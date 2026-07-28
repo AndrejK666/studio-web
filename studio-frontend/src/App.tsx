@@ -116,12 +116,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
         .map((t) => ({ ...t, orgName: homeTenant.name }));
       // Workspaces live under organizations — fetch each org's children.
+      // A self-managed org raises the visibility barrier: from outside its
+      // subtree the backend answers 404. That's tenant isolation working,
+      // not an error — skip such orgs instead of failing the whole view.
       const nested = await Promise.all(
-        orgList.map(async (org) => {
-          const kids = await api.tenantChildren(token, org.id);
-          return (kids.items ?? [])
-            .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
-            .map((t) => ({ ...t, orgName: org.name }));
+        orgList.map(async (org): Promise<Workspace[]> => {
+          try {
+            const kids = await api.tenantChildren(token, org.id);
+            return (kids.items ?? [])
+              .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
+              .map((t) => ({ ...t, orgName: org.name }));
+          } catch {
+            return []; // barrier (404) or no access — org stays visible, contents don't
+          }
         }),
       );
       setOrgs(orgList);
