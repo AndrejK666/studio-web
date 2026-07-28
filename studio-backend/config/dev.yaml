@@ -1,0 +1,149 @@
+# Constructor Studio Backend — dev configuration (SQLite, static auth).
+# Layered config: this YAML -> env APP__* -> CLI. Unknown fields inside a
+# gear `config:` section fail that gear's init loudly — that is intended.
+#
+# Verify the effective assembly before first run:
+#   cargo run -- --config config/dev.yaml --list-gears
+#   cargo run -- --config config/dev.yaml --dump-gears-config
+
+server:
+  home_dir: "~/.cf-studio-backend"
+
+database:
+  servers:
+    sqlite_main:
+      engine: "sqlite"
+      params:
+        WAL: "true"
+        synchronous: "NORMAL"
+        busy_timeout: "5000"
+      pool:
+        max_conns: 1          # SQLite is single-writer
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/studio-backend.log"
+    file_level: info
+  account_management:
+    console_level: debug
+    file: "logs/account-management.log"
+    file_level: debug
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "127.0.0.1:8090"
+      prefix_path: "/cf"
+      enable_docs: true        # OpenAPI browser at /cf/docs — source of truth for paths
+      cors_enabled: false
+      openapi:
+        title: "Constructor Studio Backend (dev)"
+        version: "0.1.0"
+        description: "Studio backend assembly — account-management demo"
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-studio-backend-grpc"
+
+  # ── AuthN: static bearer tokens for the demo ──
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        # Platform admin: home tenant = root tenant (see account-management.bootstrap.root_id)
+        - token: "studio-admin-token"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000a001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+
+  # ── AuthZ: permissive static PDP for the demo (Studio roles later = own PDP plugin) ──
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  types-registry:
+    database:
+      server: "sqlite_main"
+      file: "types_registry.db"
+    config:
+      # Seed Studio tenant types at startup (solves bootstrap chicken-and-egg:
+      # AM validates root_tenant_type against types-registry before any REST is up).
+      entities:
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Platform root tenant type (root-only)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: []
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization tenant"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace tenant (product-line context)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
+            idp_provisioning: false
+
+  nodes-registry:
+    database:
+      server: "sqlite_main"
+      file: "nodes_registry.db"
+    config: {}
+
+  resource-group:
+    database:
+      server: "sqlite_main"
+      file: "resource_group.db"
+    config: {}
+
+  # ── The gear under demonstration ──
+  account-management:
+    database:
+      server: "sqlite_main"
+      file: "account_management.db"
+    config:
+      bootstrap:
+        # Deployment-stable ids — do NOT change between restarts (idempotency contract)
+        root_id: "00000000-0000-0000-0000-000000000001"
+        root_name: "Constructor Platform"
+        root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        strict: true
+      # AM's co-located tenant-resolver plugin (barrier-aware reads over tenant_closure)
+      tr_plugin:
+        enabled: true
+      # listing / hierarchy / retention / reaper / idp — defaults are fine for dev
+      # (see gears-rust/gears/system/account-management/docs/config-example.yaml)
+
+  static-idp-plugin:
+    config:
+      vendor: "cf"       # matches AM idp.vendor default
+      priority: 100

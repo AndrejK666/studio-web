@@ -1,0 +1,142 @@
+# Constructor Studio Backend — Postgres profile.
+# Usage:
+#   docker compose up -d postgres
+#   cargo run -- --config config/postgres.yaml run
+#
+# Same gear assembly as dev.yaml; only the storage layer differs — one Postgres
+# server, one database per gear (matches the per-gear schema-ownership rule).
+# Password comes from the environment: export STUDIO_PG_PASSWORD=studio (compose default).
+
+server:
+  home_dir: "~/.cf-studio-backend"
+
+database:
+  auto_provision: true            # dev convenience: create missing databases on start
+  servers:
+    pg_main:
+      engine: "postgres"
+      host: "127.0.0.1"
+      port: 5432
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD}"
+      dbname: "studio"            # admin/default db; gears override per-gear below
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/studio-backend.log"
+    file_level: info
+  account_management:
+    console_level: debug
+    file: "logs/account-management.log"
+    file_level: debug
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "127.0.0.1:8090"
+      prefix_path: "/cf"
+      enable_docs: true
+      cors_enabled: false
+      openapi:
+        title: "Constructor Studio Backend (postgres)"
+        version: "0.1.0"
+        description: "Studio backend assembly — account-management demo"
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-studio-backend-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        - token: "studio-admin-token"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000a001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  types-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_types_registry"
+    config:
+      entities:
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Platform root tenant type (root-only)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: []
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization tenant"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace tenant (product-line context)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
+            idp_provisioning: false
+
+  nodes-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_nodes_registry"
+    config: {}
+
+  resource-group:
+    database:
+      server: "pg_main"
+      dbname: "studio_resource_group"
+    config: {}
+
+  account-management:
+    database:
+      server: "pg_main"
+      dbname: "studio_account_management"
+    config:
+      bootstrap:
+        root_id: "00000000-0000-0000-0000-000000000001"
+        root_name: "Constructor Platform"
+        root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        strict: true
+      tr_plugin:
+        enabled: true
+
+  static-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 100
