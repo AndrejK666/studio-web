@@ -68,6 +68,14 @@ gears:
             subject_tenant_id: "00000000-0000-0000-0000-000000000001"
             token_scopes: ["*"]
             subject_type: "gts.cf.core.security.subject_user.v1~"
+        # Regular user for the frontend login demo: subject = the deterministic
+        # UUIDv5 the echo IdP mints for username "a.kuchma" (demo.sh step 6).
+        - token: "studio-user-token"
+          identity:
+            subject_id: "ac6ae8e2-b765-541b-8ecd-405addfaef21"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
 
   # ── AuthZ: permissive static PDP for the demo (Studio roles later = own PDP plugin) ──
   authz-resolver:

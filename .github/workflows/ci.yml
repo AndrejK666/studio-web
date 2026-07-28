@@ -80,10 +80,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
       - name: Install
-        # TODO: commit package-lock.json (npm install locally), then switch to
-        # `npm ci` + setup-node npm cache for reproducible installs.
-        run: npm install --no-audit --no-fund
+        run: npm ci
       - name: Test
         run: npm test
       - name: Build

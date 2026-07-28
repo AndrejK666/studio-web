@@ -69,6 +69,12 @@ gears:
             subject_tenant_id: "00000000-0000-0000-0000-000000000001"
             token_scopes: ["*"]
             subject_type: "gts.cf.core.security.subject_user.v1~"
+        - token: "studio-user-token"
+          identity:
+            subject_id: "ac6ae8e2-b765-541b-8ecd-405addfaef21"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
 
   authz-resolver:
     config:

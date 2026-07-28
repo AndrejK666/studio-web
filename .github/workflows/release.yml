@@ -53,8 +53,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # TODO: switch to `npm ci` once package-lock.json is committed.
-      - run: npm install --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - run: npm ci
       - run: npm test
       - run: npm run build
       - uses: actions/upload-artifact@v4
