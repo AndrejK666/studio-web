@@ -3,3 +3,4 @@
 - [ ] Need to define repo structure to have both backend and frontend @artifizer
 - [ ] To create initial v1 scope PRD @nrggit
 - [ ] Review gears-rust/ account-management gear and check if it has enough capabilities @andrejk666
+- [ ] Theia review, ensure multi-user/multi-tenant source code management would work
