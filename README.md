@@ -9,12 +9,29 @@ Constructor Studio web server — backend, frontend, installer.
 
 ## Quick start
 
+**One click (Docker):** everything — Postgres, backend built from source, frontend on nginx:
+
 ```bash
-# backend (needs a gears-rust checkout as a sibling of this repo)
-cd studio-backend && cargo run -- --config config/dev.yaml run
-# frontend
-cd studio-frontend && npm install && npm run dev   # http://localhost:5173
+docker compose up --build -d
+# portal:   http://localhost:8080    (sign in: studio-admin-token)
+# API/docs: http://localhost:8090/cf/docs
 ```
+
+Requires Docker (Desktop with WSL integration is fine) and a `gears-rust` checkout as a
+sibling of this repo. The first build compiles the whole gears workspace — grab a
+coffee; rebuilds are cached. Stop with `docker compose down` (add `-v` to wipe data).
+To enable the Ask AI feature, put a real OpenAI key into
+`studio-backend/config/docker.yaml` → `static-credstore-plugin` before building.
+
+**Daily dev (fast iteration):** database in Docker, backend on the host (WSL), frontend via Vite:
+
+```bash
+docker compose up -d postgres                                   # once
+cd studio-backend && cargo run -- --config config/postgres.yaml run   # WSL
+cd studio-frontend && npm install && npm run dev                # http://localhost:5173
+```
+
+(or the zero-Docker variant: `--config config/dev.yaml` runs the backend on SQLite)
 
 ## CI/CD (GitHub Actions)
 

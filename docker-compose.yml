@@ -1,0 +1,70 @@
+# Constructor Studio — one-click dev environment.
+#
+#   Full stack (postgres + backend built from source + frontend on nginx):
+#     docker compose up --build -d
+#     → portal:  http://localhost:8080   (token: studio-admin-token)
+#     → api/docs: http://localhost:8090/cf/docs
+#
+#   Database only (daily dev: backend in WSL, frontend via npm run dev):
+#     docker compose up -d postgres
+#
+# NB: the backend image builds the 90-crate gears workspace — the first
+# `--build` takes a while; BuildKit caches make rebuilds fast. gears-rust must
+# be checked out as a sibling of studio-web (build context is the parent dir).
+
+name: studio
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: studio-backend-pg
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      POSTGRES_DB: studio
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - studio_pg_data:/var/lib/postgresql/data
+      - ./studio-backend/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: studio-web/studio-backend/Dockerfile.src
+    container_name: studio-backend
+    environment:
+      STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+    ports:
+      - "127.0.0.1:8090:8090"   # direct API + /cf/docs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+
+  frontend:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: studio-web/studio-frontend/Dockerfile.src
+    container_name: studio-frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    # nginx.conf proxies /cf/ to http://studio-backend:8090 — the service's
+    # container_name above must stay in sync with it.
+
+volumes:
+  studio_pg_data:

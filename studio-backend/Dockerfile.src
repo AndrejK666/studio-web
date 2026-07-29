@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+# Build the Studio backend FROM SOURCE inside Docker (one-click compose path).
+# Build context must be the CFS root (gears-rust as a sibling of studio-web) —
+# see studio-web/docker-compose.yml and CFS/.dockerignore.
+# CI uses the plain ./Dockerfile with a prebuilt binary instead.
+
+FROM rust:1.97-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler cmake \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY gears-rust/ gears-rust/
+COPY studio-web/studio-backend/ studio-web/studio-backend/
+
+WORKDIR /src/studio-web/studio-backend
+# Cache cargo registry and build artifacts across rebuilds (BuildKit).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/studio-web/studio-backend/target \
+    cargo build --release --locked \
+ && cp target/release/studio-backend /studio-backend
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --home /app studio
+WORKDIR /app
+COPY --from=build /studio-backend /app/studio-backend
+COPY studio-web/studio-backend/config/ /app/config/
+RUN chown -R studio /app
+USER studio
+EXPOSE 8090
+HEALTHCHECK --interval=10s --timeout=3s --retries=10 \
+  CMD curl -sf http://127.0.0.1:8090/healthz || exit 1
+ENTRYPOINT ["/app/studio-backend"]
+CMD ["--config", "/app/config/docker.yaml", "run"]

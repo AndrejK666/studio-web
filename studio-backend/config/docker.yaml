@@ -1,0 +1,291 @@
+# Constructor Studio Backend — in-Docker profile (one-click compose).
+# Differences from postgres.yaml: DB host is the compose service name and the
+# HTTP server binds 0.0.0.0 so the frontend (nginx) container can reach it.
+
+server:
+  home_dir: "~/.cf-studio-backend"
+
+database:
+  auto_provision: true            # dev convenience: create missing databases on start
+  servers:
+    pg_main:
+      engine: "postgres"
+      host: "postgres"
+      port: 5432
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD}"
+      dbname: "studio"            # admin/default db; gears override per-gear below
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/studio-backend.log"
+    file_level: info
+  account_management:
+    console_level: debug
+    file: "logs/account-management.log"
+    file_level: debug
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "0.0.0.0:8090"
+      prefix_path: "/cf"
+      enable_docs: true
+      cors_enabled: false
+      openapi:
+        title: "Constructor Studio Backend (docker)"
+        version: "0.1.0"
+        description: "Studio backend assembly — account-management demo"
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-studio-backend-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        - token: "studio-admin-token"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000a001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+        - token: "studio-user-token"
+          identity:
+            subject_id: "ac6ae8e2-b765-541b-8ecd-405addfaef21"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+      s2s_credentials:
+        # Explicit identity: without it the plugin's built-in default tenant id
+        # is used, which does not exist in OUR tenant tree -> the AM tenant-
+        # resolver plugin fails OAGW hierarchy resolution (TenantNotFound).
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-dev-secret"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000b001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  types-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_types_registry"
+    config:
+      entities:
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Platform root tenant type (root-only)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: []
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization tenant"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace tenant (product-line context)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
+          # Free-form payload: the GTS OP#12 narrowing check treats the base
+          # tenant_metadata envelope as a CLOSED empty object, so a derived
+          # schema may not declare typed properties at all (gears issue #4).
+          # Shape {automation_level, approved_worker_categories} is enforced
+          # client-side until the base schema is relaxed upstream.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+
+  nodes-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_nodes_registry"
+    config: {}
+
+  resource-group:
+    database:
+      server: "pg_main"
+      dbname: "studio_resource_group"
+    config: {}
+
+  account-management:
+    database:
+      server: "pg_main"
+      dbname: "studio_account_management"
+    config:
+      bootstrap:
+        root_id: "00000000-0000-0000-0000-000000000001"
+        root_name: "Constructor Platform"
+        root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        strict: true
+      tr_plugin:
+        enabled: true
+
+  static-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 100
+
+  # ── Feature gears: per-user settings, files, AI chat ──
+
+  simple-user-settings:
+    database:
+      server: "pg_main"
+      dbname: "studio_settings"
+    config:
+      max_field_length: 200
+
+  file-storage:
+    database:
+      server: "pg_main"
+      dbname: "studio_file_storage"
+    config:
+      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # own for any shared environment).
+      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+
+  # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  oagw:
+    config:
+      proxy_timeout_secs: 120
+
+  credstore:
+    database:
+      server: "pg_main"
+      dbname: "studio_credstore"
+    config:
+      vendor: "constructorfabric"
+
+  static-credstore-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      secrets:
+        # Shared secret (no tenant_id). Put your real OpenAI key here for the
+        # Ask AI feature; without it chats are created but streaming replies
+        # fail at the provider with 401.
+        - key: "openai-key"
+          value: "sk-REPLACE_ME"
+
+  mini-chat:
+    database:
+      server: "pg_main"
+      dbname: "studio_mini_chat"
+    config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      providers:
+        openai:
+          kind: openai_responses
+          storage_kind: openai
+          host: "api.openai.com"
+          auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+          auth_config:
+            header: "Authorization"
+            prefix: "Bearer "
+            secret_ref: "openai-key"
+
+  static-mini-chat-model-policy-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      model_catalog:
+        - id: "gpt-5.2"
+          provider_model_id: "gpt-5.2"
+          display_name: "GPT-5.2"
+          tier: Standard
+          enabled: true
+          system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
+          thread_summary_prompt: ""
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 3000000
+          multimodal_capabilities: ["VISION_INPUT"]
+          context_window: 128000
+          max_output_tokens: 8192
+          max_input_tokens: 120000
+          description: "Default Studio assistant model"
+          version: "2025-01"
+          icon: ""
+          provider_display_name: "OpenAI"
+          multiplier_display: "1x"
+          provider_id: "openai"
+          max_num_results: 10
+          max_tool_calls: 2
+          estimation_budgets:
+            bytes_per_token_conservative: 4
+            fixed_overhead_tokens: 500
+            safety_margin_pct: 10
+            image_token_budget: 1000
+            tool_surcharge_tokens: 200
+            web_search_surcharge_tokens: 500
+            code_interpreter_surcharge_tokens: 1000
+            minimal_generation_floor: 100
+          preference:
+            is_default: true
+            sort_order: 1
+          general_config:
+            type: "chat"
+            available_from: "2025-01-01T00:00:00Z"
+            max_file_size_mb: 50
+            api_params:
+              temperature: 0.7
+              top_p: 1.0
+              frequency_penalty: 0.0
+              presence_penalty: 0.0
+              stop: []
+            features:
+              streaming: true
+              structured_output: true
+            tool_support:
+              web_search: false
+              file_search: false
+              image_generation: false
+              code_interpreter: false
+              mcp: false
+            supported_endpoints:
+              chat_completions: true
+              responses: true
+              embeddings: false
+              image_generation: false
+              audio_speech_generation: false
+              audio_transcription: false
+              audio_translation: false

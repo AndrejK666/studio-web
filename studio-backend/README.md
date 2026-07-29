@@ -45,11 +45,16 @@ System packages: `sudo apt install -y build-essential pkg-config cmake protobuf-
 
 ```bash
 cd /mnt/c/Repos/CFS/studio-web/studio-backend
-cargo run -- --config config/dev.yaml --list-gears   # verify the assembly (13 gears)
+cargo run -- --config config/dev.yaml --list-gears   # verify the assembly (20 gears)
 cargo run -- --config config/dev.yaml run            # migrations apply on start
 ./demo/demo.sh                                       # in a second terminal
 ./demo/demo-groups.sh <user-id>                      # user-groups scenario
 ```
+
+Config profiles: `dev.yaml` (SQLite, zero deps), `postgres.yaml` (host run against the
+compose Postgres), `docker.yaml` (in-container: DB host `postgres`, binds 0.0.0.0).
+Docker orchestration lives at the repo root — see `../docker-compose.yml`
+(`docker compose up --build -d` for the full stack, `up -d postgres` for DB only).
 
 Measured: full build from /mnt/c ~1m20s (deps cached), incremental — seconds. Requires Rust ≥ 1.96 (edition 2024) and a `gears-rust` checkout as a sibling of `studio-web` (path dependencies `../../gears-rust`).
 
