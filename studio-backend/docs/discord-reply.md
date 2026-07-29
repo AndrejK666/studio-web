@@ -11,12 +11,11 @@ truth. One residual left for the owner: RG declares `/groups/{group_id}/hierarch
 but the implementation exposes `/ancestors` + `/descendants` — that's a content
 decision, flagged in the PR body. PR: <link after push>
 
-**2. The typed tenant-metadata bug — proposal: let's track it on GitHub Issues**
-(constructorfabric/gears-rust), unless you prefer another tracker. Reasoning: the repo
-is public OSS and adopters should be able to *find* known problems — e.g. the
-member-handle "known limitation" wasn't discoverable anywhere public and cost us a
-debugging cycle; a public issue also gives our failing test + fix PR something to
-reference.
+**2. The typed tenant-metadata bug — filing it on GitHub Issues**, per CONTRIBUTING
+("Getting Help → GitHub Issues: for bug reports and feature requests"). A public
+issue also keeps it discoverable for the next adopter (the member-handle "known
+limitation" wasn't findable anywhere public and cost us a debugging cycle) and gives
+our failing test + fix PR something to reference.
 
 We have the report fully written: env (main @ 71218154), one-line config repro, both
 failure paths (draft-07 → OP#12 narrowing vs the closed base envelope; `gts://` chain
