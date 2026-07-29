@@ -1,23 +1,29 @@
-# Discord follow-up (after Diffora's answer) — ready to paste
+# Discord follow-up #2 (proposing where + what) — ready to paste
 
-Thanks Diffora, super helpful! Two follow-ups:
+Quick follow-up on the metadata bug and the docs fix:
 
-1. **Stale per-gear OpenAPI files.** Since `docs/api/api.json` is the CI-verified
-source of truth, the per-gear artifacts like
-`gears/system/account-management/docs/account-management-v1.yaml` (with the `/api/...`
-prefix that doesn't match the real routes) are a trap for adopters — that's exactly
-how we generated a 404-ing client. Proposal: delete them, or replace each with a
-one-line pointer to `docs/api/api.json`. We're happy to send that PR — any preference
-between "delete" vs "pointer"?
+**1. Docs PR is ready.** Rather than deleting the per-gear OpenAPI artifacts (they're
+wired into DESIGN.md and Cypilot validation), we fixed them in place: stripped the
+phantom `/api` prefix from all account-management (16) and resource-group paths,
+verified every path against `docs/api/api.json`, renamed `{schema_id}` → `{code}` to
+match the real route, and added a header note pointing to api.json as the source of
+truth. One residual left for the owner: RG declares `/groups/{group_id}/hierarchy`
+but the implementation exposes `/ancestors` + `/descendants` — that's a content
+decision, flagged in the PR body. PR: <link after push>
 
-2. **The typed tenant-metadata bug.** Should we file a proper bug report, and if so —
-where? GitHub issues on `constructorfabric/gears-rust`, or do you track bugs
-elsewhere? We have it fully written up: both repro paths (draft-07 → OP#12 narrowing
-rejects any added property against the closed base envelope;
-`$schema: "gts://gts.cf.core.am.tenant_metadata.v1~"` → "Unknown meta-schema" in trait
-validation), a one-line repro via `types-registry.config.entities`, and we can
-contribute a failing test alongside it.
+**2. The typed tenant-metadata bug — proposal: let's track it on GitHub Issues**
+(constructorfabric/gears-rust), unless you prefer another tracker. Reasoning: the repo
+is public OSS and adopters should be able to *find* known problems — e.g. the
+member-handle "known limitation" wasn't discoverable anywhere public and cost us a
+debugging cycle; a public issue also gives our failing test + fix PR something to
+reference.
 
-And one leftover from the original list: the static-entity registration loop logs only
-"Request validation failed" while the actual cause sits in `FieldViolations` — is
-there a log level/flag we missed, or file that one too?
+We have the report fully written: env (main @ 71218154), one-line config repro, both
+failure paths (draft-07 → OP#12 narrowing vs the closed base envelope; `gts://` chain
+`$schema` → "Unknown meta-schema"), expected/actual, and a **recommended fix**: relax
+the base envelope (`additionalProperties: true` at the payload level of
+`gts.cf.core.am.tenant_metadata.v1~`, traits schema stays strict) — one data-only
+line in a schema AM owns, no OP#12 changes, payload validation still enforced by the
+derived schema at PUT time. We're offering the fix PR + failing-first test alongside.
+
+Say the word and we file it (or send it wherever you point us).

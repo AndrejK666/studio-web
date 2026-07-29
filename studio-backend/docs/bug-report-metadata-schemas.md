@@ -78,21 +78,33 @@ metadata".
 Every typed derived schema is rejected at registration; only free-form
 `type: object` (no payload validation) registers.
 
-## Possible directions
+## Recommended fix
 
-1. Relax the base envelope: `additionalProperties: true` at the payload level while
-   keeping `x-gts-traits-schema` strict; or
-2. Exempt `x-gts-abstract` envelope bases from property-narrowing in OP#12; or
-3. Support the `gts://` chain `$schema` referenced by AM's comments.
+**Relax the base envelope**: add `additionalProperties: true` at the payload level of
+`gts.cf.core.am.tenant_metadata.v1~` (the `x-gts-traits-schema` stays strict).
+Rationale:
 
-Plus a working example in the docs either way.
+- data-only, one-line change in a schema AM itself owns — no OP#12/gts-crate changes,
+  smallest blast radius (the narrowing rule stays correct for regular schemas);
+- semantically right: the base is an *envelope* — payload shape is the derived
+  schema's job, and it IS enforced at `PUT .../metadata/{type_id}` by
+  `metadata_schema_registry` compiling the derived schema;
+- unblocks PRD §5.7 immediately for every adopter.
+
+Alternatives considered: exempting `x-gts-abstract` envelope bases from
+property-narrowing in OP#12 (systemic, but touches the gts crate and every chain
+check), or supporting the `gts://` chain `$schema` from AM's comments (largest
+change). Either could follow later; the envelope relaxation doesn't preclude them.
+
+Plus a working authoring example in the docs.
 
 ## Offer
 
-We can contribute a failing test (seeding the schema above via
-`types-registry.config.entities` and asserting `switch_to_ready` succeeds) and adapt
-our integration as the verification bed — we hit this building the Constructor Studio
-backend and currently ship the free-form workaround with client-side validation.
+We can send the PR for the recommended fix (schema change + docs example) together
+with a failing-first test: seed the schema above via `types-registry.config.entities`
+and assert `switch_to_ready` succeeds. Our 20-gear Studio integration serves as the
+verification bed — we currently ship the free-form workaround with client-side
+validation and would switch back to typed schemas the moment this lands.
 
 ---
 
