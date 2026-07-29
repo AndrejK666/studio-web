@@ -39,10 +39,21 @@ by tenancy. Proper scoping arrives with either per-workspace identities (OIDC) o
 context-tenant mechanism. This is acceptable for the portal walking skeleton and is
 the main trigger for graduating to a domain gear.
 
-## Graduation criteria → `studio-projects` gear
+## Graduation path
 
-Move to a dedicated domain gear when any of these appears: project lifecycle
-(draft/active/archived with rules), links into the knowledge graph, per-project
-settings with validation, cross-gear queries ("all projects where user X is a member"),
-or the tenancy limitation above starts to matter. The REST shape of the portal is kept
-gear-compatible so the swap is a client change, not a redesign.
+**Step 2 — `simple-resource-registry` (when it ships).** gears-rust contains a
+spec-stage gear (`gears/simple-resource-registry/docs/`, PRD/DESIGN only, no code yet)
+that is a near-exact fit: universal CRUD for typed resources — fixed envelope
+(identity, ownership, timestamps) + JSON payload validated against GTS type
+definitions, tenant/owner/type authorization, optional lifecycle events
+(created/updated/deleted) usable as workflow triggers. When implemented, Project
+migrates there as GTS type `cf.studio.project.v1~` with a validated payload
+(workspace_id, status, dates) — real tenant authorization and events, still zero
+custom Rust. Project *membership* can stay on RG or move into the payload.
+
+**Step 3 — a dedicated `studio-projects` gear** only if logic outgrows CRUD: rich
+lifecycle rules, knowledge-graph links, cross-gear queries ("all projects where user X
+is a member"). The portal's REST shape is kept swap-friendly either way.
+
+Related spec-stage gear worth watching: `approval-service` (docs only) — generic
+approval flows that project lifecycle transitions could delegate to.
