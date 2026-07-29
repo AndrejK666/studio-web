@@ -194,6 +194,9 @@ gears:
       proxy_timeout_secs: 120
 
   credstore:
+    database:
+      server: "sqlite_main"
+      file: "credstore.db"
     config:
       vendor: "constructorfabric"
 

@@ -182,6 +182,9 @@ gears:
       proxy_timeout_secs: 120
 
   credstore:
+    database:
+      server: "pg_main"
+      dbname: "studio_credstore"
     config:
       vendor: "constructorfabric"
 
