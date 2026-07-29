@@ -34,7 +34,6 @@ services:
       retries: 10
 
   backend:
-    profiles: ["full"]
     build:
       context: ..
       dockerfile: studio-web/studio-backend/Dockerfile.src
@@ -53,7 +52,6 @@ services:
       retries: 15
 
   frontend:
-    profiles: ["full"]
     build:
       context: ..
       dockerfile: studio-web/studio-frontend/Dockerfile.src
