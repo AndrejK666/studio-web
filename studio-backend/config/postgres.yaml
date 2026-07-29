@@ -122,7 +122,7 @@ gears:
           # schema may not declare typed properties at all (gears issue #4).
           # Shape {automation_level, approved_worker_categories} is enforced
           # client-side until the base schema is relaxed upstream.
-          "$schema": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio workspace settings (free-form until gears issue #4)"
           type: "object"
           x-gts-traits:

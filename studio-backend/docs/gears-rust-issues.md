@@ -111,8 +111,16 @@ adds new property but base 'gts.cf.core.am.tenant_metadata.v1~' has additionalPr
 The base envelope (`docs/schemas/tenant_metadata.v1.schema.json`) declares no
 `properties` and no top-level `additionalProperties`; the OP#12 narrowing check
 treats it as a closed empty object, so **no** derived schema may add payload fields.
-Tried with both `$schema: draft-07` and `$schema: "gts://gts.cf.core.am.tenant_metadata.v1~"`
-(the convention referenced in `metadata_schema_registry.rs` comments) — same result.
+
+Both escape hatches fail:
+
+- `$schema: draft-07` → OP#12 rejects every added property (error above);
+- `$schema: "gts://gts.cf.core.am.tenant_metadata.v1~"` — the convention referenced in
+  AM's `metadata_schema_registry.rs` comments — fails earlier, in trait validation:
+  `failed to compile trait schema: Unknown meta-schema: 'gts://gts.cf.core.am.tenant_metadata.v1~'.
+  Custom meta-schemas must be registered in the registry before use`. I.e. the
+  documented AM convention is not supported by types-registry at all.
+
 The only registrable derived schema is a free-form `type: object`, which defeats the
 "GTS-validated payload" promise of PRD §5.7 / FR `extensible tenant metadata`.
 
