@@ -1,0 +1,43 @@
+# Constructor Studio Backend — assembly of CF/Gears into the Studio backend server.
+# Standalone crate: consumes gears-rust via path dependencies (sibling checkout ../../gears-rust).
+
+[package]
+name = "cf-studio-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "Constructor Studio backend server assembled from CF/Gears (account-management demo)"
+
+[[bin]]
+name = "studio-backend"
+path = "src/main.rs"
+
+[dependencies]
+mimalloc = "0.1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+
+# ── Core toolkit ──
+toolkit = { package = "cf-gears-toolkit", path = "../../gears-rust/libs/toolkit", features = ["bootstrap"] }
+
+# ── System gears (required set) ──
+api_gateway = { package = "cf-gears-api-gateway", path = "../../gears-rust/gears/system/api-gateway" }
+grpc_hub = { package = "cf-gears-grpc-hub", path = "../../gears-rust/gears/system/grpc-hub" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", path = "../../gears-rust/gears/system/gear-orchestrator" }
+nodes_registry = { package = "cf-gears-nodes-registry", path = "../../gears-rust/gears/system/nodes-registry/nodes-registry" }
+types_registry = { package = "cf-gears-types-registry", path = "../../gears-rust/gears/system/types-registry/types-registry" }
+tenant_resolver = { package = "cf-gears-tenant-resolver", path = "../../gears-rust/gears/system/tenant-resolver/tenant-resolver" }
+authn_resolver = { package = "cf-gears-authn-resolver", path = "../../gears-rust/gears/system/authn-resolver/authn-resolver" }
+authz_resolver = { package = "cf-gears-authz-resolver", path = "../../gears-rust/gears/system/authz-resolver/authz-resolver" }
+resource_group = { package = "cf-gears-resource-group", path = "../../gears-rust/gears/system/resource-group/resource-group" }
+
+# ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
+static_authn_plugin = { package = "cf-gears-static-authn-plugin", path = "../../gears-rust/gears/system/authn-resolver/plugins/static-authn-plugin" }
+static_authz_plugin = { package = "cf-gears-static-authz-plugin", path = "../../gears-rust/gears/system/authz-resolver/plugins/static-authz-plugin" }
+
+# ── The gear under demonstration ──
+# account-management ships its own Tenant Resolver plugin (src/tr_plugin) in-crate.
+account_management = { package = "cf-gears-account-management", path = "../../gears-rust/gears/system/account-management/account-management" }
+static_idp_plugin = { package = "cf-gears-static-idp-plugin", path = "../../gears-rust/gears/system/account-management/plugins/static-idp-plugin" }

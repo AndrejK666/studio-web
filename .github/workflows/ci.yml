@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'studio-backend/**'
+              - '.github/workflows/**'
+            frontend:
+              - 'studio-frontend/**'
+              - '.github/workflows/**'
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-web/studio-backend
+    steps:
+      # Path dependencies expect gears-rust as a sibling of studio-web:
+      #   <workspace>/studio-web/studio-backend -> ../../gears-rust
+      - uses: actions/checkout@v4
+        with:
+          path: studio-web
+      - uses: actions/checkout@v4
+        with:
+          repository: constructorfabric/gears-rust
+          path: gears-rust
+          # token: ${{ secrets.GEARS_RUST_TOKEN }}   # uncomment if the repo is private
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: studio-web/studio-backend
+
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --locked
+      - name: Test
+        run: cargo test --locked
+      - name: "Smoke: assembly resolves 13 gears"
+        run: |
+          cargo run --locked -- --config config/dev.yaml --list-gears | tee gears.txt
+          grep -q 'account-management' gears.txt
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio-frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-frontend-dist
+          path: studio-frontend/dist
+          retention-days: 7
