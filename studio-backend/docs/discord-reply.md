@@ -1,22 +1,23 @@
-# Discord reply draft (to Diffora's answer)
+# Discord follow-up (after Diffora's answer) — ready to paste
 
-Thanks, that's exactly what we needed! 🙏
+Thanks Diffora, super helpful! Two follow-ups:
 
-- **api.json**: got it — verified locally, 79 paths and the AM routes match the live
-  server exactly. We'll switch our TS client generation to `docs/api/api.json`. Small
-  suggestion: the stale per-gear `docs/account-management-v1.yaml` (with the `/api/...`
-  prefix) is a trap for newcomers — maybe delete it or replace with a pointer to
-  api.json? Happy to send that PR.
-- **member-handle / rg prefix**: understood, we're already on the rg-prefixed type.
-  We'll file a small docs issue for PRD §5.6 so the next adopter doesn't hit the 400.
-- **typed tenant-metadata**: filing it as a bug then, with both repro paths (draft-07
-  → OP#12 narrowing rejection; `gts://` chain `$schema` → "Unknown meta-schema" in
-  trait validation) and a one-line config repro. Ping us if you want a failing test —
-  we can contribute one against `types-registry.config.entities`.
-- One item from the original list still open: the static-entity registration loop
-  logging only "Request validation failed" while the real cause sits in
-  FieldViolations — is there a log level/flag we missed, or should we file that too?
+1. **Stale per-gear OpenAPI files.** Since `docs/api/api.json` is the CI-verified
+source of truth, the per-gear artifacts like
+`gears/system/account-management/docs/account-management-v1.yaml` (with the `/api/...`
+prefix that doesn't match the real routes) are a trap for adopters — that's exactly
+how we generated a 404-ing client. Proposal: delete them, or replace each with a
+one-line pointer to `docs/api/api.json`. We're happy to send that PR — any preference
+between "delete" vs "pointer"?
 
-Context if useful: the assembly is now 20 gears (added mini-chat + oagw + credstore +
-model-policy, simple-user-settings, file-storage) — the whole tenancy + AI-chat stack
-still with zero custom Rust. Happy to demo.
+2. **The typed tenant-metadata bug.** Should we file a proper bug report, and if so —
+where? GitHub issues on `constructorfabric/gears-rust`, or do you track bugs
+elsewhere? We have it fully written up: both repro paths (draft-07 → OP#12 narrowing
+rejects any added property against the closed base envelope;
+`$schema: "gts://gts.cf.core.am.tenant_metadata.v1~"` → "Unknown meta-schema" in trait
+validation), a one-line repro via `types-registry.config.entities`, and we can
+contribute a failing test alongside it.
+
+And one leftover from the original list: the static-entity registration loop logs only
+"Request validation failed" while the actual cause sits in `FieldViolations` — is
+there a log level/flag we missed, or file that one too?
