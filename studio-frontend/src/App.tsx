@@ -3,8 +3,11 @@ import type { FormEvent } from "react";
 import {
   api,
   ApiError,
+  PROJECT_RG_TYPE,
   shortTypeName,
   TENANT_TYPES,
+  USER_MEMBER_HANDLE,
+  type Group,
   type Me,
   type Tenant,
   type User,
@@ -85,10 +88,11 @@ function Login({ onLogin }: { onLogin: (token: string, me: Me) => void }) {
 
 /* ── App shell ── */
 
-type View = "workspaces" | "organizations" | "members" | "profile";
+type View = "workspaces" | "projects" | "organizations" | "members" | "profile";
 
 const NAV: { id: View; icon: string; label: string }[] = [
   { id: "workspaces", icon: "▦", label: "Workspaces" },
+  { id: "projects", icon: "◳", label: "Projects" },
   { id: "organizations", icon: "🏢", label: "Organizations" },
   { id: "members", icon: "👥", label: "Members" },
   { id: "profile", icon: "●", label: "Profile" },
@@ -181,6 +185,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpenStudio={setStudio}
           />
         )}
+        {view === "projects" && <ProjectsView token={token} workspaces={workspaces} />}
         {view === "organizations" && (
           <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} onChanged={refresh} />
         )}
@@ -272,6 +277,220 @@ function WorkspacesView({
         {error && <div className="error">{error}</div>}
       </div>
     </>
+  );
+}
+
+/* ── Projects (RG-backed, ADR-0002) ── */
+
+function ProjectsView({ token, workspaces }: { token: string; workspaces: Workspace[] }) {
+  const [wsId, setWsId] = useState("");
+  const [projects, setProjects] = useState<Group[] | null>(null);
+  const [name, setName] = useState("");
+  const [openProject, setOpenProject] = useState<Group | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!wsId) return;
+    setError(null);
+    setOpenProject(null);
+    try {
+      const page = await api.groups(token);
+      setProjects(
+        (page.items ?? []).filter(
+          (g) => g.type === PROJECT_RG_TYPE && g.metadata?.workspace_id === wsId,
+        ),
+      );
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, [token, wsId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function create(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await api.createGroup(token, {
+        type: PROJECT_RG_TYPE,
+        name,
+        parent_id: null,
+        metadata: { workspace_id: wsId },
+      });
+      setName("");
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 400
+          ? `${errText(err)} — если тип проекта ещё не зарегистрирован, выполните studio-backend/demo/setup-projects.sh`
+          : errText(err),
+      );
+    }
+  }
+
+  const ws = workspaces.find((w) => w.id === wsId);
+
+  return (
+    <>
+      <h1>Projects</h1>
+      <p className="subtitle">
+        Projects group work and people inside a workspace (Resource Group-backed, ADR-0002).
+      </p>
+      <div className="card">
+        <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
+          <option value="">Select a workspace…</option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name} ({w.orgName})
+            </option>
+          ))}
+        </select>
+
+        {wsId && projects && (
+          <>
+            {projects.length === 0 ? (
+              <p className="empty" style={{ marginTop: 12 }}>
+                No projects in “{ws?.name}” yet.
+              </p>
+            ) : (
+              <ul className="rows" style={{ marginTop: 12 }}>
+                {projects.map((p) => (
+                  <li key={p.id}>
+                    <div className="grow">
+                      <div className="name">{p.name}</div>
+                      <div className="sub">{p.id}</div>
+                    </div>
+                    <span className="badge">project</span>
+                    <button onClick={() => setOpenProject(p)}>members</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form className="inline" onSubmit={create}>
+              <input
+                placeholder="New project name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <button className="primary" disabled={!name}>
+                Create project
+              </button>
+            </form>
+          </>
+        )}
+        {error && <div className="error">{error}</div>}
+      </div>
+
+      {openProject && ws && (
+        <ProjectMembers
+          key={openProject.id}
+          token={token}
+          project={openProject}
+          workspace={ws}
+          onClose={() => setOpenProject(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function ProjectMembers({
+  token,
+  project,
+  workspace,
+  onClose,
+}: {
+  token: string;
+  project: Group;
+  workspace: Workspace;
+  onClose: () => void;
+}) {
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [wsUsers, setWsUsers] = useState<User[]>([]);
+  const [pick, setPick] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [ms, users] = await Promise.all([
+        api.memberships(token),
+        api.tenantUsers(token, workspace.id),
+      ]);
+      setMemberIds(
+        (ms.items ?? [])
+          .filter((m) => m.group_id === project.id && m.resource_type === USER_MEMBER_HANDLE)
+          .map((m) => m.resource_id),
+      );
+      setWsUsers(users.items ?? []);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, [token, project.id, workspace.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await api.addMembership(token, project.id, USER_MEMBER_HANDLE, pick);
+      setPick("");
+      await load();
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
+  const byId = new Map(wsUsers.map((u) => [u.id, u]));
+  const candidates = wsUsers.filter((u) => !memberIds.includes(u.id));
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>
+          Members of “{project.name}” <span className="sub">({workspace.name})</span>
+        </h2>
+        <button className="ghost" onClick={onClose}>
+          close
+        </button>
+      </div>
+      {memberIds.length === 0 ? (
+        <p className="empty">No members yet.</p>
+      ) : (
+        <ul className="rows">
+          {memberIds.map((id) => {
+            const u = byId.get(id);
+            return (
+              <li key={id}>
+                <div className="grow">
+                  <div className="name">{u?.display_name ?? u?.username ?? id}</div>
+                  <div className="sub">{u ? u.username : "user outside this workspace"}</div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <form className="inline" onSubmit={add}>
+        <select value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="">Add workspace user…</option>
+          {candidates.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.display_name ?? u.username}
+            </option>
+          ))}
+        </select>
+        <button className="primary" disabled={!pick}>
+          Add
+        </button>
+      </form>
+      {error && <div className="error">{error}</div>}
+    </div>
   );
 }
 
