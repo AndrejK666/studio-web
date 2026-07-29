@@ -76,8 +76,16 @@ gears:
             token_scopes: ["*"]
             subject_type: "gts.cf.core.security.subject_user.v1~"
       s2s_credentials:
+        # Explicit identity: without it the plugin's built-in default tenant id
+        # is used, which does not exist in OUR tenant tree -> the AM tenant-
+        # resolver plugin fails OAGW hierarchy resolution (TenantNotFound).
         - client_id: "mini-chat"
           client_secret: "mini-chat-dev-secret"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000b001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
 
   authz-resolver:
     config:
