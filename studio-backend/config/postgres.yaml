@@ -116,6 +116,21 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace settings"
+          type: "object"
+          additionalProperties: false
+          properties:
+            automation_level:
+              type: "string"
+              enum: ["manual", "recommendations", "autonomous"]
+            approved_worker_categories:
+              type: "array"
+              items:
+                type: "string"
+          x-gts-traits:
+            inheritance_policy: "override_only"
 
   nodes-registry:
     database:

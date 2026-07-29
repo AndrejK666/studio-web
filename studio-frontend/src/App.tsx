@@ -11,6 +11,7 @@ import {
   type Me,
   type Tenant,
   type User,
+  type WorkspaceSettings,
 } from "./api";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
@@ -105,6 +106,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [studio, setStudio] = useState<Workspace | null>(null);
+  const [dash, setDash] = useState<Workspace | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -176,6 +178,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
       <div className="content">
         {error && <div className="error">{error}</div>}
+        {dash ? (
+          <WorkspaceDashboard
+            token={token}
+            ws={dash}
+            onBack={() => setDash(null)}
+            onOpenStudio={setStudio}
+          />
+        ) : (
+          <>
         {view === "workspaces" && (
           <WorkspacesView
             token={token}
@@ -183,6 +194,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             workspaces={workspaces}
             onChanged={refresh}
             onOpenStudio={setStudio}
+            onOpenDashboard={setDash}
           />
         )}
         {view === "projects" && <ProjectsView token={token} workspaces={workspaces} />}
@@ -191,6 +203,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {view === "members" && <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} />}
         {view === "profile" && <ProfileView me={me} home={home} />}
+          </>
+        )}
         {studio && <StudioLauncher ws={studio} onClose={() => setStudio(null)} />}
       </div>
     </div>
@@ -205,12 +219,14 @@ function WorkspacesView({
   workspaces,
   onChanged,
   onOpenStudio,
+  onOpenDashboard,
 }: {
   token: string;
   orgs: Tenant[];
   workspaces: Workspace[];
   onChanged: () => void;
   onOpenStudio: (ws: Workspace) => void;
+  onOpenDashboard: (ws: Workspace) => void;
 }) {
   const [name, setName] = useState("");
   const [orgId, setOrgId] = useState("");
@@ -247,12 +263,18 @@ function WorkspacesView({
           <ul className="rows">
             {workspaces.map((w) => (
               <li key={w.id}>
-                <div className="grow">
+                <div
+                  className="grow"
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onOpenDashboard(w)}
+                  title="Open workspace dashboard"
+                >
                   <div className="name">{w.name}</div>
                   <div className="sub">{w.orgName}</div>
                 </div>
                 <span className="badge workspace">workspace</span>
                 {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
+                <button onClick={() => onOpenDashboard(w)}>Dashboard</button>
                 <button className="primary" onClick={() => onOpenStudio(w)}>
                   Open Studio
                 </button>
@@ -275,6 +297,193 @@ function WorkspacesView({
           </button>
         </form>
         {error && <div className="error">{error}</div>}
+      </div>
+    </>
+  );
+}
+
+/* ── Workspace Dashboard (vision journey J2: onboard a project) ── */
+
+const WORKER_CATEGORIES = ["documenting", "coding", "review", "analysis"];
+
+function WorkspaceDashboard({
+  token,
+  ws,
+  onBack,
+  onOpenStudio,
+}: {
+  token: string;
+  ws: Workspace;
+  onBack: () => void;
+  onOpenStudio: (ws: Workspace) => void;
+}) {
+  const [users, setUsers] = useState<User[] | null>(null);
+  const [projects, setProjects] = useState<Group[] | null>(null);
+  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  const [settingsExist, setSettingsExist] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [u, g, s] = await Promise.all([
+        api.tenantUsers(token, ws.id),
+        api.groups(token),
+        api.workspaceSettings(token, ws.id),
+      ]);
+      setUsers(u.items ?? []);
+      setProjects(
+        (g.items ?? []).filter(
+          (p) => p.type === PROJECT_RG_TYPE && p.metadata?.workspace_id === ws.id,
+        ),
+      );
+      setSettings(s ?? { automation_level: "recommendations", approved_worker_categories: [] });
+      setSettingsExist(s !== null);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, [token, ws.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function saveSettings(e: FormEvent) {
+    e.preventDefault();
+    if (!settings) return;
+    setError(null);
+    setSaved(false);
+    try {
+      await api.putWorkspaceSettings(token, ws.id, settings);
+      setSettingsExist(true);
+      setSaved(true);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
+  const steps: { label: string; done: boolean; soon?: boolean }[] = [
+    { label: "Workspace created", done: true },
+    { label: "Members invited", done: (users?.length ?? 0) > 0 },
+    { label: "First project created", done: (projects?.length ?? 0) > 0 },
+    { label: "Automation configured", done: settingsExist },
+    { label: "Connectors (GitHub / Jira)", done: false, soon: true },
+    { label: "Kit installed", done: false, soon: true },
+  ];
+
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>{ws.name}</h1>
+          <p className="subtitle" style={{ margin: 0 }}>
+            {ws.orgName} · <code>{ws.id.slice(0, 8)}…</code>
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onBack}>← Back</button>
+          <button className="primary" onClick={() => onOpenStudio(ws)}>
+            Open Studio
+          </button>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+
+      <div className="card">
+        <h2>Onboarding (journey J2)</h2>
+        <ul className="rows">
+          {steps.map((s) => (
+            <li key={s.label}>
+              <span style={{ width: 22 }}>{s.done ? "✅" : s.soon ? "🔒" : "⬜"}</span>
+              <div className="grow">
+                <div className={s.done ? "name" : "sub"}>{s.label}</div>
+              </div>
+              {s.soon && <span className="badge">coming soon</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="hint">
+          {users?.length ?? "…"} member(s) · {projects?.length ?? "…"} project(s)
+        </p>
+      </div>
+
+      <div className="card">
+        <h2>Automation settings</h2>
+        <p className="hint">
+          Stored as tenant metadata (GTS-validated by the backend): who is allowed to act, and how
+          autonomously.
+        </p>
+        {settings && (
+          <form onSubmit={saveSettings}>
+            <label className="field" style={{ maxWidth: 320 }}>
+              Automation level
+              <select
+                style={{ display: "block", width: "100%", marginTop: 6 }}
+                value={settings.automation_level ?? "recommendations"}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    automation_level: e.target.value as WorkspaceSettings["automation_level"],
+                  })
+                }
+              >
+                <option value="manual">manual — humans do everything</option>
+                <option value="recommendations">recommendations — workers suggest, humans approve</option>
+                <option value="autonomous">autonomous — approved workers act on their own</option>
+              </select>
+            </label>
+            <div className="field">
+              Approved worker categories
+              <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+                {WORKER_CATEGORIES.map((c) => (
+                  <label key={c} style={{ fontWeight: 400 }}>
+                    <input
+                      type="checkbox"
+                      checked={settings.approved_worker_categories?.includes(c) ?? false}
+                      onChange={(e) => {
+                        const cur = new Set(settings.approved_worker_categories ?? []);
+                        if (e.target.checked) cur.add(c);
+                        else cur.delete(c);
+                        setSettings({ ...settings, approved_worker_categories: [...cur] });
+                      }}
+                    />{" "}
+                    {c}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button className="primary">Save settings</button>
+            {saved && <span className="hint" style={{ marginLeft: 10 }}>saved ✓</span>}
+          </form>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Coming soon</h2>
+        <ul className="rows">
+          <li>
+            <div className="grow">
+              <div className="name">Object graph & traceability</div>
+              <div className="sub">journeys J20/J22 — requires the studio-graph gear</div>
+            </div>
+            <span className="badge">preview</span>
+          </li>
+          <li>
+            <div className="grow">
+              <div className="name">Recommendations inbox</div>
+              <div className="sub">worker findings awaiting review — requires workers</div>
+            </div>
+            <span className="badge">preview</span>
+          </li>
+          <li>
+            <div className="grow">
+              <div className="name">Activity / worker runs</div>
+              <div className="sub">guided interactions (awaiting_input) — requires workers + EVT</div>
+            </div>
+            <span className="badge">preview</span>
+          </li>
+        </ul>
       </div>
     </>
   );

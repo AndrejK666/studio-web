@@ -38,6 +38,14 @@ export const TENANT_TYPES = {
 export const PROJECT_RG_TYPE = "gts.cf.core.rg.type.v1~cf.studio.project.v1~";
 export const USER_MEMBER_HANDLE = "gts.cf.core.rg.type.v1~cf.core.am.user.v1~";
 
+// Workspace settings live as AM tenant metadata (schema seeded by the backend config).
+export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
+
+export interface WorkspaceSettings {
+  automation_level?: "manual" | "recommendations" | "autonomous";
+  approved_worker_categories?: string[];
+}
+
 export interface Group {
   id: string;
   type: string;
@@ -136,4 +144,25 @@ export const api = {
       token,
       { method: "POST" },
     ),
+
+  /* ── Workspace settings (AM tenant metadata) ── */
+
+  workspaceSettings: async (token: string, tenantId: string): Promise<WorkspaceSettings | null> => {
+    try {
+      const entry = await request<{ value: WorkspaceSettings }>(
+        `/account-management/v1/tenants/${tenantId}/metadata/${WS_SETTINGS_TYPE}`,
+        token,
+      );
+      return entry.value;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null; // not set yet
+      throw e;
+    }
+  },
+
+  putWorkspaceSettings: (token: string, tenantId: string, value: WorkspaceSettings) =>
+    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${WS_SETTINGS_TYPE}`, token, {
+      method: "PUT",
+      body: JSON.stringify(value), // transparent payload; GTS-validated server-side
+    }),
 };
