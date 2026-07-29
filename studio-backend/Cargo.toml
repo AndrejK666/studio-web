@@ -44,8 +44,11 @@ static_idp_plugin = { package = "cf-gears-static-idp-plugin", path = "../../gear
 
 # ── Feature gears: AI chat, per-user settings, file storage ──
 # mini-chat hard-depends on oagw (LLM egress); oagw depends on credstore.
+# NB: the static model-policy plugin lives INSIDE the mini-chat crate
+# (src/infra/plugins/static_model_policy); the standalone
+# gears/mini-chat/plugins/static-model-policy-plugin dir is a leftover
+# Cargo.toml with no sources (gears issue candidate #5).
 mini_chat = { package = "cf-gears-mini-chat", path = "../../gears-rust/gears/mini-chat/mini-chat" }
-static_model_policy_plugin = { package = "cf-gears-static-mini-chat-model-policy-plugin", path = "../../gears-rust/gears/mini-chat/plugins/static-model-policy-plugin" }
 api_egress = { package = "cf-gears-oagw", path = "../../gears-rust/gears/system/oagw/oagw" }
 credstore = { package = "cf-gears-credstore", path = "../../gears-rust/gears/credstore/credstore" }
 static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", path = "../../gears-rust/gears/credstore/plugins/static-credstore-plugin" }

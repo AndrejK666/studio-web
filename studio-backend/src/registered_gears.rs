@@ -29,10 +29,11 @@ use static_idp_plugin as _;
 
 // Feature gears: workspace AI chat (mini-chat + LLM egress chain), per-user
 // settings, file storage.
+// mini_chat also brings the static model-policy plugin (in-crate,
+// src/infra/plugins/static_model_policy — gear "static-mini-chat-model-policy-plugin").
 use api_egress as _;
 use credstore as _;
 use file_storage as _;
 use mini_chat as _;
 use simple_user_settings as _;
 use static_credstore_plugin as _;
-use static_model_policy_plugin as _;
