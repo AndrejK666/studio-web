@@ -88,3 +88,38 @@ as the PRD suggests returns 400 `invalid_argument`; with
 **Proposal:** fix PRD §5.6 (and the user_group schema description in
 `docs/schemas/user_group.v1.schema.json` if it repeats the bare id) to name the
 member-handle type explicitly. The code behaviour is correct and should not change.
+
+---
+
+## 4. GTS/AM: typed derived tenant-metadata schemas are impossible under OP#12
+
+**Title:** `tenant_metadata: OP#12 narrowing treats the base envelope as a closed empty object — derived schemas cannot declare payload properties`
+
+**Body:**
+
+AM's extensible tenant metadata (PRD §5.7) is designed around GTS-registered derived
+schemas ("branding, contacts" as examples). But registering a derived schema with any
+typed properties fails chain validation:
+
+```
+GTS validation error gts_id=gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~
+Schema '...workspace.settings.v1~' is not compatible with base
+'gts.cf.core.am.tenant_metadata.v1~': property 'automation_level': derived schema
+adds new property but base 'gts.cf.core.am.tenant_metadata.v1~' has additionalProperties: false
+```
+
+The base envelope (`docs/schemas/tenant_metadata.v1.schema.json`) declares no
+`properties` and no top-level `additionalProperties`; the OP#12 narrowing check
+treats it as a closed empty object, so **no** derived schema may add payload fields.
+Tried with both `$schema: draft-07` and `$schema: "gts://gts.cf.core.am.tenant_metadata.v1~"`
+(the convention referenced in `metadata_schema_registry.rs` comments) — same result.
+The only registrable derived schema is a free-form `type: object`, which defeats the
+"GTS-validated payload" promise of PRD §5.7 / FR `extensible tenant metadata`.
+
+**Proposal:** either relax the base envelope (`additionalProperties: true` at the
+payload level, keeping traits strict) or exempt `x-gts-abstract` envelope bases from
+property-narrowing in OP#12; and document the intended authoring pattern for typed
+metadata schemas with a working example.
+
+**Repro:** seed the schema above via `types-registry.config.entities` — `switch_to_ready`
+fails (`post-init failed for gear 'types-registry'`).

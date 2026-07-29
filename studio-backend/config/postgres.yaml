@@ -117,18 +117,14 @@ gears:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
-          "$schema": "http://json-schema.org/draft-07/schema#"
-          description: "Studio workspace settings"
+          # Free-form payload: the GTS OP#12 narrowing check treats the base
+          # tenant_metadata envelope as a CLOSED empty object, so a derived
+          # schema may not declare typed properties at all (gears issue #4).
+          # Shape {automation_level, approved_worker_categories} is enforced
+          # client-side until the base schema is relaxed upstream.
+          "$schema": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          description: "Studio workspace settings (free-form until gears issue #4)"
           type: "object"
-          additionalProperties: false
-          properties:
-            automation_level:
-              type: "string"
-              enum: ["manual", "recommendations", "autonomous"]
-            approved_worker_categories:
-              type: "array"
-              items:
-                type: "string"
           x-gts-traits:
             inheritance_policy: "override_only"
 
