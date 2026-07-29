@@ -1,0 +1,3437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studio Lifecycle Graph — Review Candidate</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050912;
+      --surface: #0a1120;
+      --surface-raised: #101a2c;
+      --surface-soft: #0d1626;
+      --line: #22324a;
+      --line-strong: #344866;
+      --text: #f2f6ff;
+      --muted: #94a3b8;
+      --faint: #627089;
+      --accent: #63a7ff;
+      --accent-soft: rgba(99, 167, 255, 0.12);
+      --cyan: #48d9cf;
+      --purple: #a685ff;
+      --green: #72d997;
+      --amber: #f4bb63;
+      --pink: #ef88ba;
+      --danger: #fb7185;
+      --shadow: 0 18px 55px rgba(0, 0, 0, 0.32);
+      --radius: 14px;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% -10%, rgba(77, 117, 255, 0.15), transparent 34rem),
+        radial-gradient(circle at 90% 0%, rgba(72, 217, 207, 0.09), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+    }
+
+    button, input { font: inherit; }
+
+    button { color: inherit; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 18px 24px;
+      border-bottom: 1px solid rgba(86, 109, 143, 0.28);
+      background: rgba(5, 9, 18, 0.88);
+      backdrop-filter: blur(18px);
+    }
+
+    .identity { min-width: 260px; }
+
+    .eyebrow {
+      margin-bottom: 5px;
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(19px, 2vw, 27px);
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .search-wrap {
+      position: relative;
+      width: min(300px, 28vw);
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      top: 50%;
+      left: 11px;
+      width: 15px;
+      transform: translateY(-50%);
+      color: var(--faint);
+      pointer-events: none;
+    }
+
+    .search {
+      width: 100%;
+      height: 36px;
+      padding: 0 12px 0 34px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      outline: none;
+      background: rgba(13, 22, 38, 0.84);
+      color: var(--text);
+      font-size: 12px;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    .control {
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(13, 22, 38, 0.84);
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      transition: 150ms ease;
+    }
+
+    .control:hover {
+      border-color: var(--line-strong);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+
+    .control.active {
+      border-color: rgba(99, 167, 255, 0.6);
+      background: var(--accent-soft);
+      color: #cfe4ff;
+    }
+
+    .contextbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 42px;
+      padding: 8px 24px;
+      border-bottom: 1px solid rgba(86, 109, 143, 0.2);
+      background: rgba(8, 14, 26, 0.72);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .stats, .legend {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .stat strong { color: var(--text); }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .line-swatch {
+      width: 22px;
+      height: 0;
+      border-top: 2px solid var(--accent);
+    }
+
+    .line-swatch.owns { border-color: var(--purple); }
+    .line-swatch.references { border-color: var(--amber); border-top-style: dashed; }
+    .line-swatch.member { border-color: var(--green); }
+    .line-swatch.derives { border-color: var(--cyan); border-top-style: dashed; }
+
+    .workspace {
+      position: relative;
+      min-height: 0;
+      overflow: auto;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+
+    .canvas {
+      position: relative;
+      width: max-content;
+      min-width: 100%;
+      min-height: 100%;
+      padding: 24px;
+    }
+
+    .relationships {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .relation-path {
+      fill: none;
+      stroke-width: 1.45;
+      opacity: 0.34;
+      transition: opacity 160ms ease, stroke-width 160ms ease;
+    }
+
+    .relation-path.references, .relation-path.derives { stroke-dasharray: 5 5; }
+    .relation-path.composes { stroke: var(--accent); }
+    .relation-path.owns { stroke: var(--purple); }
+    .relation-path.references { stroke: var(--amber); }
+    .relation-path.member { stroke: var(--green); }
+    .relation-path.derives { stroke: var(--cyan); }
+    .relation-path.connects { stroke: var(--pink); }
+    .relation-path.hidden { opacity: 0; }
+    .relation-path.related { opacity: 0.95; stroke-width: 2.4; }
+    .relation-path.unrelated { opacity: 0.055; }
+
+    .buckets {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: repeat(var(--bucket-count), 292px);
+      align-items: start;
+      gap: 18px;
+    }
+
+    .bucket-column {
+      display: grid;
+      align-content: start;
+      gap: 18px;
+    }
+
+    .buckets.stacked {
+      grid-template-columns: minmax(292px, calc(100vw - 48px));
+    }
+
+    .buckets.stacked .node-stack {
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+
+    .bucket {
+      position: relative;
+      min-height: 180px;
+      padding: 10px;
+      border: 1px solid rgba(77, 101, 136, 0.25);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(15, 25, 43, 0.72), rgba(7, 13, 24, 0.58));
+      box-shadow: inset 0 1px rgba(255,255,255,0.025);
+    }
+
+    .bucket[data-layer="extension"] {
+      border-color: color-mix(in srgb, var(--bucket-color) 48%, transparent);
+      background: linear-gradient(180deg, color-mix(in srgb, var(--bucket-color) 10%, rgba(15, 25, 43, 0.84)), rgba(10, 13, 26, 0.7));
+      box-shadow: inset 0 1px color-mix(in srgb, var(--bucket-color) 18%, transparent), 0 0 34px color-mix(in srgb, var(--bucket-color) 8%, transparent);
+    }
+
+    .bucket-header {
+      display: grid;
+      gap: 1px;
+      min-height: 54px;
+      margin-bottom: 8px;
+      padding: 4px;
+      border-bottom: 1px solid rgba(83, 108, 145, 0.2);
+    }
+
+    .bucket-heading {
+      position: relative;
+      min-width: 0;
+      outline: none;
+      cursor: help;
+    }
+
+    .bucket-heading:focus-visible {
+      border-radius: 8px;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--bucket-color) 55%, transparent);
+    }
+
+    .bucket-tooltip {
+      position: absolute;
+      z-index: 40;
+      top: calc(100% + 10px);
+      left: 0;
+      width: 270px;
+      padding: 11px 12px;
+      border: 1px solid color-mix(in srgb, var(--bucket-color) 42%, var(--line));
+      border-radius: 10px;
+      background: rgba(8, 14, 26, 0.98);
+      box-shadow: var(--shadow);
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 140ms ease, transform 140ms ease;
+      pointer-events: none;
+    }
+
+    .bucket-heading:hover .bucket-tooltip,
+    .bucket-heading:focus .bucket-tooltip {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .bucket-tooltip-title {
+      display: block;
+      font-size: 11px;
+      font-weight: 850;
+      line-height: 1.35;
+    }
+
+    .bucket-tooltip-description {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .bucket-title {
+      overflow: hidden;
+      margin: 0;
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: 0.055em;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .bucket-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 750;
+      letter-spacing: 0.07em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    .bucket-meta-divider { opacity: 0.55; }
+
+    .bucket[data-layer="extension"] .bucket-layer {
+      color: color-mix(in srgb, var(--bucket-color) 82%, white);
+    }
+
+    .node-stack { display: grid; gap: 9px; }
+
+    .node {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, rgba(17, 28, 48, 0.98), rgba(11, 19, 33, 0.98));
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      transition: border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease, transform 160ms ease;
+    }
+
+    .node:hover {
+      border-color: color-mix(in srgb, var(--node-color) 60%, var(--line));
+      transform: translateY(-1px);
+    }
+
+    .node.selected {
+      border-color: var(--node-color);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color) 16%, transparent), 0 12px 30px rgba(0,0,0,0.28);
+    }
+
+    .node.search-match {
+      border-color: var(--node-color);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color) 22%, transparent), 0 12px 30px rgba(0,0,0,0.28);
+    }
+
+    .node.search-connected {
+      border-color: color-mix(in srgb, var(--node-color) 52%, var(--line-strong));
+    }
+
+    .node.unrelated { opacity: 0.24; }
+    .node.filtered { display: none; }
+
+    .node-toggle {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      padding: 8px;
+      border: 0;
+      border-radius: inherit;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .node-glyph {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid color-mix(in srgb, var(--node-color) 40%, transparent);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--node-color) 9%, transparent);
+      color: var(--node-color);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .node-name {
+      display: block;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 12.5px;
+      font-weight: 800;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .node-kind {
+      display: block;
+      margin-top: 2px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .chevron {
+      width: 8px;
+      height: 8px;
+      margin-right: 3px;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: rotate(45deg) translateY(-2px);
+      transition: transform 160ms ease;
+    }
+
+    .node.open .chevron { transform: rotate(225deg) translate(-1px, -1px); }
+
+    .node-body {
+      display: none;
+      padding: 0 10px 10px;
+    }
+
+    .node.open .node-body { display: block; }
+
+    .description {
+      margin: 0 2px 9px;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.5;
+    }
+
+    .detail {
+      margin-top: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(77, 101, 136, 0.26);
+      border-radius: 8px;
+      background: rgba(5, 10, 19, 0.36);
+    }
+
+    .detail summary {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 8px;
+      list-style: none;
+      cursor: pointer;
+      color: #cbd5e1;
+      font-size: 10px;
+      font-weight: 750;
+      user-select: none;
+    }
+
+    .detail summary::-webkit-details-marker { display: none; }
+
+    .detail summary::before {
+      content: "+";
+      display: inline-grid;
+      place-items: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.055);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .detail[open] summary::before { content: "−"; }
+
+    .detail-count {
+      margin-left: auto;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(99, 167, 255, 0.09);
+      color: #9ec8ff;
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .detail-list {
+      display: grid;
+      gap: 0;
+      margin: 0;
+      padding: 0 8px 7px;
+      list-style: none;
+    }
+
+    .detail-list li {
+      padding: 5px 2px;
+      border-top: 1px solid rgba(77, 101, 136, 0.18);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .detail-list code { color: #d7e7ff; }
+    .type { color: var(--cyan); }
+    .required { color: var(--danger); }
+    .example-list li { font-family: var(--font); }
+
+    .empty-state {
+      display: none;
+      position: absolute;
+      z-index: 4;
+      top: 40%;
+      left: 50%;
+      width: 320px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface-raised);
+      box-shadow: var(--shadow);
+      color: var(--muted);
+      text-align: center;
+      transform: translate(-50%, -50%);
+    }
+
+    .empty-state.visible { display: block; }
+
+    @media (max-width: 900px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .toolbar { justify-content: flex-start; }
+      .search-wrap { width: min(100%, 300px); }
+      .contextbar { align-items: flex-start; flex-direction: column; }
+      .legend { display: none; }
+    }
+
+    @media print {
+      .topbar { position: static; }
+      .toolbar { display: none; }
+      .workspace { overflow: visible; }
+      .canvas { transform-origin: top left; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="identity">
+        <div class="eyebrow">Studio Lifecycle Graph · review candidate</div>
+        <h1 id="model-title"></h1>
+        <div class="subtitle" id="model-subtitle"></div>
+      </div>
+      <div class="toolbar" aria-label="Diagram controls">
+        <label class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+          <input id="search" class="search" type="search" placeholder="Find object, property, method…" aria-label="Find lifecycle object, property, or method" autocomplete="off">
+        </label>
+        <button class="control active" id="relations-toggle" type="button">Relationships</button>
+        <button class="control" id="layout-toggle" type="button" aria-pressed="false">Stack categories</button>
+        <button class="control" id="expand-all" type="button">Expand all</button>
+        <button class="control" id="collapse-all" type="button">Collapse all</button>
+        <button class="control" id="reset" type="button">Reset</button>
+      </div>
+    </header>
+    <section class="contextbar" aria-label="Model summary">
+      <div class="stats" id="stats"></div>
+      <div class="legend">
+        <span class="legend-item"><i class="line-swatch"></i>composes</span>
+        <span class="legend-item"><i class="line-swatch owns"></i>owns</span>
+        <span class="legend-item"><i class="line-swatch references"></i>references</span>
+        <span class="legend-item"><i class="line-swatch member"></i>assignment / membership</span>
+        <span class="legend-item"><i class="line-swatch derives"></i>derives</span>
+      </div>
+    </section>
+    <main class="workspace" id="workspace">
+      <div class="canvas" id="canvas">
+        <svg class="relationships" id="relationships" aria-hidden="true"></svg>
+        <div class="buckets" id="buckets"></div>
+        <div class="empty-state" id="empty-state">No domain objects match this search.</div>
+      </div>
+    </main>
+  </div>
+  <script id="domain-model" type="application/json">
+  {
+    "meta": {
+      "title": "Studio Shadow Graph",
+      "subtitle": "Core software-construction objects with explicitly isolated Plan, Build, Operate and App Security Kits",
+      "version": "1.2.3",
+      "status": "review candidate"
+    },
+    "buckets": [
+      { "id": "kit-management", "name": "Kits Management", "description": "Versioned Kit packages and their reusable role definitions across lifecycle scopes.", "color": "#b293ff", "layer": "core", "column": "integrations", "entity_order": ["kit", "kit-role"] },
+      { "id": "connectors", "name": "Integrations", "description": "Policy-controlled integrations that synchronize source control, documentation, planning, artifacts and tests.", "color": "#a685ff", "layer": "core", "column": "integrations", "entity_order": ["connector-type", "connector", "repository-manager", "docs-storage", "issue-tracker", "artifact-registry", "test-management"] },
+      { "id": "graph", "name": "Core Model & Provenance", "description": "Canonical object types, graph projections, mappings, identity resolution, change history and source provenance.", "color": "#ef88ba", "layer": "core", "entity_order": ["lifecycle-graph", "object-type", "lifecycle-phase", "object-mapping", "canonical-identity", "shadow-node", "link", "change-record", "provenance", "sync-snapshot"] },
+      { "id": "identity", "name": "Organization & Identity", "description": "Tenants, organizations, teams, people, roles, skills, assignments and explicit ownership boundaries.", "color": "#72d997", "layer": "core", "entity_order": ["tenant", "organization", "org-unit", "team", "role", "skill", "person", "person-profile", "role-assignment", "ownership"] },
+      { "id": "planning", "name": "Projects & Work", "description": "Provider-neutral workspaces, projects, objectives, milestones, risks and configurable work items.", "color": "#f4bb63", "layer": "core", "entity_order": ["workspace", "project", "objective", "milestone", "risk", "work-item-type", "work-item"] },
+      { "id": "content", "name": "Content: Code & Docs", "description": "Source-aware repositories, documents, Markdown structures, templates, checklists, comments and normalized text.", "color": "#48d9cf", "layer": "core", "column": "content", "entity_order": ["doc-space", "document", "repository", "branch", "repository-file", "template", "template-rule", "markdown-document", "checklist", "comment", "text-content", "markdown-section", "text-chunk"] },
+      { "id": "changes", "name": "Content: Change Tracking", "description": "Durable proposed and applied code changes with commits and human review records.", "color": "#4fb8d8", "layer": "core", "column": "content", "entity_order": ["pull-request", "commit", "code-review"] },
+      { "id": "automation", "name": "Automation & Controls", "description": "Governed workflows, actions, policies, validation, approvals, notifications, custom durable objects, retryable executions and evidence.", "color": "#fb7185", "layer": "core", "entity_order": ["policy", "workflow", "trigger", "action", "worker", "validator", "quality-gate", "event", "candidate-change", "custom-durable-object", "approval", "notification", "workflow-run", "action-run", "evidence"] },
+      { "id": "ai", "name": "AI & Collaboration", "description": "Models, tools, agents, prompts, conversations, context snapshots, messages and auditable tool calls.", "color": "#70c7ff", "layer": "core", "entity_order": ["model", "mcp-server", "tool", "prompt-template", "agent", "conversation", "context-snapshot", "message", "tool-call"] },
+      { "id": "kits", "name": "Kit: SDLC Plan", "description": "Opinionated product structures and durable lifecycle objects from intent through requirements and roadmap commitments.", "color": "#d995ff", "layer": "extension", "entity_order": ["portfolio", "product", "roadmap", "roadmap-items-group", "roadmap-item", "intent", "vision", "discovery", "strategy", "definition", "requirement"] },
+      { "id": "delivery", "name": "Kit: SDLC Build", "description": "Opinionated architecture, construction, validation, release and deployment objects for building software.", "color": "#d995ff", "layer": "extension", "entity_order": ["reference-architecture", "design-guideline", "design", "architecture-decision", "decomposition", "api-contract", "component", "test-case", "build", "ci-check", "build-artifact", "test-result", "release", "deployment"] },
+      { "id": "operations", "name": "Kit: SDLC Operate", "description": "Opinionated runtime, reliability, incident-response and learning objects for operating software.", "color": "#d995ff", "layer": "extension", "column": "operate", "entity_order": ["service", "environment", "slo", "error-budget", "runbook", "operational-signal", "alert", "incident", "postmortem"] },
+      { "id": "appsec", "name": "Kit: App Sec Scanner", "description": "Application-security assessment results, actionable findings and evidence-backed grading of vulnerability fixes.", "color": "#d995ff", "layer": "extension", "column": "operate", "entity_order": ["assessment-summary", "security-finding", "vulnerability-fix-grade"] }
+    ],
+    "entities": [
+      {
+        "id": "organization",
+        "bucket": "identity",
+        "name": "Organization",
+        "kind": "aggregate root",
+        "description": "A legal or operational boundary that owns people, teams, projects and source-system connections.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "slug", "type": "string", "required": true },
+          { "name": "domains", "type": "string[]" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_teams() -> Team[]", "list_people() -> Person[]", "list_projects() -> Project[]", "resolve_identity(external_id) -> Person?"],
+        "examples": ["Constructor", "Open-source foundation", "Customer tenant"]
+      },
+      {
+        "id": "team",
+        "bucket": "identity",
+        "name": "Team",
+        "kind": "entity",
+        "description": "A durable group of people with ownership and delivery responsibilities.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "slug", "type": "string" },
+          { "name": "purpose", "type": "string" },
+          { "name": "aliases", "type": "string[]" }
+        ],
+        "methods": ["list_members() -> Person[]", "list_owned_artifacts() -> Artifact[]", "list_projects() -> Project[]"],
+        "examples": ["Studio Core", "Developer Experience", "Platform Engineering"]
+      },
+      {
+        "id": "person",
+        "bucket": "identity",
+        "name": "Person",
+        "kind": "entity",
+        "description": "A normalized human identity reconciled across source systems.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "display_name", "type": "string", "required": true },
+          { "name": "emails", "type": "Email[]" },
+          { "name": "handles", "type": "ExternalIdentity[]" },
+          { "name": "status", "type": "active | inactive" },
+          { "name": "timezone", "type": "string" }
+        ],
+        "methods": ["list_teams() -> Team[]", "list_roles(scope?) -> Role[]", "list_projects() -> Project[]", "list_contributions(range) -> Contribution[]", "resolve_handle(source) -> string?"],
+        "examples": ["Git author", "Pull request reviewer", "Document editor", "Issue assignee"]
+      },
+      {
+        "id": "tenant",
+        "bucket": "identity",
+        "name": "Tenant",
+        "kind": "security boundary",
+        "description": "An isolated commercial, operational and security boundary containing organizations and their governed data.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "status", "type": "active | suspended | closed" },
+          { "name": "region", "type": "string?" },
+          { "name": "created_at", "type": "timestamp" }
+        ],
+        "methods": ["list_organizations() -> Organization[]", "get_policy() -> PolicySet", "get_usage() -> Usage"],
+        "examples": ["SaaS customer tenant", "Enterprise tenant", "Development tenant"]
+      },
+      {
+        "id": "role",
+        "bucket": "identity",
+        "name": "Role",
+        "kind": "governance definition",
+        "description": "A reusable responsibility and capability definition assignable globally or within a project.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "description", "type": "string" },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "assignable_scopes", "type": "ScopeType[]" },
+          { "name": "system", "type": "boolean" }
+        ],
+        "methods": ["list_capabilities() -> Capability[]", "list_assignments(scope?) -> RoleAssignment[]", "is_allowed(capability, context) -> boolean"],
+        "examples": ["Organization role", "Project-scoped role", "Automation role", "Custom tenant role"]
+      },
+      {
+        "id": "role-assignment",
+        "bucket": "identity",
+        "name": "Role Assignment",
+        "kind": "scoped association",
+        "description": "Assigns a role to a principal at a tenant, organization, team, workspace or project scope.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "principal_ref", "type": "EntityRef", "required": true },
+          { "name": "principal_kind", "type": "person | team | agent | service_account", "required": true },
+          { "name": "role_id", "type": "EntityId", "required": true },
+          { "name": "scope_type", "type": "tenant | organization | team | workspace | project", "required": true },
+          { "name": "scope_id", "type": "EntityId", "required": true },
+          { "name": "valid_from", "type": "timestamp" },
+          { "name": "valid_to", "type": "timestamp?" },
+          { "name": "assigned_by", "type": "EntityId?" }
+        ],
+        "methods": ["is_active(at?) -> boolean", "revoke(at?) -> void", "get_effective_capabilities() -> Capability[]", "get_principal() -> EntityRef"],
+        "examples": ["Person assigned to an organization role", "Team assigned to a project role", "Agent assigned to an automation role"]
+      },
+      {
+        "id": "org-unit",
+        "bucket": "identity",
+        "name": "Organizational Unit",
+        "kind": "organizational boundary",
+        "description": "A hierarchical business, functional or geographic unit within an organization, independent of delivery-team topology.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "unit_kind", "type": "division | department | business_unit | geography | cost_center" },
+          { "name": "parent_ref", "type": "EntityId?" },
+          { "name": "leader_ref", "type": "EntityId?" },
+          { "name": "status", "type": "active | inactive" }
+        ],
+        "methods": ["list_children() -> OrganizationalUnit[]", "list_people() -> Person[]", "list_teams() -> Team[]"],
+        "examples": ["Engineering", "Product Division", "EMEA", "Platform Department"]
+      },
+      {
+        "id": "person-profile",
+        "bucket": "identity",
+        "name": "Person Profile",
+        "kind": "professional profile",
+        "description": "A governed professional profile describing a person's experience, interests, availability and demonstrated skills.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "person_ref", "type": "EntityId", "required": true },
+          { "name": "headline", "type": "string?" },
+          { "name": "bio", "type": "TextContent?" },
+          { "name": "skill_refs", "type": "EntityId[]" },
+          { "name": "availability", "type": "Availability?" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_skills() -> Skill[]", "match(requirements) -> MatchScore", "get_contributions() -> Contribution[]"],
+        "examples": ["Professional profile", "Contributor profile", "Availability profile", "Capability profile"]
+      },
+      {
+        "id": "skill",
+        "bucket": "identity",
+        "name": "Skill",
+        "kind": "capability definition",
+        "description": "A reusable human or agent capability with proficiency, evidence and applicability to roles, work and actions.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "category", "type": "domain | technical | process | tool | leadership" },
+          { "name": "description", "type": "string?" },
+          { "name": "proficiency_scale", "type": "ProficiencyScale?" },
+          { "name": "status", "type": "active | retired" }
+        ],
+        "methods": ["list_principals(level?) -> EntityRef[]", "list_roles() -> Role[]", "verify(evidence) -> Verification"],
+        "examples": ["Software architecture", "TypeScript", "Incident command", "Code review"]
+      },
+      {
+        "id": "ownership",
+        "bucket": "identity",
+        "name": "Ownership",
+        "kind": "scoped accountability",
+        "description": "An explicit, time-bounded accountability assignment connecting a person, team or organizational unit to a governed object.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "owner_ref", "type": "EntityRef", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "ownership_kind", "type": "business | product | technical | operational | data" },
+          { "name": "valid_from", "type": "timestamp" },
+          { "name": "valid_to", "type": "timestamp?" }
+        ],
+        "methods": ["is_active(at?) -> boolean", "transfer(new_owner, at) -> Ownership", "get_escalation_path() -> EntityRef[]"],
+        "examples": ["Product owner", "Code owner", "Service owner", "Data owner"]
+      },
+      {
+        "id": "connector-type",
+        "bucket": "connectors",
+        "name": "Connector Type",
+        "kind": "type definition",
+        "description": "A registered, versioned definition of an integration category, its normalized capabilities, supported auth mechanisms and event schema, used to configure and validate Connector instances.",
+        "properties": [
+          { "name": "id", "type": "TypeId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "category", "type": "identity_directory | source_control | documentation | planning | ci_cd | registry | testing | observability | incident_management | support | cloud | developer_tool | ai_provider", "required": true },
+          { "name": "provider", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "supported_auth", "type": "AuthMechanism[]" },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "event_schema", "type": "JSONSchema?" },
+          { "name": "config_schema", "type": "JSONSchema", "required": true },
+          { "name": "status", "type": "draft | published | deprecated" }
+        ],
+        "methods": ["validate_config(config) -> ValidationResult", "list_connectors() -> Connector[]", "list_capabilities() -> Capability[]"],
+        "examples": ["GitHub source control type", "Jira planning type", "Datadog observability type", "Active Directory identity type", "JFrog registry type"]
+      },
+      {
+        "id": "connector",
+        "bucket": "connectors",
+        "name": "Connector",
+        "kind": "integration configuration",
+        "description": "A policy-controlled integration configuration that ingests external records, normalizes them into Studio objects and may write approved changes back.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "type_ref", "type": "TypeId", "required": true },
+          { "name": "kind", "type": "identity_directory | source_control | documentation | planning | ci_cd | registry | testing | observability | incident_management | support | cloud | developer_tool | ai_provider", "required": true },
+          { "name": "provider", "type": "string", "required": true },
+          { "name": "base_url", "type": "URL?" },
+          { "name": "auth_ref", "type": "SecretRef", "required": true },
+          { "name": "direction", "type": "read_only | ingest | write_back | bidirectional" },
+          { "name": "scopes", "type": "string[]" },
+          { "name": "status", "type": "active | degraded | disabled" },
+          { "name": "last_sync_at", "type": "timestamp?" }
+        ],
+        "methods": ["test_connection() -> Health", "ingest(cursor?) -> SyncSnapshot", "normalize(record) -> Object", "write_back(change, context) -> WriteBackResult", "list_sync_snapshots() -> SyncSnapshot[]"],
+        "examples": ["Active Directory / AD", "GitHub", "Jira", "CI/CD platform", "IDE plugin", "LLM provider", "Datadog", "PagerDuty"]
+      },
+      {
+        "id": "repository-manager",
+        "bucket": "connectors",
+        "name": "Source Control Connector",
+        "kind": "connector specialization",
+        "description": "A connector specialization for repositories, branches, commits, pull requests and repository-hosted collaboration objects.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "provider", "type": "github | gitlab | bitbucket", "required": true },
+          { "name": "base_url", "type": "URL", "required": true },
+          { "name": "auth_ref", "type": "SecretRef", "required": true },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "rate_limit", "type": "RateLimit" },
+          { "name": "sync_cursor", "type": "Cursor?" }
+        ],
+        "methods": ["list_organizations() -> Organization[]", "list_projects(org?) -> Project[]", "list_repositories(scope?) -> Repository[]", "get_repository(id) -> Repository", "sync(since?) -> SyncResult", "subscribe(events) -> Subscription"],
+        "examples": ["GitHub", "GitLab", "Bitbucket"]
+      },
+      {
+        "id": "docs-storage",
+        "bucket": "connectors",
+        "name": "Documentation Connector",
+        "kind": "connector specialization",
+        "description": "A connector specialization for documentation spaces, pages, hierarchy, revisions and knowledge-base content.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "provider", "type": "notion | confluence | wiki", "required": true },
+          { "name": "base_url", "type": "URL" },
+          { "name": "auth_ref", "type": "SecretRef", "required": true },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "sync_cursor", "type": "Cursor?" }
+        ],
+        "methods": ["list_spaces() -> DocSpace[]", "get_document(id) -> Document", "search(query) -> Document[]", "sync(since?) -> SyncResult", "subscribe(events) -> Subscription"],
+        "examples": ["Notion", "Confluence", "GitHub Wiki", "SharePoint"]
+      },
+      {
+        "id": "issue-tracker",
+        "bucket": "connectors",
+        "name": "Issue Tracker Connector",
+        "kind": "connector specialization",
+        "description": "A connector specialization for backlogs, requirements, work items, comments, state transitions and delivery planning.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "provider", "type": "jira | linear | github", "required": true },
+          { "name": "base_url", "type": "URL" },
+          { "name": "auth_ref", "type": "SecretRef", "required": true },
+          { "name": "field_mapping", "type": "FieldMap" }
+        ],
+        "methods": ["list_projects() -> Project[]", "list_work_items(filter?) -> WorkItem[]", "get_work_item(key) -> WorkItem", "sync(since?) -> SyncResult"],
+        "examples": ["Jira", "Linear", "GitHub Issues", "Azure Boards"]
+      },
+      {
+        "id": "artifact-registry",
+        "bucket": "connectors",
+        "name": "Artifact Registry Connector",
+        "kind": "connector specialization",
+        "description": "A connector specialization for packages, images, binaries, manifests and supply-chain provenance.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "provider", "type": "string", "required": true },
+          { "name": "base_url", "type": "URL", "required": true },
+          { "name": "auth_ref", "type": "SecretRef", "required": true },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "sync_cursor", "type": "Cursor?" }
+        ],
+        "methods": ["list_artifacts(filter?) -> BuildArtifact[]", "get_artifact(id) -> BuildArtifact", "get_manifest(id) -> JSON", "sync(since?) -> SyncResult"],
+        "examples": ["JFrog Artifactory", "Nexus", "Container registry", "Package repository", "Cloud artifact registry"]
+      },
+      {
+        "id": "test-management",
+        "bucket": "connectors",
+        "name": "Test Management Connector",
+        "kind": "connector specialization",
+        "description": "A connector specialization for test plans, cases, executions, reports and quality evidence.",
+        "properties": [
+          { "name": "id", "type": "SourceId", "required": true },
+          { "name": "provider", "type": "string", "required": true },
+          { "name": "base_url", "type": "URL" },
+          { "name": "auth_ref", "type": "SecretRef?" },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "sync_cursor", "type": "Cursor?" }
+        ],
+        "methods": ["list_results(filter?) -> TestResult[]", "get_result(id) -> TestResult", "publish_result(result) -> TestResult", "sync(since?) -> SyncResult"],
+        "examples": ["Test results portal", "Test management suite", "CI test reporter", "Quality dashboard"]
+      },
+      {
+        "id": "component",
+        "bucket": "delivery",
+        "name": "Component",
+        "kind": "software unit",
+        "description": "A deployable, reusable or independently owned software unit that can span one or more repositories.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "kind", "type": "ComponentKind", "required": true },
+          { "name": "version", "type": "string?" },
+          { "name": "lifecycle_state", "type": "string" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_repositories() -> Repository[]", "list_dependencies() -> Component[]", "list_builds() -> Build[]", "list_deployments() -> Deployment[]", "get_health() -> ComponentHealth"],
+        "examples": ["Service", "Web application", "Library", "CLI", "Infrastructure module", "Data pipeline"]
+      },
+      {
+        "id": "service",
+        "bucket": "operations",
+        "name": "Service",
+        "kind": "operational software unit",
+        "description": "A running software capability with ownership, dependencies, environments, telemetry, SLOs and support responsibilities.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "component_ref", "type": "EntityId", "required": true },
+          { "name": "owner_ref", "type": "EntityRef?" },
+          { "name": "criticality", "type": "low | medium | high | mission_critical" },
+          { "name": "status", "type": "active | degraded | maintenance | retired" }
+        ],
+        "methods": ["list_deployments() -> Deployment[]", "list_slos() -> ServiceLevelObjective[]", "get_telemetry(range) -> OperationalSignal[]", "list_incidents() -> Incident[]"],
+        "examples": ["Public API service", "Background worker service", "Data service", "Frontend service"]
+      },
+      {
+        "id": "ci-check",
+        "bucket": "delivery",
+        "name": "CI Check",
+        "kind": "continuous-integration control",
+        "description": "A normalized CI/CD status check for a source revision or pull request, including policy impact and supporting evidence.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "status", "type": "queued | running | passed | failed | skipped | cancelled" },
+          { "name": "required", "type": "boolean" },
+          { "name": "completed_at", "type": "timestamp?" }
+        ],
+        "methods": ["get_logs() -> TextContent?", "to_evidence() -> Evidence", "is_blocking() -> boolean", "retry() -> CICheck"],
+        "examples": ["Compile check", "Unit-test check", "Security scan", "License check", "Required PR status"]
+      },
+      {
+        "id": "build",
+        "bucket": "delivery",
+        "name": "Build",
+        "kind": "execution record",
+        "description": "An immutable record of transforming a source revision into verified build artifacts.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "number", "type": "string?" },
+          { "name": "source_revision", "type": "RevisionRef", "required": true },
+          { "name": "status", "type": "queued | running | passed | failed | cancelled" },
+          { "name": "started_at", "type": "timestamp" },
+          { "name": "completed_at", "type": "timestamp?" },
+          { "name": "url", "type": "URL?" }
+        ],
+        "methods": ["get_details() -> JSON", "list_artifacts() -> BuildArtifact[]", "list_test_results() -> TestResult[]", "get_logs() -> TextContent", "cancel() -> void", "retry() -> Build"],
+        "examples": ["CI pipeline build", "Local reproducible build", "Container build", "Documentation build"]
+      },
+      {
+        "id": "build-artifact",
+        "bucket": "delivery",
+        "name": "Build Artifact",
+        "kind": "immutable artifact",
+        "description": "A content-addressed output produced by a build and stored in an artifact registry or package repository.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "uri", "type": "URI", "required": true },
+          { "name": "media_type", "type": "MIME" },
+          { "name": "size", "type": "bytes" },
+          { "name": "digest", "type": "Digest", "required": true },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "provenance_ref", "type": "ProvenanceId?" }
+        ],
+        "methods": ["download() -> bytes", "verify_digest() -> Verification", "get_manifest() -> JSON", "get_provenance() -> Provenance"],
+        "examples": ["Container image", "Package", "Binary asset", "SBOM", "Site bundle", "Model artifact"]
+      },
+      {
+        "id": "test-result",
+        "bucket": "delivery",
+        "name": "Test Result",
+        "kind": "validation evidence",
+        "description": "Immutable evidence from a test execution retaining case, build, environment, timing and external source identity.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "test_case_ref", "type": "EntityId?" },
+          { "name": "build_ref", "type": "EntityId?" },
+          { "name": "environment_ref", "type": "EntityId?" },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "test_kind", "type": "string" },
+          { "name": "status", "type": "passed | failed | skipped | error" },
+          { "name": "duration_ms", "type": "integer?" },
+          { "name": "details", "type": "JSON" },
+          { "name": "url", "type": "URL?" },
+          { "name": "executed_at", "type": "timestamp" }
+        ],
+        "methods": ["get_details() -> JSON", "get_logs() -> TextContent?", "list_attachments() -> Artifact[]", "is_successful() -> boolean"],
+        "examples": ["Unit test result", "Integration suite result", "Security scan", "Performance test", "Manual QA execution"]
+      },
+      {
+        "id": "release",
+        "bucket": "delivery",
+        "name": "Release",
+        "kind": "promotion candidate",
+        "description": "A named, versioned set of build artifacts approved or proposed for promotion across environments.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "status", "type": "candidate | approved | released | withdrawn" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "released_at", "type": "timestamp?" }
+        ],
+        "methods": ["list_artifacts() -> BuildArtifact[]", "list_approvals() -> Approval[]", "promote(environment) -> Deployment", "withdraw(reason) -> void"],
+        "examples": ["Release candidate", "Product release", "Hotfix release", "Internal preview"]
+      },
+      {
+        "id": "environment",
+        "bucket": "operations",
+        "name": "Environment",
+        "kind": "runtime target",
+        "description": "A governed logical target where components and releases run, independent of infrastructure provider.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "kind", "type": "string" },
+          { "name": "region", "type": "string?" },
+          { "name": "criticality", "type": "string?" },
+          { "name": "status", "type": "active | frozen | retired" }
+        ],
+        "methods": ["list_deployments() -> Deployment[]", "get_health() -> EnvironmentHealth", "get_policy() -> PolicySet"],
+        "examples": ["Development", "Test", "Staging", "Production", "Ephemeral preview"]
+      },
+      {
+        "id": "deployment",
+        "bucket": "delivery",
+        "name": "Deployment",
+        "kind": "operation record",
+        "description": "A governed attempt to place a release or artifact into an environment, with outcome and rollback lineage.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "release_ref", "type": "EntityId", "required": true },
+          { "name": "environment_ref", "type": "EntityId", "required": true },
+          { "name": "status", "type": "pending | running | succeeded | failed | rolled_back" },
+          { "name": "strategy", "type": "string?" },
+          { "name": "version", "type": "string?" },
+          { "name": "url", "type": "URL?" },
+          { "name": "started_at", "type": "timestamp" },
+          { "name": "completed_at", "type": "timestamp?" },
+          { "name": "initiator_ref", "type": "EntityId?" }
+        ],
+        "methods": ["get_details() -> JSON", "get_status() -> DeploymentStatus", "get_logs() -> TextContent", "rollback() -> Deployment", "promote() -> Deployment"],
+        "examples": ["Canary rollout", "Blue-green deployment", "Package publication", "Desktop release", "Infrastructure apply"]
+      },
+      {
+        "id": "workspace",
+        "bucket": "planning",
+        "name": "Workspace",
+        "kind": "collaboration boundary",
+        "description": "A collaborative environment grouping related products, programs or initiatives and their projects.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "description", "type": "string" },
+          { "name": "status", "type": "active | archived" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_projects() -> Project[]", "list_members() -> Person[]", "list_workflows() -> Workflow[]"],
+        "examples": ["Product workspace", "Customer program", "Research initiative"]
+      },
+      {
+        "id": "project",
+        "bucket": "planning",
+        "name": "Project",
+        "kind": "aggregate root",
+        "description": "A scoped delivery context linking product intent, engineering work, source artifacts, validation, releases and operational feedback without replacing external systems of record.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "workspace_ref", "type": "EntityId", "required": true },
+          { "name": "key", "type": "string", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "description", "type": "string" },
+          { "name": "status", "type": "planned | active | paused | archived" },
+          { "name": "started_at", "type": "timestamp?" },
+          { "name": "target_at", "type": "timestamp?" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_people() -> Person[]", "list_teams() -> Team[]", "list_role_assignments() -> RoleAssignment[]", "list_components() -> Component[]", "list_repositories() -> Repository[]", "list_builds() -> Build[]", "list_test_results() -> TestResult[]", "list_deployments() -> Deployment[]", "list_work_items() -> WorkItem[]", "get_activity(range) -> Activity[]"],
+        "examples": ["Studio MVP", "API migration", "Quality initiative"]
+      },
+      {
+        "id": "portfolio",
+        "bucket": "kits",
+        "name": "Portfolio",
+        "kind": "investment aggregate",
+        "description": "A governed collection of products, programs and initiatives managed against strategy, investment and outcome objectives.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "strategy_ref", "type": "EntityId?" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "status", "type": "planned | active | paused | archived" },
+          { "name": "planning_horizon", "type": "DateRange?" }
+        ],
+        "methods": ["list_products() -> Product[]", "list_objectives() -> Objective[]", "prioritize() -> PortfolioPlan"],
+        "examples": ["Product portfolio", "Platform portfolio", "Transformation portfolio"]
+      },
+      {
+        "id": "product",
+        "bucket": "kits",
+        "name": "Product",
+        "kind": "value-delivery aggregate",
+        "description": "A long-lived value proposition with users, outcomes, ownership, roadmap and one or more delivery projects or services.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "vision_ref", "type": "EntityId?" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "lifecycle_state", "type": "explore | invest | grow | sustain | retire" },
+          { "name": "status", "type": "active | paused | retired" }
+        ],
+        "methods": ["get_roadmap() -> Roadmap", "list_projects() -> Project[]", "list_services() -> Service[]", "measure_outcomes() -> ObjectiveStatus[]"],
+        "examples": ["Studio", "Developer platform", "Customer-facing SaaS product"]
+      },
+      {
+        "id": "roadmap",
+        "bucket": "kits",
+        "name": "Roadmap",
+        "kind": "planning artifact",
+        "description": "A time-oriented view of intended outcomes, milestones and major investments for a product or portfolio.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "scope_ref", "type": "EntityRef", "required": true },
+          { "name": "horizon", "type": "DateRange", "required": true },
+          { "name": "status", "type": "draft | approved | superseded" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_groups() -> RoadmapItemsGroup[]", "list_objectives() -> Objective[]", "list_milestones() -> Milestone[]", "replan(changes) -> Roadmap"],
+        "examples": ["Product roadmap", "Platform roadmap", "Quarterly delivery roadmap"]
+      },
+      {
+        "id": "roadmap-items-group",
+        "bucket": "kits",
+        "name": "Roadmap Items Group",
+        "kind": "roadmap grouping",
+        "description": "An ordered group within a roadmap that organizes roadmap items by product, theme, outcome, team, value stream or another Kit-defined planning dimension.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "roadmap_ref", "type": "ArtifactId", "required": true },
+          { "name": "group_ref", "type": "EntityId?" },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "dimension", "type": "product | theme | outcome | team | value_stream | custom" },
+          { "name": "owner_ref", "type": "ActorRef?" },
+          { "name": "ordinal", "type": "integer", "required": true },
+          { "name": "status", "type": "active | archived" }
+        ],
+        "methods": ["list_items() -> RoadmapItem[]", "list_sub_groups() -> RoadmapItemsGroup[]", "reorder(ordinal) -> void", "archive() -> void"],
+        "examples": ["Platform", "Customer Experience", "Security", "Now", "Next", "Later", "Q1 2026"]
+      },
+      {
+        "id": "roadmap-item",
+        "bucket": "kits",
+        "name": "Roadmap Item",
+        "kind": "roadmap entry",
+        "description": "A dated or ordered roadmap entry mapped to exactly one Roadmap Items Group and optionally linked to a canonical objective, milestone, project or work item.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "group_ref", "type": "EntityId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "item_kind", "type": "outcome | initiative | capability | milestone | commitment | custom" },
+          { "name": "linked_object_ref", "type": "EntityRef?" },
+          { "name": "start_at", "type": "timestamp?" },
+          { "name": "target_at", "type": "timestamp?" },
+          { "name": "ordinal", "type": "integer" },
+          { "name": "status", "type": "proposed | planned | in_progress | delivered | cancelled" }
+        ],
+        "methods": ["map_to(group) -> void", "link_object(object) -> void", "move(target_at) -> void", "complete(evidence?) -> void"],
+        "examples": ["Launch public beta", "Reduce build time", "Complete SSO migration", "Improve deployment safety"]
+      },
+      {
+        "id": "objective",
+        "bucket": "planning",
+        "name": "Objective",
+        "kind": "measurable outcome",
+        "description": "A measurable business, product, engineering or operational outcome used to align strategy and delivery.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "statement", "type": "string", "required": true },
+          { "name": "metric", "type": "MetricDefinition?" },
+          { "name": "target", "type": "JSON?" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "status", "type": "planned | on_track | at_risk | achieved | cancelled" }
+        ],
+        "methods": ["measure(at?) -> ObjectiveStatus", "list_contributors() -> Object[]", "list_evidence() -> Evidence[]"],
+        "examples": ["Improve activation", "Reduce lead time", "Meet availability target", "Reduce support volume"]
+      },
+      {
+        "id": "milestone",
+        "bucket": "planning",
+        "name": "Milestone",
+        "kind": "delivery checkpoint",
+        "description": "A significant dated outcome or decision point on a roadmap, product or project.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "target_at", "type": "timestamp", "required": true },
+          { "name": "status", "type": "planned | at_risk | achieved | missed | cancelled" },
+          { "name": "completion_criteria", "type": "Criterion[]" },
+          { "name": "owner_ref", "type": "EntityId?" }
+        ],
+        "methods": ["evaluate() -> MilestoneStatus", "list_dependencies() -> Object[]", "mark_achieved(evidence) -> void"],
+        "examples": ["MVP ready", "Public beta", "Migration complete", "General availability"]
+      },
+      {
+        "id": "risk",
+        "bucket": "planning",
+        "name": "Risk",
+        "kind": "governance record",
+        "description": "A scoped uncertainty that may affect delivery or outcomes, tracked with probability, impact, ownership, mitigation and evidence.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "scope_ref", "type": "EntityRef", "required": true },
+          { "name": "category", "type": "schedule | cost | technical | security | compliance | operational" },
+          { "name": "probability", "type": "0..1" },
+          { "name": "impact", "type": "low | medium | high | critical" },
+          { "name": "score", "type": "decimal?" },
+          { "name": "owner_ref", "type": "ActorRef?" },
+          { "name": "mitigation_ref", "type": "EntityRef?" },
+          { "name": "status", "type": "identified | analyzing | mitigating | accepted | closed" }
+        ],
+        "methods": ["assess() -> RiskScore", "mitigate(work) -> void", "accept(actor, reason) -> Approval", "to_evidence() -> Evidence"],
+        "examples": ["Release schedule risk", "Security exposure", "Dependency risk", "Operational capacity risk"]
+      },
+      {
+        "id": "kit",
+        "bucket": "kit-management",
+        "name": "Kit",
+        "kind": "domain extension package",
+        "description": "A versioned Plan, Build or Operate package that introduces opinionated durable object types, roles, templates, controls, workflows and guidance without changing the core domain model.",
+        "properties": [
+          { "name": "id", "type": "KitId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "lifecycle_scope", "type": "plan | build | operate", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "artifact_type_refs", "type": "TypeId[]" },
+          { "name": "durable_object_type_refs", "type": "TypeId[]" },
+          { "name": "role_refs", "type": "EntityId[]" },
+          { "name": "template_refs", "type": "EntityId[]" },
+          { "name": "compatibility", "type": "VersionRange" },
+          { "name": "status", "type": "draft | published | deprecated" }
+        ],
+        "methods": ["validate() -> ValidationResult", "install(scope) -> KitInstallation", "upgrade(version) -> MigrationPlan", "list_extensions() -> ObjectType[]", "create_durable_object(type, data) -> CustomDurableObject"],
+        "examples": ["SDLC Plan Kit", "SDLC Build Kit", "SDLC Operate Kit", "Security extension Kit"]
+      },
+      {
+        "id": "kit-role",
+        "bucket": "kit-management",
+        "name": "Kit Role Definition",
+        "kind": "role specialization",
+        "description": "An opinionated responsibility profile supplied by a Kit and implemented through the generic core Role and Role Assignment objects.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "kit_ref", "type": "KitId", "required": true },
+          { "name": "base_role_ref", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "responsibilities", "type": "Responsibility[]" },
+          { "name": "required_skill_refs", "type": "EntityId[]" },
+          { "name": "default_capabilities", "type": "Capability[]" }
+        ],
+        "methods": ["instantiate(scope) -> Role", "list_responsibilities() -> Responsibility[]", "validate_assignment(principal) -> ValidationResult"],
+        "examples": ["Product Manager", "Architect", "Security Expert", "Discovery Lead", "Release Manager"]
+      },
+      {
+        "id": "custom-durable-object",
+        "bucket": "automation",
+        "name": "Custom Durable Object",
+        "kind": "Kit-defined durable entity",
+        "description": "A versioned, stateful lifecycle object introduced by a Kit from an extensible Object Type, persisted with stable identity, ownership, links and complete change history.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "kit_ref", "type": "KitId", "required": true },
+          { "name": "object_type_ref", "type": "TypeId", "required": true },
+          { "name": "lifecycle_phase_ref", "type": "PhaseId?" },
+          { "name": "key", "type": "string", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "state", "type": "string", "required": true },
+          { "name": "data", "type": "JSON", "required": true },
+          { "name": "owner_ref", "type": "ActorRef?" },
+          { "name": "version", "type": "integer", "required": true },
+          { "name": "created_at", "type": "timestamp", "required": true },
+          { "name": "updated_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["validate() -> ValidationResult", "transition(state, actor) -> ChangeRecord", "link(target, type) -> Link", "get_history() -> ChangeRecord[]"],
+        "examples": ["Research claim", "Product hypothesis", "Security exception", "Customer signal", "Custom approval record"]
+      },
+      {
+        "id": "intent",
+        "bucket": "kits",
+        "name": "Intent",
+        "kind": "lifecycle object",
+        "description": "A customer, market, business or operational need that provides the starting context for software construction.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "statement", "type": "TextContent", "required": true },
+          { "name": "origin", "type": "customer | market | business | operational | regulatory" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "status", "type": "captured | validated | superseded | archived" },
+          { "name": "created_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["formulate_vision(context) -> Vision", "list_sources() -> Object[]", "get_history() -> ChangeRecord[]"],
+        "examples": ["Customer problem", "Market signal", "Investment thesis", "Operational pain"]
+      },
+      {
+        "id": "vision",
+        "bucket": "kits",
+        "name": "Vision",
+        "kind": "lifecycle object",
+        "description": "An approved statement of desired outcome, target users and value that guides discovery and definition.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "outcome", "type": "TextContent", "required": true },
+          { "name": "target_users", "type": "string[]" },
+          { "name": "success_measures", "type": "MetricDefinition[]" },
+          { "name": "status", "type": "candidate | approved | superseded | archived" },
+          { "name": "version", "type": "string", "required": true }
+        ],
+        "methods": ["run_discovery(context) -> Discovery", "validate() -> ValidationResult", "list_intents() -> Intent[]"],
+        "examples": ["Product vision", "Platform vision", "Modernization outcome"]
+      },
+      {
+        "id": "discovery",
+        "bucket": "kits",
+        "name": "Discovery",
+        "kind": "evidence-backed analysis",
+        "description": "A structured body of research findings, assumptions, constraints and contradictions used to reduce uncertainty.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "question", "type": "TextContent", "required": true },
+          { "name": "findings", "type": "Finding[]" },
+          { "name": "assumptions", "type": "Assumption[]" },
+          { "name": "contradictions", "type": "Contradiction[]" },
+          { "name": "evidence_refs", "type": "EvidenceId[]" },
+          { "name": "status", "type": "draft | reviewed | accepted | archived" }
+        ],
+        "methods": ["define_strategy() -> Strategy", "score_source_quality() -> Evidence[]", "identify_gaps() -> Finding[]"],
+        "examples": ["Customer research", "Competitive analysis", "Legacy-system discovery"]
+      },
+      {
+        "id": "strategy",
+        "bucket": "kits",
+        "name": "Strategy",
+        "kind": "lifecycle object",
+        "description": "A set of explicit choices, constraints and success measures connecting discovery to product and engineering definition.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "choices", "type": "Decision[]" },
+          { "name": "constraints", "type": "Constraint[]" },
+          { "name": "success_measures", "type": "MetricDefinition[]" },
+          { "name": "status", "type": "draft | approved | superseded | archived" },
+          { "name": "owner_ref", "type": "EntityId?" }
+        ],
+        "methods": ["define_product() -> Definition", "validate_alignment() -> ValidationResult", "list_dependencies() -> Object[]"],
+        "examples": ["Product strategy", "Platform strategy", "Migration strategy"]
+      },
+      {
+        "id": "definition",
+        "bucket": "kits",
+        "name": "Definition",
+        "kind": "lifecycle artifact",
+        "description": "An approved product and engineering definition, such as a PRD or BRD, that establishes scope and acceptance intent.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "document_kind", "type": "PRD | BRD | feature_definition | specification" },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "scope", "type": "TextContent", "required": true },
+          { "name": "status", "type": "draft | in_review | approved | superseded" },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" }
+        ],
+        "methods": ["create_design(context) -> Design", "list_requirements() -> Requirement[]", "request_approval() -> Approval"],
+        "examples": ["PRD", "BRD", "Feature specification", "API specification"]
+      },
+      {
+        "id": "requirement",
+        "bucket": "kits",
+        "name": "Requirement",
+        "kind": "traceable lifecycle object",
+        "description": "A uniquely identified, testable need or constraint traceable through design, implementation, validation and operation.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "key", "type": "string", "required": true },
+          { "name": "statement", "type": "TextContent", "required": true },
+          { "name": "requirement_kind", "type": "functional | non_functional | regulatory | operational" },
+          { "name": "priority", "type": "Priority" },
+          { "name": "acceptance_criteria", "type": "AcceptanceCriterion[]" },
+          { "name": "status", "type": "proposed | approved | implemented | verified | retired" },
+          { "name": "source_ref", "type": "EntityRef?" }
+        ],
+        "methods": ["create_design(context) -> Design", "list_implementations() -> Object[]", "list_validation_evidence() -> Evidence[]", "find_gaps() -> Gap[]"],
+        "examples": ["Functional requirement", "SLO requirement", "Security requirement", "Compliance control"]
+      },
+      {
+        "id": "design",
+        "bucket": "delivery",
+        "name": "Design",
+        "kind": "lifecycle artifact",
+        "description": "A technical design describing architecture, interfaces, data, security, operations and trade-offs for an approved definition.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "content_ref", "type": "ArtifactRef", "required": true },
+          { "name": "status", "type": "draft | in_review | approved | superseded" },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "reviewed_at", "type": "timestamp?" }
+        ],
+        "methods": ["decompose_work(context) -> WorkItem[]", "list_decisions() -> ArchitectureDecision[]", "validate_coverage() -> Evidence[]"],
+        "examples": ["System design", "API design", "Threat model", "Deployment topology"]
+      },
+      {
+        "id": "architecture-decision",
+        "bucket": "delivery",
+        "name": "Architecture Decision",
+        "kind": "decision record",
+        "description": "A durable decision record capturing context, considered options, rationale and consequences.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "key", "type": "string", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "context", "type": "TextContent", "required": true },
+          { "name": "decision", "type": "TextContent", "required": true },
+          { "name": "status", "type": "proposed | accepted | rejected | superseded" },
+          { "name": "decided_by", "type": "EntityId?" },
+          { "name": "decided_at", "type": "timestamp?" }
+        ],
+        "methods": ["accept(actor) -> void", "supersede(replacement) -> void", "list_impacts() -> Object[]"],
+        "examples": ["ADR", "Security decision", "Technology selection"]
+      },
+      {
+        "id": "decomposition",
+        "bucket": "delivery",
+        "name": "Decomposition",
+        "kind": "planning artifact",
+        "description": "A traceable breakdown of an approved definition or design into components, capabilities, work items and validation scope.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "source_ref", "type": "EntityRef", "required": true },
+          { "name": "items", "type": "DecompositionItem[]", "required": true },
+          { "name": "strategy", "type": "capability | component | feature | work_breakdown" },
+          { "name": "status", "type": "draft | reviewed | approved" },
+          { "name": "version", "type": "string", "required": true }
+        ],
+        "methods": ["materialize_work() -> WorkItem[]", "list_components() -> Component[]", "validate_coverage() -> Evidence[]"],
+        "examples": ["Capability decomposition", "Component breakdown", "Feature-to-task decomposition"]
+      },
+      {
+        "id": "work-item-type",
+        "bucket": "planning",
+        "name": "Work Item Type",
+        "kind": "type definition",
+        "description": "A configurable schema and lifecycle definition for a class of work, without imposing one delivery methodology.",
+        "properties": [
+          { "name": "id", "type": "TypeId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "schema", "type": "JSONSchema", "required": true },
+          { "name": "states", "type": "StateDefinition[]" },
+          { "name": "transitions", "type": "TransitionDefinition[]" },
+          { "name": "icon", "type": "string?" },
+          { "name": "active", "type": "boolean" }
+        ],
+        "methods": ["validate(details) -> ValidationResult", "list_states() -> StateDefinition[]", "can_transition(from, to) -> boolean", "create(details) -> WorkItem"],
+        "examples": ["Epic", "Feature", "Development Task", "QA Task", "Bug", "Incident", "Research Item"]
+      },
+      {
+        "id": "work-item",
+        "bucket": "planning",
+        "name": "Work Item",
+        "kind": "typed lifecycle object",
+        "description": "A provider-neutral instance of a configurable Work Item Type, retaining source identity and lifecycle history.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "type_id", "type": "TypeId", "required": true },
+          { "name": "external_id", "type": "string?" },
+          { "name": "url", "type": "URL?" },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "details", "type": "JSON", "required": true },
+          { "name": "state", "type": "string", "required": true },
+          { "name": "priority", "type": "Priority?" },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "created_at", "type": "timestamp", "required": true },
+          { "name": "updated_at", "type": "timestamp", "required": true },
+          { "name": "closed_at", "type": "timestamp?" }
+        ],
+        "methods": ["get_details() -> JSON", "update_details(patch) -> WorkItem", "close(resolution?) -> void", "assign(person) -> void", "transition(state) -> void", "list_links() -> Link[]", "get_history() -> ChangeRecord[]"],
+        "examples": ["Jira DEV-123", "Linear ENG-42", "GitHub issue #91", "Service incident INC-7"]
+      },
+      {
+        "id": "code-review",
+        "bucket": "changes",
+        "name": "Review",
+        "kind": "review record",
+        "description": "A review decision and discussion for a proposed repository change, including required reviewers and findings.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "pull_request_ref", "type": "EntityId", "required": true },
+          { "name": "reviewer_ref", "type": "EntityId", "required": true },
+          { "name": "decision", "type": "pending | approved | changes_requested | dismissed" },
+          { "name": "body", "type": "TextContent?" },
+          { "name": "submitted_at", "type": "timestamp?" }
+        ],
+        "methods": ["approve(actor) -> void", "request_changes(actor, findings) -> void", "dismiss(actor) -> void"],
+        "examples": ["GitHub review", "GitLab approval", "Required reviewer decision"]
+      },
+      {
+        "id": "pull-request",
+        "bucket": "changes",
+        "name": "Pull Request",
+        "kind": "entity",
+        "description": "A proposed repository change with review, discussion and merge state.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "repository_ref", "type": "EntityId", "required": true },
+          { "name": "author_ref", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "number", "type": "integer", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "state", "type": "open | merged | closed" },
+          { "name": "source_branch", "type": "BranchRef" },
+          { "name": "target_branch", "type": "BranchRef" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "merged_at", "type": "timestamp?" }
+        ],
+        "methods": ["list_commits() -> Commit[]", "list_changed_files() -> FileChange[]", "list_reviews() -> CodeReview[]", "list_comments() -> Comment[]", "add_comment(author, body) -> Comment", "to_text() -> TextContent"],
+        "examples": ["GitHub pull request", "GitLab merge request", "Bitbucket pull request"]
+      },
+      {
+        "id": "comment",
+        "bucket": "content",
+        "name": "Comment",
+        "kind": "threaded collaboration record",
+        "description": "A source-aware comment attached to a pull request or document, with authorship, threading, resolution and edit history.",
+        "properties": [
+          { "name": "id", "type": "CommentId", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "subject_kind", "type": "pull_request | document", "required": true },
+          { "name": "author_ref", "type": "ActorRef", "required": true },
+          { "name": "body", "type": "TextContent", "required": true },
+          { "name": "parent_ref", "type": "CommentId?" },
+          { "name": "thread_ref", "type": "CommentId?" },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "status", "type": "active | resolved | deleted" },
+          { "name": "created_at", "type": "timestamp", "required": true },
+          { "name": "updated_at", "type": "timestamp?" }
+        ],
+        "methods": ["reply(author, body) -> Comment", "edit(body) -> Comment", "resolve(actor) -> void", "delete(actor) -> void", "list_replies() -> Comment[]"],
+        "examples": ["GitHub pull-request comment", "GitHub review thread", "Confluence page comment", "Confluence inline comment"]
+      },
+      {
+        "id": "test-case",
+        "bucket": "delivery",
+        "name": "Test Case",
+        "kind": "validation definition",
+        "description": "A repeatable validation definition with preconditions, steps, expected results and coverage links.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "key", "type": "string", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "kind", "type": "unit | integration | contract | end_to_end | performance | security | manual" },
+          { "name": "steps", "type": "TestStep[]" },
+          { "name": "expected_result", "type": "TextContent", "required": true },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["execute(context) -> TestResult", "validate() -> ValidationResult", "list_coverage() -> Requirement[]"],
+        "examples": ["API contract test", "Regression case", "Security control test", "Acceptance test"]
+      },
+      {
+        "id": "repository",
+        "bucket": "content",
+        "name": "Repository",
+        "kind": "aggregate root",
+        "description": "A versioned source tree and collaboration boundary normalized from a source-control connector.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "url", "type": "URL", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "full_name", "type": "string" },
+          { "name": "private", "type": "boolean", "required": true },
+          { "name": "default_branch", "type": "string" },
+          { "name": "language", "type": "string?" },
+          { "name": "archived", "type": "boolean" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["checkout(ref?) -> Workspace", "list_branches() -> Branch[]", "list_commits(ref?) -> Commit[]", "list_issues(filter?) -> WorkItem[]", "list_pull_requests(filter?) -> PullRequest[]", "list_files(ref?, path?) -> RepositoryFile[]", "get_file(path, ref?) -> RepositoryFile", "list_repositories() -> Repository[]"],
+        "examples": ["Git repository", "Monorepo", "Documentation repository"]
+      },
+      {
+        "id": "branch",
+        "bucket": "content",
+        "name": "Branch",
+        "kind": "value entity",
+        "description": "A named movable reference to a commit in a repository.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "repository_ref", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "head_sha", "type": "SHA", "required": true },
+          { "name": "protected", "type": "boolean" },
+          { "name": "default", "type": "boolean" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["get_head() -> Commit", "list_commits(limit?) -> Commit[]", "compare(base) -> Diff"],
+        "examples": ["main", "release/2.x", "feature/shadow-graph"]
+      },
+      {
+        "id": "commit",
+        "bucket": "changes",
+        "name": "Commit",
+        "kind": "immutable entity",
+        "description": "An immutable repository snapshot with authorship and parent lineage.",
+        "properties": [
+          { "name": "sha", "type": "SHA", "required": true },
+          { "name": "repository_ref", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "message", "type": "string", "required": true },
+          { "name": "author", "type": "IdentityRef" },
+          { "name": "committer", "type": "IdentityRef" },
+          { "name": "parent_shas", "type": "SHA[]" },
+          { "name": "committed_at", "type": "timestamp" },
+          { "name": "signature", "type": "Signature?" }
+        ],
+        "methods": ["list_files() -> RepositoryFile[]", "diff(parent?) -> Diff", "get_parent() -> Commit?", "verify_signature() -> Verification"],
+        "examples": ["Git commit", "Merge commit", "Signed commit"]
+      },
+      {
+        "id": "repository-file",
+        "bucket": "content",
+        "name": "Repository File",
+        "kind": "artifact",
+        "description": "A path-addressed file at a specific repository revision; mutations create new revisions rather than changing history.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "repository_ref", "type": "EntityId", "required": true },
+          { "name": "revision", "type": "SHA", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "path", "type": "string", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "extension", "type": "string?" },
+          { "name": "media_type", "type": "MIME", "required": true },
+          { "name": "size", "type": "bytes", "required": true },
+          { "name": "content_hash", "type": "Hash", "required": true },
+          { "name": "encoding", "type": "string?" },
+          { "name": "created_at", "type": "timestamp?" },
+          { "name": "updated_at", "type": "timestamp?" }
+        ],
+        "methods": ["read() -> bytes", "write(content, message) -> Commit", "create(content, message) -> Commit", "delete(message) -> Commit", "patch(diff, message) -> Commit", "to_text() -> TextContent", "to_markdown() -> TextContent", "get_history() -> Commit[]"],
+        "examples": ["README.md", "src/lib.rs", "cmd/main.go", "package.json", "architecture.yaml"]
+      },
+      {
+        "id": "api-contract",
+        "bucket": "delivery",
+        "name": "API Contract",
+        "kind": "interface artifact",
+        "description": "A versioned machine- or human-readable contract for an API, event, command or integration boundary.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "api_kind", "type": "REST | GraphQL | gRPC | event | command | library" },
+          { "name": "specification_ref", "type": "ArtifactRef", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "status", "type": "draft | active | deprecated | retired" }
+        ],
+        "methods": ["validate() -> ValidationResult", "list_consumers() -> Component[]", "diff(previous) -> ContractDiff"],
+        "examples": ["OpenAPI contract", "AsyncAPI contract", "GraphQL schema", "Protocol Buffers API"]
+      },
+      {
+        "id": "reference-architecture",
+        "bucket": "delivery",
+        "name": "Reference Architecture",
+        "kind": "architecture standard",
+        "description": "A reusable approved architecture pattern describing expected components, boundaries, qualities and deployment choices.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "scope", "type": "string" },
+          { "name": "content_ref", "type": "ArtifactRef", "required": true },
+          { "name": "status", "type": "draft | approved | superseded | retired" }
+        ],
+        "methods": ["assess(design) -> Evidence[]", "instantiate(context) -> Design", "list_guidelines() -> DesignGuideline[]"],
+        "examples": ["SaaS reference architecture", "Event-driven reference architecture", "Mobile reference architecture"]
+      },
+      {
+        "id": "design-guideline",
+        "bucket": "delivery",
+        "name": "Design Guideline",
+        "kind": "architecture guidance",
+        "description": "A reusable design rule or recommendation with rationale, applicability and validation guidance.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "guidance", "type": "TextContent", "required": true },
+          { "name": "rationale", "type": "TextContent?" },
+          { "name": "applicability", "type": "RuleExpression?" },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["applies_to(subject) -> boolean", "validate(subject) -> Evidence", "list_examples() -> Artifact[]"],
+        "examples": ["API design guideline", "Security guideline", "Data-modeling guideline", "UX guideline"]
+      },
+      {
+        "id": "doc-space",
+        "bucket": "content",
+        "name": "Doc Space",
+        "kind": "aggregate",
+        "description": "A provider-owned hierarchy or collection of documents with access boundaries.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "url", "type": "URL?" },
+          { "name": "visibility", "type": "Visibility" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_documents(parent?) -> Document[]", "get_document(id) -> Document", "search(query) -> Document[]"],
+        "examples": ["Confluence space", "Notion workspace", "Wiki collection"]
+      },
+      {
+        "id": "document",
+        "bucket": "content",
+        "name": "Document",
+        "kind": "artifact",
+        "description": "A versioned document mirrored from a documentation source while preserving hierarchy and provenance.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "space_ref", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "url", "type": "URL?" },
+          { "name": "parent_id", "type": "EntityId?" },
+          { "name": "version", "type": "string?" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["read() -> ProviderContent", "to_text() -> TextContent", "to_markdown() -> TextContent", "list_children() -> Document[]", "list_comments() -> Comment[]", "add_comment(author, body) -> Comment", "get_history() -> DocumentVersion[]"],
+        "examples": ["Notion page", "Confluence page", "Wiki page", "Technical note"]
+      },
+      {
+        "id": "markdown-document",
+        "bucket": "content",
+        "name": "Markdown Document",
+        "kind": "structured content artifact",
+        "description": "A source-aware Markdown artifact with canonical text, dialect, front matter and heading structure that can be generated from a template or normalized from a document or repository file.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "source_ref", "type": "EntityRef", "required": true },
+          { "name": "title", "type": "string?" },
+          { "name": "dialect", "type": "commonmark | gfm | mdx | custom", "required": true },
+          { "name": "front_matter", "type": "JSON?" },
+          { "name": "content", "type": "TextContent", "required": true },
+          { "name": "content_hash", "type": "Hash", "required": true },
+          { "name": "status", "type": "draft | published | archived" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["to_text() -> TextContent", "list_sections() -> MarkdownSection[]", "find_heading(selector) -> MarkdownSection?", "validate(template?) -> ValidationResult", "render() -> string"],
+        "examples": ["README document", "Product requirements document", "Architecture decision record", "Runbook document"]
+      },
+      {
+        "id": "text-content",
+        "bucket": "content",
+        "name": "Text Content",
+        "kind": "value object",
+        "description": "Canonical text returned by to_text(), carrying a stable mapping back to its source artifact.",
+        "properties": [
+          { "name": "source_ref", "type": "EntityRef", "required": true },
+          { "name": "text", "type": "string", "required": true },
+          { "name": "format", "type": "plain | markdown | code", "required": true },
+          { "name": "language", "type": "string?" },
+          { "name": "content_hash", "type": "Hash", "required": true },
+          { "name": "source_map", "type": "SourceSpan[]" },
+          { "name": "generated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_sections() -> MarkdownSection[]", "list_chunks(strategy?) -> TextChunk[]", "slice(span) -> TextContent", "find(query) -> TextSpan[]", "token_count(tokenizer?) -> integer"],
+        "examples": ["Markdown text", "Source code text", "Plain-text document", "Normalized issue description"]
+      },
+      {
+        "id": "markdown-section",
+        "bucket": "content",
+        "name": "Markdown Section",
+        "kind": "value object",
+        "description": "A heading-bounded semantic section available only for Markdown content.",
+        "properties": [
+          { "name": "id", "type": "ContentId", "required": true },
+          { "name": "heading", "type": "string" },
+          { "name": "level", "type": "1..6" },
+          { "name": "anchor", "type": "string?" },
+          { "name": "start_offset", "type": "integer" },
+          { "name": "end_offset", "type": "integer" },
+          { "name": "ordinal", "type": "integer" }
+        ],
+        "methods": ["to_text() -> TextContent", "list_subsections() -> MarkdownSection[]", "list_chunks(strategy?) -> TextChunk[]", "get_parent() -> MarkdownSection?"],
+        "examples": ["README > Installation", "ADR > Decision", "Vision > Principles"]
+      },
+      {
+        "id": "text-chunk",
+        "bucket": "content",
+        "name": "Text Chunk",
+        "kind": "derived value",
+        "description": "A bounded segment used for retrieval and analysis, derived reproducibly from text or a section.",
+        "properties": [
+          { "name": "id", "type": "ContentId", "required": true },
+          { "name": "text", "type": "string", "required": true },
+          { "name": "start_offset", "type": "integer" },
+          { "name": "end_offset", "type": "integer" },
+          { "name": "token_count", "type": "integer" },
+          { "name": "strategy", "type": "ChunkStrategy" },
+          { "name": "embedding_ref", "type": "VectorRef?" }
+        ],
+        "methods": ["to_text() -> TextContent", "embed(model) -> VectorRef", "neighbors(limit?) -> TextChunk[]", "source_span() -> SourceSpan"],
+        "examples": ["Token-window chunk", "Paragraph chunk", "Semantic chunk", "Code-symbol chunk"]
+      },
+      {
+        "id": "operational-signal",
+        "bucket": "operations",
+        "name": "Operational Signal",
+        "kind": "observed signal",
+        "description": "Normalized telemetry or feedback, including metrics, logs, traces, support, usage and cost signals about a service or customer outcome.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "signal_kind", "type": "metric | log | trace | support | usage | cost", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "value", "type": "JSON", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "observed_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["correlate(context) -> SignalCorrelation[]", "aggregate(window) -> Metric", "to_evidence() -> Evidence"],
+        "examples": ["Latency metric", "Error trace", "Customer support signal", "AI usage cost"]
+      },
+      {
+        "id": "slo",
+        "bucket": "operations",
+        "name": "Service Level Objective",
+        "kind": "reliability objective",
+        "description": "A measurable reliability objective for a component or service, with an indicator, target and evaluation window.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "service_ref", "type": "EntityId", "required": true },
+          { "name": "indicator", "type": "SLI", "required": true },
+          { "name": "target", "type": "decimal", "required": true },
+          { "name": "window", "type": "duration", "required": true },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["evaluate(signals, window) -> SLOStatus", "get_error_budget() -> ErrorBudget", "validate_release(release) -> Evidence"],
+        "examples": ["99.9% availability", "p95 latency under 300 ms", "Message processing freshness"]
+      },
+      {
+        "id": "error-budget",
+        "bucket": "operations",
+        "name": "Error Budget",
+        "kind": "reliability allowance",
+        "description": "The measurable amount of unreliability permitted by an SLO during an evaluation window, used to govern release and remediation decisions.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "slo_ref", "type": "EntityId", "required": true },
+          { "name": "window", "type": "duration", "required": true },
+          { "name": "allowed", "type": "decimal", "required": true },
+          { "name": "consumed", "type": "decimal", "required": true },
+          { "name": "remaining", "type": "decimal", "required": true },
+          { "name": "burn_rate", "type": "decimal?" },
+          { "name": "status", "type": "healthy | warning | exhausted" },
+          { "name": "calculated_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["calculate(signals) -> ErrorBudget", "get_burn_rate(window?) -> decimal", "allows_release(release) -> boolean", "to_evidence() -> Evidence"],
+        "examples": ["Monthly availability budget", "Latency error budget", "Release freeze threshold"]
+      },
+      {
+        "id": "alert",
+        "bucket": "operations",
+        "name": "Alert",
+        "kind": "operational signal",
+        "description": "A routed notification that a monitored condition requires attention, with deduplication and acknowledgement state.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "external_id", "type": "string", "required": true },
+          { "name": "severity", "type": "info | warning | critical", "required": true },
+          { "name": "state", "type": "firing | acknowledged | resolved" },
+          { "name": "started_at", "type": "timestamp", "required": true },
+          { "name": "resolved_at", "type": "timestamp?" }
+        ],
+        "methods": ["acknowledge(actor) -> void", "create_incident() -> Incident", "link_signal(signal) -> void"],
+        "examples": ["SLO burn alert", "Security alert", "Capacity alert", "Dependency outage"]
+      },
+      {
+        "id": "incident",
+        "bucket": "operations",
+        "name": "Incident",
+        "kind": "operational lifecycle object",
+        "description": "A production or service-impacting event managed through triage, mitigation, resolution and learning.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "source_system", "type": "SourceId?" },
+          { "name": "external_id", "type": "string?" },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "severity", "type": "sev0 | sev1 | sev2 | sev3", "required": true },
+          { "name": "status", "type": "open | mitigated | resolved | closed" },
+          { "name": "commander_ref", "type": "EntityId?" },
+          { "name": "started_at", "type": "timestamp", "required": true },
+          { "name": "resolved_at", "type": "timestamp?" }
+        ],
+        "methods": ["assign_commander(actor) -> void", "link_alert(alert) -> void", "create_postmortem() -> Postmortem", "list_timeline() -> Event[]"],
+        "examples": ["Production outage", "Data loss incident", "Security incident", "Degraded dependency"]
+      },
+      {
+        "id": "runbook",
+        "bucket": "operations",
+        "name": "Runbook",
+        "kind": "operational artifact",
+        "description": "A versioned, executable or human-guided procedure for operating, diagnosing or recovering a service.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "steps", "type": "RunbookStep[]", "required": true },
+          { "name": "owner_ref", "type": "EntityId?" },
+          { "name": "status", "type": "draft | approved | retired" }
+        ],
+        "methods": ["validate() -> ValidationResult", "execute(context) -> WorkflowRun", "request_review() -> Approval"],
+        "examples": ["Rollback procedure", "Database failover", "On-call diagnostic", "Capacity response"]
+      },
+      {
+        "id": "postmortem",
+        "bucket": "operations",
+        "name": "Postmortem",
+        "kind": "learning artifact",
+        "description": "A blameless incident analysis recording impact, timeline, contributing factors, corrective actions and follow-up ownership.",
+        "properties": [
+          { "name": "id", "type": "ArtifactId", "required": true },
+          { "name": "incident_ref", "type": "EntityId", "required": true },
+          { "name": "impact", "type": "TextContent", "required": true },
+          { "name": "root_cause", "type": "TextContent?" },
+          { "name": "action_refs", "type": "EntityId[]" },
+          { "name": "status", "type": "draft | reviewed | published" },
+          { "name": "published_at", "type": "timestamp?" }
+        ],
+        "methods": ["identify_contributing_factors() -> Finding[]", "create_prevention_work() -> WorkItem[]", "request_review() -> Approval"],
+        "examples": ["Availability postmortem", "Security post-incident review", "Release failure analysis"]
+      },
+      {
+        "id": "template",
+        "bucket": "content",
+        "name": "Template",
+        "kind": "versioned content definition",
+        "description": "A reusable text or Markdown document definition containing canonical source content, variables and structural rules for consistent document creation.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "format", "type": "plain_text | markdown", "required": true },
+          { "name": "content", "type": "TextContent", "required": true },
+          { "name": "prototype_ref", "type": "EntityId?" },
+          { "name": "variables", "type": "TemplateVariable[]" },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["instantiate(variables) -> MarkdownDocument", "list_rules() -> TemplateRule[]", "validate(document) -> ValidationResult", "publish() -> Template"],
+        "examples": ["Product requirements template", "Architecture decision template", "Design document template", "Runbook template"]
+      },
+      {
+        "id": "template-rule",
+        "bucket": "content",
+        "name": "Template Rule",
+        "kind": "document structure constraint",
+        "description": "A reusable matching and validation rule for a template, including required, optional or forbidden headings, heading levels, ordering, cardinality and content patterns.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "template_ref", "type": "EntityId", "required": true },
+          { "name": "selector", "type": "MarkdownSelector", "required": true },
+          { "name": "match_mode", "type": "exact | case_insensitive | regex", "required": true },
+          { "name": "presence", "type": "optional | required | forbidden", "required": true },
+          { "name": "heading_level", "type": "1..6?" },
+          { "name": "min_occurrences", "type": "integer?" },
+          { "name": "max_occurrences", "type": "integer?" },
+          { "name": "content_pattern", "type": "regex?" },
+          { "name": "after_rule_ref", "type": "EntityId?" },
+          { "name": "severity", "type": "info | warning | error | blocking" },
+          { "name": "message", "type": "string?" },
+          { "name": "ordinal", "type": "integer", "required": true }
+        ],
+        "methods": ["matches(section) -> boolean", "validate(document) -> RuleResult[]", "explain() -> TextContent"],
+        "examples": ["Overview heading is mandatory at level 2", "Constraints heading is optional", "Decision must follow Context", "At most one Status heading", "Risks section must not be empty"]
+      },
+      {
+        "id": "checklist",
+        "bucket": "content",
+        "name": "Checklist",
+        "kind": "control artifact",
+        "description": "A versioned set of required or advisory checks used by people, workflows and quality gates.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "items", "type": "ChecklistItem[]", "required": true },
+          { "name": "scope_ref", "type": "EntityRef?" },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["evaluate(subject, context) -> ChecklistResult", "completion() -> decimal", "to_evidence() -> Evidence"],
+        "examples": ["Definition of done", "Release checklist", "Architecture review checklist", "Incident checklist"]
+      },
+      {
+        "id": "candidate-change",
+        "bucket": "automation",
+        "name": "Candidate Change",
+        "kind": "proposed state change",
+        "description": "A previewable set of changes proposed against one or more lifecycle objects before validation, approval or write-back.",
+        "properties": [
+          { "name": "id", "type": "ChangeId", "required": true },
+          { "name": "subject_refs", "type": "EntityRef[]", "required": true },
+          { "name": "operations", "type": "ChangeOperation[]", "required": true },
+          { "name": "proposed_by", "type": "ActorRef", "required": true },
+          { "name": "status", "type": "draft | proposed | approved | rejected | applied | expired" },
+          { "name": "expires_at", "type": "timestamp?" }
+        ],
+        "methods": ["diff() -> Diff", "validate() -> Evidence[]", "request_approval(gate) -> Approval", "apply(context) -> ChangeRecord[]", "reject(reason) -> void"],
+        "examples": ["Generated PR patch", "Recommended Jira transition", "Release promotion plan", "Documentation correction"]
+      },
+      {
+        "id": "quality-gate",
+        "bucket": "automation",
+        "name": "Quality Gate",
+        "kind": "lifecycle checkpoint",
+        "description": "A required validation and/or approval checkpoint that controls advancement of an object or workflow state.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "criteria", "type": "GateCriterion[]", "required": true },
+          { "name": "required_approvals", "type": "integer" },
+          { "name": "status", "type": "draft | active | retired" },
+          { "name": "scope_ref", "type": "EntityRef?" }
+        ],
+        "methods": ["evaluate(subject, context) -> GateResult", "is_satisfied(evidence) -> boolean", "request_approval(subject) -> Approval"],
+        "examples": ["PR merge gate", "Release readiness", "Architecture review", "Production change gate"]
+      },
+      {
+        "id": "approval",
+        "bucket": "automation",
+        "name": "Approval",
+        "kind": "human decision record",
+        "description": "An attributable human or delegated principal decision on a candidate change, quality gate or lifecycle transition.",
+        "properties": [
+          { "name": "id", "type": "ApprovalId", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "gate_ref", "type": "EntityId?" },
+          { "name": "decision", "type": "pending | approved | rejected | expired", "required": true },
+          { "name": "decided_by", "type": "ActorRef?" },
+          { "name": "reason", "type": "TextContent?" },
+          { "name": "decided_at", "type": "timestamp?" }
+        ],
+        "methods": ["approve(actor, reason?) -> void", "reject(actor, reason) -> void", "is_current(at?) -> boolean"],
+        "examples": ["Code review approval", "Release approval", "Risk acceptance", "Production change approval"]
+      },
+      {
+        "id": "notification",
+        "bucket": "automation",
+        "name": "Notification",
+        "kind": "delivery record",
+        "description": "A routed collaboration notification about a lifecycle object, comment, approval, alert or workflow state.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "recipient_ref", "type": "ActorRef", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "notification_type", "type": "mention | assignment | review | approval | alert | workflow" },
+          { "name": "channel", "type": "in_app | email | chat | webhook" },
+          { "name": "payload", "type": "JSON" },
+          { "name": "status", "type": "queued | delivered | read | failed" },
+          { "name": "created_at", "type": "timestamp", "required": true },
+          { "name": "delivered_at", "type": "timestamp?" },
+          { "name": "read_at", "type": "timestamp?" }
+        ],
+        "methods": ["deliver() -> DeliveryResult", "mark_read(at?) -> void", "retry() -> Notification", "get_subject() -> Object"],
+        "examples": ["Pull-request mention", "Document comment reply", "Approval request", "SLO alert", "Workflow completion"]
+      },
+      {
+        "id": "worker",
+        "bucket": "automation",
+        "name": "Worker",
+        "kind": "controlled executor",
+        "description": "An isolated executable unit that performs an action with explicit runtime, resource and identity boundaries.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "kind", "type": "container | function | sandbox | human_task | agent" },
+          { "name": "runtime_ref", "type": "EntityRef?" },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "status", "type": "active | paused | retired" }
+        ],
+        "methods": ["execute(action, input) -> ActionRun", "get_limits() -> ResourceLimits", "health() -> Health"],
+        "examples": ["CI worker", "Sandbox worker", "Human review task", "Agent worker"]
+      },
+      {
+        "id": "event",
+        "bucket": "automation",
+        "name": "Event",
+        "kind": "immutable signal",
+        "description": "A fact that something happened to an object or source, used as a generic automation input.",
+        "properties": [
+          { "name": "id", "type": "EventId", "required": true },
+          { "name": "type", "type": "string", "required": true },
+          { "name": "subject_ref", "type": "EntityId?" },
+          { "name": "source_ref", "type": "SourceId?" },
+          { "name": "payload", "type": "JSON" },
+          { "name": "occurred_at", "type": "timestamp", "required": true },
+          { "name": "correlation_id", "type": "string?" }
+        ],
+        "methods": ["get_subject() -> Object?", "get_payload() -> JSON", "matches(filter) -> boolean"],
+        "examples": ["Object changed", "Build completed", "Comment added", "Schedule elapsed", "External webhook"]
+      },
+      {
+        "id": "trigger",
+        "bucket": "automation",
+        "name": "Trigger",
+        "kind": "activation rule",
+        "description": "A declarative rule that starts a workflow from an event, schedule, condition or explicit request.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "kind", "type": "event | schedule | condition | manual" },
+          { "name": "configuration", "type": "JSON" },
+          { "name": "enabled", "type": "boolean" },
+          { "name": "deduplication_policy", "type": "JSON?" }
+        ],
+        "methods": ["matches(event, context) -> boolean", "activate(input) -> WorkflowRun", "enable() -> void", "disable() -> void", "validate() -> ValidationResult"],
+        "examples": ["On object change", "At schedule", "When quality gate fails", "On human request"]
+      },
+      {
+        "id": "workflow",
+        "bucket": "automation",
+        "name": "Workflow",
+        "kind": "automation definition",
+        "description": "A versioned graph of actions, decisions, validations, approvals and compensation paths over typed objects.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "input_schema", "type": "JSONSchema" },
+          { "name": "output_schema", "type": "JSONSchema" },
+          { "name": "definition", "type": "WorkflowGraph", "required": true },
+          { "name": "automation_mode", "type": "read_only | recommend | approval_gated | write_back" },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["validate() -> ValidationResult", "start(input, context) -> WorkflowRun", "list_actions() -> Action[]", "publish() -> Workflow", "clone() -> Workflow"],
+        "examples": ["Lifecycle flow", "Agentic flow", "Review flow", "Research flow", "Incident response", "Release readiness"]
+      },
+      {
+        "id": "workflow-run",
+        "bucket": "automation",
+        "name": "Workflow Run",
+        "kind": "durable execution",
+        "description": "A stateful, inspectable execution of one workflow version with retries, approvals and full evidence.",
+        "properties": [
+          { "name": "id", "type": "ExecutionId", "required": true },
+          { "name": "workflow_version", "type": "EntityVersion", "required": true },
+          { "name": "status", "type": "queued | running | waiting | succeeded | failed | cancelled" },
+          { "name": "input", "type": "JSON" },
+          { "name": "output", "type": "JSON?" },
+          { "name": "correlation_id", "type": "string?" },
+          { "name": "started_at", "type": "timestamp" },
+          { "name": "completed_at", "type": "timestamp?" }
+        ],
+        "methods": ["get_state() -> JSON", "list_action_runs() -> ActionRun[]", "list_evidence() -> Evidence[]", "cancel() -> void", "retry(from?) -> WorkflowRun", "resume(input?) -> void"],
+        "examples": ["Active run", "Approval-waiting run", "Completed run", "Compensated run"]
+      },
+      {
+        "id": "action",
+        "bucket": "automation",
+        "name": "Action",
+        "kind": "operation definition",
+        "description": "A typed operation over objects that may be deterministic, AI-assisted, human-driven or connector-backed.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "mode", "type": "deterministic | ai_assisted | human | connector" },
+          { "name": "input_schema", "type": "JSONSchema" },
+          { "name": "output_schema", "type": "JSONSchema" },
+          { "name": "timeout", "type": "duration?" },
+          { "name": "retry_policy", "type": "RetryPolicy?" }
+        ],
+        "methods": ["validate_input(input) -> ValidationResult", "execute(input, context) -> ActionRun", "dry_run(input) -> CandidateChange", "list_validators() -> Validator[]"],
+        "examples": ["Transform object", "Query source", "Request review", "Invoke tool", "Write back change"]
+      },
+      {
+        "id": "action-run",
+        "bucket": "automation",
+        "name": "Action Run",
+        "kind": "immutable execution attempt",
+        "description": "One durable execution attempt for an action, preserving retry lineage, inputs, outputs, gate results, costs and evidence until a retry passes its Quality Gate or policy is exhausted.",
+        "properties": [
+          { "name": "id", "type": "ExecutionId", "required": true },
+          { "name": "action_ref", "type": "EntityId", "required": true },
+          { "name": "worker_ref", "type": "EntityId?" },
+          { "name": "quality_gate_ref", "type": "EntityId", "required": true },
+          { "name": "retry_of_ref", "type": "ExecutionId?" },
+          { "name": "attempt", "type": "integer", "required": true },
+          { "name": "candidate_change_ref", "type": "ChangeId?" },
+          { "name": "retry_policy", "type": "RetryPolicy?" },
+          { "name": "status", "type": "queued | running | waiting | gate_failed | succeeded | failed | cancelled" },
+          { "name": "input", "type": "JSON" },
+          { "name": "output", "type": "JSON?" },
+          { "name": "gate_result", "type": "GateResult?" },
+          { "name": "error", "type": "ExecutionError?" },
+          { "name": "started_at", "type": "timestamp" },
+          { "name": "completed_at", "type": "timestamp?" },
+          { "name": "cost", "type": "Cost?" }
+        ],
+        "methods": ["evaluate_gate() -> GateResult", "can_retry() -> boolean", "retry(input?) -> ActionRun", "get_logs() -> TextContent", "list_evidence() -> Evidence[]", "cancel() -> void"],
+        "examples": ["Initial tool invocation", "Validation repair retry", "Human task attempt", "Connector write-back retry"]
+      },
+      {
+        "id": "validator",
+        "bucket": "automation",
+        "name": "Validator",
+        "kind": "control definition",
+        "description": "A reusable check that evaluates an object, candidate change or execution result against explicit criteria.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string" },
+          { "name": "severity", "type": "info | warning | error | blocking" },
+          { "name": "configuration", "type": "JSON" },
+          { "name": "enabled", "type": "boolean" }
+        ],
+        "methods": ["validate(subject, context) -> Evidence", "explain(result) -> TextContent", "is_blocking() -> boolean"],
+        "examples": ["Schema check", "Policy check", "Quality gate", "Human approval", "Semantic consistency check"]
+      },
+      {
+        "id": "evidence",
+        "bucket": "automation",
+        "name": "Evidence",
+        "kind": "audit fact",
+        "description": "Stored proof of an input, decision, validation, approval, action, cost or outcome.",
+        "properties": [
+          { "name": "id", "type": "EvidenceId", "required": true },
+          { "name": "type", "type": "string", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "source_refs", "type": "SourceRef[]" },
+          { "name": "result", "type": "pass | fail | unknown | informative" },
+          { "name": "details", "type": "JSON" },
+          { "name": "producer_ref", "type": "EntityId?" },
+          { "name": "observed_at", "type": "timestamp" },
+          { "name": "expires_at", "type": "timestamp?" }
+        ],
+        "methods": ["get_details() -> JSON", "verify() -> Verification", "explain() -> TextContent", "is_current(at?) -> boolean"],
+        "examples": ["Test evidence", "Approval", "Policy decision", "Tool output", "Cost record", "Deployment outcome"]
+      },
+      {
+        "id": "policy",
+        "bucket": "automation",
+        "name": "Policy",
+        "kind": "governance rule",
+        "description": "A versioned rule constraining access, recommendations, execution, approval and write-back at any supported scope.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "scope_ref", "type": "EntityRef?" },
+          { "name": "rule", "type": "PolicyExpression", "required": true },
+          { "name": "effect", "type": "allow | deny | require_approval" },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["evaluate(subject, action, context) -> Evidence", "explain(decision) -> TextContent", "publish() -> Policy", "test(cases) -> TestResult[]"],
+        "examples": ["Access policy", "Data boundary", "Approval rule", "Budget limit", "Write-back guardrail"]
+      },
+      {
+        "id": "agent",
+        "bucket": "ai",
+        "name": "Agent",
+        "kind": "AI-assisted actor",
+        "description": "A governed AI-assisted worker with instructions, tools, model policy, budgets and approval boundaries.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "instructions", "type": "TextContent" },
+          { "name": "model_policy", "type": "ModelPolicy" },
+          { "name": "tool_policy", "type": "ToolPolicy" },
+          { "name": "budget", "type": "Budget?" },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["start(context) -> Conversation", "run(input, context) -> ActionRun", "list_tools() -> Tool[]", "estimate_cost(input) -> Cost", "validate_policy() -> ValidationResult"],
+        "examples": ["Planning agent", "Review agent", "Research agent", "Operations agent", "Coordinator agent"]
+      },
+      {
+        "id": "model",
+        "bucket": "ai",
+        "name": "Model",
+        "kind": "inference capability",
+        "description": "A provider-neutral AI model capability selected by policy for quality, latency, privacy and cost objectives.",
+        "properties": [
+          { "name": "id", "type": "ModelId", "required": true },
+          { "name": "provider", "type": "string", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "context_limit", "type": "integer?" },
+          { "name": "pricing", "type": "Pricing?" },
+          { "name": "data_policy", "type": "DataPolicy" },
+          { "name": "status", "type": "available | degraded | disabled" }
+        ],
+        "methods": ["supports(capability) -> boolean", "estimate_cost(usage) -> Cost", "get_limits() -> ModelLimits", "get_health() -> Health"],
+        "examples": ["Hosted LLM / language model", "Local LLM", "Embedding model", "Reranker", "Multimodal model"]
+      },
+      {
+        "id": "mcp-server",
+        "bucket": "ai",
+        "name": "MCP Server",
+        "kind": "tool provider",
+        "description": "A registered Model Context Protocol endpoint exposing discoverable tools, resources and prompts under policy.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "transport", "type": "stdio | streamable_http" },
+          { "name": "endpoint", "type": "URI?" },
+          { "name": "auth_ref", "type": "SecretRef?" },
+          { "name": "capabilities", "type": "Capability[]" },
+          { "name": "status", "type": "available | unavailable | disabled" }
+        ],
+        "methods": ["initialize() -> ServerCapabilities", "list_tools() -> Tool[]", "list_resources() -> Resource[]", "list_prompts() -> PromptTemplate[]", "get_health() -> Health"],
+        "examples": ["Repository MCP", "Issue tracker MCP", "Documentation MCP", "Studio MCP", "Custom enterprise MCP"]
+      },
+      {
+        "id": "tool",
+        "bucket": "ai",
+        "name": "Tool",
+        "kind": "callable capability",
+        "description": "A discoverable typed capability callable by an agent, workflow or human through a governed provider.",
+        "properties": [
+          { "name": "id", "type": "ToolId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "description", "type": "string" },
+          { "name": "input_schema", "type": "JSONSchema", "required": true },
+          { "name": "output_schema", "type": "JSONSchema?" },
+          { "name": "side_effect", "type": "none | read | write | destructive" },
+          { "name": "approval_policy", "type": "ApprovalPolicy?" },
+          { "name": "version", "type": "string?" }
+        ],
+        "methods": ["validate_input(input) -> ValidationResult", "invoke(input, context) -> ToolCall", "estimate_risk(input) -> Risk", "dry_run(input) -> CandidateChange?"],
+        "examples": ["Read object", "Search graph", "Create work item", "Patch file", "Deploy release"]
+      },
+      {
+        "id": "conversation",
+        "bucket": "ai",
+        "name": "Conversation",
+        "kind": "interaction session",
+        "description": "A durable, scoped sequence of messages, context snapshots, tool calls and produced artifacts.",
+        "properties": [
+          { "name": "id", "type": "ConversationId", "required": true },
+          { "name": "title", "type": "string?" },
+          { "name": "scope_ref", "type": "EntityId?" },
+          { "name": "participants", "type": "ActorRef[]" },
+          { "name": "status", "type": "active | archived" },
+          { "name": "created_at", "type": "timestamp" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["list_messages() -> Message[]", "send(message) -> Message", "fork(at?) -> Conversation", "summarize() -> TextContent", "list_artifacts() -> Artifact[]"],
+        "examples": ["Human-agent chat", "Agent coordination thread", "Workflow review thread", "Incident collaboration"]
+      },
+      {
+        "id": "message",
+        "bucket": "ai",
+        "name": "Message",
+        "kind": "interaction event",
+        "description": "An immutable turn carrying typed content, authorship, references, usage and optional tool activity.",
+        "properties": [
+          { "name": "id", "type": "MessageId", "required": true },
+          { "name": "role", "type": "system | user | assistant | tool" },
+          { "name": "author_ref", "type": "ActorRef?" },
+          { "name": "content", "type": "ContentPart[]", "required": true },
+          { "name": "references", "type": "EntityRef[]" },
+          { "name": "usage", "type": "ModelUsage?" },
+          { "name": "created_at", "type": "timestamp" }
+        ],
+        "methods": ["to_text() -> TextContent", "list_references() -> Object[]", "list_tool_calls() -> ToolCall[]", "get_usage() -> ModelUsage?"],
+        "examples": ["Instruction", "Human request", "Assistant response", "Tool result", "Approval request"]
+      },
+      {
+        "id": "prompt-template",
+        "bucket": "ai",
+        "name": "Prompt Template",
+        "kind": "versioned instruction",
+        "description": "A model-independent, versioned instruction template with typed variables, examples and evaluation history.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "template", "type": "TextContent", "required": true },
+          { "name": "variables", "type": "JSONSchema" },
+          { "name": "examples", "type": "Example[]" },
+          { "name": "status", "type": "draft | active | retired" }
+        ],
+        "methods": ["render(variables) -> Message", "validate_variables(input) -> ValidationResult", "evaluate(dataset) -> EvaluationResult", "publish() -> PromptTemplate"],
+        "examples": ["System instruction", "Review rubric", "Extraction prompt", "Tool-use guidance"]
+      },
+      {
+        "id": "context-snapshot",
+        "bucket": "ai",
+        "name": "Context Snapshot",
+        "kind": "reproducibility record",
+        "description": "The immutable, policy-filtered set of graph objects and content supplied to one model invocation.",
+        "properties": [
+          { "name": "id", "type": "ContextId", "required": true },
+          { "name": "items", "type": "ContextItem[]", "required": true },
+          { "name": "token_count", "type": "integer" },
+          { "name": "selection_strategy", "type": "string" },
+          { "name": "policy_decisions", "type": "Evidence[]" },
+          { "name": "content_hash", "type": "Hash" },
+          { "name": "created_at", "type": "timestamp" }
+        ],
+        "methods": ["list_items() -> Object[]", "verify_hash() -> Verification", "explain_selection() -> TextContent", "replay() -> ContextSnapshot"],
+        "examples": ["RAG context", "Conversation context", "Workflow context", "Code review context"]
+      },
+      {
+        "id": "tool-call",
+        "bucket": "ai",
+        "name": "Tool Call",
+        "kind": "invocation record",
+        "description": "An auditable request and response for one tool invocation, including approval and side-effect status.",
+        "properties": [
+          { "name": "id", "type": "ExecutionId", "required": true },
+          { "name": "tool_id", "type": "ToolId", "required": true },
+          { "name": "input", "type": "JSON", "required": true },
+          { "name": "output", "type": "JSON?" },
+          { "name": "status", "type": "requested | approved | running | succeeded | failed | denied" },
+          { "name": "approval_ref", "type": "ApprovalId?" },
+          { "name": "started_at", "type": "timestamp?" },
+          { "name": "completed_at", "type": "timestamp?" }
+        ],
+        "methods": ["approve(actor) -> void", "deny(actor, reason) -> void", "execute() -> ToolCall", "get_evidence() -> Evidence[]"],
+        "examples": ["Read-only query", "File write", "Issue creation", "Deployment request", "MCP invocation"]
+      },
+      {
+        "id": "lifecycle-graph",
+        "bucket": "graph",
+        "name": "Lifecycle Object Graph",
+        "kind": "control-plane aggregate",
+        "description": "The governed SDLC objects graph providing typed relationships, canonical identity, source mappings, traversal and search across the lifecycle.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "tenant_ref", "type": "EntityId", "required": true },
+          { "name": "schema_version", "type": "string", "required": true },
+          { "name": "index_status", "type": "ready | updating | degraded" },
+          { "name": "updated_at", "type": "timestamp" }
+        ],
+        "methods": ["search(query, scope?) -> SearchResult[]", "traverse(start, relationship?, depth?) -> ShadowNode[]", "resolve_canonical(source_ref) -> CanonicalIdentity?", "explain(link) -> Provenance"],
+        "examples": ["Tenant lifecycle graph", "Project traceability graph", "Cross-source SDLC object graph"]
+      },
+      {
+        "id": "canonical-identity",
+        "bucket": "graph",
+        "name": "Canonical Identity",
+        "kind": "identity resolution record",
+        "description": "A stable canonical ID that reconciles equivalent records from external systems without losing their source-native identities.",
+        "properties": [
+          { "name": "id", "type": "CanonicalId", "required": true },
+          { "name": "object_type_ref", "type": "TypeId", "required": true },
+          { "name": "source_refs", "type": "ExternalRecordRef[]", "required": true },
+          { "name": "resolution_method", "type": "exact | rule | probabilistic | human" },
+          { "name": "confidence", "type": "0..1?" },
+          { "name": "resolved_at", "type": "timestamp" }
+        ],
+        "methods": ["attach_source(record) -> void", "merge(other) -> CanonicalIdentity", "split(source_refs) -> CanonicalIdentity[]", "explain() -> Provenance"],
+        "examples": ["Person across AD, GitHub and Jira", "Project across Jira and GitHub", "Service across repository and observability"]
+      },
+      {
+        "id": "object-mapping",
+        "bucket": "graph",
+        "name": "Object Mapping",
+        "kind": "normalization definition",
+        "description": "A versioned mapping from an external schema and lifecycle into canonical Studio object types, fields, states and relationships.",
+        "properties": [
+          { "name": "id", "type": "EntityId", "required": true },
+          { "name": "connector_ref", "type": "SourceId", "required": true },
+          { "name": "source_type", "type": "string", "required": true },
+          { "name": "target_type_ref", "type": "TypeId", "required": true },
+          { "name": "field_mappings", "type": "FieldMapping[]", "required": true },
+          { "name": "state_mappings", "type": "StateMapping[]" },
+          { "name": "version", "type": "string", "required": true }
+        ],
+        "methods": ["normalize(record) -> Object", "denormalize(change) -> ExternalChange", "validate() -> ValidationResult", "test(fixtures) -> MappingResult[]"],
+        "examples": ["Jira issue to Work Item", "GitHub repository to Repository", "AD user to Person"]
+      },
+      {
+        "id": "lifecycle-phase",
+        "bucket": "graph",
+        "name": "Lifecycle Phase",
+        "kind": "canonical lifecycle definition",
+        "description": "A canonical software-construction phase used to classify objects, transitions, gates, evidence and feedback without forcing one methodology.",
+        "properties": [
+          { "name": "id", "type": "PhaseId", "required": true },
+          { "name": "name", "type": "vision | discovery | strategy | definition | design | construction | validation | release | operation | support | intelligence | optimization | evolution", "required": true },
+          { "name": "ordinal", "type": "integer", "required": true },
+          { "name": "entry_criteria", "type": "Criterion[]" },
+          { "name": "exit_criteria", "type": "Criterion[]" }
+        ],
+        "methods": ["next() -> LifecyclePhase?", "classify(object) -> boolean", "list_gates() -> QualityGate[]", "list_objects(scope) -> Object[]"],
+        "examples": ["Vision", "Discovery", "Strategy", "Definition", "Design", "Construction", "Validation", "Release", "Operation", "Support", "Intelligence", "Optimization", "Evolution"]
+      },
+      {
+        "id": "object-type",
+        "bucket": "graph",
+        "name": "Object Type",
+        "kind": "extensible schema",
+        "description": "A tenant-extensible definition of schema, states, relationships, validation and presentation for any lifecycle object.",
+        "properties": [
+          { "name": "id", "type": "TypeId", "required": true },
+          { "name": "name", "type": "string", "required": true },
+          { "name": "version", "type": "string", "required": true },
+          { "name": "schema", "type": "JSONSchema", "required": true },
+          { "name": "states", "type": "StateDefinition[]" },
+          { "name": "relationship_rules", "type": "RelationshipRule[]" },
+          { "name": "validators", "type": "ValidatorRef[]" },
+          { "name": "extension_of", "type": "TypeId?" }
+        ],
+        "methods": ["validate(object) -> ValidationResult", "create(data) -> Object", "extend(schema) -> ObjectType", "list_relationships() -> RelationshipRule[]", "migrate(object, version) -> Object"],
+        "examples": ["Requirement", "Decision", "Runbook", "Research Claim", "Customer Signal", "Custom lifecycle object"]
+      },
+      {
+        "id": "shadow-node",
+        "bucket": "graph",
+        "name": "Shadow Node",
+        "kind": "graph projection",
+        "description": "A time-aware graph projection available for every graph-addressable Studio object or external record through its Object Type; it is not a second source of truth.",
+        "properties": [
+          { "name": "id", "type": "NodeId", "required": true },
+          { "name": "object_type_ref", "type": "TypeId", "required": true },
+          { "name": "object_ref", "type": "EntityRef", "required": true },
+          { "name": "source_refs", "type": "SourceRef[]" },
+          { "name": "labels", "type": "string[]" },
+          { "name": "valid_from", "type": "timestamp" },
+          { "name": "valid_to", "type": "timestamp?" },
+          { "name": "observed_at", "type": "timestamp", "required": true },
+          { "name": "confidence", "type": "0..1?" }
+        ],
+        "methods": ["neighbors(type?, depth?) -> ShadowNode[]", "get_source() -> SourceRecord", "history() -> NodeVersion[]", "explain() -> Provenance"],
+        "examples": ["Repository node", "Person node", "Section node", "Work-item node"]
+      },
+      {
+        "id": "link",
+        "bucket": "graph",
+        "name": "Link",
+        "kind": "graph edge",
+        "description": "A typed, directed and provenance-backed relationship between graph-addressable objects; the relationship itself is the edge, not a child of a node.",
+        "properties": [
+          { "name": "id", "type": "LinkId", "required": true },
+          { "name": "relationship_type", "type": "RelationshipType", "required": true },
+          { "name": "source_id", "type": "NodeId", "required": true },
+          { "name": "target_id", "type": "NodeId", "required": true },
+          { "name": "direction", "type": "directed | bidirectional" },
+          { "name": "strength", "type": "0..1?" },
+          { "name": "confidence", "type": "0..1?" },
+          { "name": "provenance_ref", "type": "ProvenanceId", "required": true },
+          { "name": "valid_from", "type": "timestamp" },
+          { "name": "valid_to", "type": "timestamp?" }
+        ],
+        "methods": ["get_source() -> ShadowNode", "get_target() -> ShadowNode", "explain() -> Provenance", "invalidate(at) -> void"],
+        "examples": ["File imports file", "Section references section", "Chunk is similar to chunk", "Team owns repository", "Person authored commit"]
+      },
+      {
+        "id": "change-record",
+        "bucket": "graph",
+        "name": "Change Record",
+        "kind": "immutable audit record",
+        "description": "An immutable record of an applied change to a lifecycle object, preserving actor, source, before-and-after state, correlation and provenance.",
+        "properties": [
+          { "name": "id", "type": "ChangeId", "required": true },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "operation", "type": "create | update | delete | transition | link | unlink", "required": true },
+          { "name": "actor_ref", "type": "ActorRef?" },
+          { "name": "source_ref", "type": "SourceRef?" },
+          { "name": "before", "type": "JSON?" },
+          { "name": "after", "type": "JSON?" },
+          { "name": "correlation_id", "type": "string?" },
+          { "name": "provenance_ref", "type": "ProvenanceId?" },
+          { "name": "occurred_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["diff() -> Diff", "get_actor() -> Actor?", "get_provenance() -> Provenance?", "to_event() -> Event"],
+        "examples": ["Work-item transition", "Document revision", "Role assignment", "Connector write-back", "Relationship update"]
+      },
+      {
+        "id": "provenance",
+        "bucket": "graph",
+        "name": "Provenance",
+        "kind": "evidence record",
+        "description": "Evidence describing where a graph fact came from, how it was derived and when it was observed.",
+        "properties": [
+          { "name": "id", "type": "ProvenanceId", "required": true },
+          { "name": "source_system", "type": "SourceId", "required": true },
+          { "name": "source_uri", "type": "URI?" },
+          { "name": "source_record_ref", "type": "ExternalRecordRef?" },
+          { "name": "source_revision", "type": "string?" },
+          { "name": "extractor", "type": "ExtractorId" },
+          { "name": "observed_at", "type": "timestamp" },
+          { "name": "derivation", "type": "DerivationStep[]" },
+          { "name": "confidence", "type": "0..1" }
+        ],
+        "methods": ["verify() -> Verification", "trace() -> DerivationStep[]", "get_source_record() -> SourceRecord"],
+        "examples": ["Git API observation", "Markdown parser output", "Identity resolution evidence", "Embedding similarity inference"]
+      },
+      {
+        "id": "sync-snapshot",
+        "bucket": "graph",
+        "name": "Sync Snapshot",
+        "kind": "temporal boundary",
+        "description": "A consistent observation boundary for one source sync, enabling replay and bitemporal graph history.",
+        "properties": [
+          { "name": "id", "type": "SnapshotId", "required": true },
+          { "name": "connector_ref", "type": "SourceId", "required": true },
+          { "name": "cursor", "type": "Cursor?" },
+          { "name": "started_at", "type": "timestamp" },
+          { "name": "completed_at", "type": "timestamp?" },
+          { "name": "status", "type": "running | complete | failed" },
+          { "name": "object_count", "type": "integer" },
+          { "name": "error_count", "type": "integer" }
+        ],
+        "methods": ["list_changes() -> ChangeRecord[]", "replay() -> SyncResult", "diff(previous) -> SnapshotDiff"],
+        "examples": ["GitHub incremental sync", "Nightly Confluence crawl", "Webhook micro-batch"]
+      },
+      {
+        "id": "assessment-summary",
+        "bucket": "appsec",
+        "name": "Assessment Summary",
+        "kind": "security assessment aggregate",
+        "description": "A durable summary of one application-security assessment over a project, repository and revision, including scanner coverage, severity counts and overall risk.",
+        "properties": [
+          { "name": "id", "type": "AssessmentId", "required": true },
+          { "name": "scope_ref", "type": "EntityRef", "required": true },
+          { "name": "repository_ref", "type": "EntityId", "required": true },
+          { "name": "revision", "type": "SHA", "required": true },
+          { "name": "scanner_ref", "type": "SourceId", "required": true },
+          { "name": "assessment_types", "type": "SecurityAssessmentType[]", "required": true },
+          { "name": "severity_counts", "type": "SeverityCounts", "required": true },
+          { "name": "risk_score", "type": "decimal?" },
+          { "name": "status", "type": "queued | running | completed | failed" },
+          { "name": "started_at", "type": "timestamp", "required": true },
+          { "name": "completed_at", "type": "timestamp?" }
+        ],
+        "methods": ["list_findings(filter?) -> SecurityFinding[]", "highest_severity() -> Severity?", "meets_policy(policy) -> boolean", "to_evidence() -> Evidence"],
+        "examples": ["Pull-request SAST summary", "Dependency scan summary", "Container assessment", "Infrastructure-as-code assessment"]
+      },
+      {
+        "id": "security-finding",
+        "bucket": "appsec",
+        "name": "Finding",
+        "kind": "security finding",
+        "description": "An actionable application-security issue discovered by an assessment, with stable fingerprint, severity, details, affected subject and remediation lifecycle.",
+        "properties": [
+          { "name": "id", "type": "FindingId", "required": true },
+          { "name": "assessment_ref", "type": "AssessmentId", "required": true },
+          { "name": "fingerprint", "type": "Hash", "required": true },
+          { "name": "severity", "type": "critical | high | medium | low | info", "required": true },
+          { "name": "title", "type": "string", "required": true },
+          { "name": "details", "type": "TextContent", "required": true },
+          { "name": "category", "type": "vulnerability | misconfiguration | secret | dependency | license" },
+          { "name": "rule_id", "type": "string?" },
+          { "name": "cwe_ids", "type": "string[]" },
+          { "name": "cve_ids", "type": "string[]" },
+          { "name": "subject_ref", "type": "EntityRef", "required": true },
+          { "name": "location", "type": "CodeLocation?" },
+          { "name": "status", "type": "open | triaged | accepted | false_positive | fixed" },
+          { "name": "detected_at", "type": "timestamp", "required": true }
+        ],
+        "methods": ["create_remediation_work() -> WorkItem", "accept_risk(actor, reason) -> Approval", "mark_false_positive(actor, reason) -> void", "verify(fix) -> VulnerabilityFixGrade"],
+        "examples": ["SQL injection", "Exposed secret", "Critical dependency CVE", "Insecure cloud policy", "Missing authorization check"]
+      },
+      {
+        "id": "vulnerability-fix-grade",
+        "bucket": "appsec",
+        "name": "Vulnerability Fix Grade",
+        "kind": "fix verification record",
+        "description": "An evidence-backed grade for a proposed or applied vulnerability fix, measuring remediation completeness, regression safety and residual risk.",
+        "properties": [
+          { "name": "id", "type": "GradeId", "required": true },
+          { "name": "finding_ref", "type": "FindingId", "required": true },
+          { "name": "fix_ref", "type": "EntityRef", "required": true },
+          { "name": "grade", "type": "A | B | C | D | F | ungraded", "required": true },
+          { "name": "score", "type": "0..100", "required": true },
+          { "name": "criteria", "type": "FixGradeCriterion[]", "required": true },
+          { "name": "residual_severity", "type": "critical | high | medium | low | none" },
+          { "name": "evidence_refs", "type": "EvidenceId[]" },
+          { "name": "status", "type": "pending | passed | failed" },
+          { "name": "graded_at", "type": "timestamp?" }
+        ],
+        "methods": ["evaluate(fix) -> VulnerabilityFixGrade", "passes(minimum_grade) -> boolean", "list_evidence() -> Evidence[]", "explain() -> TextContent"],
+        "examples": ["Complete fix with regression coverage", "Partial mitigation", "Fix introduces regression", "Finding remains exploitable"]
+      }
+    ],
+    "relationships": [
+      { "from": "organization", "to": "team", "type": "owns", "label": "contains" },
+      { "from": "team", "to": "person", "type": "member", "label": "has members" },
+      { "from": "organization", "to": "project", "type": "owns", "label": "sponsors" },
+      { "from": "team", "to": "project", "type": "owns", "label": "delivers" },
+      { "from": "connector", "to": "organization", "type": "references", "label": "scoped to" },
+      { "from": "repository-manager", "to": "repository", "type": "composes", "label": "mirrors" },
+      { "from": "docs-storage", "to": "doc-space", "type": "composes", "label": "contains" },
+      { "from": "issue-tracker", "to": "project", "type": "references", "label": "provides" },
+      { "from": "issue-tracker", "to": "work-item", "type": "composes", "label": "tracks" },
+      { "from": "artifact-registry", "to": "build-artifact", "type": "composes", "label": "stores" },
+      { "from": "test-management", "to": "test-result", "type": "composes", "label": "reports" },
+      { "from": "project", "to": "work-item", "type": "composes", "label": "scopes" },
+      { "from": "project", "to": "repository", "type": "references", "label": "uses" },
+      { "from": "project", "to": "document", "type": "references", "label": "documented by" },
+      { "from": "work-item", "to": "person", "type": "member", "label": "assigned to" },
+      { "from": "pull-request", "to": "person", "type": "references", "label": "authored by" },
+      { "from": "code-review", "to": "person", "type": "references", "label": "submitted by" },
+      { "from": "work-item", "to": "pull-request", "type": "references", "label": "implemented by" },
+      { "from": "repository", "to": "pull-request", "type": "composes", "label": "hosts" },
+      { "from": "pull-request", "to": "branch", "type": "references", "label": "sources from" },
+      { "from": "pull-request", "to": "branch", "type": "references", "label": "targets" },
+      { "from": "pull-request", "to": "commit", "type": "references", "label": "proposes" },
+      { "from": "repository", "to": "branch", "type": "composes", "label": "has" },
+      { "from": "repository", "to": "commit", "type": "composes", "label": "records" },
+      { "from": "repository", "to": "repository-file", "type": "composes", "label": "contains" },
+      { "from": "branch", "to": "commit", "type": "references", "label": "points to" },
+      { "from": "commit", "to": "commit", "type": "references", "label": "has parent", "visual": false },
+      { "from": "commit", "to": "person", "type": "references", "label": "authored by" },
+      { "from": "commit", "to": "repository-file", "type": "references", "label": "versions" },
+      { "from": "doc-space", "to": "document", "type": "composes", "label": "contains" },
+      { "from": "document", "to": "document", "type": "composes", "label": "contains child", "visual": false },
+      { "from": "document", "to": "markdown-document", "type": "derives", "label": "normalizes as" },
+      { "from": "repository-file", "to": "markdown-document", "type": "derives", "label": "parses as" },
+      { "from": "comment", "to": "comment", "type": "references", "label": "replies to", "visual": false },
+      { "from": "text-content", "to": "object-type", "type": "references", "label": "normalized from" },
+      { "from": "markdown-document", "to": "text-content", "type": "composes", "label": "contains text" },
+      { "from": "markdown-document", "to": "markdown-section", "type": "composes", "label": "structures into" },
+      { "from": "text-content", "to": "markdown-section", "type": "composes", "label": "parses into" },
+      { "from": "text-content", "to": "text-chunk", "type": "derives", "label": "chunks into" },
+      { "from": "markdown-section", "to": "text-chunk", "type": "derives", "label": "chunks into" },
+      { "from": "link", "to": "provenance", "type": "references", "label": "explained by" },
+      { "from": "shadow-node", "to": "provenance", "type": "references", "label": "observed by" },
+      { "from": "sync-snapshot", "to": "provenance", "type": "composes", "label": "captures" },
+      { "from": "connector", "to": "connector-type", "type": "references", "label": "instance of" },
+      { "from": "connector", "to": "sync-snapshot", "type": "derives", "label": "records sync" },
+      { "from": "tenant", "to": "organization", "type": "owns", "label": "contains" },
+      { "from": "organization", "to": "person", "type": "owns", "label": "governs identities" },
+      { "from": "organization", "to": "workspace", "type": "owns", "label": "contains" },
+      { "from": "workspace", "to": "project", "type": "composes", "label": "contains" },
+      { "from": "organization", "to": "role", "type": "owns", "label": "defines" },
+      { "from": "person", "to": "role-assignment", "type": "member", "label": "receives" },
+      { "from": "team", "to": "role-assignment", "type": "member", "label": "receives" },
+      { "from": "agent", "to": "role-assignment", "type": "member", "label": "receives" },
+      { "from": "role-assignment", "to": "role", "type": "references", "label": "assigns" },
+      { "from": "role-assignment", "to": "organization", "type": "references", "label": "global scope" },
+      { "from": "role-assignment", "to": "project", "type": "references", "label": "project scope" },
+      { "from": "project", "to": "person", "type": "member", "label": "includes" },
+      { "from": "project", "to": "team", "type": "member", "label": "includes" },
+      { "from": "project", "to": "component", "type": "composes", "label": "delivers" },
+      { "from": "project", "to": "build", "type": "references", "label": "tracks" },
+      { "from": "project", "to": "test-result", "type": "references", "label": "validates with" },
+      { "from": "project", "to": "deployment", "type": "references", "label": "tracks" },
+      { "from": "work-item", "to": "work-item-type", "type": "references", "label": "instance of" },
+      { "from": "work-item-type", "to": "object-type", "type": "references", "label": "specializes" },
+      { "from": "component", "to": "repository", "type": "references", "label": "sourced from" },
+      { "from": "component", "to": "component", "type": "references", "label": "depends on", "visual": false },
+      { "from": "component", "to": "build", "type": "derives", "label": "built as" },
+      { "from": "commit", "to": "build", "type": "derives", "label": "triggers" },
+      { "from": "build", "to": "build-artifact", "type": "composes", "label": "produces" },
+      { "from": "build", "to": "test-result", "type": "composes", "label": "validated by" },
+      { "from": "build-artifact", "to": "release", "type": "references", "label": "included in" },
+      { "from": "release", "to": "deployment", "type": "derives", "label": "promoted as" },
+      { "from": "deployment", "to": "environment", "type": "references", "label": "targets" },
+      { "from": "deployment", "to": "component", "type": "references", "label": "runs" },
+      { "from": "test-result", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "deployment", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "project", "to": "workflow", "type": "references", "label": "enables" },
+      { "from": "event", "to": "trigger", "type": "connects", "label": "matches" },
+      { "from": "trigger", "to": "workflow", "type": "connects", "label": "starts" },
+      { "from": "workflow", "to": "action", "type": "composes", "label": "orchestrates" },
+      { "from": "workflow", "to": "workflow-run", "type": "derives", "label": "executes as" },
+      { "from": "workflow-run", "to": "action-run", "type": "composes", "label": "contains" },
+      { "from": "action", "to": "action-run", "type": "derives", "label": "executes as" },
+      { "from": "action", "to": "validator", "type": "references", "label": "checked by" },
+      { "from": "validator", "to": "evidence", "type": "derives", "label": "produces" },
+      { "from": "workflow-run", "to": "evidence", "type": "composes", "label": "records" },
+      { "from": "action-run", "to": "evidence", "type": "composes", "label": "records" },
+      { "from": "policy", "to": "workflow", "type": "references", "label": "governs" },
+      { "from": "policy", "to": "action", "type": "references", "label": "governs" },
+      { "from": "policy", "to": "tool", "type": "references", "label": "governs" },
+      { "from": "team", "to": "agent", "type": "member", "label": "includes" },
+      { "from": "agent", "to": "model", "type": "references", "label": "routes to" },
+      { "from": "agent", "to": "tool", "type": "references", "label": "may invoke" },
+      { "from": "agent", "to": "prompt-template", "type": "references", "label": "instructed by" },
+      { "from": "agent", "to": "conversation", "type": "derives", "label": "participates in" },
+      { "from": "person", "to": "conversation", "type": "member", "label": "participates in" },
+      { "from": "project", "to": "conversation", "type": "references", "label": "scopes" },
+      { "from": "conversation", "to": "message", "type": "composes", "label": "contains" },
+      { "from": "conversation", "to": "context-snapshot", "type": "composes", "label": "captures" },
+      { "from": "message", "to": "tool-call", "type": "composes", "label": "requests" },
+      { "from": "message", "to": "model", "type": "references", "label": "generated by" },
+      { "from": "mcp-server", "to": "tool", "type": "composes", "label": "provides" },
+      { "from": "mcp-server", "to": "prompt-template", "type": "composes", "label": "provides" },
+      { "from": "tool", "to": "tool-call", "type": "derives", "label": "invoked as" },
+      { "from": "tool-call", "to": "evidence", "type": "composes", "label": "records" },
+      { "from": "tool-call", "to": "action-run", "type": "references", "label": "executes within" },
+      { "from": "context-snapshot", "to": "shadow-node", "type": "references", "label": "selects" },
+      { "from": "object-type", "to": "shadow-node", "type": "references", "label": "types every projection" },
+      { "from": "evidence", "to": "provenance", "type": "references", "label": "explained by" },
+      { "from": "intent", "to": "vision", "type": "derives", "label": "formulates" },
+      { "from": "vision", "to": "discovery", "type": "derives", "label": "informs" },
+      { "from": "discovery", "to": "evidence", "type": "references", "label": "supported by" },
+      { "from": "discovery", "to": "strategy", "type": "derives", "label": "informs" },
+      { "from": "strategy", "to": "definition", "type": "derives", "label": "defines" },
+      { "from": "definition", "to": "requirement", "type": "composes", "label": "specifies" },
+      { "from": "definition", "to": "design", "type": "derives", "label": "guides" },
+      { "from": "requirement", "to": "design", "type": "references", "label": "constrains" },
+      { "from": "design", "to": "architecture-decision", "type": "composes", "label": "records" },
+      { "from": "design", "to": "work-item", "type": "derives", "label": "decomposes into" },
+      { "from": "requirement", "to": "work-item", "type": "derives", "label": "implemented by" },
+      { "from": "pull-request", "to": "code-review", "type": "composes", "label": "has reviews" },
+      { "from": "requirement", "to": "test-case", "type": "references", "label": "covered by" },
+      { "from": "test-case", "to": "test-result", "type": "derives", "label": "executes as" },
+      { "from": "release", "to": "quality-gate", "type": "references", "label": "must satisfy" },
+      { "from": "service", "to": "runbook", "type": "references", "label": "operated by" },
+      { "from": "operational-signal", "to": "slo", "type": "references", "label": "evaluates" },
+      { "from": "slo", "to": "alert", "type": "derives", "label": "fires" },
+      { "from": "alert", "to": "incident", "type": "derives", "label": "opens" },
+      { "from": "incident", "to": "runbook", "type": "references", "label": "handled by" },
+      { "from": "incident", "to": "postmortem", "type": "derives", "label": "learns as" },
+      { "from": "postmortem", "to": "work-item", "type": "derives", "label": "creates prevention work" },
+      { "from": "operational-signal", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "repository-manager", "to": "connector", "type": "references", "label": "specializes" },
+      { "from": "docs-storage", "to": "connector", "type": "references", "label": "specializes" },
+      { "from": "issue-tracker", "to": "connector", "type": "references", "label": "specializes" },
+      { "from": "artifact-registry", "to": "connector", "type": "references", "label": "specializes" },
+      { "from": "test-management", "to": "connector", "type": "references", "label": "specializes" },
+      { "from": "workflow", "to": "quality-gate", "type": "composes", "label": "enforces" },
+      { "from": "action", "to": "candidate-change", "type": "derives", "label": "proposes" },
+      { "from": "quality-gate", "to": "validator", "type": "composes", "label": "evaluates with" },
+      { "from": "quality-gate", "to": "approval", "type": "composes", "label": "requires" },
+      { "from": "candidate-change", "to": "quality-gate", "type": "references", "label": "must pass" },
+      { "from": "approval", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "action", "to": "worker", "type": "references", "label": "runs on" },
+      { "from": "worker", "to": "action-run", "type": "derives", "label": "executes" },
+      { "from": "policy", "to": "connector", "type": "references", "label": "governs" },
+      { "from": "organization", "to": "org-unit", "type": "owns", "label": "structures" },
+      { "from": "org-unit", "to": "org-unit", "type": "composes", "label": "contains child", "visual": false },
+      { "from": "org-unit", "to": "team", "type": "composes", "label": "contains" },
+      { "from": "org-unit", "to": "person", "type": "member", "label": "includes" },
+      { "from": "org-unit", "to": "person", "type": "references", "label": "led by" },
+      { "from": "person", "to": "person-profile", "type": "composes", "label": "has profile" },
+      { "from": "person-profile", "to": "skill", "type": "references", "label": "demonstrates" },
+      { "from": "role", "to": "skill", "type": "references", "label": "requires" },
+      { "from": "agent", "to": "skill", "type": "references", "label": "has capability" },
+      { "from": "person", "to": "ownership", "type": "member", "label": "holds" },
+      { "from": "team", "to": "ownership", "type": "member", "label": "holds" },
+      { "from": "ownership", "to": "shadow-node", "type": "references", "label": "accountability for" },
+      { "from": "organization", "to": "portfolio", "type": "owns", "label": "funds" },
+      { "from": "portfolio", "to": "strategy", "type": "references", "label": "guided by" },
+      { "from": "portfolio", "to": "product", "type": "composes", "label": "contains" },
+      { "from": "portfolio", "to": "objective", "type": "composes", "label": "targets" },
+      { "from": "product", "to": "vision", "type": "references", "label": "guided by" },
+      { "from": "product", "to": "roadmap", "type": "composes", "label": "plans with" },
+      { "from": "product", "to": "project", "type": "composes", "label": "delivered through" },
+      { "from": "product", "to": "service", "type": "references", "label": "operates as" },
+      { "from": "roadmap", "to": "objective", "type": "composes", "label": "targets" },
+      { "from": "roadmap", "to": "milestone", "type": "composes", "label": "schedules" },
+      { "from": "milestone", "to": "project", "type": "references", "label": "tracks" },
+      { "from": "objective", "to": "project", "type": "references", "label": "measured through" },
+      { "from": "design", "to": "decomposition", "type": "derives", "label": "breaks down as" },
+      { "from": "decomposition", "to": "component", "type": "derives", "label": "defines" },
+      { "from": "decomposition", "to": "work-item", "type": "derives", "label": "materializes" },
+      { "from": "component", "to": "api-contract", "type": "composes", "label": "exposes" },
+      { "from": "design", "to": "reference-architecture", "type": "references", "label": "conforms to" },
+      { "from": "reference-architecture", "to": "design-guideline", "type": "composes", "label": "defines" },
+      { "from": "design-guideline", "to": "design", "type": "references", "label": "guides" },
+      { "from": "component", "to": "service", "type": "derives", "label": "runs as" },
+      { "from": "deployment", "to": "service", "type": "references", "label": "deploys" },
+      { "from": "service", "to": "slo", "type": "composes", "label": "governed by" },
+      { "from": "service", "to": "operational-signal", "type": "composes", "label": "emits telemetry" },
+      { "from": "pull-request", "to": "ci-check", "type": "composes", "label": "validated by" },
+      { "from": "commit", "to": "ci-check", "type": "derives", "label": "triggers" },
+      { "from": "ci-check", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "quality-gate", "to": "checklist", "type": "composes", "label": "evaluates" },
+      { "from": "template", "to": "text-content", "type": "composes", "label": "defined by" },
+      { "from": "markdown-document", "to": "template", "type": "references", "label": "based on prototype" },
+      { "from": "template", "to": "markdown-document", "type": "derives", "label": "instantiates" },
+      { "from": "template", "to": "template-rule", "type": "composes", "label": "defines" },
+      { "from": "template-rule", "to": "template-rule", "type": "references", "label": "ordered after", "visual": false },
+      { "from": "template-rule", "to": "markdown-section", "type": "references", "label": "matches headings" },
+      { "from": "lifecycle-graph", "to": "object-type", "type": "composes", "label": "registers" },
+      { "from": "lifecycle-graph", "to": "shadow-node", "type": "composes", "label": "indexes" },
+      { "from": "lifecycle-graph", "to": "link", "type": "composes", "label": "indexes" },
+      { "from": "lifecycle-graph", "to": "canonical-identity", "type": "composes", "label": "resolves" },
+      { "from": "lifecycle-graph", "to": "object-mapping", "type": "composes", "label": "normalizes with" },
+      { "from": "lifecycle-graph", "to": "lifecycle-phase", "type": "composes", "label": "organizes by" },
+      { "from": "connector", "to": "object-mapping", "type": "composes", "label": "maps through" },
+      { "from": "object-mapping", "to": "object-type", "type": "references", "label": "targets" },
+      { "from": "canonical-identity", "to": "shadow-node", "type": "references", "label": "identifies" },
+      { "from": "quality-gate", "to": "lifecycle-phase", "type": "references", "label": "controls exit from" },
+      { "from": "object-type", "to": "lifecycle-phase", "type": "references", "label": "classified in" },
+      { "from": "kit", "to": "object-type", "type": "references", "label": "extends through" },
+      { "from": "kit", "to": "kit-role", "type": "composes", "label": "introduces" },
+      { "from": "kit-role", "to": "role", "type": "references", "label": "specializes" },
+      { "from": "kit-role", "to": "skill", "type": "references", "label": "requires" },
+      { "from": "kit", "to": "intent", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "vision", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "discovery", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "strategy", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "definition", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "requirement", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "design", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "architecture-decision", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "decomposition", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "roadmap", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "api-contract", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "reference-architecture", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "design-guideline", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "template", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "checklist", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "runbook", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "postmortem", "type": "references", "label": "introduces type" },
+      { "from": "pull-request", "to": "comment", "type": "composes", "label": "has comments" },
+      { "from": "document", "to": "comment", "type": "composes", "label": "has comments" },
+      { "from": "comment", "to": "person", "type": "references", "label": "authored by" },
+      { "from": "repository-manager", "to": "comment", "type": "composes", "label": "mirrors" },
+      { "from": "docs-storage", "to": "comment", "type": "composes", "label": "mirrors" },
+      { "from": "project", "to": "risk", "type": "composes", "label": "tracks" },
+      { "from": "risk", "to": "person", "type": "member", "label": "owned by" },
+      { "from": "risk", "to": "work-item", "type": "references", "label": "mitigated by" },
+      { "from": "risk", "to": "evidence", "type": "derives", "label": "assessed as" },
+      { "from": "slo", "to": "error-budget", "type": "composes", "label": "defines" },
+      { "from": "operational-signal", "to": "error-budget", "type": "references", "label": "consumes" },
+      { "from": "release", "to": "error-budget", "type": "references", "label": "must respect" },
+      { "from": "event", "to": "notification", "type": "derives", "label": "routes" },
+      { "from": "comment", "to": "notification", "type": "derives", "label": "notifies" },
+      { "from": "approval", "to": "notification", "type": "derives", "label": "notifies" },
+      { "from": "alert", "to": "notification", "type": "derives", "label": "notifies" },
+      { "from": "notification", "to": "person", "type": "references", "label": "delivered to" },
+      { "from": "candidate-change", "to": "change-record", "type": "derives", "label": "applies as" },
+      { "from": "sync-snapshot", "to": "change-record", "type": "composes", "label": "captures" },
+      { "from": "change-record", "to": "provenance", "type": "references", "label": "explained by" },
+      { "from": "change-record", "to": "event", "type": "derives", "label": "emits" },
+      { "from": "lifecycle-graph", "to": "change-record", "type": "composes", "label": "records" },
+      { "from": "roadmap", "to": "roadmap-items-group", "type": "composes", "label": "organizes into" },
+      { "from": "roadmap-item", "to": "roadmap-items-group", "type": "references", "label": "maps to" },
+      { "from": "roadmap-item", "to": "objective", "type": "references", "label": "may represent" },
+      { "from": "roadmap-item", "to": "milestone", "type": "references", "label": "may represent" },
+      { "from": "roadmap-item", "to": "project", "type": "references", "label": "may represent" },
+      { "from": "roadmap-item", "to": "work-item", "type": "references", "label": "may represent" },
+      { "from": "kit", "to": "roadmap-items-group", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "roadmap-item", "type": "references", "label": "introduces type" },
+      { "from": "tenant", "to": "lifecycle-graph", "type": "owns", "label": "owns" },
+      { "from": "canonical-identity", "to": "object-type", "type": "references", "label": "resolves identity for" },
+      { "from": "link", "to": "shadow-node", "type": "references", "label": "source endpoint" },
+      { "from": "link", "to": "shadow-node", "type": "references", "label": "target endpoint" },
+      { "from": "build-artifact", "to": "provenance", "type": "references", "label": "explained by" },
+      { "from": "test-result", "to": "environment", "type": "references", "label": "executed in" },
+      { "from": "deployment", "to": "person", "type": "references", "label": "initiated by" },
+      { "from": "incident", "to": "person", "type": "references", "label": "commanded by" },
+      { "from": "action-run", "to": "candidate-change", "type": "references", "label": "produces" },
+      { "from": "tool-call", "to": "approval", "type": "references", "label": "authorized by" },
+      { "from": "person", "to": "message", "type": "member", "label": "authors" },
+      { "from": "agent", "to": "message", "type": "member", "label": "authors" },
+      { "from": "kit", "to": "custom-durable-object", "type": "references", "label": "introduces type" },
+      { "from": "custom-durable-object", "to": "object-type", "type": "references", "label": "instance of" },
+      { "from": "custom-durable-object", "to": "lifecycle-phase", "type": "references", "label": "classified in" },
+      { "from": "custom-durable-object", "to": "change-record", "type": "composes", "label": "has history" },
+      { "from": "action-run", "to": "action-run", "type": "references", "label": "retries", "visual": false },
+      { "from": "action-run", "to": "quality-gate", "type": "references", "label": "evaluated by" },
+      { "from": "kit", "to": "assessment-summary", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "security-finding", "type": "references", "label": "introduces type" },
+      { "from": "kit", "to": "vulnerability-fix-grade", "type": "references", "label": "introduces type" },
+      { "from": "connector", "to": "assessment-summary", "type": "derives", "label": "produces" },
+      { "from": "assessment-summary", "to": "project", "type": "references", "label": "scoped to" },
+      { "from": "assessment-summary", "to": "repository", "type": "references", "label": "assesses" },
+      { "from": "assessment-summary", "to": "pull-request", "type": "references", "label": "may assess" },
+      { "from": "assessment-summary", "to": "commit", "type": "references", "label": "scans revision" },
+      { "from": "assessment-summary", "to": "security-finding", "type": "composes", "label": "contains" },
+      { "from": "assessment-summary", "to": "evidence", "type": "derives", "label": "records" },
+      { "from": "security-finding", "to": "repository-file", "type": "references", "label": "located in" },
+      { "from": "security-finding", "to": "work-item", "type": "references", "label": "remediated by" },
+      { "from": "security-finding", "to": "vulnerability-fix-grade", "type": "composes", "label": "graded by" },
+      { "from": "security-finding", "to": "evidence", "type": "references", "label": "supported by" },
+      { "from": "vulnerability-fix-grade", "to": "pull-request", "type": "references", "label": "evaluates fix in" },
+      { "from": "vulnerability-fix-grade", "to": "commit", "type": "references", "label": "verifies fix at" },
+      { "from": "vulnerability-fix-grade", "to": "evidence", "type": "composes", "label": "records" },
+      { "from": "pull-request", "to": "build", "type": "derives", "label": "triggers" },
+      { "from": "build", "to": "ci-check", "type": "derives", "label": "produces" },
+      { "from": "roadmap-items-group", "to": "roadmap-item", "type": "composes", "label": "contains" },
+      { "from": "roadmap-items-group", "to": "roadmap-items-group", "type": "composes", "label": "contains sub-group", "visual": false },
+      { "from": "environment", "to": "service", "type": "references", "label": "hosts" },
+      { "from": "agent", "to": "workflow", "type": "references", "label": "runs" },
+      { "from": "milestone", "to": "work-item", "type": "references", "label": "tracks" },
+      { "from": "person", "to": "skill", "type": "references", "label": "has" }
+    ]
+  }
+  </script>
+
+  <script>
+    const model = JSON.parse(document.getElementById('domain-model').textContent);
+    const state = {
+      selected: null,
+      relationsVisible: true,
+      categoriesStacked: false,
+      query: ''
+    };
+
+    const byId = new Map(model.entities.map(entity => [entity.id, entity]));
+    const bucketById = new Map(model.buckets.map(bucket => [bucket.id, bucket]));
+    const bucketsElement = document.getElementById('buckets');
+    const relationshipsElement = document.getElementById('relationships');
+    const canvasElement = document.getElementById('canvas');
+    const workspaceElement = document.getElementById('workspace');
+    const searchElement = document.getElementById('search');
+    const layoutToggleElement = document.getElementById('layout-toggle');
+    const emptyStateElement = document.getElementById('empty-state');
+    let frame = 0;
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function entitySearchText(entity) {
+      const bucket = bucketById.get(entity.bucket);
+      return [
+        entity.name,
+        entity.kind,
+        entity.description,
+        bucket.name,
+        bucket.layer,
+        ...entity.properties.flatMap(property => [property.name, property.type]),
+        ...entity.methods,
+        ...entity.examples
+      ].join(' ').toLowerCase();
+    }
+
+    function propertyMarkup(property) {
+      return `<li><code>${escapeHtml(property.name)}</code>${property.required ? ' <span class="required">*</span>' : ''}: <span class="type">${escapeHtml(property.type)}</span></li>`;
+    }
+
+    function detailMarkup(label, values, listClass = '') {
+      const items = values.map(value => `<li>${escapeHtml(value)}</li>`).join('');
+      return `<details class="detail"><summary>${label}<span class="detail-count">${values.length}</span></summary><ul class="detail-list ${listClass}">${items}</ul></details>`;
+    }
+
+    function nodeMarkup(entity) {
+      const bucket = bucketById.get(entity.bucket);
+      const properties = entity.properties.map(propertyMarkup).join('');
+      const relations = model.relationships
+        .filter(relationship => relationship.from === entity.id || relationship.to === entity.id)
+        .map(relationship => {
+          const outgoing = relationship.from === entity.id;
+          const peer = byId.get(outgoing ? relationship.to : relationship.from);
+          return `${outgoing ? '→' : '←'} ${relationship.label} · ${peer.name}`;
+        });
+      const initials = entity.name.split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase();
+      return `
+        <article class="node" id="node-${entity.id}" data-entity-id="${entity.id}" data-search="${escapeHtml(entitySearchText(entity))}" style="--node-color:${bucket.color}">
+          <button class="node-toggle" type="button" aria-expanded="false">
+            <span class="node-glyph">${escapeHtml(initials)}</span>
+            <span><span class="node-name">${escapeHtml(entity.name)}</span><span class="node-kind">${escapeHtml(entity.kind)}</span></span>
+            <span class="chevron" aria-hidden="true"></span>
+          </button>
+          <div class="node-body">
+            <p class="description">${escapeHtml(entity.description)}</p>
+            <details class="detail"><summary>Properties<span class="detail-count">${entity.properties.length}</span></summary><ul class="detail-list">${properties}</ul></details>
+            ${detailMarkup('Methods', entity.methods)}
+            ${detailMarkup('Examples', entity.examples, 'example-list')}
+            ${detailMarkup('Relationships', relations, 'example-list')}
+          </div>
+        </article>`;
+    }
+
+    function renderModel() {
+      const extensionBucketIds = new Set(model.buckets.filter(bucket => bucket.layer === 'extension').map(bucket => bucket.id));
+      const extensionCount = model.entities.filter(entity => extensionBucketIds.has(entity.bucket)).length;
+      const coreCount = model.entities.length - extensionCount;
+      document.getElementById('model-title').textContent = model.meta.title;
+      document.getElementById('model-subtitle').textContent = model.meta.subtitle;
+      document.getElementById('stats').innerHTML = `
+        <span class="stat"><strong>${model.buckets.length}</strong> groups</span>
+        <span class="stat"><strong>${coreCount}</strong> core objects</span>
+        <span class="stat"><strong>${extensionCount}</strong> Kit-defined objects</span>
+        <span class="stat"><strong>${model.relationships.length}</strong> relationships</span>
+        <span class="stat">version <strong>${escapeHtml(model.meta.version)}</strong></span>`;
+
+      const columns = [];
+      const columnById = new Map();
+      model.buckets.forEach(bucket => {
+        const columnId = bucket.column || bucket.id;
+        if (!columnById.has(columnId)) {
+          const column = { id: columnId, buckets: [] };
+          columns.push(column);
+          columnById.set(columnId, column);
+        }
+        columnById.get(columnId).buckets.push(bucket);
+      });
+
+      bucketsElement.style.setProperty('--bucket-count', columns.length);
+      bucketsElement.innerHTML = columns.map(column => `
+        <div class="bucket-column" data-column-id="${escapeHtml(column.id)}">
+          ${column.buckets.map(bucket => {
+            const entityOrder = new Map(bucket.entity_order.map((entityId, index) => [entityId, index]));
+            const entities = model.entities
+              .filter(entity => entity.bucket === bucket.id)
+              .sort((left, right) => entityOrder.get(left.id) - entityOrder.get(right.id));
+            return `
+              <section class="bucket" data-bucket-id="${bucket.id}" data-layer="${escapeHtml(bucket.layer)}" style="--bucket-color:${bucket.color}">
+                <header class="bucket-header">
+                  <div class="bucket-heading" tabindex="0" aria-describedby="tooltip-${bucket.id}"><h2 class="bucket-title">${escapeHtml(bucket.name)}</h2><span class="bucket-tooltip" id="tooltip-${bucket.id}" role="tooltip"><strong class="bucket-tooltip-title">${escapeHtml(bucket.name)}</strong><span class="bucket-tooltip-description">${escapeHtml(bucket.description)}</span></span></div>
+                  <small class="bucket-meta"><span class="bucket-layer">${bucket.layer === 'extension' ? 'Kit' : 'Core'}</span><span class="bucket-meta-divider" aria-hidden="true">·</span><span class="bucket-count">${entities.length} element${entities.length === 1 ? '' : 's'}</span></small>
+                </header>
+                <div class="node-stack">${entities.map(nodeMarkup).join('')}</div>
+              </section>`;
+          }).join('')}
+        </div>`).join('');
+
+      bucketsElement.querySelectorAll('.node-toggle').forEach(button => {
+        const updateOverflowTooltip = () => {
+          const name = button.querySelector('.node-name');
+          if (name.scrollWidth > name.clientWidth) {
+            button.title = name.textContent;
+          } else {
+            button.removeAttribute('title');
+          }
+        };
+        button.addEventListener('mouseenter', updateOverflowTooltip);
+        button.addEventListener('focus', updateOverflowTooltip);
+        button.addEventListener('click', event => {
+          const node = event.currentTarget.closest('.node');
+          const opening = !node.classList.contains('open');
+          node.classList.toggle('open', opening);
+          button.setAttribute('aria-expanded', String(opening));
+          selectNode(node.dataset.entityId);
+          scheduleRelationships();
+        });
+      });
+
+      bucketsElement.querySelectorAll('details').forEach(detail => {
+        detail.addEventListener('toggle', scheduleRelationships);
+        detail.addEventListener('click', event => event.stopPropagation());
+      });
+    }
+
+    function markerDefinitions() {
+      const colors = {
+        composes: '#63a7ff',
+        owns: '#a685ff',
+        references: '#f4bb63',
+        member: '#72d997',
+        derives: '#48d9cf',
+        connects: '#ef88ba'
+      };
+      return `<defs>${Object.entries(colors).map(([type, color]) => `
+        <marker id="arrow-${type}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"></path>
+        </marker>`).join('')}</defs>`;
+    }
+
+    function connectionPoints(fromRect, toRect, canvasRect) {
+      const fromCenter = fromRect.left + fromRect.width / 2;
+      const toCenter = toRect.left + toRect.width / 2;
+      const leftToRight = fromCenter <= toCenter;
+      const sameColumn = Math.abs(fromCenter - toCenter) < 30;
+
+      if (sameColumn) {
+        const downward = fromRect.top <= toRect.top;
+        return {
+          x1: fromCenter - canvasRect.left,
+          y1: (downward ? fromRect.bottom : fromRect.top) - canvasRect.top,
+          x2: toCenter - canvasRect.left,
+          y2: (downward ? toRect.top : toRect.bottom) - canvasRect.top,
+          vertical: true
+        };
+      }
+
+      return {
+        x1: (leftToRight ? fromRect.right : fromRect.left) - canvasRect.left,
+        y1: fromRect.top + fromRect.height / 2 - canvasRect.top,
+        x2: (leftToRight ? toRect.left : toRect.right) - canvasRect.left,
+        y2: toRect.top + toRect.height / 2 - canvasRect.top,
+        vertical: false
+      };
+    }
+
+    function pathFor(points, index) {
+      if (points.vertical) {
+        const bend = Math.max(18, Math.abs(points.y2 - points.y1) * 0.46);
+        const direction = points.y2 >= points.y1 ? 1 : -1;
+        return `M ${points.x1} ${points.y1} C ${points.x1 + (index % 3 - 1) * 9} ${points.y1 + bend * direction}, ${points.x2 + (index % 3 - 1) * 9} ${points.y2 - bend * direction}, ${points.x2} ${points.y2}`;
+      }
+      const bend = Math.max(34, Math.abs(points.x2 - points.x1) * 0.42);
+      const direction = points.x2 >= points.x1 ? 1 : -1;
+      return `M ${points.x1} ${points.y1} C ${points.x1 + bend * direction} ${points.y1}, ${points.x2 - bend * direction} ${points.y2}, ${points.x2} ${points.y2}`;
+    }
+
+    function drawRelationships() {
+      cancelAnimationFrame(frame);
+      const canvasRect = canvasElement.getBoundingClientRect();
+      const selected = state.selected;
+      let markup = markerDefinitions();
+
+      model.relationships.forEach((relationship, index) => {
+        if (relationship.visual === false) return;
+        const from = document.getElementById(`node-${relationship.from}`);
+        const to = document.getElementById(`node-${relationship.to}`);
+        if (!from || !to || from.classList.contains('filtered') || to.classList.contains('filtered')) return;
+        const related = selected && (relationship.from === selected || relationship.to === selected);
+        const unrelated = selected && !related;
+        const visibilityClass = state.relationsVisible ? '' : ' hidden';
+        const emphasisClass = related ? ' related' : unrelated ? ' unrelated' : '';
+        const points = connectionPoints(from.getBoundingClientRect(), to.getBoundingClientRect(), canvasRect);
+        markup += `<path class="relation-path ${relationship.type}${visibilityClass}${emphasisClass}" d="${pathFor(points, index)}" marker-end="url(#arrow-${relationship.type})"></path>`;
+      });
+
+      relationshipsElement.setAttribute('viewBox', `0 0 ${canvasElement.scrollWidth} ${canvasElement.scrollHeight}`);
+      relationshipsElement.innerHTML = markup;
+    }
+
+    function scheduleRelationships() {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(drawRelationships);
+    }
+
+    function clearSelection() {
+      state.selected = null;
+      document.querySelectorAll('.node').forEach(node => {
+        node.classList.remove('selected', 'unrelated');
+      });
+      scheduleRelationships();
+    }
+
+    function selectNode(entityId) {
+      if (state.selected === entityId) {
+        clearSelection();
+        return;
+      }
+      state.selected = entityId;
+      const connectedIds = new Set();
+      if (state.selected) {
+        connectedIds.add(state.selected);
+        model.relationships.forEach(relationship => {
+          if (relationship.from === state.selected) connectedIds.add(relationship.to);
+          if (relationship.to === state.selected) connectedIds.add(relationship.from);
+        });
+      }
+
+      document.querySelectorAll('.node').forEach(node => {
+        node.classList.toggle('selected', node.dataset.entityId === state.selected);
+        node.classList.toggle('unrelated', Boolean(state.selected) && !connectedIds.has(node.dataset.entityId));
+      });
+
+      scheduleRelationships();
+    }
+
+    function setAllExpanded(expanded) {
+      document.querySelectorAll('.node').forEach(node => {
+        node.classList.toggle('open', expanded);
+        node.querySelector('.node-toggle').setAttribute('aria-expanded', String(expanded));
+        if (!expanded) node.querySelectorAll('details').forEach(detail => { detail.open = false; });
+      });
+      scheduleRelationships();
+    }
+
+    function applySearch() {
+      state.query = searchElement.value.trim().toLowerCase();
+      const matchedIds = new Set();
+      const visibleIds = new Set();
+
+      document.querySelectorAll('.node').forEach(node => {
+        const matches = !state.query || node.dataset.search.includes(state.query);
+        if (matches && state.query) matchedIds.add(node.dataset.entityId);
+      });
+
+      if (!state.query) {
+        model.entities.forEach(entity => visibleIds.add(entity.id));
+      } else {
+        matchedIds.forEach(entityId => visibleIds.add(entityId));
+        model.relationships.forEach(relationship => {
+          if (matchedIds.has(relationship.from)) visibleIds.add(relationship.to);
+          if (matchedIds.has(relationship.to)) visibleIds.add(relationship.from);
+        });
+      }
+
+      let visibleCount = 0;
+      document.querySelectorAll('.node').forEach(node => {
+        const entityId = node.dataset.entityId;
+        const visible = visibleIds.has(entityId);
+        node.classList.toggle('filtered', !visible);
+        node.classList.toggle('search-match', Boolean(state.query) && matchedIds.has(entityId));
+        node.classList.toggle('search-connected', Boolean(state.query) && visible && !matchedIds.has(entityId));
+        if (visible) visibleCount += 1;
+      });
+      document.querySelectorAll('.bucket').forEach(bucket => {
+        const visible = bucket.querySelectorAll('.node:not(.filtered)').length;
+        bucket.style.display = visible ? '' : 'none';
+        bucket.querySelector('.bucket-count').textContent = `${visible} element${visible === 1 ? '' : 's'}`;
+      });
+      document.querySelectorAll('.bucket-column').forEach(column => {
+        column.style.display = [...column.querySelectorAll('.bucket')].some(bucket => bucket.style.display !== 'none') ? '' : 'none';
+      });
+      emptyStateElement.classList.toggle('visible', visibleCount === 0);
+      scheduleRelationships();
+    }
+
+    document.getElementById('expand-all').addEventListener('click', () => setAllExpanded(true));
+    document.getElementById('collapse-all').addEventListener('click', () => setAllExpanded(false));
+    layoutToggleElement.addEventListener('click', () => {
+      state.categoriesStacked = !state.categoriesStacked;
+      bucketsElement.classList.toggle('stacked', state.categoriesStacked);
+      layoutToggleElement.classList.toggle('active', state.categoriesStacked);
+      layoutToggleElement.setAttribute('aria-pressed', String(state.categoriesStacked));
+      workspaceElement.scrollTo({ left: 0, behavior: 'smooth' });
+      scheduleRelationships();
+    });
+    document.getElementById('relations-toggle').addEventListener('click', event => {
+      state.relationsVisible = !state.relationsVisible;
+      event.currentTarget.classList.toggle('active', state.relationsVisible);
+      scheduleRelationships();
+    });
+    document.getElementById('reset').addEventListener('click', () => {
+      searchElement.value = '';
+      state.query = '';
+      clearSelection();
+      state.relationsVisible = true;
+      state.categoriesStacked = false;
+      document.getElementById('relations-toggle').classList.add('active');
+      bucketsElement.classList.remove('stacked');
+      layoutToggleElement.classList.remove('active');
+      layoutToggleElement.setAttribute('aria-pressed', 'false');
+      setAllExpanded(false);
+      applySearch();
+      workspaceElement.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+    });
+    searchElement.addEventListener('input', applySearch);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && state.selected) clearSelection();
+    });
+    window.addEventListener('resize', scheduleRelationships);
+    workspaceElement.addEventListener('scroll', scheduleRelationships, { passive: true });
+
+    renderModel();
+    new ResizeObserver(scheduleRelationships).observe(bucketsElement);
+    scheduleRelationships();
+  </script>
+</body>
+</html>
