@@ -174,7 +174,10 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_file_storage"
-    config: {}            # local-fs backend, defaults (storage under CWD)
+    config:
+      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # own for any shared environment).
+      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
 
   # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
   oagw:
