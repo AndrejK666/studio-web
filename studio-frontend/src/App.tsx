@@ -202,7 +202,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} onChanged={refresh} />
         )}
         {view === "members" && <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} />}
-        {view === "profile" && <ProfileView me={me} home={home} />}
+        {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
         {studio && <StudioLauncher ws={studio} onClose={() => setStudio(null)} />}
@@ -459,6 +459,8 @@ function WorkspaceDashboard({
         )}
       </div>
 
+      <AskAI token={token} ws={ws} />
+
       <div className="card">
         <h2>Coming soon</h2>
         <ul className="rows">
@@ -486,6 +488,78 @@ function WorkspaceDashboard({
         </ul>
       </div>
     </>
+  );
+}
+
+/* ── Ask AI (mini-chat gear: SSE streaming through oagw -> provider) ── */
+
+interface ChatLine {
+  role: "user" | "assistant";
+  text: string;
+}
+
+function AskAI({ token, ws }: { token: string; ws: Workspace }) {
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    const content = input.trim();
+    if (!content) return;
+    setBusy(true);
+    setError(null);
+    setInput("");
+    setLines((l) => [...l, { role: "user", text: content }, { role: "assistant", text: "…" }]);
+    try {
+      let id = chatId;
+      if (!id) {
+        const chat = await api.createChat(token, `Workspace: ${ws.name}`);
+        id = chat.id;
+        setChatId(id);
+      }
+      await api.streamMessage(token, id, content, (full) =>
+        setLines((l) => [...l.slice(0, -1), { role: "assistant", text: full }]),
+      );
+    } catch (err) {
+      setLines((l) => l.slice(0, -1));
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Ask AI</h2>
+      <p className="hint">
+        Live chat via the mini-chat gear (SSE through oagw). Needs a real provider key in
+        `static-credstore-plugin` (`openai-key`) — otherwise the stream fails at the provider.
+      </p>
+      {lines.length > 0 && (
+        <div style={{ maxHeight: 320, overflowY: "auto", margin: "0.5rem 0" }}>
+          {lines.map((l, i) => (
+            <p key={i} style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+              <strong>{l.role === "user" ? "You" : "AI"}:</strong> {l.text}
+            </p>
+          ))}
+        </div>
+      )}
+      <form className="inline" onSubmit={send}>
+        <input
+          placeholder={`Ask about “${ws.name}”…`}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={busy}
+        />
+        <button className="primary" disabled={busy || !input.trim()}>
+          {busy ? "Streaming…" : "Send"}
+        </button>
+      </form>
+      {error && <div className="error">{error}</div>}
+    </div>
   );
 }
 
@@ -875,7 +949,38 @@ function MembersView({
 
 /* ── Profile ── */
 
-function ProfileView({ me, home }: { me: Me; home: Tenant | null }) {
+function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: string }) {
+  const [theme, setTheme] = useState("light");
+  const [language, setLanguage] = useState("en");
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .userSettings(token)
+      .then((p) => {
+        if (p.theme) {
+          setTheme(p.theme);
+          document.documentElement.dataset.theme = p.theme;
+        }
+        if (p.language) setLanguage(p.language);
+      })
+      .catch((e) => setError(errText(e)));
+  }, [token]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    try {
+      await api.saveUserSettings(token, { theme, language });
+      document.documentElement.dataset.theme = theme;
+      setSaved(true);
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
   return (
     <>
       <h1>Profile</h1>
@@ -898,6 +1003,24 @@ function ProfileView({ me, home }: { me: Me; home: Tenant | null }) {
         <p className="hint" style={{ marginTop: 12 }}>
           API: <a href="/cf/docs">/cf/docs</a>
         </p>
+      </div>
+
+      <div className="card">
+        <h2>Preferences</h2>
+        <p className="hint">Stored server-side per user (simple-user-settings gear).</p>
+        <form className="inline" onSubmit={save}>
+          <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="en">en</option>
+            <option value="ru">ru</option>
+          </select>
+          <button className="primary">Save</button>
+          {saved && <span className="hint">saved ✓</span>}
+        </form>
+        {error && <div className="error">{error}</div>}
       </div>
     </>
   );

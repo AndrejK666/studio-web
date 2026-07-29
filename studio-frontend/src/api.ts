@@ -46,6 +46,12 @@ export interface WorkspaceSettings {
   approved_worker_categories?: string[];
 }
 
+// simple-user-settings gear stores exactly these two per-user fields.
+export interface UserPrefs {
+  theme?: string;
+  language?: string;
+}
+
 export interface Group {
   id: string;
   type: string;
@@ -165,4 +171,94 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(value), // transparent payload; GTS-validated server-side
     }),
+
+  /* ── Per-user settings (simple-user-settings gear: fixed theme/language) ── */
+
+  userSettings: async (token: string): Promise<UserPrefs> => {
+    try {
+      const s = await request<{ theme?: string | null; language?: string | null }>(
+        "/simple-user-settings/v1/settings",
+        token,
+      );
+      return { theme: s.theme ?? undefined, language: s.language ?? undefined };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return {};
+      throw e;
+    }
+  },
+
+  saveUserSettings: (token: string, prefs: Required<UserPrefs>) =>
+    request<unknown>("/simple-user-settings/v1/settings", token, {
+      method: "PATCH",
+      body: JSON.stringify(prefs),
+    }).catch(async (e) => {
+      // First write for this user needs POST (create), PATCH 404s.
+      if (e instanceof ApiError && e.status === 404) {
+        return request<unknown>("/simple-user-settings/v1/settings", token, {
+          method: "POST",
+          body: JSON.stringify(prefs),
+        });
+      }
+      throw e;
+    }),
+
+  /* ── Workspace AI chat (mini-chat gear) ── */
+
+  createChat: (token: string, title: string) =>
+    request<{ id: string }>("/mini-chat/v1/chats", token, {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+
+  /**
+   * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.
+   * Calls onDelta with accumulated text; resolves when the stream ends.
+   */
+  streamMessage: async (
+    token: string,
+    chatId: string,
+    content: string,
+    onDelta: (full: string) => void,
+  ): Promise<void> => {
+    const res = await fetch(apiUrl(`/mini-chat/v1/chats/${chatId}/messages:stream`), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok || !res.body) {
+      throw new ApiError(res.status, await res.json().catch(() => undefined));
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let text = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Parse SSE frames: "event: X\ndata: {...}\n\n"
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = /^event:\s*(.+)$/m.exec(frame)?.[1]?.trim();
+        const data = /^data:\s*(.+)$/m.exec(frame)?.[1];
+        if (event === "delta" && data) {
+          try {
+            const d = JSON.parse(data) as { text?: string; content?: string; delta?: string };
+            text += d.text ?? d.content ?? d.delta ?? "";
+            onDelta(text);
+          } catch {
+            /* ignore malformed frame */
+          }
+        } else if (event === "error" && data) {
+          throw new ApiError(502, JSON.parse(data));
+        }
+      }
+    }
+  },
 };

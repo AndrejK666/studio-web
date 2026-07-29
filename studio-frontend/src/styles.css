@@ -159,3 +159,27 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   .sidebar nav { flex-direction: row; }
   .sidebar .whoami { border: none; padding: 0; }
 }
+
+/* ── Dark theme (server-side preference via simple-user-settings) ── */
+:root[data-theme="dark"] {
+  --bg: #0f1420;
+  --surface: #1a2233;
+  --border: #2a3550;
+  --text: #e5eaf5;
+  --muted: #8b98b5;
+  --accent: #818cf8;
+  --accent-hover: #6d79f2;
+  --accent-soft: #262f52;
+  --danger-soft: #3a1f26;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+:root[data-theme="dark"] body {
+  background: radial-gradient(1000px 400px at 80% -10%, #1e2a4d 0%, transparent 60%), var(--bg);
+}
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select {
+  background: #131a2a; color: var(--text);
+}
+:root[data-theme="dark"] .sidebar nav button:hover { background: #222c44; }
+:root[data-theme="dark"] .hint code { background: #222c44; }
+:root[data-theme="dark"] button:hover:not(:disabled) { background: #222c44; }

@@ -41,3 +41,13 @@ static_authz_plugin = { package = "cf-gears-static-authz-plugin", path = "../../
 # account-management ships its own Tenant Resolver plugin (src/tr_plugin) in-crate.
 account_management = { package = "cf-gears-account-management", path = "../../gears-rust/gears/system/account-management/account-management" }
 static_idp_plugin = { package = "cf-gears-static-idp-plugin", path = "../../gears-rust/gears/system/account-management/plugins/static-idp-plugin" }
+
+# ── Feature gears: AI chat, per-user settings, file storage ──
+# mini-chat hard-depends on oagw (LLM egress); oagw depends on credstore.
+mini_chat = { package = "cf-gears-mini-chat", path = "../../gears-rust/gears/mini-chat/mini-chat" }
+static_model_policy_plugin = { package = "cf-gears-static-mini-chat-model-policy-plugin", path = "../../gears-rust/gears/mini-chat/plugins/static-model-policy-plugin" }
+api_egress = { package = "cf-gears-oagw", path = "../../gears-rust/gears/system/oagw/oagw" }
+credstore = { package = "cf-gears-credstore", path = "../../gears-rust/gears/credstore/credstore" }
+static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", path = "../../gears-rust/gears/credstore/plugins/static-credstore-plugin" }
+simple_user_settings = { package = "cf-gears-simple-user-settings", path = "../../gears-rust/gears/simple-user-settings/simple-user-settings" }
+file_storage = { package = "cf-gears-file-storage", path = "../../gears-rust/gears/file-storage/file-storage" }

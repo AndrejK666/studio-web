@@ -76,6 +76,10 @@ gears:
             subject_tenant_id: "00000000-0000-0000-0000-000000000001"
             token_scopes: ["*"]
             subject_type: "gts.cf.core.security.subject_user.v1~"
+      # S2S: mini-chat exchanges these for a SecurityContext to call other gears
+      s2s_credentials:
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-dev-secret"
 
   # ── AuthZ: permissive static PDP for the demo (Studio roles later = own PDP plugin) ──
   authz-resolver:
@@ -168,3 +172,125 @@ gears:
     config:
       vendor: "cf"       # matches AM idp.vendor default
       priority: 100
+
+  # ── Feature gears: per-user settings, files, AI chat ──
+
+  simple-user-settings:
+    database:
+      server: "sqlite_main"
+      file: "settings.db"
+    config:
+      max_field_length: 200
+
+  file-storage:
+    database:
+      server: "sqlite_main"
+      file: "file_storage.db"
+    config: {}            # local-fs backend, defaults (storage under CWD)
+
+  # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  oagw:
+    config:
+      proxy_timeout_secs: 120
+
+  credstore:
+    config:
+      vendor: "constructorfabric"
+
+  static-credstore-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      secrets:
+        # Shared secret (no tenant_id). Put your real OpenAI key here for the
+        # Ask AI feature; without it chats are created but streaming replies
+        # fail at the provider with 401.
+        - key: "openai-key"
+          value: "sk-REPLACE_ME"
+
+  mini-chat:
+    database:
+      server: "sqlite_main"
+      file: "mini_chat.db"
+    config:
+      outbox:
+        num_partitions: 2   # SQLite is single-writer; default 4 causes contention
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      providers:
+        openai:
+          kind: openai_responses
+          storage_kind: openai
+          host: "api.openai.com"
+          auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+          auth_config:
+            header: "Authorization"
+            prefix: "Bearer "
+            secret_ref: "openai-key"
+
+  static-mini-chat-model-policy-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      model_catalog:
+        - id: "gpt-5.2"
+          provider_model_id: "gpt-5.2"
+          display_name: "GPT-5.2"
+          tier: Standard
+          enabled: true
+          system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
+          thread_summary_prompt: ""
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 3000000
+          multimodal_capabilities: ["VISION_INPUT"]
+          context_window: 128000
+          max_output_tokens: 8192
+          max_input_tokens: 120000
+          description: "Default Studio assistant model"
+          version: "2025-01"
+          icon: ""
+          provider_display_name: "OpenAI"
+          multiplier_display: "1x"
+          provider_id: "openai"
+          max_num_results: 10
+          max_tool_calls: 2
+          estimation_budgets:
+            bytes_per_token_conservative: 4
+            fixed_overhead_tokens: 500
+            safety_margin_pct: 10
+            image_token_budget: 1000
+            tool_surcharge_tokens: 200
+            web_search_surcharge_tokens: 500
+            code_interpreter_surcharge_tokens: 1000
+            minimal_generation_floor: 100
+          preference:
+            is_default: true
+            sort_order: 1
+          general_config:
+            type: "chat"
+            available_from: "2025-01-01T00:00:00Z"
+            max_file_size_mb: 50
+            api_params:
+              temperature: 0.7
+              top_p: 1.0
+              frequency_penalty: 0.0
+              presence_penalty: 0.0
+              stop: []
+            features:
+              streaming: true
+              structured_output: true
+            tool_support:
+              web_search: false
+              file_search: false
+              image_generation: false
+              code_interpreter: false
+              mcp: false
+            supported_endpoints:
+              chat_completions: true
+              responses: true
+              embeddings: false
+              image_generation: false
+              audio_speech_generation: false
+              audio_transcription: false
+              audio_translation: false

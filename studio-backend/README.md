@@ -4,14 +4,20 @@ The Constructor Studio backend service, assembled from [CF/Gears](https://github
 
 **What it is.** A single HTTP API service — the CF/Gears analogue of an ASP.NET Core WebAPI host. It contains almost no code of its own (~150 lines): gears are linked in as library crates and discovered at link time (`src/registered_gears.rs`); `main.rs` only loads layered configuration and hands control to the toolkit bootstrap. All functionality comes from the gears. The frontend consumes it via REST + OpenAPI (`/cf/docs`, ready for TS client codegen) and SSE for streaming.
 
-## Assembly (13 gears, fixed set — no feature flags)
+## Assembly (20 gears, fixed set — no feature flags)
 
 | Layer | Gears |
 |---|---|
 | Entry | api-gateway (port 8090, prefix `/cf`, per-request auth, OpenAPI UI at `/cf/docs`) |
-| Auth (dev stubs) | authn-resolver + **static-authn** (single bearer token), authz-resolver + **static-authz** (permissive PDP) |
+| Auth (dev stubs) | authn-resolver + **static-authn** (bearer tokens + mini-chat S2S), authz-resolver + **static-authz** (permissive PDP) |
 | Platform | grpc-hub, gear-orchestrator, nodes-registry, types-registry (GTS), tenant-resolver |
 | Domain | **account-management** (tenants, users, conversions, metadata) + its co-located TR plugin + **static-idp** (echo IdP), resource-group (group hierarchies, memberships) |
+| Features | **mini-chat** (workspace AI chat, SSE) + static model-policy plugin, **oagw** (LLM egress) + **credstore** + static secrets plugin, **simple-user-settings** (per-user theme/language), **file-storage** |
+
+Ask AI needs a real provider key: put your OpenAI API key into
+`static-credstore-plugin.config.secrets[key=openai-key]` (both profiles ship
+`sk-REPLACE_ME`). Without it, chats are created but streamed replies fail at the
+provider with 401.
 
 Production swaps are config + two imports: static-authn → OIDC plugin, static-authz → a Studio PDP plugin (workspace-level roles), static-idp → a real IdP plugin, SQLite → Postgres.
 

@@ -26,3 +26,13 @@ use static_authz_plugin as _;
 // AM also brings its co-located Tenant Resolver plugin (reads tenant_closure).
 use account_management as _;
 use static_idp_plugin as _;
+
+// Feature gears: workspace AI chat (mini-chat + LLM egress chain), per-user
+// settings, file storage.
+use api_egress as _;
+use credstore as _;
+use file_storage as _;
+use mini_chat as _;
+use simple_user_settings as _;
+use static_credstore_plugin as _;
+use static_model_policy_plugin as _;
