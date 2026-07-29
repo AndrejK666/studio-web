@@ -89,13 +89,24 @@ function Login({ onLogin }: { onLogin: (token: string, me: Me) => void }) {
 
 /* ── App shell ── */
 
-type View = "workspaces" | "projects" | "organizations" | "members" | "profile";
+type View =
+  | "workspaces"
+  | "projects"
+  | "chats"
+  | "organizations"
+  | "members"
+  | "files"
+  | "system"
+  | "profile";
 
 const NAV: { id: View; icon: string; label: string }[] = [
   { id: "workspaces", icon: "▦", label: "Workspaces" },
   { id: "projects", icon: "◳", label: "Projects" },
+  { id: "chats", icon: "💬", label: "Chats" },
   { id: "organizations", icon: "🏢", label: "Organizations" },
   { id: "members", icon: "👥", label: "Members" },
+  { id: "files", icon: "📄", label: "Files" },
+  { id: "system", icon: "⚙", label: "System" },
   { id: "profile", icon: "●", label: "Profile" },
 ];
 
@@ -202,6 +213,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} onChanged={refresh} />
         )}
         {view === "members" && <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} />}
+        {view === "chats" && <ChatsView token={token} />}
+        {view === "files" && <FilesView token={token} />}
+        {view === "system" && <SystemView token={token} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
@@ -487,6 +501,238 @@ function WorkspaceDashboard({
           </li>
         </ul>
       </div>
+    </>
+  );
+}
+
+/* ── Chats (mini-chat: threads, history, models) ── */
+
+function ChatsView({ token }: { token: string }) {
+  const [chats, setChats] = useState<import("./api").Chat[]>([]);
+  const [models, setModels] = useState<import("./api").Model[]>([]);
+  const [open, setOpen] = useState<import("./api").Chat | null>(null);
+  const [history, setHistory] = useState<import("./api").ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [live, setLive] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [c, m] = await Promise.all([api.chats(token), api.models(token)]);
+      setChats(c.items ?? []);
+      setModels(m.items ?? []);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function openChat(c: import("./api").Chat) {
+    setOpen(c);
+    setHistory([]);
+    setLive(null);
+    try {
+      const page = await api.chatMessages(token, c.id);
+      setHistory(page.items ?? []);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  async function send(e: FormEvent) {
+    e.preventDefault();
+    if (!open || !input.trim()) return;
+    const content = input.trim();
+    setInput("");
+    setBusy(true);
+    setHistory((h) => [
+      ...h,
+      { id: crypto.randomUUID(), role: "user", content, created_at: new Date().toISOString() },
+    ]);
+    setLive("…");
+    try {
+      await api.streamMessage(token, open.id, content, setLive);
+      const page = await api.chatMessages(token, open.id);
+      setHistory(page.items ?? []);
+      setLive(null);
+      await load();
+    } catch (err) {
+      setLive(null);
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(c: import("./api").Chat) {
+    try {
+      await api.deleteChat(token, c.id);
+      if (open?.id === c.id) setOpen(null);
+      await load();
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  return (
+    <>
+      <h1>Chats</h1>
+      <p className="subtitle">
+        mini-chat gear · models: {models.map((m) => m.display_name).join(", ") || "…"}
+      </p>
+      {error && <div className="error">{error}</div>}
+
+      <div className="card">
+        {chats.length === 0 ? (
+          <p className="empty">No chats yet — start one from a workspace dashboard (Ask AI).</p>
+        ) : (
+          <ul className="rows">
+            {chats.map((c) => (
+              <li key={c.id}>
+                <div className="grow" style={{ cursor: "pointer" }} onClick={() => openChat(c)}>
+                  <div className="name">{c.title ?? c.id.slice(0, 8)}</div>
+                  <div className="sub">
+                    {c.model} · {c.message_count} messages
+                  </div>
+                </div>
+                <button onClick={() => openChat(c)}>open</button>
+                <button className="ghost" onClick={() => remove(c)}>
+                  delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {open && (
+        <div className="card">
+          <div className="card-head">
+            <h2>{open.title ?? open.id.slice(0, 8)}</h2>
+            <button className="ghost" onClick={() => setOpen(null)}>
+              close
+            </button>
+          </div>
+          <div style={{ maxHeight: 380, overflowY: "auto" }}>
+            {history.map((m) => (
+              <p key={m.id} style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+                <strong>{m.role === "user" ? "You" : "AI"}:</strong> {m.content}
+              </p>
+            ))}
+            {live !== null && (
+              <p style={{ margin: "6px 0", whiteSpace: "pre-wrap" }}>
+                <strong>AI:</strong> {live}
+              </p>
+            )}
+          </div>
+          <form className="inline" onSubmit={send}>
+            <input value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} />
+            <button className="primary" disabled={busy || !input.trim()}>
+              {busy ? "Streaming…" : "Send"}
+            </button>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── Files (file-storage: read-only until an upload sidecar is deployed) ── */
+
+function FilesView({ token }: { token: string }) {
+  const [files, setFiles] = useState<import("./api").StoredFile[] | null>(null);
+  const [storages, setStorages] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([api.files(token), api.storages(token)])
+      .then(([f, s]) => {
+        setFiles(f.items ?? []);
+        setStorages(s);
+      })
+      .catch((e) => setError(errText(e)));
+  }, [token]);
+
+  return (
+    <>
+      <h1>Files</h1>
+      <p className="subtitle">
+        file-storage gear. Uploads go through signed URLs served by a separate sidecar, which
+        this dev assembly doesn't run yet — the view is read-only for now.
+      </p>
+      {error && <div className="error">{error}</div>}
+      <div className="card">
+        <h2>Files</h2>
+        {!files || files.length === 0 ? (
+          <p className="empty">No files.</p>
+        ) : (
+          <ul className="rows">
+            {files.map((f) => (
+              <li key={f.id}>
+                <div className="grow">
+                  <div className="name">{f.name ?? f.file_name ?? f.id}</div>
+                  <div className="sub">{f.id}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="card">
+        <h2>Storages</h2>
+        <pre style={{ overflow: "auto", fontSize: 12 }}>{JSON.stringify(storages, null, 2)}</pre>
+      </div>
+    </>
+  );
+}
+
+/* ── System (observability across platform gears) ── */
+
+function SystemView({ token }: { token: string }) {
+  const [gears, setGears] = useState<unknown>(null);
+  const [upstreams, setUpstreams] = useState<unknown>(null);
+  const [entities, setEntities] = useState<unknown>(null);
+
+  useEffect(() => {
+    (async () => {
+      const grab = async (p: Promise<unknown>) => p.catch((e) => ({ error: errText(e) }));
+      setGears(await grab(api.gears(token)));
+      setUpstreams(await grab(api.oagwUpstreams(token)));
+      setEntities(await grab(api.gtsEntities(token)));
+    })();
+  }, [token]);
+
+  const count = (v: unknown): string => {
+    if (Array.isArray(v)) return String(v.length);
+    if (v && typeof v === "object" && "items" in v && Array.isArray((v as { items: unknown[] }).items))
+      return String((v as { items: unknown[] }).items.length);
+    return "—";
+  };
+
+  const cards: { title: string; sub: string; data: unknown }[] = [
+    { title: `Gears (${count(gears)})`, sub: "gear-orchestrator/v1/gears", data: gears },
+    { title: `OAGW upstreams (${count(upstreams)})`, sub: "oagw/v1/upstreams — the openai LLM egress lives here", data: upstreams },
+    { title: `GTS entities (${count(entities)})`, sub: "types-registry/v1/entities — tenant types, schemas, permissions, plugins", data: entities },
+  ];
+
+  return (
+    <>
+      <h1>System</h1>
+      <p className="subtitle">Live observability over the platform gears of this assembly.</p>
+      {cards.map((c) => (
+        <div className="card" key={c.title}>
+          <h2>{c.title}</h2>
+          <p className="hint">{c.sub}</p>
+          <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
+            {JSON.stringify(c.data, null, 2)}
+          </pre>
+        </div>
+      ))}
     </>
   );
 }
@@ -793,6 +1039,41 @@ function OrganizationsView({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [inbound, setInbound] = useState<import("./api").Conversion[]>([]);
+
+  const loadInbound = useCallback(async () => {
+    try {
+      const page = await api.inboundConversions(token, homeId);
+      setInbound((page.items ?? []).filter((c) => c.status === "pending"));
+    } catch {
+      /* inbound discovery is best-effort */
+    }
+  }, [token, homeId]);
+
+  useEffect(() => {
+    void loadInbound();
+  }, [loadInbound]);
+
+  async function requestMode(org: Tenant) {
+    setError(null);
+    try {
+      await api.requestConversion(token, org.id, org.self_managed ? "managed" : "self_managed");
+      await loadInbound();
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  async function decide(c: import("./api").Conversion, status: "approved" | "rejected") {
+    setError(null);
+    try {
+      await api.decideConversion(token, homeId, c.request_id ?? c.id ?? "", status);
+      await loadInbound();
+      onChanged(); // self_managed flag may have flipped
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -830,6 +1111,13 @@ function OrganizationsView({
                 </div>
                 <span className="badge">{shortTypeName(o.tenant_type)}</span>
                 {o.self_managed && <span className="badge selfmanaged">self-managed</span>}
+                <button
+                  className="ghost"
+                  title="Dual-consent mode conversion: creates a pending request the org side must approve"
+                  onClick={() => void requestMode(o)}
+                >
+                  {o.self_managed ? "→ managed" : "→ self-managed"}
+                </button>
               </li>
             ))}
           </ul>
@@ -842,6 +1130,28 @@ function OrganizationsView({
         </form>
         {error && <div className="error">{error}</div>}
       </div>
+
+      {inbound.length > 0 && (
+        <div className="card">
+          <h2>Pending mode conversions (need your consent)</h2>
+          <ul className="rows">
+            {inbound.map((c) => (
+              <li key={c.request_id ?? c.id}>
+                <div className="grow">
+                  <div className="name">
+                    {c.child_tenant_name ?? c.tenant_id} → {c.target_mode}
+                  </div>
+                  <div className="sub">expires {c.expires_at ?? "—"}</div>
+                </div>
+                <button className="primary" onClick={() => decide(c, "approved")}>
+                  Approve
+                </button>
+                <button onClick={() => decide(c, "rejected")}>Reject</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </>
   );
 }

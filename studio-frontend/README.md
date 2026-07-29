@@ -11,6 +11,18 @@ npm run build    # type-check + production bundle in dist/
 
 Start the backend first (`../studio-backend`, `cargo run -- --config config/dev.yaml run`), open http://localhost:5173, press **Connect** (dev token is pre-filled).
 
+## Gear coverage
+
+| Gear | Portal surface |
+|---|---|
+| account-management | login `/me` · org/workspace CRUD + type barrier · users invite/list · workspace settings (tenant metadata) · **dual-consent mode conversions** (request per org + pending-approvals inbox) |
+| resource-group | Projects (RG groups + metadata binding) · project members (memberships) |
+| mini-chat (+ oagw, credstore, model-policy) | Ask AI on the dashboard · **Chats view**: thread list, history, streamed replies, delete, model catalog |
+| simple-user-settings | Profile → Preferences (server-side theme/language; dark theme) |
+| file-storage | **Files view**: files + storages (read-only until an upload sidecar is deployed) |
+| gear-orchestrator, oagw, types-registry | **System view**: live gears list, OAGW upstreams (the LLM egress), GTS entities |
+| api-gateway, authn/authz, tenant-resolver, grpc-hub, nodes-registry, credstore | infrastructure — exercised by every call rather than shown as screens |
+
 The API client (`src/api.ts`) is hand-written for now; the plan is to generate it from the backend's live OpenAPI (`/cf/docs`) once the surface stabilizes.
 
 **Product shape.** This app is the **portal** (control plane UI): sign in → pick an organization/workspace → manage members. Selecting a workspace hands off to the **Studio workbench** — a Theia-based per-user session bound to that workspace tenant (the "Open Studio" button stakes out the `/studio/{workspace_id}` contract; the session manager — docker-compose MVP, then theia-cloud on k8s — and the Studio Theia extension are future work). Longer term the portal views converge with the gears-frontx / fabric-poc UI (see `../../fabric-poc`).

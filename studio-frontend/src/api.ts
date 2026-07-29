@@ -52,6 +52,50 @@ export interface UserPrefs {
   language?: string;
 }
 
+/* ── mini-chat / conversions / file-storage shapes ── */
+
+export interface Chat {
+  id: string;
+  model: string;
+  title?: string;
+  message_count: number;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  model?: string;
+  created_at: string;
+}
+
+export interface Model {
+  model_id: string;
+  display_name: string;
+  tier: string;
+  context_window: number;
+  description?: string;
+}
+
+export interface Conversion {
+  request_id?: string;
+  id?: string;
+  tenant_id: string;
+  child_tenant_name?: string;
+  target_mode: string;
+  status: string;
+  expires_at?: string;
+}
+
+export interface StoredFile {
+  id: string;
+  name?: string;
+  file_name?: string;
+  size_bytes?: number;
+  created_at?: string;
+}
+
 export interface Group {
   id: string;
   type: string;
@@ -209,6 +253,47 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ title }),
     }),
+
+  chats: (token: string) => request<Page<Chat>>("/mini-chat/v1/chats", token),
+
+  chatMessages: (token: string, chatId: string) =>
+    request<Page<ChatMessage>>(`/mini-chat/v1/chats/${chatId}/messages`, token),
+
+  deleteChat: (token: string, chatId: string) =>
+    request<unknown>(`/mini-chat/v1/chats/${chatId}`, token, { method: "DELETE" }),
+
+  models: (token: string) => request<Page<Model>>("/mini-chat/v1/models", token),
+
+  /* ── AM dual-consent conversions ── */
+
+  requestConversion: (token: string, tenantId: string, target: "managed" | "self_managed") =>
+    request<Conversion>(`/account-management/v1/tenants/${tenantId}/conversions`, token, {
+      method: "POST",
+      body: JSON.stringify({ target_mode: target, comment: "Requested from the Studio portal" }),
+    }),
+
+  inboundConversions: (token: string, parentId: string) =>
+    request<Page<Conversion>>(`/account-management/v1/tenants/${parentId}/child-conversions`, token),
+
+  decideConversion: (
+    token: string,
+    parentId: string,
+    requestId: string,
+    status: "approved" | "rejected",
+  ) =>
+    request<Conversion>(
+      `/account-management/v1/tenants/${parentId}/child-conversions/${requestId}`,
+      token,
+      { method: "PATCH", body: JSON.stringify({ status }) },
+    ),
+
+  /* ── System observability (orchestrator / oagw / types-registry / file-storage) ── */
+
+  gears: (token: string) => request<unknown>("/gear-orchestrator/v1/gears", token),
+  oagwUpstreams: (token: string) => request<unknown>("/oagw/v1/upstreams", token),
+  gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
+  files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
+  storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /**
    * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.
