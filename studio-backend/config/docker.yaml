@@ -289,3 +289,18 @@ gears:
               audio_speech_generation: false
               audio_transcription: false
               audio_translation: false
+
+  # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
+  # In-docker profile: the backend container needs /var/run/docker.sock
+  # mounted, and workspaces_root must be a HOST path that is mounted into
+  # this container at the same location (see docker-compose.yml).
+  studio-session:
+    config:
+      image: "cf-studio-theia:latest"
+      workspaces_root: "/srv/cf-studio-workspaces"
+      bind_host: "127.0.0.1"
+      public_host: "localhost"
+      port_range_start: 41000
+      port_range_end: 41099
+      max_session_secs: 14400
+      git_mode: "disabled"

@@ -88,6 +88,15 @@ export interface Conversion {
   expires_at?: string;
 }
 
+export interface StudioSession {
+  id: string;
+  workspace_id: string;
+  state: "starting" | "running" | "stopped";
+  url: string;
+  created_at_epoch_secs: number;
+  repo_url?: string;
+}
+
 export interface StoredFile {
   id: string;
   name?: string;
@@ -294,6 +303,19 @@ export const api = {
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
   files: (token: string) => request<Page<StoredFile>>("/api/file-storage/v1/files", token),
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
+
+  /* ── studio-session gear: per-workspace Theia IDE containers ── */
+  createStudioSession: (token: string, workspaceId: string, repoUrl?: string) =>
+    request<StudioSession>("/studio-session/v1/sessions", token, {
+      method: "POST",
+      body: JSON.stringify({ workspace_id: workspaceId, repo_url: repoUrl || undefined }),
+    }),
+  studioSession: (token: string, id: string) =>
+    request<StudioSession>(`/studio-session/v1/sessions/${id}`, token),
+  studioSessions: (token: string) =>
+    request<{ items: StudioSession[] }>("/studio-session/v1/sessions", token),
+  deleteStudioSession: (token: string, id: string) =>
+    request<void>(`/studio-session/v1/sessions/${id}`, token, { method: "DELETE" }),
 
   /**
    * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.

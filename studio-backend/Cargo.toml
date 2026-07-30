@@ -19,6 +19,19 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 
+# ── studio-session gear (in-crate; per-workspace Theia IDE containers) ──
+bollard = "0.17"
+async-trait = "0.1"
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+inventory = "0.3"
+tracing = "0.1"
+tokio-util = "0.7"
+utoipa = "5"
+uuid = { version = "1", features = ["serde", "v4"] }
+toolkit-security = { package = "cf-gears-toolkit-security", path = "../../gears-rust/libs/toolkit-security" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", path = "../../gears-rust/libs/toolkit-canonical-errors", features = ["axum"] }
+
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", path = "../../gears-rust/libs/toolkit", features = ["bootstrap"] }
 

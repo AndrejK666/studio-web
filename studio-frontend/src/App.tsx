@@ -284,7 +284,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
-        {studio && <StudioLauncher ws={studio} onClose={() => setStudio(null)} />}
+        {studio && <StudioLauncher token={token} ws={studio} onClose={() => setStudio(null)} />}
       </div>
 
       <FilterPanel
@@ -1646,10 +1646,62 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
   );
 }
 
-/* ── Studio launcher (Theia hand-off contract) ── */
+/* ── Studio launcher (studio-session gear → per-workspace Theia container) ── */
 
-function StudioLauncher({ ws, onClose }: { ws: Workspace; onClose: () => void }) {
-  const url = `/studio/${ws.id}`;
+function StudioLauncher({
+  token,
+  ws,
+  onClose,
+}: {
+  token: string;
+  ws: Workspace;
+  onClose: () => void;
+}) {
+  const [session, setSession] = useState<import("./api").StudioSession | null>(null);
+  const [repoUrl, setRepoUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Poll a starting session until Theia answers, then open it.
+  useEffect(() => {
+    if (!session || session.state !== "starting") return;
+    const t = setInterval(async () => {
+      try {
+        const s = await api.studioSession(token, session.id);
+        setSession(s);
+        if (s.state === "running") window.open(s.url, "_blank", "noopener");
+      } catch (e) {
+        setError(errText(e));
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [session, token]);
+
+  async function launch() {
+    setBusy(true);
+    setError(null);
+    try {
+      const s = await api.createStudioSession(token, ws.id, repoUrl.trim() || undefined);
+      setSession(s);
+      if (s.state === "running") window.open(s.url, "_blank", "noopener");
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stop() {
+    if (!session) return;
+    setError(null);
+    try {
+      await api.deleteStudioSession(token, session.id);
+      setSession(null);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
   return (
     <div className="card launcher">
       <div className="card-head">
@@ -1661,16 +1713,58 @@ function StudioLauncher({ ws, onClose }: { ws: Workspace; onClose: () => void })
         </button>
       </div>
       <p>
-        The Theia-based workbench for this workspace will open at <code>{url}</code> with your
-        token; the backend scopes everything the Studio sees to this workspace tenant.
+        Launches a dedicated Theia IDE container for this workspace (studio-session gear). The
+        session is published on loopback and stopped automatically after its maximum age.
       </p>
+
+      {!session && (
+        <>
+          <label className="field" style={{ maxWidth: 460 }}>
+            Git repository (optional — cloned into the workspace on first launch)
+            <input
+              placeholder="https://github.com/org/repo.git"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+            />
+          </label>
+          <button className="primary" onClick={launch} disabled={busy}>
+            {busy ? "Launching…" : "Launch Studio"}
+          </button>
+        </>
+      )}
+
+      {session && (
+        <ul className="rows">
+          <li>
+            <div className="grow">
+              <div className="name">
+                {session.state === "starting" ? "Starting container…" : `Session ${session.state}`}
+              </div>
+              <div className="sub">{session.url}</div>
+            </div>
+            <span className={`badge ${session.state === "running" ? "workspace" : ""}`}>
+              {session.state}
+            </span>
+            {session.state === "running" && (
+              <button
+                className="primary"
+                onClick={() => window.open(session.url, "_blank", "noopener")}
+              >
+                Open IDE
+              </button>
+            )}
+            <button className="ghost" onClick={stop}>
+              Stop session
+            </button>
+          </li>
+        </ul>
+      )}
+
+      {error && <div className="error">{error}</div>}
       <p className="hint">
-        Not wired yet: Theia session manager (docker-compose MVP → theia-cloud on k8s) and the
-        Studio Theia extension.
+        Requires Docker on the backend host and the image built once:{" "}
+        <code>cd fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .</code>
       </p>
-      <button className="primary" disabled title="Theia session manager not deployed yet">
-        Launch (coming soon)
-      </button>
     </div>
   );
 }

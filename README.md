@@ -33,6 +33,30 @@ cd studio-frontend && npm install && npm run dev                # http://localho
 
 (or the zero-Docker variant: `--config config/dev.yaml` runs the backend on SQLite)
 
+## Theia IDE sessions (Open Studio)
+
+"Open Studio" launches a dedicated Theia IDE container per workspace via the
+`studio-session` gear (our first own gear — see
+`studio-backend/docs/adr/0003-theia-sessions.md`).
+
+One-time setup: build the IDE image (repo `fabric-poc` checked out next to
+this one):
+
+```bash
+cd ../fabric-poc/poc/theia
+docker build -t cf-studio-theia:latest .
+```
+
+Then in the portal: workspace → Open Studio → Launch. Optional Git URL is
+cloned into the workspace on first launch. Sessions bind to loopback ports
+41000-41099, live 4 h (reaper), survive backend restarts (label adoption),
+and can be stopped from the launcher.
+
+Requirements: Docker daemon reachable from the backend (`/var/run/docker.sock`).
+In the full-docker profile the compose file mounts the socket and
+`/srv/cf-studio-workspaces` into the backend (host and container paths must be
+identical — bind sources are resolved by the host daemon).
+
 ## CI/CD (GitHub Actions)
 
 - **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private.

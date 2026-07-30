@@ -308,3 +308,17 @@ gears:
               audio_speech_generation: false
               audio_transcription: false
               audio_translation: false
+
+  # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
+  # Requires: Docker daemon on the host and the Theia image built once:
+  #   cd ../fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .
+  studio-session:
+    config:
+      image: "cf-studio-theia:latest"
+      workspaces_root: "~/.cf-studio-workspaces"
+      bind_host: "127.0.0.1"      # loopback only — the Theia PoC has no auth
+      public_host: "localhost"
+      port_range_start: 41000
+      port_range_end: 41099
+      max_session_secs: 14400     # 4h, then the reaper stops the container
+      git_mode: "disabled"

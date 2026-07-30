@@ -40,6 +40,12 @@ services:
     container_name: studio-backend
     environment:
       STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+    volumes:
+      # studio-session gear: launches sibling Theia containers via the host
+      # Docker daemon. The workspaces path must be IDENTICAL on host and in
+      # this container — the gear passes it to the daemon as a host path.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/cf-studio-workspaces:/srv/cf-studio-workspaces
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:

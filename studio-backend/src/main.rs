@@ -5,6 +5,7 @@
 //! only loads layered config and hands control to `toolkit::bootstrap`.
 
 mod registered_gears;
+mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 
 use std::path::PathBuf;
 
