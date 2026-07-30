@@ -41,13 +41,21 @@ export const USER_MEMBER_HANDLE = "gts.cf.core.rg.type.v1~cf.core.am.user.v1~";
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
 export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 
+export type RepoSource = "none" | "local" | "git" | "github" | "gitlab";
+
 export interface WorkspaceSettings {
   automation_level?: "manual" | "recommendations" | "autonomous";
   approved_worker_categories?: string[];
+  /** How the workspace content is sourced for IDE sessions. */
+  repo_source?: RepoSource;
   /** Git repository cloned into the workspace on first IDE launch. */
   repo_url?: string;
   /** Backend-host folder mounted as the workspace (bring-your-own-repo). */
   local_path?: string;
+  /** Branch for the first clone. */
+  repo_branch?: string;
+  /** credstore secret reference holding the repo PAT (private repos). */
+  repo_token_ref?: string;
 }
 
 // simple-user-settings gear stores exactly these two per-user fields.
@@ -310,13 +318,30 @@ export const api = {
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
-  createStudioSession: (token: string, workspaceId: string, repoUrl?: string, localPath?: string) =>
+  createStudioSession: (
+    token: string,
+    workspaceId: string,
+    opts?: { repoUrl?: string; localPath?: string; gitBranch?: string; gitTokenRef?: string },
+  ) =>
     request<StudioSession>("/studio-session/v1/sessions", token, {
       method: "POST",
       body: JSON.stringify({
         workspace_id: workspaceId,
-        repo_url: repoUrl || undefined,
-        local_path: localPath || undefined,
+        repo_url: opts?.repoUrl || undefined,
+        local_path: opts?.localPath || undefined,
+        git_branch: opts?.gitBranch || undefined,
+        git_token_ref: opts?.gitTokenRef || undefined,
+      }),
+    }),
+
+  /** credstore: create/rotate a secret (used for repo PATs). */
+  putSecret: (token: string, reference: string, value: string, secretType?: string) =>
+    request<unknown>("/credstore/v1/secrets", token, {
+      method: "POST",
+      body: JSON.stringify({
+        reference,
+        value,
+        ...(secretType ? { type: secretType } : {}),
       }),
     }),
   studioSession: (token: string, id: string) =>

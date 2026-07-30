@@ -29,6 +29,8 @@ tracing = "0.1"
 tokio-util = "0.7"
 utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4"] }
+toolkit-macros = { package = "cf-gears-toolkit-macros", path = "../../gears-rust/libs/toolkit-macros" }
+credstore-sdk = { package = "cf-gears-credstore-sdk", path = "../../gears-rust/gears/credstore/credstore-sdk" }
 toolkit-security = { package = "cf-gears-toolkit-security", path = "../../gears-rust/libs/toolkit-security" }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", path = "../../gears-rust/libs/toolkit-canonical-errors", features = ["axum"] }
 

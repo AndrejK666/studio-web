@@ -38,6 +38,14 @@ pub struct CreateSessionRequest {
     /// (bring-your-own-repo). Takes precedence over the managed directory.
     #[serde(default)]
     pub local_path: Option<String>,
+    /// Optional branch for the first clone.
+    #[serde(default)]
+    pub git_branch: Option<String>,
+    /// Optional credstore secret reference holding a repo access token (PAT)
+    /// for private GitHub/GitLab repositories. Resolved server-side; the
+    /// token value never travels through this API.
+    #[serde(default)]
+    pub git_token_ref: Option<String>,
 }
 
 #[derive(Debug)]
@@ -83,6 +91,13 @@ async fn create_session(
     Extension(svc): Extension<Arc<SessionService>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<impl IntoResponse> {
+    // Private-repo PAT: resolved from credstore under the caller's tenant.
+    let git_token = match req.git_token_ref.as_deref().filter(|r| !r.trim().is_empty()) {
+        Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref.trim()).await.map_err(
+            |e| CanonicalError::internal(format!("repo token resolution failed: {e:#}")).create(),
+        )?),
+        None => None,
+    };
     let (session, existed) = svc
         .create(
             ctx.subject_tenant_id(),
@@ -90,6 +105,8 @@ async fn create_session(
             req.workspace_id,
             req.repo_url,
             req.local_path,
+            req.git_branch,
+            git_token,
         )
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;

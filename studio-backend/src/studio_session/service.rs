@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
 use bollard::Docker;
+use credstore_sdk::{CredStoreClientV1, SecretRef};
+use toolkit_security::SecurityContext;
 use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, ListContainersOptions,
     RemoveContainerOptions, StopContainerOptions,
@@ -54,6 +56,8 @@ pub struct SessionService {
     cfg: StudioSessionConfig,
     docker: Docker,
     sessions: RwLock<HashMap<Uuid, Session>>,
+    /// Resolves repo access tokens (PATs) stored as credstore secrets.
+    credstore: RwLock<Option<Arc<dyn CredStoreClientV1>>>,
 }
 
 fn now_secs() -> u64 {
@@ -71,7 +75,34 @@ impl SessionService {
             cfg,
             docker,
             sessions: RwLock::new(HashMap::new()),
+            credstore: RwLock::new(None),
         }))
+    }
+
+    pub async fn set_credstore(&self, client: Arc<dyn CredStoreClientV1>) {
+        *self.credstore.write().await = Some(client);
+    }
+
+    /// Resolve a repo access token from credstore (tenant-scoped by ctx).
+    /// Missing/inaccessible secret is an error: a private clone would fail
+    /// later with a far less helpful message.
+    pub async fn resolve_git_token(
+        &self,
+        ctx: &SecurityContext,
+        token_ref: &str,
+    ) -> anyhow::Result<String> {
+        let guard = self.credstore.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("credstore client not wired"))?;
+        let key = SecretRef::new(token_ref).map_err(|e| anyhow!("bad token_ref: {e}"))?;
+        let secret = client
+            .get(ctx, &key)
+            .await
+            .map_err(|e| anyhow!("credstore error: {e}"))?
+            .ok_or_else(|| anyhow!("secret '{token_ref}' not found or not accessible"))?;
+        String::from_utf8(secret.value.as_bytes().to_vec())
+            .map_err(|_| anyhow!("secret '{token_ref}' is not valid UTF-8"))
     }
 
     pub fn session_url(&self, port: u16) -> String {
@@ -97,6 +128,11 @@ impl SessionService {
     /// `local_path`: host directory mounted as /workspace INSTEAD of the
     /// managed per-workspace directory (bring-your-own-repo). Must exist on
     /// the backend host.
+    ///
+    /// `git_branch` / `git_token`: optional clone branch and access token
+    /// (already resolved from credstore by the caller); both go to the
+    /// container as env, the token is never persisted in the registry.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         tenant_id: Uuid,
@@ -104,6 +140,8 @@ impl SessionService {
         workspace_id: Uuid,
         repo_url: Option<String>,
         local_path: Option<String>,
+        git_branch: Option<String>,
+        git_token: Option<String>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
             let sessions = self.sessions.read().await;
@@ -151,6 +189,16 @@ impl SessionService {
         ];
         if let Some(url) = &repo_url {
             env.push(format!("STUDIO_REPO_URL={url}"));
+        }
+        if let Some(branch) = &git_branch {
+            if !branch.trim().is_empty() {
+                env.push(format!("STUDIO_GIT_BRANCH={}", branch.trim()));
+            }
+        }
+        if let Some(token) = &git_token {
+            // Consumed by the entrypoint's inline credential helper for the
+            // first clone; not stored anywhere in the session registry.
+            env.push(format!("STUDIO_GIT_TOKEN={token}"));
         }
 
         let labels: HashMap<String, String> = HashMap::from([

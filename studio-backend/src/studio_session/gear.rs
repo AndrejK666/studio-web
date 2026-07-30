@@ -20,6 +20,7 @@ use super::service::SessionService;
 /// Pods (theia-cloud model) behind the same REST contract.
 #[toolkit::gear(
     name = "studio-session",
+    deps = [credstore],
     capabilities = [rest, stateful]
 )]
 pub struct StudioSessionGear {
@@ -44,6 +45,13 @@ impl Gear for StudioSessionGear {
             "studio-session: initializing"
         );
         let service = SessionService::new(cfg)?;
+
+        // credstore client: resolves repo PATs for private clones (optional —
+        // sessions without tokens work regardless).
+        match ctx.client_hub().get::<dyn credstore_sdk::CredStoreClientV1>() {
+            Ok(client) => service.set_credstore(client).await,
+            Err(e) => warn!("studio-session: credstore client unavailable ({e}); private repo tokens disabled"),
+        }
 
         // Re-attach sessions that survived a backend restart.
         match service.adopt_existing().await {
