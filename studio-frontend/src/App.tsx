@@ -30,6 +30,50 @@ interface Workspace extends Tenant {
   orgName: string;
 }
 
+/* ── Filters (right panel) ── */
+
+interface Filters {
+  query: string;
+  org: string; // workspaces: filter by organization id
+  selfManagedOnly: boolean; // workspaces
+  sort: "name-asc" | "name-desc"; // workspaces
+  model: string; // chats: filter by model_id
+  mode: "all" | "managed" | "self"; // organizations
+  sections: { gears: boolean; upstreams: boolean; entities: boolean }; // system
+}
+
+const DEFAULT_FILTERS: Filters = {
+  query: "",
+  org: "",
+  selfManagedOnly: false,
+  sort: "name-asc",
+  model: "",
+  mode: "all",
+  sections: { gears: true, upstreams: true, entities: true },
+};
+
+function matches(q: string, ...fields: (string | undefined | null)[]): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  return fields.some((f) => (f ?? "").toLowerCase().includes(needle));
+}
+
+type PanelView = View | "dashboard";
+
+function activeFilterCount(view: PanelView, f: Filters): number {
+  let n = 0;
+  if (view !== "system" && view !== "profile" && view !== "dashboard" && f.query.trim()) n++;
+  if (view === "workspaces") {
+    if (f.org) n++;
+    if (f.selfManagedOnly) n++;
+    if (f.sort !== "name-asc") n++;
+  }
+  if (view === "chats" && f.model) n++;
+  if (view === "organizations" && f.mode !== "all") n++;
+  if (view === "system") n += Object.values(f.sections).filter((v) => !v).length;
+  return n;
+}
+
 export function App() {
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -118,6 +162,24 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [error, setError] = useState<string | null>(null);
   const [studio, setStudio] = useState<Workspace | null>(null);
   const [dash, setDash] = useState<Workspace | null>(null);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [panelOpen, setPanelOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("studio.filterPanel") !== "collapsed";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("studio.filterPanel", panelOpen ? "open" : "collapsed");
+    } catch {
+      /* private mode etc. — non-fatal */
+    }
+  }, [panelOpen]);
+
+  const panelView: PanelView = dash ? "dashboard" : view;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -203,25 +265,214 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             token={token}
             orgs={orgs}
             workspaces={workspaces}
+            filters={filters}
             onChanged={refresh}
             onOpenStudio={setStudio}
             onOpenDashboard={setDash}
           />
         )}
-        {view === "projects" && <ProjectsView token={token} workspaces={workspaces} />}
+        {view === "projects" && <ProjectsView token={token} workspaces={workspaces} filters={filters} />}
         {view === "organizations" && (
-          <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} onChanged={refresh} />
+          <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} filters={filters} onChanged={refresh} />
         )}
-        {view === "members" && <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} />}
-        {view === "chats" && <ChatsView token={token} />}
-        {view === "files" && <FilesView token={token} />}
-        {view === "system" && <SystemView token={token} />}
+        {view === "members" && (
+          <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
+        )}
+        {view === "chats" && <ChatsView token={token} filters={filters} />}
+        {view === "files" && <FilesView token={token} filters={filters} />}
+        {view === "system" && <SystemView token={token} filters={filters} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
         {studio && <StudioLauncher ws={studio} onClose={() => setStudio(null)} />}
       </div>
+
+      <FilterPanel
+        view={panelView}
+        token={token}
+        filters={filters}
+        onChange={setFilters}
+        open={panelOpen}
+        onToggle={() => setPanelOpen((v) => !v)}
+        orgs={orgs}
+      />
     </div>
+  );
+}
+
+/* ── Right panel: context-aware filters ── */
+
+function FilterPanel({
+  view,
+  token,
+  filters,
+  onChange,
+  open,
+  onToggle,
+  orgs,
+}: {
+  view: PanelView;
+  token: string;
+  filters: Filters;
+  onChange: (f: Filters) => void;
+  open: boolean;
+  onToggle: () => void;
+  orgs: Tenant[];
+}) {
+  const [models, setModels] = useState<import("./api").Model[]>([]);
+
+  useEffect(() => {
+    if (view === "chats" && models.length === 0) {
+      api
+        .models(token)
+        .then((p) => setModels(p.items ?? []))
+        .catch(() => {
+          /* model list is a nicety — search still works */
+        });
+    }
+  }, [view, token, models.length]);
+
+  const count = activeFilterCount(view, filters);
+  const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
+  const noFilters = view === "profile" || view === "dashboard";
+  const hasSearch = !noFilters && view !== "system";
+
+  if (!open) {
+    return (
+      <aside className="rightbar collapsed">
+        <button className="funnel" title="Show filters" onClick={onToggle}>
+          <span aria-hidden>🎛</span>
+          {count > 0 && <span className="count">{count}</span>}
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="rightbar">
+      <div className="rightbar-head">
+        <h2>
+          Filters {count > 0 && <span className="count-pill">{count}</span>}
+        </h2>
+        <div style={{ display: "flex", gap: 4 }}>
+          {count > 0 && (
+            <button className="ghost" onClick={() => onChange({ ...DEFAULT_FILTERS })}>
+              reset
+            </button>
+          )}
+          <button className="ghost" title="Hide filters" onClick={onToggle}>
+            ⇥
+          </button>
+        </div>
+      </div>
+
+      {noFilters ? (
+        <p className="hint">No filters for this view.</p>
+      ) : (
+        <>
+          {hasSearch && (
+            <div className="filter-group">
+              <span className="lbl">Search</span>
+              <input
+                placeholder="Type to filter…"
+                value={filters.query}
+                onChange={(e) => set({ query: e.target.value })}
+              />
+            </div>
+          )}
+
+          {view === "workspaces" && (
+            <>
+              <div className="filter-group">
+                <span className="lbl">Organization</span>
+                <select value={filters.org} onChange={(e) => set({ org: e.target.value })}>
+                  <option value="">All organizations</option>
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="filter-group">
+                <span className="lbl">Mode</span>
+                <div className="chipset">
+                  <button
+                    type="button"
+                    className={`chip ${filters.selfManagedOnly ? "on" : ""}`}
+                    onClick={() => set({ selfManagedOnly: !filters.selfManagedOnly })}
+                  >
+                    self-managed only
+                  </button>
+                </div>
+              </div>
+              <div className="filter-group">
+                <span className="lbl">Sort</span>
+                <select
+                  value={filters.sort}
+                  onChange={(e) => set({ sort: e.target.value as Filters["sort"] })}
+                >
+                  <option value="name-asc">Name A → Z</option>
+                  <option value="name-desc">Name Z → A</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {view === "chats" && (
+            <div className="filter-group">
+              <span className="lbl">Model</span>
+              <select value={filters.model} onChange={(e) => set({ model: e.target.value })}>
+                <option value="">All models</option>
+                {models.map((m) => (
+                  <option key={m.model_id} value={m.model_id}>
+                    {m.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {view === "organizations" && (
+            <div className="filter-group">
+              <span className="lbl">Mode</span>
+              <div className="chipset">
+                {(["all", "managed", "self"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`chip ${filters.mode === m ? "on" : ""}`}
+                    onClick={() => set({ mode: m })}
+                  >
+                    {m === "self" ? "self-managed" : m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === "system" && (
+            <div className="filter-group">
+              <span className="lbl">Sections</span>
+              <div className="chipset">
+                {(Object.keys(filters.sections) as (keyof Filters["sections"])[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`chip ${filters.sections[k] ? "on" : ""}`}
+                    onClick={() =>
+                      set({ sections: { ...filters.sections, [k]: !filters.sections[k] } })
+                    }
+                  >
+                    {k}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </aside>
   );
 }
 
@@ -231,6 +482,7 @@ function WorkspacesView({
   token,
   orgs,
   workspaces,
+  filters,
   onChanged,
   onOpenStudio,
   onOpenDashboard,
@@ -238,6 +490,7 @@ function WorkspacesView({
   token: string;
   orgs: Tenant[];
   workspaces: Workspace[];
+  filters: Filters;
   onChanged: () => void;
   onOpenStudio: (ws: Workspace) => void;
   onOpenDashboard: (ws: Workspace) => void;
@@ -246,6 +499,15 @@ function WorkspacesView({
   const [orgId, setOrgId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const orgFilterName = orgs.find((o) => o.id === filters.org)?.name;
+  const visible = workspaces
+    .filter((w) => matches(filters.query, w.name, w.orgName))
+    .filter((w) => !orgFilterName || w.orgName === orgFilterName)
+    .filter((w) => !filters.selfManagedOnly || w.self_managed)
+    .sort((a, b) =>
+      filters.sort === "name-desc" ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name),
+    );
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -273,9 +535,11 @@ function WorkspacesView({
       <div className="card">
         {workspaces.length === 0 ? (
           <p className="empty">No workspaces yet — create the first one below.</p>
+        ) : visible.length === 0 ? (
+          <p className="empty">No workspaces match the current filters.</p>
         ) : (
           <ul className="rows">
-            {workspaces.map((w) => (
+            {visible.map((w) => (
               <li key={w.id}>
                 <div
                   className="grow"
@@ -507,7 +771,7 @@ function WorkspaceDashboard({
 
 /* ── Chats (mini-chat: threads, history, models) ── */
 
-function ChatsView({ token }: { token: string }) {
+function ChatsView({ token, filters }: { token: string; filters: Filters }) {
   const [chats, setChats] = useState<import("./api").Chat[]>([]);
   const [models, setModels] = useState<import("./api").Model[]>([]);
   const [open, setOpen] = useState<import("./api").Chat | null>(null);
@@ -579,6 +843,10 @@ function ChatsView({ token }: { token: string }) {
     }
   }
 
+  const visibleChats = chats
+    .filter((c) => matches(filters.query, c.title, c.model, c.id))
+    .filter((c) => !filters.model || c.model === filters.model);
+
   return (
     <>
       <h1>Chats</h1>
@@ -590,9 +858,11 @@ function ChatsView({ token }: { token: string }) {
       <div className="card">
         {chats.length === 0 ? (
           <p className="empty">No chats yet — start one from a workspace dashboard (Ask AI).</p>
+        ) : visibleChats.length === 0 ? (
+          <p className="empty">No chats match the current filters.</p>
         ) : (
           <ul className="rows">
-            {chats.map((c) => (
+            {visibleChats.map((c) => (
               <li key={c.id}>
                 <div className="grow" style={{ cursor: "pointer" }} onClick={() => openChat(c)}>
                   <div className="name">{c.title ?? c.id.slice(0, 8)}</div>
@@ -644,7 +914,7 @@ function ChatsView({ token }: { token: string }) {
 
 /* ── Files (file-storage: read-only until an upload sidecar is deployed) ── */
 
-function FilesView({ token }: { token: string }) {
+function FilesView({ token, filters }: { token: string; filters: Filters }) {
   const [files, setFiles] = useState<import("./api").StoredFile[] | null>(null);
   const [storages, setStorages] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
@@ -658,6 +928,10 @@ function FilesView({ token }: { token: string }) {
       .catch((e) => setError(errText(e)));
   }, [token]);
 
+  const visibleFiles = (files ?? []).filter((f) =>
+    matches(filters.query, f.name, f.file_name, f.id),
+  );
+
   return (
     <>
       <h1>Files</h1>
@@ -670,9 +944,11 @@ function FilesView({ token }: { token: string }) {
         <h2>Files</h2>
         {!files || files.length === 0 ? (
           <p className="empty">No files.</p>
+        ) : visibleFiles.length === 0 ? (
+          <p className="empty">No files match the current filters.</p>
         ) : (
           <ul className="rows">
-            {files.map((f) => (
+            {visibleFiles.map((f) => (
               <li key={f.id}>
                 <div className="grow">
                   <div className="name">{f.name ?? f.file_name ?? f.id}</div>
@@ -693,7 +969,7 @@ function FilesView({ token }: { token: string }) {
 
 /* ── System (observability across platform gears) ── */
 
-function SystemView({ token }: { token: string }) {
+function SystemView({ token, filters }: { token: string; filters: Filters }) {
   const [gears, setGears] = useState<unknown>(null);
   const [upstreams, setUpstreams] = useState<unknown>(null);
   const [entities, setEntities] = useState<unknown>(null);
@@ -714,17 +990,21 @@ function SystemView({ token }: { token: string }) {
     return "—";
   };
 
-  const cards: { title: string; sub: string; data: unknown }[] = [
-    { title: `Gears (${count(gears)})`, sub: "gear-orchestrator/v1/gears", data: gears },
-    { title: `OAGW upstreams (${count(upstreams)})`, sub: "oagw/v1/upstreams — the openai LLM egress lives here", data: upstreams },
-    { title: `GTS entities (${count(entities)})`, sub: "types-registry/v1/entities — tenant types, schemas, permissions, plugins", data: entities },
+  const cards: { key: keyof Filters["sections"]; title: string; sub: string; data: unknown }[] = [
+    { key: "gears", title: `Gears (${count(gears)})`, sub: "gear-orchestrator/v1/gears", data: gears },
+    { key: "upstreams", title: `OAGW upstreams (${count(upstreams)})`, sub: "oagw/v1/upstreams — the openai LLM egress lives here", data: upstreams },
+    { key: "entities", title: `GTS entities (${count(entities)})`, sub: "types-registry/v1/entities — tenant types, schemas, permissions, plugins", data: entities },
   ];
+  const visibleCards = cards.filter((c) => filters.sections[c.key]);
 
   return (
     <>
       <h1>System</h1>
       <p className="subtitle">Live observability over the platform gears of this assembly.</p>
-      {cards.map((c) => (
+      {visibleCards.length === 0 && (
+        <p className="empty">All sections are hidden — enable them in the filter panel.</p>
+      )}
+      {visibleCards.map((c) => (
         <div className="card" key={c.title}>
           <h2>{c.title}</h2>
           <p className="hint">{c.sub}</p>
@@ -811,7 +1091,15 @@ function AskAI({ token, ws }: { token: string; ws: Workspace }) {
 
 /* ── Projects (RG-backed, ADR-0002) ── */
 
-function ProjectsView({ token, workspaces }: { token: string; workspaces: Workspace[] }) {
+function ProjectsView({
+  token,
+  workspaces,
+  filters,
+}: {
+  token: string;
+  workspaces: Workspace[];
+  filters: Filters;
+}) {
   const [wsId, setWsId] = useState("");
   const [projects, setProjects] = useState<Group[] | null>(null);
   const [name, setName] = useState("");
@@ -860,6 +1148,7 @@ function ProjectsView({ token, workspaces }: { token: string; workspaces: Worksp
   }
 
   const ws = workspaces.find((w) => w.id === wsId);
+  const visible = (projects ?? []).filter((p) => matches(filters.query, p.name, p.id));
 
   return (
     <>
@@ -883,9 +1172,13 @@ function ProjectsView({ token, workspaces }: { token: string; workspaces: Worksp
               <p className="empty" style={{ marginTop: 12 }}>
                 No projects in “{ws?.name}” yet.
               </p>
+            ) : visible.length === 0 ? (
+              <p className="empty" style={{ marginTop: 12 }}>
+                No projects match the current filters.
+              </p>
             ) : (
               <ul className="rows" style={{ marginTop: 12 }}>
-                {projects.map((p) => (
+                {visible.map((p) => (
                   <li key={p.id}>
                     <div className="grow">
                       <div className="name">{p.name}</div>
@@ -1029,13 +1322,20 @@ function OrganizationsView({
   token,
   homeId,
   orgs,
+  filters,
   onChanged,
 }: {
   token: string;
   homeId: string;
   orgs: Tenant[];
+  filters: Filters;
   onChanged: () => void;
 }) {
+  const visibleOrgs = orgs
+    .filter((o) => matches(filters.query, o.name, o.id))
+    .filter((o) =>
+      filters.mode === "all" ? true : filters.mode === "self" ? o.self_managed : !o.self_managed,
+    );
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1101,9 +1401,11 @@ function OrganizationsView({
       <div className="card">
         {orgs.length === 0 ? (
           <p className="empty">No organizations yet.</p>
+        ) : visibleOrgs.length === 0 ? (
+          <p className="empty">No organizations match the current filters.</p>
         ) : (
           <ul className="rows">
-            {orgs.map((o) => (
+            {visibleOrgs.map((o) => (
               <li key={o.id}>
                 <div className="grow">
                   <div className="name">{o.name}</div>
@@ -1163,11 +1465,13 @@ function MembersView({
   home,
   orgs,
   workspaces,
+  filters,
 }: {
   token: string;
   home: Tenant | null;
   orgs: Tenant[];
   workspaces: Workspace[];
+  filters: Filters;
 }) {
   const all = [...(home ? [home] : []), ...orgs, ...workspaces];
   const [tenantId, setTenantId] = useState<string>("");
@@ -1206,6 +1510,10 @@ function MembersView({
     }
   }
 
+  const visibleUsers = (users ?? []).filter((u) =>
+    matches(filters.query, u.display_name, u.username, u.email),
+  );
+
   return (
     <>
       <h1>Members</h1>
@@ -1224,9 +1532,11 @@ function MembersView({
           <>
             {users.length === 0 ? (
               <p className="empty" style={{ marginTop: 12 }}>No users in this tenant.</p>
+            ) : visibleUsers.length === 0 ? (
+              <p className="empty" style={{ marginTop: 12 }}>No users match the current filters.</p>
             ) : (
               <ul className="rows" style={{ marginTop: 12 }}>
-                {users.map((u) => (
+                {visibleUsers.map((u) => (
                   <li key={u.id}>
                     <div className="grow">
                       <div className="name">{u.display_name ?? u.username}</div>
