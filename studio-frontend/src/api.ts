@@ -44,6 +44,10 @@ export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.wor
 export interface WorkspaceSettings {
   automation_level?: "manual" | "recommendations" | "autonomous";
   approved_worker_categories?: string[];
+  /** Git repository cloned into the workspace on first IDE launch. */
+  repo_url?: string;
+  /** Backend-host folder mounted as the workspace (bring-your-own-repo). */
+  local_path?: string;
 }
 
 // simple-user-settings gear stores exactly these two per-user fields.

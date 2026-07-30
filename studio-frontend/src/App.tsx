@@ -641,11 +641,13 @@ function WorkspaceDashboard({
     }
   }
 
+  const repoConnected = Boolean(settings?.repo_url?.trim() || settings?.local_path?.trim());
   const steps: { label: string; done: boolean; soon?: boolean }[] = [
     { label: "Workspace created", done: true },
     { label: "Members invited", done: (users?.length ?? 0) > 0 },
     { label: "First project created", done: (projects?.length ?? 0) > 0 },
     { label: "Automation configured", done: settingsExist },
+    { label: "Repository connected", done: repoConnected },
     { label: "Connectors (GitHub / Jira)", done: false, soon: true },
     { label: "Kit installed", done: false, soon: true },
   ];
@@ -732,6 +734,36 @@ function WorkspaceDashboard({
               </div>
             </div>
             <button className="primary">Save settings</button>
+            {saved && <span className="hint" style={{ marginLeft: 10 }}>saved ✓</span>}
+          </form>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Repository</h2>
+        <p className="hint">
+          Bound once per workspace (stored as tenant metadata); every IDE session launches with
+          it — no per-launch setup. Local folder takes precedence over the clone URL.
+        </p>
+        {settings && (
+          <form onSubmit={saveSettings}>
+            <label className="field" style={{ maxWidth: 460 }}>
+              Git repository URL (cloned on first launch)
+              <input
+                placeholder="https://github.com/org/repo.git"
+                value={settings.repo_url ?? ""}
+                onChange={(e) => setSettings({ ...settings, repo_url: e.target.value })}
+              />
+            </label>
+            <label className="field" style={{ maxWidth: 460 }}>
+              Local folder on the backend host (mounted as the workspace)
+              <input
+                placeholder="/mnt/c/Repos/CFS/studio-demo-workspace"
+                value={settings.local_path ?? ""}
+                onChange={(e) => setSettings({ ...settings, local_path: e.target.value })}
+              />
+            </label>
+            <button className="primary">Save repository</button>
             {saved && <span className="hint" style={{ marginLeft: 10 }}>saved ✓</span>}
           </form>
         )}
@@ -1660,8 +1692,24 @@ function StudioLauncher({
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repoUrl, setRepoUrl] = useState("");
   const [localPath, setLocalPath] = useState("");
+  const [bound, setBound] = useState<boolean | null>(null); // workspace has a repo binding?
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Repository binding lives on the workspace (dashboard → Repository card);
+  // the launcher only falls back to manual fields when nothing is bound.
+  useEffect(() => {
+    api
+      .workspaceSettings(token, ws.id)
+      .then((s) => {
+        const repo = s?.repo_url?.trim() ?? "";
+        const local = s?.local_path?.trim() ?? "";
+        setRepoUrl(repo);
+        setLocalPath(local);
+        setBound(Boolean(repo || local));
+      })
+      .catch(() => setBound(false));
+  }, [token, ws.id]);
 
   // Poll a starting session until Theia answers, then open it.
   useEffect(() => {
@@ -1725,24 +1773,38 @@ function StudioLauncher({
 
       {!session && (
         <>
-          <label className="field" style={{ maxWidth: 460 }}>
-            Git repository (optional — cloned into the workspace on first launch)
-            <input
-              placeholder="https://github.com/org/repo.git"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-            />
-          </label>
-          <label className="field" style={{ maxWidth: 460 }}>
-            Local folder on the backend host (optional — mounted as the workspace)
-            <input
-              placeholder="/mnt/c/Repos/my-repo"
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-            />
-          </label>
-          <button className="primary" onClick={launch} disabled={busy}>
-            {busy ? "Launching…" : "Launch Studio"}
+          {bound === true && (
+            <p className="hint">
+              Repository binding from workspace settings:{" "}
+              <code>{localPath || repoUrl}</code> — change it on the dashboard.
+            </p>
+          )}
+          {bound === false && (
+            <>
+              <p className="hint">
+                No repository bound to this workspace yet — set it once on the dashboard
+                (Repository card), or fill in a one-off below.
+              </p>
+              <label className="field" style={{ maxWidth: 460 }}>
+                Git repository (optional — cloned into the workspace on first launch)
+                <input
+                  placeholder="https://github.com/org/repo.git"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                />
+              </label>
+              <label className="field" style={{ maxWidth: 460 }}>
+                Local folder on the backend host (optional — mounted as the workspace)
+                <input
+                  placeholder="/mnt/c/Repos/my-repo"
+                  value={localPath}
+                  onChange={(e) => setLocalPath(e.target.value)}
+                />
+              </label>
+            </>
+          )}
+          <button className="primary" onClick={launch} disabled={busy || bound === null}>
+            {busy ? "Launching…" : bound === null ? "Loading…" : "Launch Studio"}
           </button>
         </>
       )}
