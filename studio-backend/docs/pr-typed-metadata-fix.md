@@ -1,57 +1,42 @@
-# PR #2 — fix for the typed tenant-metadata bug (ready after local test run)
+# PR #2 — fix for the typed tenant-metadata bug (TESTS GREEN — ready to open)
 
-**Branch:** `fix/typed-tenant-metadata-envelope` (fork, commit `91ade214`, based on upstream main — independent of PR #1)
+**Branch:** `fix/typed-tenant-metadata-envelope` (fork, commit `3c19809d`, based on upstream main — independent of PR #1)
 **Title:** `fix(account-management): open the tenant-metadata envelope payload so typed derived schemas can register`
 
-## ⚠️ Перед открытием PR — прогнать тесты локально (WSL)
-
-```bash
-cd /mnt/c/Repos/CFS/gears-rust\(forked\)
-git checkout fix/typed-tenant-metadata-envelope
-git restore gears/system/account-management/docs/account-management-v1.yaml \
-            gears/system/resource-group/docs/openapi.yaml   # снять worktree-шум от PR#1
-
-# 1. Новый integration-тест (ключевая проверка гипотезы фикса):
-cargo test -p cf-gears-types-registry --test abstract_envelope_tests
-
-# 2. Sync-тесты AM SDK (schema generated == docs artifact, payload open):
-cargo test -p cf-gears-account-management-sdk
-
-# 3. Остальные тесты затронутых крейтов:
-cargo test -p cf-gears-account-management
-```
-
-**Возможный исход и его значение:**
-- Всё зелёное → фикс верный, открываем PR (тело ниже).
-- Тест №1 падает с тем же "adds new property but base has additionalProperties:
-  false" → OP#12 игнорирует явный `additionalProperties: true`; значит, баг в
-  крейте `gts` (GlobalTypeSystem/gts-rust), а не в gears — тогда PR не открываем,
-  а этот результат дословно дописываем в issue (тест уже готов как репро).
+Local verification done (2026-07-30): toolkit-gts(+macros), account-management-sdk and
+the new types-registry integration test — all green.
 
 ## Body (их шаблон)
 
 ### Description
 
-The `gts.cf.core.am.tenant_metadata.v1~` envelope declared no payload properties and
-no `additionalProperties`; the OP#12 chain-narrowing check treats such a base as a
-**closed empty object**, so any derived metadata schema declaring a typed payload
-property was rejected at registration (`switch_to_ready` fails, gear init aborts).
-That made the PRD §5.7 promise — "extensible tenant metadata with GTS-validated
-payloads (branding, contacts)" — unrealisable: only free-form `type: object` derived
-schemas could register. Found while building the Constructor Studio backend;
-confirmed as a bug on Discord (2026-07-29). Fixes #<issue>.
+The `gts.cf.core.am.tenant_metadata.v1~` envelope reached types-registry with
+`additionalProperties: false`: the upstream gts-macros emitter closes the generated
+object unconditionally, and its attribute surface offers no override (a
+`#[schemars(extend(...))]` on the struct is overwritten by the emitter — we tried).
+The OP#12 chain-narrowing check therefore rejected **any** derived metadata schema
+declaring a typed payload property (`switch_to_ready` fails, gear init aborts). That
+made the PRD §5.7 promise — "extensible tenant metadata with GTS-validated payloads
+(branding, contacts)" — unrealisable: only free-form `type: object` derived schemas
+could register. Found while building the Constructor Studio backend; confirmed as a
+bug on Discord (2026-07-29). Fixes #<issue>.
 
-The fix opens the envelope payload explicitly:
+The fix, entirely within this repo:
 
-- `#[schemars(extend("additionalProperties" = true))]` on `TenantMetadataEnvelopeV1`
-  (the documented schemars-extend mechanism already used elsewhere in the repo);
-- `docs/schemas/tenant_metadata.v1.schema.json` synced accordingly.
+- **toolkit-gts-macros**: new wrapper-only `gts_type_schema` argument
+  `open_payload = true` — stripped before forwarding to upstream (which rejects
+  unknown attributes); the inventory `schema_fn` post-processes the emitted JSON and
+  sets `additionalProperties: true` at the schema root. `toolkit-gts` re-exports
+  `serde_json` for the generated code.
+- **account-management-sdk**: `TenantMetadataEnvelopeV1` declares
+  `open_payload = true`; `docs/schemas/tenant_metadata.v1.schema.json` synced.
 
 Semantically the envelope payload was always meant to be open: derived schemas own
 the payload shape, and `MetadataService` validates entries against the **derived**
 schema at PUT time (`metadata_schema_registry`) — the base is an envelope, not a
 payload contract. Traits stay strict (`x-gts-traits-schema` unchanged,
-`additionalProperties: false` inside it).
+`additionalProperties: false` inside it). Verified along the way that OP#12 honours
+an explicit `additionalProperties: true` — the narrowing rule itself needs no change.
 
 ### Type of Change
 
@@ -61,15 +46,16 @@ payload contract. Traits stay strict (`x-gts-traits-schema` unchanged,
 
 - [x] New tests added:
   - `types-registry/tests/abstract_envelope_tests.rs` — a typed derived schema under
-    an open abstract envelope registers and survives `switch_to_ready` (fails
-    without the envelope change);
+    an open abstract envelope registers and survives `switch_to_ready`;
   - `account-management-sdk` sync test `tenant_metadata_envelope_payload_is_open` —
-    guards `additionalProperties: true` in both the generated schema and the docs
-    artifact.
-- [x] Unit tests pass (`cargo test -p cf-gears-types-registry -p cf-gears-account-management-sdk -p cf-gears-account-management`)
+    asserts the **inventory entry** (what types-registry actually registers) and the
+    docs artifact both carry `additionalProperties: true` (the raw
+    `gts_schema_with_refs()` accessor intentionally still reflects the upstream
+    emitter's closed default — documented in the test).
+- [x] Unit tests pass (`cargo test -p cf-gears-toolkit-gts-macros -p cf-gears-toolkit-gts -p cf-gears-account-management-sdk -p cf-gears-types-registry`)
 - [x] Manual testing completed — original repro (one typed entry in
-  `types-registry.config.entities`) now boots a 20-gear assembly instead of failing
-  post-init.
+  `types-registry.config.entities`) previously aborted post-init on a 20-gear
+  assembly.
 
 ### Documentation
 

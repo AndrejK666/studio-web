@@ -78,6 +78,16 @@ metadata".
 Every typed derived schema is rejected at registration; only free-form
 `type: object` (no payload validation) registers.
 
+## Root cause (narrowed down while preparing the fix)
+
+The envelope reaches types-registry with an **explicit** `additionalProperties:
+false`: the upstream gts-macros emitter closes every generated object
+unconditionally, and its attribute surface offers no override (a
+`#[schemars(extend("additionalProperties" = true))]` on the struct is overwritten by
+the emitter — verified by test). OP#12 itself is fine: it honours an explicit
+`additionalProperties: true` (verified by an integration test registering a typed
+derived schema under an open envelope).
+
 ## Recommended fix
 
 **Relax the base envelope**: add `additionalProperties: true` at the payload level of
@@ -98,13 +108,15 @@ change). Either could follow later; the envelope relaxation doesn't preclude the
 
 Plus a working authoring example in the docs.
 
-## Offer
+## Offer → Fix PR ready
 
-We can send the PR for the recommended fix (schema change + docs example) together
-with a failing-first test: seed the schema above via `types-registry.config.entities`
-and assert `switch_to_ready` succeeds. Our 20-gear Studio integration serves as the
-verification bed — we currently ship the free-form workaround with client-side
-validation and would switch back to typed schemas the moment this lands.
+We've implemented the fix (all tests green): a wrapper-only
+`gts_type_schema(open_payload = true)` argument in toolkit-gts-macros that opens the
+schema root in the inventory `schema_fn`, applied to `TenantMetadataEnvelopeV1`, with
+a types-registry integration test and an SDK inventory/docs sync guard.
+PR: #<link>. Our 20-gear Studio integration serves as the verification bed — we
+currently ship the free-form workaround with client-side validation and will switch
+back to typed schemas the moment this lands.
 
 ---
 
