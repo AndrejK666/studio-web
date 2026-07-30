@@ -1,0 +1,21 @@
+# kubectl apply -k deploy/k8s
+#
+# Before the first apply, create the secret (never commit it):
+#   kubectl -n studio create secret generic studio-secrets \
+#     --from-literal=pg-password='<strong password>'
+#
+# CD pins image tags here (kustomize edit set image ...) or via kubectl set image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: studio
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+images:
+  - name: ghcr.io/constructorfabric/studio-web/studio-backend
+    newTag: latest
+  - name: ghcr.io/constructorfabric/studio-web/studio-frontend
+    newTag: latest

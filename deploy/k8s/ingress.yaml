@@ -1,0 +1,29 @@
+# HTTPS entry point. Assumes ingress-nginx + cert-manager with a ClusterIssuer
+# named "letsencrypt" — adjust annotations to whatever the cluster runs.
+# Replace studio.example.com with the real DNS name (ask infra).
+#
+# SSE note: the AI chat streams over long-lived responses; buffering is off
+# and read timeout is raised so the ingress doesn't cut streams.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: studio
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [studio.example.com]
+      secretName: studio-tls
+  rules:
+    - host: studio.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: studio-frontend
+                port: { number: 80 }

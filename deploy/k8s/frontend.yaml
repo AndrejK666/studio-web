@@ -1,0 +1,37 @@
+# Studio frontend — static Vite build served by nginx.
+# nginx.conf inside the image proxies /cf/ to studio-backend:8090 with
+# proxy_buffering off (SSE chat streaming), so the Ingress only needs to
+# route the single host to this service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: studio-frontend }
+  template:
+    metadata:
+      labels: { app: studio-frontend }
+    spec:
+      containers:
+        - name: studio-frontend
+          image: ghcr.io/constructorfabric/studio-web/studio-frontend:latest # CD pins the tag
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-frontend
+spec:
+  selector: { app: studio-frontend }
+  ports:
+    - port: 80
+      targetPort: 80

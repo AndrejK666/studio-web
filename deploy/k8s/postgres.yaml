@@ -1,0 +1,86 @@
+# Postgres for the Studio backend (dev/stage-grade: single replica + PVC).
+# For production prefer a managed Postgres or an operator (CloudNativePG);
+# the backend only needs a DSN change in its config.
+#
+# NB: initdb scripts run ONLY on an empty data volume. If you add a gear with
+# a new database later, create it manually (see README "Postgres" section) —
+# same rule as the docker-compose volume.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-initdb
+data:
+  # Keep in sync with studio-backend/docker/initdb/01-create-databases.sql
+  01-create-databases.sql: |
+    -- One database per stateful gear (matches config/docker.yaml dbnames).
+    CREATE DATABASE studio_types_registry OWNER studio;
+    CREATE DATABASE studio_nodes_registry OWNER studio;
+    CREATE DATABASE studio_resource_group OWNER studio;
+    CREATE DATABASE studio_account_management OWNER studio;
+    CREATE DATABASE studio_settings OWNER studio;
+    CREATE DATABASE studio_file_storage OWNER studio;
+    CREATE DATABASE studio_mini_chat OWNER studio;
+    CREATE DATABASE studio_credstore OWNER studio;
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: studio
+            - name: POSTGRES_DB
+              value: studio
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: studio-secrets, key: pg-password }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "studio", "-d", "studio"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: initdb
+          configMap: { name: postgres-initdb }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 5Gi }
+---
+# Service name "postgres" is load-bearing: config/docker.yaml (baked into the
+# backend image) points at host "postgres".
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432
