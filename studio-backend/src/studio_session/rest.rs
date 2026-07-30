@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use axum::extract::Path;
 use axum::{Extension, Router};
-use serde::{Deserialize, Serialize};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
-use toolkit_canonical_errors::{gts_id, resource_error};
+use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
-use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::service::{Session, SessionService};
@@ -27,18 +25,27 @@ impl LicenseFeature for License {}
 
 /* ── DTOs ── */
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
 pub struct CreateSessionRequest {
     /// Workspace tenant id the IDE session is for.
+    #[schema(value_type = String)]
     pub workspace_id: Uuid,
     /// Optional Git repository cloned into the workspace on first launch.
     #[serde(default)]
     pub repo_url: Option<String>,
+    /// Optional directory on the backend host mounted as the workspace
+    /// (bring-your-own-repo). Takes precedence over the managed directory.
+    #[serde(default)]
+    pub local_path: Option<String>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
 pub struct SessionDto {
+    #[schema(value_type = String)]
     pub id: Uuid,
+    #[schema(value_type = String)]
     pub workspace_id: Uuid,
     /// starting | running | stopped
     pub state: String,
@@ -47,9 +54,12 @@ pub struct SessionDto {
     pub created_at_epoch_secs: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
 pub struct SessionListDto {
     pub items: Vec<SessionDto>,
 }
@@ -62,6 +72,7 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
         url: svc.session_url(s.port),
         created_at_epoch_secs: s.created_at_epoch_secs,
         repo_url: s.repo_url,
+        local_path: s.local_path,
     }
 }
 
@@ -78,6 +89,7 @@ async fn create_session(
             ctx.subject_id(),
             req.workspace_id,
             req.repo_url,
+            req.local_path,
         )
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
@@ -187,6 +199,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .path_param("id", "Session id")
         .handler(delete_session)
+        .no_content_response(StatusCode::NO_CONTENT, "Session stopped and removed")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

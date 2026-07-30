@@ -1659,6 +1659,7 @@ function StudioLauncher({
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repoUrl, setRepoUrl] = useState("");
+  const [localPath, setLocalPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1681,7 +1682,12 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      const s = await api.createStudioSession(token, ws.id, repoUrl.trim() || undefined);
+      const s = await api.createStudioSession(
+        token,
+        ws.id,
+        repoUrl.trim() || undefined,
+        localPath.trim() || undefined,
+      );
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
@@ -1725,6 +1731,14 @@ function StudioLauncher({
               placeholder="https://github.com/org/repo.git"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
+            />
+          </label>
+          <label className="field" style={{ maxWidth: 460 }}>
+            Local folder on the backend host (optional — mounted as the workspace)
+            <input
+              placeholder="/mnt/c/Repos/my-repo"
+              value={localPath}
+              onChange={(e) => setLocalPath(e.target.value)}
             />
           </label>
           <button className="primary" onClick={launch} disabled={busy}>

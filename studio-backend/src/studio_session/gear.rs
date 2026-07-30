@@ -79,23 +79,32 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
 #[async_trait]
 impl toolkit::contracts::RunnableCapability for StudioSessionGear {
     /// Background reaper: stops sessions past their maximum age.
+    ///
+    /// NB: `start()` must RETURN — the runtime awaits it before starting the
+    /// next gear in topo order. The loop therefore runs in a spawned task
+    /// tied to the runtime's cancellation token (same pattern as credstore's
+    /// reaper tick).
     async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
         let service = self
             .service
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-session service not initialized"))?
             .clone();
-        loop {
-            tokio::select! {
-                () = cancel.cancelled() => break,
-                () = tokio::time::sleep(Duration::from_secs(60)) => {
-                    let reaped = service.reap_expired().await;
-                    if reaped > 0 {
-                        info!("studio-session: reaped {reaped} expired session(s)");
+        tokio::spawn(async move {
+            info!("studio-session: reaper started (tick 60s)");
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(Duration::from_secs(60)) => {
+                        let reaped = service.reap_expired().await;
+                        if reaped > 0 {
+                            info!("studio-session: reaped {reaped} expired session(s)");
+                        }
                     }
                 }
             }
-        }
+            info!("studio-session: reaper stopped");
+        });
         Ok(())
     }
 

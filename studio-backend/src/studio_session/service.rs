@@ -47,6 +47,7 @@ pub struct Session {
     pub state: SessionState,
     pub created_at_epoch_secs: u64,
     pub repo_url: Option<String>,
+    pub local_path: Option<String>,
 }
 
 pub struct SessionService {
@@ -92,12 +93,17 @@ impl SessionService {
 
     /// Create (or return the existing) session for a workspace.
     /// Idempotency key: (tenant, workspace).
+    ///
+    /// `local_path`: host directory mounted as /workspace INSTEAD of the
+    /// managed per-workspace directory (bring-your-own-repo). Must exist on
+    /// the backend host.
     pub async fn create(
         &self,
         tenant_id: Uuid,
         actor_id: Uuid,
         workspace_id: Uuid,
         repo_url: Option<String>,
+        local_path: Option<String>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
             let sessions = self.sessions.read().await;
@@ -112,11 +118,27 @@ impl SessionService {
 
         self.ensure_image().await?;
 
-        // Workspace directory on the host (bind-mount source).
-        let root = self.cfg.workspaces_root_expanded();
-        let ws_dir = format!("{root}/{workspace_id}");
-        std::fs::create_dir_all(&ws_dir)
-            .with_context(|| format!("cannot create workspace dir {ws_dir}"))?;
+        // Workspace directory on the host (bind-mount source): either a
+        // user-provided local repo/folder, or the managed per-workspace dir.
+        let ws_dir = match &local_path {
+            Some(p) => {
+                let p = p.trim();
+                if !std::path::Path::new(p).is_dir() {
+                    return Err(anyhow!(
+                        "local_path '{p}' is not a directory on the backend host \
+                         (for WSL use /mnt/c/... style paths)"
+                    ));
+                }
+                p.to_string()
+            }
+            None => {
+                let root = self.cfg.workspaces_root_expanded();
+                let dir = format!("{root}/{workspace_id}");
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("cannot create workspace dir {dir}"))?;
+                dir
+            }
+        };
 
         let port = self.allocate_port().await?;
         let session_id = Uuid::new_v4();
@@ -185,6 +207,7 @@ impl SessionService {
             state: SessionState::Starting,
             created_at_epoch_secs: now_secs(),
             repo_url,
+            local_path,
         };
         self.sessions
             .write()
@@ -310,6 +333,7 @@ impl SessionService {
                     },
                     created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or_else(now_secs),
                     repo_url: None,
+                    local_path: None,
                 },
             );
             adopted += 1;

@@ -8,5 +8,3 @@ pub mod config;
 pub mod gear;
 pub mod rest;
 pub mod service;
-
-pub use gear::StudioSessionGear;

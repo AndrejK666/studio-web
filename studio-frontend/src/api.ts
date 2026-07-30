@@ -95,6 +95,7 @@ export interface StudioSession {
   url: string;
   created_at_epoch_secs: number;
   repo_url?: string;
+  local_path?: string;
 }
 
 export interface StoredFile {
@@ -305,10 +306,14 @@ export const api = {
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
-  createStudioSession: (token: string, workspaceId: string, repoUrl?: string) =>
+  createStudioSession: (token: string, workspaceId: string, repoUrl?: string, localPath?: string) =>
     request<StudioSession>("/studio-session/v1/sessions", token, {
       method: "POST",
-      body: JSON.stringify({ workspace_id: workspaceId, repo_url: repoUrl || undefined }),
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        repo_url: repoUrl || undefined,
+        local_path: localPath || undefined,
+      }),
     }),
   studioSession: (token: string, id: string) =>
     request<StudioSession>(`/studio-session/v1/sessions/${id}`, token),
