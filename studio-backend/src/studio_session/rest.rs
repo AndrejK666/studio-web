@@ -130,16 +130,21 @@ async fn create_session(
                 .create());
             }
         };
+        // A missing/inaccessible secret must not block the launch: public
+        // repositories clone fine without it, and a private one fails later
+        // with git's own message in the session log.
         let token = match r.token_ref.as_deref().filter(|t| !t.trim().is_empty()) {
-            Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref.trim()).await.map_err(
-                |e| {
-                    CanonicalError::internal(format!(
-                        "source '{}': token resolution failed: {e:#}",
-                        r.name
-                    ))
-                    .create()
-                },
-            )?),
+            Some(token_ref) => match svc.resolve_git_token(&ctx, token_ref.trim()).await {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::warn!(
+                        source = %r.name,
+                        token_ref = %token_ref.trim(),
+                        "studio-session: repo token unavailable ({e:#}) — cloning without credentials"
+                    );
+                    None
+                }
+            },
             None => None,
         };
         repos.push(RepoSpec {
@@ -166,10 +171,16 @@ async fn create_session(
                 .map(str::trim)
                 .filter(|t| !t.is_empty())
             {
-                Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref).await.map_err(|e| {
-                    CanonicalError::internal(format!("workspace root: token resolution failed: {e:#}"))
-                        .create()
-                })?),
+                Some(token_ref) => match svc.resolve_git_token(&ctx, token_ref).await {
+                    Ok(t) => Some(t),
+                    Err(e) => {
+                        tracing::warn!(
+                            token_ref = %token_ref,
+                            "studio-session: workspace-root token unavailable ({e:#}) — cloning without credentials"
+                        );
+                        None
+                    }
+                },
                 None => None,
             };
             Some(RepoSpec {

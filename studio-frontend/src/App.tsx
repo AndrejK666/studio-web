@@ -981,6 +981,16 @@ function WorkspaceDashboard({
                   value={pats["__root__"] ?? ""}
                   onChange={(e) => setPats({ ...pats, __root__: e.target.value })}
                 />
+                {settings.root_token_ref && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    title="Forget the stored token reference (use the repo without credentials)"
+                    onClick={() => setSettings({ ...settings, root_token_ref: "" })}
+                  >
+                    forget token
+                  </button>
+                )}
                 <input
                   placeholder="branch"
                   style={{ width: 110, fontWeight: 400 }}
@@ -1092,6 +1102,16 @@ function WorkspaceDashboard({
                         value={pats[r.name] ?? ""}
                         onChange={(e) => setPats({ ...pats, [r.name]: e.target.value })}
                       />
+                      {r.token_ref && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          title="Forget the stored token reference"
+                          onClick={() => patchRepo(i, { token_ref: "" })}
+                        >
+                          forget token
+                        </button>
+                      )}
                       <input
                         placeholder="branch"
                         style={{ width: 110 }}
