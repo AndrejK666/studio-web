@@ -162,7 +162,16 @@ export function apiUrl(path: string): string {
   return `/cf${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** Fired on any 401 so the app can drop a dead session instead of looping. */
+export const UNAUTHENTICATED_EVENT = "studio:unauthenticated";
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+  if (!token) {
+    // Defensive: an empty token would reach the gateway as a missing bearer
+    // and read as a server-side auth failure. Fail here, clearly.
+    window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
+    throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
+  }
   const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
@@ -172,7 +181,12 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     },
   });
   const body = res.status === 204 ? undefined : await res.json().catch(() => undefined);
-  if (!res.ok) throw new ApiError(res.status, body);
+  if (!res.ok) {
+    // 401 = the session is over (SSO access tokens expire; we hold no refresh
+    // token yet). Tell the app once; every caller still gets its error.
+    if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
+    throw new ApiError(res.status, body);
+  }
   return body as T;
 }
 

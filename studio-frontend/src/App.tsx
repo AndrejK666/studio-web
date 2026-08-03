@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import {
   api,
   ApiError,
+  UNAUTHENTICATED_EVENT,
   PROJECT_RG_TYPE,
   shortTypeName,
   TENANT_TYPES,
@@ -77,18 +78,51 @@ function activeFilterCount(view: PanelView, f: Filters): number {
 export function App() {
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  const [expired, setExpired] = useState(false);
+
+  // Any 401 from the API ends the session: SSO access tokens expire (Keycloak
+  // default: 1 h) and the portal holds no refresh token yet, so the honest
+  // behaviour is to ask for a new sign-in instead of showing 401s forever.
+  useEffect(() => {
+    const onUnauthenticated = () => {
+      setToken((t) => {
+        if (t) setExpired(true);
+        return null;
+      });
+      setMe(null);
+    };
+    window.addEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated);
+    return () => window.removeEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated);
+  }, []);
 
   if (!token || !me) {
-    return <Login onLogin={(t, who) => { setToken(t); setMe(who); }} />;
+    return (
+      <Login
+        sessionExpired={expired}
+        onLogin={(t, who) => {
+          setExpired(false);
+          setToken(t);
+          setMe(who);
+        }}
+      />
+    );
   }
   return <Shell token={token} me={me} onLogout={() => { setToken(null); setMe(null); }} />;
 }
 
 /* ── Login ── */
 
-function Login({ onLogin }: { onLogin: (token: string, me: Me) => void }) {
+function Login({
+  onLogin,
+  sessionExpired = false,
+}: {
+  onLogin: (token: string, me: Me) => void;
+  sessionExpired?: boolean;
+}) {
   const [value, setValue] = useState("studio-admin-token");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    sessionExpired ? "Session expired — please sign in again." : null,
+  );
   const [busy, setBusy] = useState(false);
 
   // Returning from the IdP? Finish the PKCE exchange and sign in.
@@ -214,7 +248,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     try {
       const [homeTenant, page] = await Promise.all([
         api.tenant(token, me.subject_tenant_id),
-        api.tenantChildren(token, me.subject_tenant_id),
+        api.tenantChildren(token, me.subject_tenant_id).catch((e) => {
+          // A 404 here means the home tenant is gone (deleted) — show an
+          // empty portal with a clear note rather than a raw API error.
+          if (e instanceof ApiError && e.status === 404) return { items: [] };
+          throw e;
+        }),
       ]);
       setHome(homeTenant);
       const children = page.items ?? [];
