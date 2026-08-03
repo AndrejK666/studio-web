@@ -850,14 +850,20 @@ function WorkspaceDashboard({
     setSettings({ ...settings, repos });
   }
 
-  const repoConnected = (settings?.repos?.length ?? 0) > 0;
+  const repoConnected =
+    (settings?.repos?.length ?? 0) > 0 || Boolean(settings?.root_repo_url?.trim());
+  // A git-backed source (GitLab/GitHub URL + PAT via credstore) IS a working
+  // repository connector — the studio-session gear clones it into the
+  // workspace. Only the non-git connectors are still ahead.
+  const gitConnector = (settings?.repos ?? []).some((r) => r.source !== "local" && r.url?.trim());
   const steps: { label: string; done: boolean; soon?: boolean }[] = [
     { label: "Workspace created", done: true },
     { label: "Members invited", done: (users?.length ?? 0) > 0 },
     { label: "First project created", done: (projects?.length ?? 0) > 0 },
     { label: "Automation configured", done: settingsExist },
     { label: "Repository connected", done: repoConnected },
-    { label: "Connectors (GitHub / Jira)", done: false, soon: true },
+    { label: "Connector: Git (GitLab / GitHub)", done: gitConnector },
+    { label: "Connectors (Jira / Slack)", done: false, soon: true },
     { label: "Kit installed", done: false, soon: true },
   ];
 

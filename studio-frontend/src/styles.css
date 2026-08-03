@@ -151,7 +151,9 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 12.5px; color: var(--muted);
   display: flex; flex-direction: column; gap: 8px;
 }
-.content { flex: 1; min-width: 0; padding: 1.75rem 2rem 4rem; max-width: 860px; }
+/* The work area takes all width between the nav and the filter panel; cards
+   inside cap their own line lengths, the shell itself fills the screen. */
+.content { flex: 1; min-width: 0; padding: 1.75rem 2.25rem 4rem; }
 .content > h1 { margin-bottom: 0.25rem; }
 @media (max-width: 720px) {
   .shell { flex-direction: column; }
