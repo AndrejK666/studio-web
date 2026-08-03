@@ -392,16 +392,29 @@ export const api = {
    * `personal_token` secret type would reject tenant sharing: it is
    * private-only by definition.)
    */
-  putSecret: (token: string, reference: string, value: string, secretType?: string) =>
-    request<unknown>("/credstore/v1/secrets", token, {
-      method: "POST",
-      body: JSON.stringify({
-        reference,
-        value,
-        sharing: "tenant",
-        ...(secretType ? { type: secretType } : {}),
-      }),
-    }),
+  putSecret: async (token: string, reference: string, value: string, secretType?: string) => {
+    const payload = {
+      value,
+      sharing: "tenant",
+      ...(secretType ? { type: secretType } : {}),
+    };
+    try {
+      return await request<unknown>("/credstore/v1/secrets", token, {
+        method: "POST",
+        body: JSON.stringify({ reference, ...payload }),
+      });
+    } catch (e) {
+      // 409: the reference exists (possibly from an earlier failed attempt,
+      // whose GET fails closed). Rotate it instead — `If-Match: *` is the
+      // gear's explicit unconditional overwrite.
+      if (!(e instanceof ApiError) || e.status !== 409) throw e;
+      return await request<unknown>(`/credstore/v1/secrets/${encodeURIComponent(reference)}`, token, {
+        method: "PUT",
+        headers: { "If-Match": "*" },
+        body: JSON.stringify(payload),
+      });
+    }
+  },
   studioSession: (token: string, id: string) =>
     request<StudioSession>(`/studio-session/v1/sessions/${id}`, token),
   studioSessions: (token: string) =>
