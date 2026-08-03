@@ -803,6 +803,16 @@ function WorkspaceDashboard({
         </p>
         {settings && (
           <form onSubmit={saveRepo}>
+            <label className="field" style={{ maxWidth: 460 }}>
+              Workspace root (optional — existing Studio workspace folder, e.g. created by the
+              Studio CLI; used as-is, its .cf-workspace.toml is not touched)
+              <input
+                placeholder="/mnt/c/Repos/hypothesis-workspace"
+                value={settings.root_path ?? ""}
+                onChange={(e) => setSettings({ ...settings, root_path: e.target.value })}
+              />
+            </label>
+
             {(settings.repos ?? []).map((r, i) => (
               <div
                 key={i}
@@ -850,12 +860,21 @@ function WorkspaceDashboard({
 
                 <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   {r.source === "local" && (
-                    <input
-                      placeholder="/mnt/c/Repos/CFS/studio-demo-workspace"
-                      style={{ flex: 1, minWidth: 280 }}
-                      value={r.path ?? ""}
-                      onChange={(e) => patchRepo(i, { path: e.target.value })}
-                    />
+                    <>
+                      <input
+                        placeholder="/mnt/c/Repos/HYP/csh_hypotheses_back"
+                        style={{ flex: 1, minWidth: 240 }}
+                        value={r.path ?? ""}
+                        onChange={(e) => patchRepo(i, { path: e.target.value })}
+                      />
+                      <input
+                        placeholder="mount at (default: name)"
+                        title="Target inside the workspace, e.g. .workspace-sources/hypotheses/csh_hypotheses_back"
+                        style={{ width: 260 }}
+                        value={r.target ?? ""}
+                        onChange={(e) => patchRepo(i, { target: e.target.value })}
+                      />
+                    </>
                   )}
                   {r.source === "git" && (
                     <input
@@ -1844,6 +1863,7 @@ function StudioLauncher({
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repos, setRepos] = useState<import("./api").RepoEntry[] | null>(null);
+  const [rootPath, setRootPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1852,7 +1872,10 @@ function StudioLauncher({
   useEffect(() => {
     api
       .workspaceSettings(token, ws.id)
-      .then((s) => setRepos(s?.repos ?? []))
+      .then((s) => {
+        setRepos(s?.repos ?? []);
+        setRootPath(s?.root_path?.trim() ?? "");
+      })
       .catch(() => setRepos([]));
   }, [token, ws.id]);
 
@@ -1875,7 +1898,7 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      const s = await api.createStudioSession(token, ws.id, repos ?? []);
+      const s = await api.createStudioSession(token, ws.id, repos ?? [], rootPath || undefined);
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
@@ -1913,13 +1936,18 @@ function StudioLauncher({
 
       {!session && (
         <>
+          {rootPath && (
+            <p className="hint">
+              Workspace root: <code>{rootPath}</code> (existing Studio workspace)
+            </p>
+          )}
           {repos && repos.length > 0 && (
             <p className="hint">
               Workspace sources ({repos.length}):{" "}
               {repos.map((r) => `${r.name} (${r.source})`).join(", ")} — managed on the dashboard.
             </p>
           )}
-          {repos && repos.length === 0 && (
+          {repos && repos.length === 0 && !rootPath && (
             <p className="hint">
               No sources bound yet — the workspace opens with an empty repository. Connect
               repositories on the dashboard (Repositories card).

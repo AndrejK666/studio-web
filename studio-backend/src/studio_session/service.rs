@@ -50,6 +50,10 @@ pub struct RepoSpec {
     pub url: Option<String>,
     /// Host directory (kind = Local).
     pub path: Option<String>,
+    /// Mount/clone target relative to the workspace root (defaults to
+    /// `name`). Lets a live working copy shadow a materialized source,
+    /// e.g. `.workspace-sources/hypotheses/csh_hypotheses_back`.
+    pub target: Option<String>,
     pub branch: Option<String>,
     /// Resolved PAT (kind = Git, private repos). Never persisted.
     pub token: Option<String>,
@@ -153,11 +157,16 @@ impl SessionService {
     /// first launch. The gear materializes the canonical
     /// `.cf-workspace.toml` (`[sources.<id>]`, the format the Theia Studio
     /// extension owns) unless the file already exists.
+    /// `root_path`: an existing Studio workspace folder on the backend host
+    /// (e.g. created by the Studio CLI, with its own `.cf-workspace.toml`)
+    /// mounted as /workspace INSTEAD of the managed directory. The gear
+    /// never writes into such a root unless the manifest is missing.
     pub async fn create(
         &self,
         tenant_id: Uuid,
         actor_id: Uuid,
         workspace_id: Uuid,
+        root_path: Option<String>,
         repos: Vec<RepoSpec>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
@@ -184,6 +193,22 @@ impl SessionService {
             if !seen.insert(r.name.clone()) {
                 return Err(anyhow!("duplicate source name '{}'", r.name));
             }
+            if let Some(t) = r.target.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                let ok = !t.starts_with('/')
+                    && t.split('/').all(|seg| {
+                        !seg.is_empty()
+                            && seg != ".."
+                            && seg
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                    });
+                if !ok {
+                    return Err(anyhow!(
+                        "source '{}': target '{t}' must be a relative path without '..'",
+                        r.name
+                    ));
+                }
+            }
             match r.kind {
                 RepoKind::Local => {
                     let p = r.path.as_deref().unwrap_or("").trim();
@@ -203,11 +228,27 @@ impl SessionService {
             }
         }
 
-        // Managed workspace root (always) + canonical .cf-workspace.toml.
-        let root = self.cfg.workspaces_root_expanded();
-        let ws_dir = format!("{root}/{workspace_id}");
-        std::fs::create_dir_all(&ws_dir)
-            .with_context(|| format!("cannot create workspace dir {ws_dir}"))?;
+        // Workspace root: an existing Studio workspace folder (CLI-created,
+        // bring-your-own) or the managed per-workspace directory.
+        let ws_dir = match root_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            Some(p) => {
+                if !std::path::Path::new(p).is_dir() {
+                    return Err(anyhow!(
+                        "root_path '{p}' is not a directory on the backend host \
+                         (for WSL use /mnt/c/... style paths)"
+                    ));
+                }
+                p.to_string()
+            }
+            None => {
+                let root = self.cfg.workspaces_root_expanded();
+                let dir = format!("{root}/{workspace_id}");
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("cannot create workspace dir {dir}"))?;
+                dir
+            }
+        };
+        // No-op when .cf-workspace.toml already exists (CLI workspaces).
         self.materialize_workspace_toml(&ws_dir, &repos)?;
 
         let port = self.allocate_port().await?;
@@ -227,6 +268,7 @@ impl SessionService {
             .map(|r| {
                 serde_json::json!({
                     "name": r.name,
+                    "dir": r.target.as_deref().map(str::trim).filter(|t| !t.is_empty()).unwrap_or(&r.name),
                     "url": r.url.as_deref().unwrap_or("").trim(),
                     "branch": r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()),
                     "token": r.token,
@@ -247,11 +289,17 @@ impl SessionService {
             (PORT_LABEL.into(), port.to_string()),
         ]);
 
-        // Workspace root + one bind per local source.
+        // Workspace root + one bind per local source (at its target path).
         let mut binds = vec![format!("{ws_dir}:/workspace")];
         for r in repos.iter().filter(|r| r.kind == RepoKind::Local) {
             let p = r.path.as_deref().unwrap_or("").trim();
-            binds.push(format!("{p}:/workspace/{}", r.name));
+            let target = r
+                .target
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .unwrap_or(&r.name);
+            binds.push(format!("{p}:/workspace/{target}"));
         }
 
         let host_config = HostConfig {
@@ -333,24 +381,24 @@ impl SessionService {
         }
         let mut toml = String::from("version = \"1.0\"\n");
         for r in repos {
+            let target = r
+                .target
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .unwrap_or(&r.name);
             toml.push_str(&format!("\n[sources.{}]\nrole = \"codebase\"\n", r.name));
-            match r.kind {
-                RepoKind::Git => {
-                    toml.push_str(&format!(
-                        "url = \"{}\"\n",
-                        r.url.as_deref().unwrap_or("").trim()
-                    ));
-                    if let Some(b) = r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
-                        toml.push_str(&format!("branch = \"{b}\"\n"));
-                    }
-                    // Cloned by the session entrypoint into ./<name>
-                    toml.push_str(&format!("path = \"{}\"\n", r.name));
-                }
-                RepoKind::Local => {
-                    // Bind-mounted by the session manager at ./<name>
-                    toml.push_str(&format!("path = \"{}\"\n", r.name));
+            if r.kind == RepoKind::Git {
+                toml.push_str(&format!(
+                    "url = \"{}\"\n",
+                    r.url.as_deref().unwrap_or("").trim()
+                ));
+                if let Some(b) = r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                    toml.push_str(&format!("branch = \"{b}\"\n"));
                 }
             }
+            // Cloned by the entrypoint / bind-mounted by the session manager.
+            toml.push_str(&format!("path = \"{target}\"\n"));
         }
         std::fs::write(&path, toml).with_context(|| format!("cannot write {path}"))?;
         Ok(())

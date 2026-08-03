@@ -51,6 +51,8 @@ export interface RepoEntry {
   source: RepoSource;
   url?: string;
   path?: string;
+  /** Mount/clone target relative to the workspace root (defaults to name). */
+  target?: string;
   branch?: string;
   /** credstore secret reference holding the repo PAT (private repos). */
   token_ref?: string;
@@ -59,6 +61,8 @@ export interface RepoEntry {
 export interface WorkspaceSettings {
   automation_level?: "manual" | "recommendations" | "autonomous";
   approved_worker_categories?: string[];
+  /** Existing Studio workspace folder (CLI-created) used as the root. */
+  root_path?: string;
   /** Workspace sources: multiple repositories/folders per workspace. */
   repos?: RepoEntry[];
 }
@@ -322,16 +326,18 @@ export const api = {
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
-  createStudioSession: (token: string, workspaceId: string, repos: RepoEntry[]) =>
+  createStudioSession: (token: string, workspaceId: string, repos: RepoEntry[], rootPath?: string) =>
     request<StudioSession>("/studio-session/v1/sessions", token, {
       method: "POST",
       body: JSON.stringify({
         workspace_id: workspaceId,
+        root_path: rootPath || undefined,
         repos: repos.map((r) => ({
           name: r.name,
           kind: r.source === "local" ? "local" : "git",
           url: r.url || undefined,
           path: r.path || undefined,
+          target: r.target || undefined,
           branch: r.branch || undefined,
           token_ref: r.token_ref || undefined,
         })),

@@ -38,6 +38,9 @@ pub struct RepoSpecDto {
     pub url: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    /// Mount/clone target relative to the workspace root (defaults to name).
+    #[serde(default)]
+    pub target: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
     /// credstore secret reference with a PAT for private repos. Resolved
@@ -52,6 +55,11 @@ pub struct CreateSessionRequest {
     /// Workspace tenant id the IDE session is for.
     #[schema(value_type = String)]
     pub workspace_id: Uuid,
+    /// Existing Studio workspace folder on the backend host (e.g. created by
+    /// the Studio CLI) mounted as the workspace root instead of the managed
+    /// directory. Its own .cf-workspace.toml is left untouched.
+    #[serde(default)]
+    pub root_path: Option<String>,
     /// Workspace sources (multiple repositories/folders per workspace).
     #[serde(default)]
     pub repos: Vec<RepoSpecDto>,
@@ -129,12 +137,19 @@ async fn create_session(
             kind,
             url: r.url,
             path: r.path,
+            target: r.target,
             branch: r.branch,
             token,
         });
     }
     let (session, existed) = svc
-        .create(ctx.subject_tenant_id(), ctx.subject_id(), req.workspace_id, repos)
+        .create(
+            ctx.subject_tenant_id(),
+            ctx.subject_id(),
+            req.workspace_id,
+            req.root_path,
+            repos,
+        )
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
     let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
