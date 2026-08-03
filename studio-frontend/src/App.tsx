@@ -678,7 +678,11 @@ function WorkspaceDashboard({
           return r;
         }),
       );
-      const next = { ...settings, repos };
+      // Drop incomplete rows (an added-but-unfilled source would fail launch).
+      const complete = repos.filter((r) =>
+        r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
+      );
+      const next = { ...settings, repos: complete };
       await api.putWorkspaceSettings(token, ws.id, next);
       setSettings(next);
       setPats({});
@@ -1898,7 +1902,10 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      const s = await api.createStudioSession(token, ws.id, repos ?? [], rootPath || undefined);
+      const usable = (repos ?? []).filter((r) =>
+        r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
+      );
+      const s = await api.createStudioSession(token, ws.id, usable, rootPath || undefined);
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
