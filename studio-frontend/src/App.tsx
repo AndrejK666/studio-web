@@ -2037,6 +2037,21 @@ function MembersView({
 
 /* ── Profile ── */
 
+/// Best-effort JWT payload decode for DISPLAY only — authorization decisions
+/// live in the backend (oidc-authn-plugin validates signatures; we just show
+/// the person who they are signed in as). Static dev tokens are opaque, so
+/// this returns null and the card degrades gracefully.
+function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b64)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: string }) {
   const [theme, setTheme] = useState("light");
   const [language, setLanguage] = useState("en");
@@ -2069,10 +2084,62 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
     }
   }
 
+  const claims = decodeJwtClaims(token);
+  const claim = (k: string) => {
+    const v = claims?.[k];
+    return typeof v === "string" && v.trim() ? v : null;
+  };
+  const displayName = claim("name") ?? claim("preferred_username");
+  const sessionUntil =
+    typeof claims?.exp === "number" ? new Date(claims.exp * 1000).toLocaleTimeString() : null;
+
   return (
     <>
       <h1>Profile</h1>
       <p className="subtitle">Identity as the backend sees it (from the validated token).</p>
+
+      <div className="card">
+        <h2>Signed in as</h2>
+        <ul className="rows">
+          <li>
+            <div className="grow">
+              <div className="sub">Name</div>
+              <div className="name">{displayName ?? "— (opaque dev token)"}</div>
+            </div>
+          </li>
+          {claim("preferred_username") && (
+            <li>
+              <div className="grow">
+                <div className="sub">Username</div>
+                <div className="name">{claim("preferred_username")}</div>
+              </div>
+            </li>
+          )}
+          {claim("email") && (
+            <li>
+              <div className="grow">
+                <div className="sub">Email</div>
+                <div className="name">{claim("email")}</div>
+              </div>
+            </li>
+          )}
+          <li>
+            <div className="grow">
+              <div className="sub">Identity provider</div>
+              <div className="name">{claim("iss") ?? "static token (dev profile)"}</div>
+            </div>
+          </li>
+          {sessionUntil && (
+            <li>
+              <div className="grow">
+                <div className="sub">Session token valid until</div>
+                <div className="name">{sessionUntil} (renewed silently)</div>
+              </div>
+            </li>
+          )}
+        </ul>
+      </div>
+
       <div className="card">
         <ul className="rows">
           <li>
