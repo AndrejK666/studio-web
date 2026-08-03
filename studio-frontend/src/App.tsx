@@ -1053,21 +1053,12 @@ function WorkspaceDashboard({
 
                 <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   {r.source === "local" && (
-                    <>
-                      <input
-                        placeholder="/mnt/c/Repos/HYP/csh_hypotheses_back"
-                        style={{ flex: 1, minWidth: 240 }}
-                        value={r.path ?? ""}
-                        onChange={(e) => patchRepo(i, { path: e.target.value })}
-                      />
-                      <input
-                        placeholder="mount at (default: name)"
-                        title="Target inside the workspace, e.g. .workspace-sources/hypotheses/csh_hypotheses_back"
-                        style={{ width: 260 }}
-                        value={r.target ?? ""}
-                        onChange={(e) => patchRepo(i, { target: e.target.value })}
-                      />
-                    </>
+                    <input
+                      placeholder="/mnt/c/Repos/HYP/csh_hypotheses_back"
+                      style={{ flex: 1, minWidth: 240 }}
+                      value={r.path ?? ""}
+                      onChange={(e) => patchRepo(i, { path: e.target.value })}
+                    />
                   )}
                   {r.source === "git" && (
                     <input
@@ -1120,6 +1111,17 @@ function WorkspaceDashboard({
                       />
                     </>
                   )}
+                  {/* Clone/mount target — every source kind. A CLI-created
+                      workspace expects its sources under
+                      .workspace-sources/<group>/<repo>; leaving this empty
+                      puts the source at ./<name>. */}
+                  <input
+                    placeholder="target (default: name)"
+                    title="Path inside the workspace, e.g. .workspace-sources/hypotheses/csh_hypotheses_back"
+                    style={{ width: 260 }}
+                    value={r.target ?? ""}
+                    onChange={(e) => patchRepo(i, { target: e.target.value })}
+                  />
                 </div>
               </div>
             ))}
