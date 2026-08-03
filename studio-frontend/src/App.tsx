@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   api,
@@ -2122,6 +2122,7 @@ function StudioLauncher({
   }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoLaunched = useRef(false);
 
   // Sources are bound on the workspace (dashboard → Repositories card);
   // the launcher just uses them.
@@ -2154,6 +2155,16 @@ function StudioLauncher({
     }, 2000);
     return () => clearInterval(t);
   }, [session, token]);
+
+  // "Open Studio" means open the Studio — launch as soon as the sources are
+  // known instead of asking for a second click. Creation is idempotent per
+  // workspace: an already-running session is simply returned (and opened).
+  useEffect(() => {
+    if (repos === null || session || autoLaunched.current) return;
+    autoLaunched.current = true;
+    void launch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repos, session]);
 
   async function launch() {
     setBusy(true);
@@ -2237,8 +2248,10 @@ function StudioLauncher({
               repositories on the dashboard (Repositories card).
             </p>
           )}
+          {/* Launch fires automatically when the card opens; the button is
+              the retry path (e.g. after fixing sources or a failed start). */}
           <button className="primary" onClick={launch} disabled={busy || repos === null}>
-            {busy ? "Launching…" : repos === null ? "Loading…" : "Launch Studio"}
+            {busy || repos === null ? "Launching…" : error ? "Retry launch" : "Launch again"}
           </button>
         </>
       )}
