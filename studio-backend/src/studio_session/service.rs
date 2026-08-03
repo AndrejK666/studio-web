@@ -254,15 +254,12 @@ impl SessionService {
                 dir
             }
         };
-        // When the workspace root itself is a repo pending its first clone,
-        // the directory must stay EMPTY (git clone refuses a non-empty
-        // target) — the cloned repo brings its own manifest. On later
-        // launches the manifest exists and missing sources are appended.
-        let root_clone_pending = root_repo.is_some()
-            && std::fs::read_dir(&ws_dir)
-                .map(|mut d| d.next().is_none())
-                .unwrap_or(false);
-        if !root_clone_pending {
+        // A workspace backed by its own repository owns its manifest — never
+        // write a stub next to it (a generated stub is exactly what used to
+        // make the directory non-empty and block the clone; the entrypoint
+        // now adopts the repo either way, but the stub would still shadow the
+        // real file until the first checkout).
+        if root_repo.is_none() {
             // No-op when .cf-workspace.toml already exists (CLI workspaces).
             self.materialize_workspace_toml(&ws_dir, &repos)?;
         }
