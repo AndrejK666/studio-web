@@ -63,6 +63,11 @@ export interface WorkspaceSettings {
   approved_worker_categories?: string[];
   /** Existing Studio workspace folder (CLI-created) used as the root. */
   root_path?: string;
+  /** Clone URL of the workspace repository itself (alternative to root_path). */
+  root_repo_url?: string;
+  root_branch?: string;
+  /** credstore secret reference with the PAT for the workspace repository. */
+  root_token_ref?: string;
   /** Workspace sources: multiple repositories/folders per workspace. */
   repos?: RepoEntry[];
 }
@@ -334,12 +339,20 @@ export const api = {
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
-  createStudioSession: (token: string, workspaceId: string, repos: RepoEntry[], rootPath?: string) =>
+  createStudioSession: (
+    token: string,
+    workspaceId: string,
+    repos: RepoEntry[],
+    root?: { path?: string; repoUrl?: string; branch?: string; tokenRef?: string },
+  ) =>
     request<StudioSession>("/studio-session/v1/sessions", token, {
       method: "POST",
       body: JSON.stringify({
         workspace_id: workspaceId,
-        root_path: rootPath || undefined,
+        root_path: root?.path || undefined,
+        root_repo_url: root?.repoUrl || undefined,
+        root_branch: root?.branch || undefined,
+        root_token_ref: root?.tokenRef || undefined,
         repos: repos.map((r) => ({
           name: r.name,
           kind: r.source === "local" ? "local" : "git",

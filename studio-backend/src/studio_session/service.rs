@@ -161,12 +161,18 @@ impl SessionService {
     /// (e.g. created by the Studio CLI, with its own `.cf-workspace.toml`)
     /// mounted as /workspace INSTEAD of the managed directory. The gear
     /// never writes into such a root unless the manifest is missing.
+    /// `root_repo`: clone URL of the workspace repository itself (a Studio
+    /// workspace created by the CLI is a git repo: manifest, docs, and
+    /// `.workspace-sources/` for its sources). Cloned into the managed
+    /// directory on first launch; `root_path` takes precedence when both are
+    /// given.
     pub async fn create(
         &self,
         tenant_id: Uuid,
         actor_id: Uuid,
         workspace_id: Uuid,
         root_path: Option<String>,
+        root_repo: Option<RepoSpec>,
         repos: Vec<RepoSpec>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
@@ -248,8 +254,18 @@ impl SessionService {
                 dir
             }
         };
-        // No-op when .cf-workspace.toml already exists (CLI workspaces).
-        self.materialize_workspace_toml(&ws_dir, &repos)?;
+        // When the workspace root itself is a repo pending its first clone,
+        // the directory must stay EMPTY (git clone refuses a non-empty
+        // target) — the cloned repo brings its own manifest. On later
+        // launches the manifest exists and missing sources are appended.
+        let root_clone_pending = root_repo.is_some()
+            && std::fs::read_dir(&ws_dir)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false);
+        if !root_clone_pending {
+            // No-op when .cf-workspace.toml already exists (CLI workspaces).
+            self.materialize_workspace_toml(&ws_dir, &repos)?;
+        }
 
         let port = self.allocate_port().await?;
         let session_id = Uuid::new_v4();
@@ -260,6 +276,20 @@ impl SessionService {
             format!("STUDIO_ACTOR_ID={actor_id}"),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
         ];
+        // Workspace root repository (cloned by the entrypoint into an empty
+        // /workspace on first launch).
+        if let Some(root) = &root_repo {
+            env.push(format!(
+                "STUDIO_ROOT_URL={}",
+                root.url.as_deref().unwrap_or("").trim()
+            ));
+            if let Some(b) = root.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                env.push(format!("STUDIO_ROOT_BRANCH={b}"));
+            }
+            if let Some(t) = &root.token {
+                env.push(format!("STUDIO_ROOT_TOKEN={t}"));
+            }
+        }
         // Git sources for the entrypoint to clone (JSON; tokens included —
         // env-only, never persisted in the registry or the toml).
         let git_sources: Vec<serde_json::Value> = repos
@@ -348,7 +378,10 @@ impl SessionService {
             port,
             state: SessionState::Starting,
             created_at_epoch_secs: now_secs(),
-            sources: repos
+            sources: root_repo
+                .iter()
+                .map(|_| "workspace root (git)".to_string())
+                .chain(repos
                 .iter()
                 .map(|r| {
                     format!(
@@ -359,7 +392,7 @@ impl SessionService {
                             RepoKind::Local => "local",
                         }
                     )
-                })
+                }))
                 .collect(),
         };
         self.sessions

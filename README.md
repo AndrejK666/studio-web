@@ -95,6 +95,14 @@ a PAT:
 | PAT | a GitLab personal access token with the `read_repository` scope |
 | mount at | optional — e.g. `.workspace-sources/hypotheses/csh_hypotheses_back` to match a CLI-created workspace layout |
 
+**The workspace root can be a repository too.** A Studio workspace created by
+the CLI *is* a git repo (manifest, docs, `.workspace-sources/`). Put its clone
+URL in the dashboard's **Workspace root** field (plus a PAT and branch if
+needed) and the session clones it on first launch — nothing has to exist on
+the backend host. Sources then clone into it, and because CLI workspaces
+gitignore `.workspace-sources/`, the root repo stays clean. The local-folder
+field remains as the alternative and takes precedence when both are set.
+
 HTTPS, not SSH: the session container has no SSH key or agent, while a PAT
 travels as a credstore secret reference and is injected into the clone through
 an inline credential helper (never written to `.git/config`). If the workspace

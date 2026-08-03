@@ -724,7 +724,14 @@ function WorkspaceDashboard({
       const complete = repos.filter((r) =>
         r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
       );
-      const next = { ...settings, repos: complete };
+      let next = { ...settings, repos: complete };
+      // Root repository PAT → credstore secret, settings keep the reference.
+      const rootPat = pats["__root__"]?.trim();
+      if (rootPat && next.root_repo_url?.trim()) {
+        const ref = `studio-root-${ws.id}`;
+        await api.putSecret(token, ref, rootPat, PAT_SECRET_TYPE);
+        next = { ...next, root_token_ref: ref };
+      }
       await api.putWorkspaceSettings(token, ws.id, next);
       setSettings(next);
       setPats({});
@@ -851,15 +858,44 @@ function WorkspaceDashboard({
         </p>
         {settings && (
           <form onSubmit={saveRepo}>
-            <label className="field" style={{ maxWidth: 460 }}>
-              Workspace root (optional — existing Studio workspace folder, e.g. created by the
-              Studio CLI; used as-is, its .cf-workspace.toml is not touched)
+            <div
+              className="field"
+              style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}
+            >
+              Workspace root — a Studio workspace is itself a repository (manifest, docs,
+              <code> .workspace-sources/</code>). Clone it, or point at a local folder.
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <input
+                  placeholder="https://gitlab.constr.dev/hypotheses/hypothesis-workspace.git"
+                  style={{ flex: 1, minWidth: 300, fontWeight: 400 }}
+                  value={settings.root_repo_url ?? ""}
+                  onChange={(e) => setSettings({ ...settings, root_repo_url: e.target.value })}
+                />
+                <input
+                  type="password"
+                  placeholder={
+                    settings.root_token_ref
+                      ? `secret '${settings.root_token_ref}' — enter to rotate`
+                      : "PAT (private repo)"
+                  }
+                  style={{ width: 200, fontWeight: 400 }}
+                  value={pats["__root__"] ?? ""}
+                  onChange={(e) => setPats({ ...pats, __root__: e.target.value })}
+                />
+                <input
+                  placeholder="branch"
+                  style={{ width: 110, fontWeight: 400 }}
+                  value={settings.root_branch ?? ""}
+                  onChange={(e) => setSettings({ ...settings, root_branch: e.target.value })}
+                />
+              </div>
               <input
-                placeholder="/mnt/c/Repos/hypothesis-workspace"
+                placeholder="…or a local folder on the backend host: /mnt/c/Repos/hypothesis-workspace"
+                style={{ width: "100%", marginTop: 8, fontWeight: 400 }}
                 value={settings.root_path ?? ""}
                 onChange={(e) => setSettings({ ...settings, root_path: e.target.value })}
               />
-            </label>
+            </div>
 
             {(settings.repos ?? []).map((r, i) => (
               <div
@@ -1956,7 +1992,12 @@ function StudioLauncher({
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repos, setRepos] = useState<import("./api").RepoEntry[] | null>(null);
-  const [rootPath, setRootPath] = useState("");
+  const [root, setRoot] = useState<{
+    path?: string;
+    repoUrl?: string;
+    branch?: string;
+    tokenRef?: string;
+  }>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1967,7 +2008,12 @@ function StudioLauncher({
       .workspaceSettings(token, ws.id)
       .then((s) => {
         setRepos(s?.repos ?? []);
-        setRootPath(s?.root_path?.trim() ?? "");
+        setRoot({
+          path: s?.root_path?.trim() || undefined,
+          repoUrl: s?.root_repo_url?.trim() || undefined,
+          branch: s?.root_branch?.trim() || undefined,
+          tokenRef: s?.root_token_ref?.trim() || undefined,
+        });
       })
       .catch(() => setRepos([]));
   }, [token, ws.id]);
@@ -1994,7 +2040,7 @@ function StudioLauncher({
       const usable = (repos ?? []).filter((r) =>
         r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
       );
-      const s = await api.createStudioSession(token, ws.id, usable, rootPath || undefined);
+      const s = await api.createStudioSession(token, ws.id, usable, root);
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
@@ -2032,9 +2078,10 @@ function StudioLauncher({
 
       {!session && (
         <>
-          {rootPath && (
+          {(root.path || root.repoUrl) && (
             <p className="hint">
-              Workspace root: <code>{rootPath}</code> (existing Studio workspace)
+              Workspace root: <code>{root.path || root.repoUrl}</code>{" "}
+              {root.path ? "(local folder)" : "(cloned on first launch)"}
             </p>
           )}
           {repos && repos.length > 0 && (
@@ -2043,7 +2090,7 @@ function StudioLauncher({
               {repos.map((r) => `${r.name} (${r.source})`).join(", ")} — managed on the dashboard.
             </p>
           )}
-          {repos && repos.length === 0 && !rootPath && (
+          {repos && repos.length === 0 && !root.path && !root.repoUrl && (
             <p className="hint">
               No sources bound yet — the workspace opens with an empty repository. Connect
               repositories on the dashboard (Repositories card).

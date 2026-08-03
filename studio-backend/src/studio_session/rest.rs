@@ -60,6 +60,16 @@ pub struct CreateSessionRequest {
     /// directory. Its own .cf-workspace.toml is left untouched.
     #[serde(default)]
     pub root_path: Option<String>,
+    /// Clone URL of the workspace repository itself (a CLI-created Studio
+    /// workspace is a git repo). Cloned into the managed directory on first
+    /// launch; ignored when `root_path` is set.
+    #[serde(default)]
+    pub root_repo_url: Option<String>,
+    #[serde(default)]
+    pub root_branch: Option<String>,
+    /// credstore secret reference with a PAT for the workspace repository.
+    #[serde(default)]
+    pub root_token_ref: Option<String>,
     /// Workspace sources (multiple repositories/folders per workspace).
     #[serde(default)]
     pub repos: Vec<RepoSpecDto>,
@@ -142,12 +152,46 @@ async fn create_session(
             token,
         });
     }
+    // Workspace root repository (optional).
+    let root_repo = match req
+        .root_repo_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        Some(url) => {
+            let token = match req
+                .root_token_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref).await.map_err(|e| {
+                    CanonicalError::internal(format!("workspace root: token resolution failed: {e:#}"))
+                        .create()
+                })?),
+                None => None,
+            };
+            Some(RepoSpec {
+                name: "workspace-root".to_string(),
+                kind: RepoKind::Git,
+                url: Some(url.to_string()),
+                path: None,
+                target: None,
+                branch: req.root_branch.clone(),
+                token,
+            })
+        }
+        None => None,
+    };
+
     let (session, existed) = svc
         .create(
             ctx.subject_tenant_id(),
             ctx.subject_id(),
             req.workspace_id,
             req.root_path,
+            root_repo,
             repos,
         )
         .await
