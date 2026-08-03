@@ -32,6 +32,12 @@ utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4"] }
 toolkit-macros = { package = "cf-gears-toolkit-macros", path = "../../gears-rust/libs/toolkit-macros" }
 credstore-sdk = { package = "cf-gears-credstore-sdk", path = "../../gears-rust/gears/credstore/credstore-sdk" }
+
+# ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+account-management-sdk = { package = "cf-gears-account-management-sdk", path = "../../gears-rust/gears/system/account-management/account-management-sdk" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", path = "../../gears-rust/libs/toolkit-odata" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", path = "../../gears-rust/gears/system/types-registry/types-registry-sdk" }
 toolkit-security = { package = "cf-gears-toolkit-security", path = "../../gears-rust/libs/toolkit-security" }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", path = "../../gears-rust/libs/toolkit-canonical-errors", features = ["axum"] }
 

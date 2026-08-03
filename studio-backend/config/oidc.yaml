@@ -166,6 +166,24 @@ gears:
       vendor: "cf"
       priority: 100
 
+  # Real user provisioning (ADR-0004, invite-first): the portal's "Invite"
+  # creates an actual Keycloak user with the tenant_id attribute + temporary
+  # password (rotation forced at first sign-in). Wins selection over the
+  # static echo plugin (priority 50 < 100). Without a client_secret the
+  # plugin self-deprioritizes to 10000 and the echo plugin stays in charge —
+  # that is how the static-token profiles keep working unchanged.
+  keycloak-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 50
+      base_url: "https://localhost:8443"
+      realm: "studio"
+      client_id: "studio-admin"
+      client_secret: "studio-admin-dev-secret"
+      custom_ca_certificate_paths:
+        - "../docker/keycloak/certs/dev-ca.pem"
+      default_temp_password: "studio"
+
   # ── Feature gears: per-user settings, files, AI chat ──
 
   simple-user-settings:

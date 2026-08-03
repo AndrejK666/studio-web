@@ -4,6 +4,7 @@
 //! lives in the linked gear crates (see `registered_gears.rs`); this binary
 //! only loads layered config and hands control to `toolkit::bootstrap`.
 
+mod keycloak_idp_plugin; // real user provisioning via Keycloak Admin API (ADR-0004)
 mod registered_gears;
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 

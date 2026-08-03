@@ -12,8 +12,18 @@
       "emailVerified": true,
       "firstName": "Studio",
       "lastName": "Admin",
-      "credentials": [{ "type": "password", "value": "studio", "temporary": false }],
-      "attributes": { "tenant_id": ["00000000-0000-0000-0000-000000000001"] }
+      "credentials": [
+        {
+          "type": "password",
+          "value": "studio",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "tenant_id": [
+          "00000000-0000-0000-0000-000000000001"
+        ]
+      }
     },
     {
       "username": "demo",
@@ -22,8 +32,30 @@
       "emailVerified": true,
       "firstName": "Demo",
       "lastName": "User",
-      "credentials": [{ "type": "password", "value": "studio", "temporary": false }],
-      "attributes": { "tenant_id": ["00000000-0000-0000-0000-000000000001"] }
+      "credentials": [
+        {
+          "type": "password",
+          "value": "studio",
+          "temporary": false
+        }
+      ],
+      "attributes": {
+        "tenant_id": [
+          "00000000-0000-0000-0000-000000000001"
+        ]
+      }
+    },
+    {
+      "username": "service-account-studio-admin",
+      "enabled": true,
+      "serviceAccountClientId": "studio-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users"
+        ]
+      }
     }
   ],
   "clients": [
@@ -35,9 +67,17 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
-      "redirectUris": ["http://localhost:5173/*", "http://localhost:8080/*"],
-      "webOrigins": ["http://localhost:5173", "http://localhost:8080"],
-      "attributes": { "pkce.code.challenge.method": "S256" },
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://localhost:8080"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "protocolMappers": [
         {
           "name": "tenant-id",
@@ -79,6 +119,16 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "studio-admin",
+      "name": "studio-admin S2S (AM keycloak-idp-plugin: user provisioning)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "studio-admin-dev-secret",
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ]
 }
