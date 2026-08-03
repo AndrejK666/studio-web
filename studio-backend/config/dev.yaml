@@ -330,7 +330,7 @@ gears:
   oidc-authn-plugin:
     config:
       vendor: "constructorfabric"
-      priority: 10
+      priority: 1000   # LOWER number wins vendor selection; static (100) stays in charge here
       jwt:
         supported_algorithms: ["RS256", "ES256"]
         require_audience: false

@@ -311,6 +311,6 @@ gears:
   static-authn-plugin:
     config:
       vendor: "constructorfabric"
-      priority: 1
+      priority: 1000   # LOWER number wins vendor selection; oidc (100) is in charge here
       mode: static_tokens
       tokens: []
