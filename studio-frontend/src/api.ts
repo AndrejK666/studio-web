@@ -172,14 +172,19 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
   }
-  const res = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    ...((init?.headers as Record<string, string> | undefined) ?? {}),
+  };
+  if (import.meta.env.DEV) {
+    // Dev-only: makes "did we actually send the bearer?" answerable from the
+    // console instead of guessing at a server-side 401.
+    console.debug(
+      `[api] ${init?.method ?? "GET"} ${path} · auth=${headers.Authorization ? "yes" : "NO"} · token=${token.length}ch ${token.slice(0, 6)}…`,
+    );
+  }
+  const res = await fetch(apiUrl(path), { ...init, headers });
   const body = res.status === 204 ? undefined : await res.json().catch(() => undefined);
   if (!res.ok) {
     // 401 = the session is over (SSO access tokens expire; we hold no refresh
