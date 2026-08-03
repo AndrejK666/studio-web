@@ -294,6 +294,19 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     }
   }, [panelOpen]);
 
+  // The saved theme applies on login, not on the first visit to Profile —
+  // ProfileView only edits it.
+  useEffect(() => {
+    api
+      .userSettings(token)
+      .then((p) => {
+        if (p.theme) document.documentElement.dataset.theme = p.theme;
+      })
+      .catch(() => {
+        /* theme is cosmetic — never block the shell on it */
+      });
+  }, [token]);
+
   const panelView: PanelView = dash ? "dashboard" : view;
 
   const refresh = useCallback(async () => {
