@@ -1,0 +1,307 @@
+# Constructor Studio Backend — OIDC profile (real login via Keycloak).
+# postgres.yaml with static-authn-plugin replaced by oidc-authn-plugin.
+# Start the IdP first:  docker compose up -d postgres keycloak
+# Portal login: "Sign in with SSO" (admin/studio or demo/studio).
+# For an EXTERNAL IdP see README "OIDC login" — you need an issuer URL, a
+# public PKCE client, UUID `sub`, and a `tenant_id` claim (home tenant UUID).
+server:
+  home_dir: "~/.cf-studio-backend"
+
+database:
+  auto_provision: true            # dev convenience: create missing databases on start
+  servers:
+    pg_main:
+      engine: "postgres"
+      host: "127.0.0.1"
+      port: 5432
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD}"
+      dbname: "studio"            # admin/default db; gears override per-gear below
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/studio-backend.log"
+    file_level: info
+  account_management:
+    console_level: debug
+    file: "logs/account-management.log"
+    file_level: debug
+
+gears:
+  api-gateway:
+    config:
+      bind_addr: "127.0.0.1:8090"
+      prefix_path: "/cf"
+      enable_docs: true
+      cors_enabled: false
+      openapi:
+        title: "Constructor Studio Backend (postgres)"
+        version: "0.1.0"
+        description: "Studio backend assembly — account-management demo"
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-studio-backend-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  # Real login: validates JWTs issued by the Keycloak from docker-compose
+  # (docker compose up -d keycloak). One authn plugin per vendor wins by
+  # priority — this profile simply does not configure static-authn-plugin
+  # (linked but inactive). The plugin enforces https for IdP endpoints, so
+  # dev Keycloak runs TLS with a self-signed cert; its CA is trusted below.
+  oidc-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      jwt:
+        supported_algorithms: ["RS256", "ES256"]
+        require_audience: false
+        trusted_issuers:
+          - issuer: "https://localhost:8443/realms/studio"
+        claim_mapping:
+          subject_id: "sub"              # Keycloak user id (UUID)
+          subject_tenant_id: "tenant_id" # user attribute -> claim (realm import)
+          token_scopes: "scope"
+        first_party_clients:
+          - "studio-portal"
+      http_client:
+        custom_ca_certificate_paths:
+          - "../docker/keycloak/certs/dev-ca.pem"   # relative to studio-backend cwd
+      s2s_oauth:
+        # mini-chat exchanges client credentials against the same realm
+        # (confidential client "mini-chat", secret mini-chat-dev-secret,
+        # hardcoded tenant_id claim — see docker/keycloak/realm-studio.json).
+        discovery_url: "https://localhost:8443/realms/studio"
+        default_subject_type: "gts.cf.core.security.subject_service.v1~"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  types-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_types_registry"
+    config:
+      entities:
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Platform root tenant type (root-only)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: []
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization tenant"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace tenant (product-line context)"
+          type: "object"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
+          # Free-form payload: the GTS OP#12 narrowing check treats the base
+          # tenant_metadata envelope as a CLOSED empty object, so a derived
+          # schema may not declare typed properties at all (gears issue #4).
+          # Shape {automation_level, approved_worker_categories} is enforced
+          # client-side until the base schema is relaxed upstream.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+
+  nodes-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_nodes_registry"
+    config: {}
+
+  resource-group:
+    database:
+      server: "pg_main"
+      dbname: "studio_resource_group"
+    config: {}
+
+  account-management:
+    database:
+      server: "pg_main"
+      dbname: "studio_account_management"
+    config:
+      bootstrap:
+        root_id: "00000000-0000-0000-0000-000000000001"
+        root_name: "Constructor Platform"
+        root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        strict: true
+      tr_plugin:
+        enabled: true
+
+  static-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 100
+
+  # ── Feature gears: per-user settings, files, AI chat ──
+
+  simple-user-settings:
+    database:
+      server: "pg_main"
+      dbname: "studio_settings"
+    config:
+      max_field_length: 200
+
+  file-storage:
+    database:
+      server: "pg_main"
+      dbname: "studio_file_storage"
+    config:
+      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # own for any shared environment).
+      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+
+  # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  oagw:
+    config:
+      proxy_timeout_secs: 120
+
+  credstore:
+    database:
+      server: "pg_main"
+      dbname: "studio_credstore"
+    config:
+      vendor: "constructorfabric"
+
+  static-credstore-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      secrets:
+        # Shared secret (no tenant_id). Put your real OpenAI key here for the
+        # Ask AI feature; without it chats are created but streaming replies
+        # fail at the provider with 401.
+        - key: "openai-key"
+          value: "sk-REPLACE_ME"
+
+  mini-chat:
+    database:
+      server: "pg_main"
+      dbname: "studio_mini_chat"
+    config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      providers:
+        openai:
+          kind: openai_responses
+          storage_kind: openai
+          host: "api.openai.com"
+          auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+          auth_config:
+            header: "Authorization"
+            prefix: "Bearer "
+            secret_ref: "openai-key"
+
+  static-mini-chat-model-policy-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      model_catalog:
+        - id: "gpt-5.2"
+          provider_model_id: "gpt-5.2"
+          display_name: "GPT-5.2"
+          tier: Standard
+          enabled: true
+          system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
+          thread_summary_prompt: ""
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 3000000
+          multimodal_capabilities: ["VISION_INPUT"]
+          context_window: 128000
+          max_output_tokens: 8192
+          max_input_tokens: 120000
+          description: "Default Studio assistant model"
+          version: "2025-01"
+          icon: ""
+          provider_display_name: "OpenAI"
+          multiplier_display: "1x"
+          provider_id: "openai"
+          max_num_results: 10
+          max_tool_calls: 2
+          estimation_budgets:
+            bytes_per_token_conservative: 4
+            fixed_overhead_tokens: 500
+            safety_margin_pct: 10
+            image_token_budget: 1000
+            tool_surcharge_tokens: 200
+            web_search_surcharge_tokens: 500
+            code_interpreter_surcharge_tokens: 1000
+            minimal_generation_floor: 100
+          preference:
+            is_default: true
+            sort_order: 1
+          general_config:
+            type: "chat"
+            available_from: "2025-01-01T00:00:00Z"
+            max_file_size_mb: 50
+            api_params:
+              temperature: 0.7
+              top_p: 1.0
+              frequency_penalty: 0.0
+              presence_penalty: 0.0
+              stop: []
+            features:
+              streaming: true
+              structured_output: true
+            tool_support:
+              web_search: false
+              file_search: false
+              image_generation: false
+              code_interpreter: false
+              mcp: false
+            supported_endpoints:
+              chat_completions: true
+              responses: true
+              embeddings: false
+              image_generation: false
+              audio_speech_generation: false
+              audio_transcription: false
+              audio_translation: false
+
+  # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
+  # Requires: Docker daemon on the host and the Theia image built once:
+  #   cd ../fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .
+  studio-session:
+    config:
+      image: "cf-studio-theia:latest"
+      workspaces_root: "~/.cf-studio-workspaces"
+      bind_host: "127.0.0.1"      # loopback only — the Theia PoC has no auth
+      public_host: "localhost"
+      port_range_start: 41000
+      port_range_end: 41099
+      max_session_secs: 14400     # 4h, then the reaper stops the container
+      git_mode: "disabled"

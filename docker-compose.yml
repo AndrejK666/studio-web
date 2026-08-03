@@ -33,6 +33,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # OIDC IdP for real login (config/oidc.yaml profile). Dev-grade: self-signed
+  # TLS (certs in docker/keycloak/certs, CA trusted by the backend via
+  # http_client.custom_ca_certificate_paths), realm imported on start.
+  # Admin console: https://localhost:8443 (admin/admin). Realm users:
+  # admin/studio, demo/studio. NOT started by default `up` of backend+frontend
+  # workflows that don't need it — but included in the default profile for
+  # one-click friendliness; comment out if unwanted.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: studio-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
+      KC_HOSTNAME: "https://localhost:8443"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - ./docker/keycloak/realm-studio.json:/opt/keycloak/data/import/realm-studio.json:ro
+      - ./docker/keycloak/certs:/opt/keycloak/certs:ro
+
   backend:
     build:
       context: ..

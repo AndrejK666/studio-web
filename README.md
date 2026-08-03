@@ -57,6 +57,42 @@ In the full-docker profile the compose file mounts the socket and
 `/srv/cf-studio-workspaces` into the backend (host and container paths must be
 identical — bind sources are resolved by the host daemon).
 
+## OIDC login (real sign-in)
+
+The static dev tokens stay for scripts and quick starts; real browser login
+uses the `oidc-authn-plugin` gear against a Keycloak shipped in compose.
+
+```bash
+docker compose up -d postgres keycloak
+cd studio-backend && cargo run -- --config config/oidc.yaml run
+```
+
+Then in the portal press "Sign in with SSO" — users `admin` / `demo`
+(password `studio`). Dev Keycloak runs self-signed TLS on
+<https://localhost:8443>: open that URL once and accept the certificate
+before the first login. Admin console: same URL, `admin`/`admin`.
+
+How it fits together: the portal does Authorization Code + PKCE
+(`src/oidc.ts`, no dependencies), Keycloak issues a JWT whose `sub` is the
+user UUID and whose `tenant_id` claim (from a user attribute, see
+`docker/keycloak/realm-studio.json`) is the home tenant UUID; the
+`oidc-authn-plugin` validates it via discovery/JWKS (the dev CA is trusted
+through `http_client.custom_ca_certificate_paths`) and maps claims into the
+platform SecurityContext. mini-chat's background S2S goes through the same
+realm (`s2s_oauth`, confidential client `mini-chat`).
+
+### Using your own IdP (Keycloak, Azure AD, Auth0, …)
+
+1. Create a **public client** with **PKCE (S256)**, redirect URI
+   `http://localhost:5173/*` (or your portal origin) and matching web origin.
+2. Tokens must carry: UUID `sub`, and a `tenant_id` claim with the user's
+   home-tenant UUID (custom claim/attribute mapper). Adjust
+   `jwt.claim_mapping` in `config/oidc.yaml` if your claim names differ.
+3. Point `jwt.trusted_issuers` (and `s2s_oauth.discovery_url`, if used) at
+   your issuer URL — https required; add your corporate root CA via
+   `http_client.custom_ca_certificate_paths` when it is not in system roots.
+4. Frontend: set `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID`.
+
 ## CI/CD (GitHub Actions)
 
 - **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private.

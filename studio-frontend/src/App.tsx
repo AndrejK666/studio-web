@@ -91,6 +91,24 @@ function Login({ onLogin }: { onLogin: (token: string, me: Me) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Returning from the IdP? Finish the PKCE exchange and sign in.
+  useEffect(() => {
+    import("./oidc").then(({ completeSsoLogin }) =>
+      completeSsoLogin()
+        .then(async (t) => {
+          if (!t) return;
+          setBusy(true);
+          const who = await api.me(t);
+          onLogin(t, who);
+        })
+        .catch((e) => {
+          setBusy(false);
+          setError(errText(e));
+        }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -120,12 +138,22 @@ function Login({ onLogin }: { onLogin: (token: string, me: Me) => void }) {
           <button className="primary" disabled={busy || !value} style={{ width: "100%" }}>
             {busy ? "Signing in…" : "Sign in"}
           </button>
+          <button
+            type="button"
+            style={{ width: "100%", marginTop: 8 }}
+            disabled={busy}
+            onClick={() => import("./oidc").then(({ startSsoLogin }) => startSsoLogin())}
+          >
+            Sign in with SSO (Keycloak)
+          </button>
           {error && <div className="error">{error}</div>}
         </form>
       </div>
       <p className="hint" style={{ marginTop: "1rem" }}>
-        Dev tokens: <code>studio-admin-token</code>, <code>studio-user-token</code>. Real sign-in
-        arrives with the OIDC plugin.
+        Dev tokens (<code>studio-admin-token</code>, <code>studio-user-token</code>) work with the
+        static profiles; SSO needs the backend on <code>config/oidc.yaml</code> and{" "}
+        <code>docker compose up -d keycloak</code> (users <code>admin</code>/<code>demo</code>,
+        password <code>studio</code>; accept the self-signed cert on first visit).
       </p>
     </main>
   );

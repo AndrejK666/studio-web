@@ -51,6 +51,8 @@ resource_group = { package = "cf-gears-resource-group", path = "../../gears-rust
 
 # ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
 static_authn_plugin = { package = "cf-gears-static-authn-plugin", path = "../../gears-rust/gears/system/authn-resolver/plugins/static-authn-plugin" }
+# Real login: OIDC JWT validation (used by config/oidc.yaml with Keycloak from compose)
+oidc_authn_plugin = { package = "cf-gears-oidc-authn-plugin", path = "../../gears-rust/gears/system/authn-resolver/plugins/oidc-authn-plugin" }
 static_authz_plugin = { package = "cf-gears-static-authz-plugin", path = "../../gears-rust/gears/system/authz-resolver/plugins/static-authz-plugin" }
 
 # ── The gear under demonstration ──
