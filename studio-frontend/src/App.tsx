@@ -152,9 +152,12 @@ export function App() {
       token={token}
       me={me}
       onLogout={() => {
-        void import("./oidc").then(({ clearSsoSession }) => clearSsoSession());
         setToken(null);
         setMe(null);
+        // Ends the Keycloak session too (RP-initiated logout) — otherwise
+        // the SSO cookie silently signs the same user back in and there is
+        // no way to switch accounts. Static-token logins clear locally.
+        void import("./oidc").then(({ endSsoSession }) => endSsoSession());
       }}
     />
   );

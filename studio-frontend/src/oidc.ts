@@ -18,6 +18,7 @@ const CLIENT_ID: string =
 
 const VERIFIER_KEY = "studio.oidc.verifier";
 const REFRESH_KEY = "studio.oidc.refresh";
+const ID_TOKEN_KEY = "studio.oidc.id";
 
 export interface SsoSession {
   accessToken: string;
@@ -40,10 +41,15 @@ function tokenEndpoint(): string {
 function storeSession(body: {
   access_token?: string;
   refresh_token?: string;
+  id_token?: string;
   expires_in?: number;
 }): SsoSession {
   if (!body.access_token) throw new Error("SSO: no access_token in the token response");
   if (body.refresh_token) sessionStorage.setItem(REFRESH_KEY, body.refresh_token);
+  // Kept for RP-initiated logout (id_token_hint) — lets Sign out end the
+  // IdP session too, so the next login shows the account form instead of
+  // silently reusing the Keycloak SSO cookie.
+  if (body.id_token) sessionStorage.setItem(ID_TOKEN_KEY, body.id_token);
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 300 };
 }
 
@@ -125,4 +131,30 @@ export function hasSsoSession(): boolean {
 
 export function clearSsoSession(): void {
   sessionStorage.removeItem(REFRESH_KEY);
+  sessionStorage.removeItem(ID_TOKEN_KEY);
+}
+
+/**
+ * RP-initiated logout: clear local state AND end the IdP session, so the
+ * next "Sign in with SSO" asks for credentials instead of silently reusing
+ * the Keycloak SSO cookie (the "can't switch user" trap).
+ *
+ * Returns true when a redirect to the IdP was issued (the page navigates
+ * away); false when there was no SSO session — static-token logins just
+ * clear locally.
+ */
+export function endSsoSession(): boolean {
+  const idToken = sessionStorage.getItem(ID_TOKEN_KEY);
+  const hadSso = hasSsoSession() || Boolean(idToken);
+  clearSsoSession();
+  if (!hadSso) return false;
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    post_logout_redirect_uri: `${window.location.origin}/`,
+  });
+  // With the hint Keycloak logs out and redirects straight back; without it
+  // (e.g. storage was wiped) it shows its own logout confirmation page.
+  if (idToken) params.set("id_token_hint", idToken);
+  window.location.href = `${ISSUER}/protocol/openid-connect/logout?${params.toString()}`;
+  return true;
 }
