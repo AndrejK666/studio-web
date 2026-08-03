@@ -39,6 +39,28 @@ impl SessionState {
     }
 }
 
+/// One workspace source: a git repository cloned on first launch, or a
+/// backend-host folder bind-mounted into the workspace.
+#[derive(Debug, Clone)]
+pub struct RepoSpec {
+    /// Directory name under /workspace — `[a-z0-9_-]+`.
+    pub name: String,
+    pub kind: RepoKind,
+    /// Clone URL (kind = Git).
+    pub url: Option<String>,
+    /// Host directory (kind = Local).
+    pub path: Option<String>,
+    pub branch: Option<String>,
+    /// Resolved PAT (kind = Git, private repos). Never persisted.
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepoKind {
+    Git,
+    Local,
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: Uuid,
@@ -48,8 +70,8 @@ pub struct Session {
     pub port: u16,
     pub state: SessionState,
     pub created_at_epoch_secs: u64,
-    pub repo_url: Option<String>,
-    pub local_path: Option<String>,
+    /// Human-readable source summaries, e.g. "docs (git)".
+    pub sources: Vec<String>,
 }
 
 pub struct SessionService {
@@ -125,23 +147,18 @@ impl SessionService {
     /// Create (or return the existing) session for a workspace.
     /// Idempotency key: (tenant, workspace).
     ///
-    /// `local_path`: host directory mounted as /workspace INSTEAD of the
-    /// managed per-workspace directory (bring-your-own-repo). Must exist on
-    /// the backend host.
-    ///
-    /// `git_branch` / `git_token`: optional clone branch and access token
-    /// (already resolved from credstore by the caller); both go to the
-    /// container as env, the token is never persisted in the registry.
-    #[allow(clippy::too_many_arguments)]
+    /// The workspace root is always the managed per-workspace directory;
+    /// `repos` are its *sources*: local ones are bind-mounted as
+    /// `/workspace/<name>`, git ones are cloned there by the entrypoint on
+    /// first launch. The gear materializes the canonical
+    /// `.cf-workspace.toml` (`[sources.<id>]`, the format the Theia Studio
+    /// extension owns) unless the file already exists.
     pub async fn create(
         &self,
         tenant_id: Uuid,
         actor_id: Uuid,
         workspace_id: Uuid,
-        repo_url: Option<String>,
-        local_path: Option<String>,
-        git_branch: Option<String>,
-        git_token: Option<String>,
+        repos: Vec<RepoSpec>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
             let sessions = self.sessions.read().await;
@@ -156,27 +173,42 @@ impl SessionService {
 
         self.ensure_image().await?;
 
-        // Workspace directory on the host (bind-mount source): either a
-        // user-provided local repo/folder, or the managed per-workspace dir.
-        let ws_dir = match &local_path {
-            Some(p) => {
-                let p = p.trim();
-                if !std::path::Path::new(p).is_dir() {
-                    return Err(anyhow!(
-                        "local_path '{p}' is not a directory on the backend host \
-                         (for WSL use /mnt/c/... style paths)"
-                    ));
+        // Validate sources: sane unique names; local paths must exist.
+        let mut seen = std::collections::HashSet::new();
+        for r in &repos {
+            if r.name.is_empty()
+                || !r.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+            {
+                return Err(anyhow!("source name '{}' must match [a-z0-9_-]+", r.name));
+            }
+            if !seen.insert(r.name.clone()) {
+                return Err(anyhow!("duplicate source name '{}'", r.name));
+            }
+            match r.kind {
+                RepoKind::Local => {
+                    let p = r.path.as_deref().unwrap_or("").trim();
+                    if !std::path::Path::new(p).is_dir() {
+                        return Err(anyhow!(
+                            "source '{}': path '{p}' is not a directory on the backend host \
+                             (for WSL use /mnt/c/... style paths)",
+                            r.name
+                        ));
+                    }
                 }
-                p.to_string()
+                RepoKind::Git => {
+                    if r.url.as_deref().unwrap_or("").trim().is_empty() {
+                        return Err(anyhow!("source '{}': git source needs a url", r.name));
+                    }
+                }
             }
-            None => {
-                let root = self.cfg.workspaces_root_expanded();
-                let dir = format!("{root}/{workspace_id}");
-                std::fs::create_dir_all(&dir)
-                    .with_context(|| format!("cannot create workspace dir {dir}"))?;
-                dir
-            }
-        };
+        }
+
+        // Managed workspace root (always) + canonical .cf-workspace.toml.
+        let root = self.cfg.workspaces_root_expanded();
+        let ws_dir = format!("{root}/{workspace_id}");
+        std::fs::create_dir_all(&ws_dir)
+            .with_context(|| format!("cannot create workspace dir {ws_dir}"))?;
+        self.materialize_workspace_toml(&ws_dir, &repos)?;
 
         let port = self.allocate_port().await?;
         let session_id = Uuid::new_v4();
@@ -187,18 +219,25 @@ impl SessionService {
             format!("STUDIO_ACTOR_ID={actor_id}"),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
         ];
-        if let Some(url) = &repo_url {
-            env.push(format!("STUDIO_REPO_URL={url}"));
-        }
-        if let Some(branch) = &git_branch {
-            if !branch.trim().is_empty() {
-                env.push(format!("STUDIO_GIT_BRANCH={}", branch.trim()));
-            }
-        }
-        if let Some(token) = &git_token {
-            // Consumed by the entrypoint's inline credential helper for the
-            // first clone; not stored anywhere in the session registry.
-            env.push(format!("STUDIO_GIT_TOKEN={token}"));
+        // Git sources for the entrypoint to clone (JSON; tokens included —
+        // env-only, never persisted in the registry or the toml).
+        let git_sources: Vec<serde_json::Value> = repos
+            .iter()
+            .filter(|r| r.kind == RepoKind::Git)
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "url": r.url.as_deref().unwrap_or("").trim(),
+                    "branch": r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()),
+                    "token": r.token,
+                })
+            })
+            .collect();
+        if !git_sources.is_empty() {
+            env.push(format!(
+                "STUDIO_SOURCES={}",
+                serde_json::Value::Array(git_sources)
+            ));
         }
 
         let labels: HashMap<String, String> = HashMap::from([
@@ -208,8 +247,15 @@ impl SessionService {
             (PORT_LABEL.into(), port.to_string()),
         ]);
 
+        // Workspace root + one bind per local source.
+        let mut binds = vec![format!("{ws_dir}:/workspace")];
+        for r in repos.iter().filter(|r| r.kind == RepoKind::Local) {
+            let p = r.path.as_deref().unwrap_or("").trim();
+            binds.push(format!("{p}:/workspace/{}", r.name));
+        }
+
         let host_config = HostConfig {
-            binds: Some(vec![format!("{ws_dir}:/workspace")]),
+            binds: Some(binds),
             port_bindings: Some(HashMap::from([(
                 THEIA_PORT.to_string(),
                 Some(vec![PortBinding {
@@ -254,14 +300,60 @@ impl SessionService {
             port,
             state: SessionState::Starting,
             created_at_epoch_secs: now_secs(),
-            repo_url,
-            local_path,
+            sources: repos
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} ({})",
+                        r.name,
+                        match r.kind {
+                            RepoKind::Git => "git",
+                            RepoKind::Local => "local",
+                        }
+                    )
+                })
+                .collect(),
         };
         self.sessions
             .write()
             .await
             .insert(session_id, session.clone());
         Ok((session, false))
+    }
+
+    /// Write the canonical `.cf-workspace.toml` (`[sources.<id>]` sections —
+    /// the format owned by the Theia Studio extension's Workspace Sources).
+    /// Only materialized when the file does not exist yet: once created, the
+    /// Studio's own config mutation service is the editor of record.
+    fn materialize_workspace_toml(&self, ws_dir: &str, repos: &[RepoSpec]) -> anyhow::Result<()> {
+        let path = format!("{ws_dir}/.cf-workspace.toml");
+        if std::path::Path::new(&path).exists() {
+            tracing::debug!("studio-session: {path} already exists — leaving as-is");
+            return Ok(());
+        }
+        let mut toml = String::from("version = \"1.0\"\n");
+        for r in repos {
+            toml.push_str(&format!("\n[sources.{}]\nrole = \"codebase\"\n", r.name));
+            match r.kind {
+                RepoKind::Git => {
+                    toml.push_str(&format!(
+                        "url = \"{}\"\n",
+                        r.url.as_deref().unwrap_or("").trim()
+                    ));
+                    if let Some(b) = r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                        toml.push_str(&format!("branch = \"{b}\"\n"));
+                    }
+                    // Cloned by the session entrypoint into ./<name>
+                    toml.push_str(&format!("path = \"{}\"\n", r.name));
+                }
+                RepoKind::Local => {
+                    // Bind-mounted by the session manager at ./<name>
+                    toml.push_str(&format!("path = \"{}\"\n", r.name));
+                }
+            }
+        }
+        std::fs::write(&path, toml).with_context(|| format!("cannot write {path}"))?;
+        Ok(())
     }
 
     /// Refresh state: Starting → Running once the Theia port accepts TCP.
@@ -380,8 +472,7 @@ impl SessionService {
                         SessionState::Stopped
                     },
                     created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or_else(now_secs),
-                    repo_url: None,
-                    local_path: None,
+                    sources: Vec::new(),
                 },
             );
             adopted += 1;

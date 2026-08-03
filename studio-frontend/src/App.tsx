@@ -585,7 +585,6 @@ function WorkspacesView({
 const WORKER_CATEGORIES = ["documenting", "coding", "review", "analysis"];
 
 const REPO_SOURCES: { id: import("./api").RepoSource; label: string }[] = [
-  { id: "none", label: "None" },
   { id: "local", label: "Local folder" },
   { id: "git", label: "Git URL" },
   { id: "github", label: "GitHub" },
@@ -618,7 +617,7 @@ function WorkspaceDashboard({
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   const [settingsExist, setSettingsExist] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [pat, setPat] = useState(""); // write-only: becomes a credstore secret
+  const [pats, setPats] = useState<Record<string, string>>({}); // write-only: become credstore secrets
   const [repoSaved, setRepoSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -667,20 +666,22 @@ function WorkspaceDashboard({
     setError(null);
     setRepoSaved(false);
     try {
-      let next = { ...settings };
-      // A newly entered PAT becomes a credstore secret; only its reference
-      // is stored in the workspace settings.
-      if (pat.trim() && (next.repo_source === "github" || next.repo_source === "gitlab")) {
-        const ref = `studio-repo-${ws.id}`;
-        await api.putSecret(token, ref, pat.trim(), PAT_SECRET_TYPE);
-        next = { ...next, repo_token_ref: ref };
-        setPat("");
-      }
-      if (next.repo_source === "none") {
-        next = { ...next, repo_url: "", local_path: "", repo_branch: "", repo_token_ref: "" };
-      }
+      // Newly entered PATs become credstore secrets; settings keep only refs.
+      const repos = await Promise.all(
+        (settings.repos ?? []).map(async (r) => {
+          const pat = pats[r.name]?.trim();
+          if (pat && (r.source === "github" || r.source === "gitlab")) {
+            const ref = `studio-repo-${ws.id}-${r.name}`;
+            await api.putSecret(token, ref, pat, PAT_SECRET_TYPE);
+            return { ...r, token_ref: ref };
+          }
+          return r;
+        }),
+      );
+      const next = { ...settings, repos };
       await api.putWorkspaceSettings(token, ws.id, next);
       setSettings(next);
+      setPats({});
       setSettingsExist(true);
       setRepoSaved(true);
     } catch (err) {
@@ -688,7 +689,14 @@ function WorkspaceDashboard({
     }
   }
 
-  const repoConnected = Boolean(settings?.repo_url?.trim() || settings?.local_path?.trim());
+  function patchRepo(i: number, patch: Partial<import("./api").RepoEntry>) {
+    if (!settings) return;
+    const repos = [...(settings.repos ?? [])];
+    repos[i] = { ...repos[i], ...patch };
+    setSettings({ ...settings, repos });
+  }
+
+  const repoConnected = (settings?.repos?.length ?? 0) > 0;
   const steps: { label: string; done: boolean; soon?: boolean }[] = [
     { label: "Workspace created", done: true },
     { label: "Members invited", done: (users?.length ?? 0) > 0 },
@@ -787,97 +795,129 @@ function WorkspaceDashboard({
       </div>
 
       <div className="card">
-        <h2>Repository</h2>
+        <h2>Repositories</h2>
         <p className="hint">
-          Bound once per workspace (tenant metadata); every IDE session launches with it. Access
-          tokens go to the credstore gear — only a secret reference is stored here.
+          Workspace sources: each becomes <code>./&lt;name&gt;</code> in the IDE and a{" "}
+          <code>[sources.&lt;name&gt;]</code> entry in <code>.cf-workspace.toml</code>. Multiple
+          sources per workspace; tokens go to credstore, only references are stored here.
         </p>
         {settings && (
           <form onSubmit={saveRepo}>
-            <div className="field">
-              Source
-              <div className="chipset" style={{ marginTop: 6 }}>
-                {REPO_SOURCES.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`chip ${(settings.repo_source ?? "none") === s.id ? "on" : ""}`}
-                    onClick={() => setSettings({ ...settings, repo_source: s.id })}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {settings.repo_source === "local" && (
-              <label className="field" style={{ maxWidth: 460 }}>
-                Folder on the backend host (mounted as the workspace)
-                <input
-                  placeholder="/mnt/c/Repos/CFS/studio-demo-workspace"
-                  value={settings.local_path ?? ""}
-                  onChange={(e) => setSettings({ ...settings, local_path: e.target.value })}
-                />
-              </label>
-            )}
-
-            {settings.repo_source === "git" && (
-              <label className="field" style={{ maxWidth: 460 }}>
-                Clone URL (public)
-                <input
-                  placeholder="https://example.com/org/repo.git"
-                  value={settings.repo_url ?? ""}
-                  onChange={(e) => setSettings({ ...settings, repo_url: e.target.value })}
-                />
-              </label>
-            )}
-
-            {(settings.repo_source === "github" || settings.repo_source === "gitlab") && (
-              <>
-                <label className="field" style={{ maxWidth: 460 }}>
-                  Repository ({ADAPTER_HOSTS[settings.repo_source]})
+            {(settings.repos ?? []).map((r, i) => (
+              <div
+                key={i}
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  marginBottom: 10,
+                }}
+              >
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input
-                    placeholder="org/repo"
-                    value={slugFromUrl(settings.repo_url, ADAPTER_HOSTS[settings.repo_source])}
+                    placeholder="name (dir)"
+                    style={{ width: 140 }}
+                    value={r.name}
                     onChange={(e) =>
+                      patchRepo(i, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-") })
+                    }
+                  />
+                  <div className="chipset">
+                    {REPO_SOURCES.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={`chip ${r.source === s.id ? "on" : ""}`}
+                        onClick={() => patchRepo(i, { source: s.id })}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() =>
                       setSettings({
                         ...settings,
-                        repo_url: e.target.value.trim()
-                          ? `https://${ADAPTER_HOSTS[settings.repo_source!]}/${e.target.value.trim()}.git`
-                          : "",
+                        repos: (settings.repos ?? []).filter((_, j) => j !== i),
                       })
                     }
-                  />
-                </label>
-                <label className="field" style={{ maxWidth: 460 }}>
-                  Access token (PAT — optional for public repos)
-                  <input
-                    type="password"
-                    placeholder={
-                      settings.repo_token_ref
-                        ? `stored as secret '${settings.repo_token_ref}' — enter to rotate`
-                        : "ghp_… / glpat_…"
-                    }
-                    value={pat}
-                    onChange={(e) => setPat(e.target.value)}
-                  />
-                </label>
-              </>
-            )}
+                  >
+                    remove
+                  </button>
+                </div>
 
-            {settings.repo_source && settings.repo_source !== "none" && settings.repo_source !== "local" && (
-              <label className="field" style={{ maxWidth: 200 }}>
-                Branch (optional)
-                <input
-                  placeholder="main"
-                  value={settings.repo_branch ?? ""}
-                  onChange={(e) => setSettings({ ...settings, repo_branch: e.target.value })}
-                />
-              </label>
-            )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {r.source === "local" && (
+                    <input
+                      placeholder="/mnt/c/Repos/CFS/studio-demo-workspace"
+                      style={{ flex: 1, minWidth: 280 }}
+                      value={r.path ?? ""}
+                      onChange={(e) => patchRepo(i, { path: e.target.value })}
+                    />
+                  )}
+                  {r.source === "git" && (
+                    <input
+                      placeholder="https://example.com/org/repo.git"
+                      style={{ flex: 1, minWidth: 280 }}
+                      value={r.url ?? ""}
+                      onChange={(e) => patchRepo(i, { url: e.target.value })}
+                    />
+                  )}
+                  {(r.source === "github" || r.source === "gitlab") && (
+                    <>
+                      <input
+                        placeholder={`org/repo (${ADAPTER_HOSTS[r.source]})`}
+                        style={{ flex: 1, minWidth: 200 }}
+                        value={slugFromUrl(r.url, ADAPTER_HOSTS[r.source])}
+                        onChange={(e) =>
+                          patchRepo(i, {
+                            url: e.target.value.trim()
+                              ? `https://${ADAPTER_HOSTS[r.source]}/${e.target.value.trim()}.git`
+                              : "",
+                          })
+                        }
+                      />
+                      <input
+                        type="password"
+                        placeholder={r.token_ref ? `secret '${r.token_ref}' — enter to rotate` : "PAT (optional)"}
+                        style={{ width: 220 }}
+                        value={pats[r.name] ?? ""}
+                        onChange={(e) => setPats({ ...pats, [r.name]: e.target.value })}
+                      />
+                    </>
+                  )}
+                  {r.source !== "local" && (
+                    <input
+                      placeholder="branch"
+                      style={{ width: 110 }}
+                      value={r.branch ?? ""}
+                      onChange={(e) => patchRepo(i, { branch: e.target.value })}
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
 
-            <button className="primary">Save repository</button>
-            {repoSaved && <span className="hint" style={{ marginLeft: 10 }}>saved ✓</span>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() =>
+                  setSettings({
+                    ...settings,
+                    repos: [
+                      ...(settings.repos ?? []),
+                      { name: `repo-${(settings.repos?.length ?? 0) + 1}`, source: "git" },
+                    ],
+                  })
+                }
+              >
+                + Add source
+              </button>
+              <button className="primary">Save repositories</button>
+              {repoSaved && <span className="hint">saved ✓</span>}
+            </div>
           </form>
         )}
       </div>
@@ -1803,29 +1843,17 @@ function StudioLauncher({
   onClose: () => void;
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [localPath, setLocalPath] = useState("");
-  const [gitBranch, setGitBranch] = useState("");
-  const [gitTokenRef, setGitTokenRef] = useState("");
-  const [bound, setBound] = useState<boolean | null>(null); // workspace has a repo binding?
+  const [repos, setRepos] = useState<import("./api").RepoEntry[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Repository binding lives on the workspace (dashboard → Repository card);
-  // the launcher only falls back to manual fields when nothing is bound.
+  // Sources are bound on the workspace (dashboard → Repositories card);
+  // the launcher just uses them.
   useEffect(() => {
     api
       .workspaceSettings(token, ws.id)
-      .then((s) => {
-        const repo = s?.repo_url?.trim() ?? "";
-        const local = s?.local_path?.trim() ?? "";
-        setRepoUrl(repo);
-        setLocalPath(local);
-        setGitBranch(s?.repo_branch?.trim() ?? "");
-        setGitTokenRef(s?.repo_token_ref?.trim() ?? "");
-        setBound(Boolean(repo || local));
-      })
-      .catch(() => setBound(false));
+      .then((s) => setRepos(s?.repos ?? []))
+      .catch(() => setRepos([]));
   }, [token, ws.id]);
 
   // Poll a starting session until Theia answers, then open it.
@@ -1847,12 +1875,7 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      const s = await api.createStudioSession(token, ws.id, {
-        repoUrl: repoUrl.trim() || undefined,
-        localPath: localPath.trim() || undefined,
-        gitBranch: gitBranch.trim() || undefined,
-        gitTokenRef: gitTokenRef.trim() || undefined,
-      });
+      const s = await api.createStudioSession(token, ws.id, repos ?? []);
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
@@ -1890,38 +1913,20 @@ function StudioLauncher({
 
       {!session && (
         <>
-          {bound === true && (
+          {repos && repos.length > 0 && (
             <p className="hint">
-              Repository binding from workspace settings:{" "}
-              <code>{localPath || repoUrl}</code> — change it on the dashboard.
+              Workspace sources ({repos.length}):{" "}
+              {repos.map((r) => `${r.name} (${r.source})`).join(", ")} — managed on the dashboard.
             </p>
           )}
-          {bound === false && (
-            <>
-              <p className="hint">
-                No repository bound to this workspace yet — set it once on the dashboard
-                (Repository card), or fill in a one-off below.
-              </p>
-              <label className="field" style={{ maxWidth: 460 }}>
-                Git repository (optional — cloned into the workspace on first launch)
-                <input
-                  placeholder="https://github.com/org/repo.git"
-                  value={repoUrl}
-                  onChange={(e) => setRepoUrl(e.target.value)}
-                />
-              </label>
-              <label className="field" style={{ maxWidth: 460 }}>
-                Local folder on the backend host (optional — mounted as the workspace)
-                <input
-                  placeholder="/mnt/c/Repos/my-repo"
-                  value={localPath}
-                  onChange={(e) => setLocalPath(e.target.value)}
-                />
-              </label>
-            </>
+          {repos && repos.length === 0 && (
+            <p className="hint">
+              No sources bound yet — the workspace opens with an empty repository. Connect
+              repositories on the dashboard (Repositories card).
+            </p>
           )}
-          <button className="primary" onClick={launch} disabled={busy || bound === null}>
-            {busy ? "Launching…" : bound === null ? "Loading…" : "Launch Studio"}
+          <button className="primary" onClick={launch} disabled={busy || repos === null}>
+            {busy ? "Launching…" : repos === null ? "Loading…" : "Launch Studio"}
           </button>
         </>
       )}

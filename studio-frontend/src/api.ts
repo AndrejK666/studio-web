@@ -41,21 +41,26 @@ export const USER_MEMBER_HANDLE = "gts.cf.core.rg.type.v1~cf.core.am.user.v1~";
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
 export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 
-export type RepoSource = "none" | "local" | "git" | "github" | "gitlab";
+export type RepoSource = "local" | "git" | "github" | "gitlab";
+
+/** One workspace source — mirrored into .cf-workspace.toml by the backend. */
+export interface RepoEntry {
+  /** Directory name under the workspace root: [a-z0-9_-]+ */
+  name: string;
+  /** UI-level source flavor; github/gitlab are git with a composed URL. */
+  source: RepoSource;
+  url?: string;
+  path?: string;
+  branch?: string;
+  /** credstore secret reference holding the repo PAT (private repos). */
+  token_ref?: string;
+}
 
 export interface WorkspaceSettings {
   automation_level?: "manual" | "recommendations" | "autonomous";
   approved_worker_categories?: string[];
-  /** How the workspace content is sourced for IDE sessions. */
-  repo_source?: RepoSource;
-  /** Git repository cloned into the workspace on first IDE launch. */
-  repo_url?: string;
-  /** Backend-host folder mounted as the workspace (bring-your-own-repo). */
-  local_path?: string;
-  /** Branch for the first clone. */
-  repo_branch?: string;
-  /** credstore secret reference holding the repo PAT (private repos). */
-  repo_token_ref?: string;
+  /** Workspace sources: multiple repositories/folders per workspace. */
+  repos?: RepoEntry[];
 }
 
 // simple-user-settings gear stores exactly these two per-user fields.
@@ -106,8 +111,7 @@ export interface StudioSession {
   state: "starting" | "running" | "stopped";
   url: string;
   created_at_epoch_secs: number;
-  repo_url?: string;
-  local_path?: string;
+  sources: string[];
 }
 
 export interface StoredFile {
@@ -318,19 +322,19 @@ export const api = {
   storages: (token: string) => request<unknown>("/api/file-storage/v1/storages", token),
 
   /* ── studio-session gear: per-workspace Theia IDE containers ── */
-  createStudioSession: (
-    token: string,
-    workspaceId: string,
-    opts?: { repoUrl?: string; localPath?: string; gitBranch?: string; gitTokenRef?: string },
-  ) =>
+  createStudioSession: (token: string, workspaceId: string, repos: RepoEntry[]) =>
     request<StudioSession>("/studio-session/v1/sessions", token, {
       method: "POST",
       body: JSON.stringify({
         workspace_id: workspaceId,
-        repo_url: opts?.repoUrl || undefined,
-        local_path: opts?.localPath || undefined,
-        git_branch: opts?.gitBranch || undefined,
-        git_token_ref: opts?.gitTokenRef || undefined,
+        repos: repos.map((r) => ({
+          name: r.name,
+          kind: r.source === "local" ? "local" : "git",
+          url: r.url || undefined,
+          path: r.path || undefined,
+          branch: r.branch || undefined,
+          token_ref: r.token_ref || undefined,
+        })),
       }),
     }),
 

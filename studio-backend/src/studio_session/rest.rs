@@ -9,7 +9,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::service::{Session, SessionService};
+use super::service::{RepoKind, RepoSpec, Session, SessionService};
 
 /// Errors attributable to an IDE session as a resource.
 #[resource_error(gts_id!("cf.studio.session.session.v1~"))]
@@ -25,27 +25,36 @@ impl LicenseFeature for License {}
 
 /* ── DTOs ── */
 
+/// One workspace source, mirrored into the canonical `.cf-workspace.toml`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RepoSpecDto {
+    /// Directory name under the workspace root — `[a-z0-9_-]+`.
+    pub name: String,
+    /// "git" (cloned on first launch) or "local" (backend-host folder
+    /// bind-mounted as ./name).
+    pub kind: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// credstore secret reference with a PAT for private repos. Resolved
+    /// server-side; the token value never travels through this API.
+    #[serde(default)]
+    pub token_ref: Option<String>,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct CreateSessionRequest {
     /// Workspace tenant id the IDE session is for.
     #[schema(value_type = String)]
     pub workspace_id: Uuid,
-    /// Optional Git repository cloned into the workspace on first launch.
+    /// Workspace sources (multiple repositories/folders per workspace).
     #[serde(default)]
-    pub repo_url: Option<String>,
-    /// Optional directory on the backend host mounted as the workspace
-    /// (bring-your-own-repo). Takes precedence over the managed directory.
-    #[serde(default)]
-    pub local_path: Option<String>,
-    /// Optional branch for the first clone.
-    #[serde(default)]
-    pub git_branch: Option<String>,
-    /// Optional credstore secret reference holding a repo access token (PAT)
-    /// for private GitHub/GitLab repositories. Resolved server-side; the
-    /// token value never travels through this API.
-    #[serde(default)]
-    pub git_token_ref: Option<String>,
+    pub repos: Vec<RepoSpecDto>,
 }
 
 #[derive(Debug)]
@@ -60,10 +69,8 @@ pub struct SessionDto {
     /// Browser URL of the Theia IDE (loopback-published).
     pub url: String,
     pub created_at_epoch_secs: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub repo_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_path: Option<String>,
+    /// Source summaries, e.g. "docs (git)", "demo (local)".
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -79,8 +86,7 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
         state: s.state.as_str().to_string(),
         url: svc.session_url(s.port),
         created_at_epoch_secs: s.created_at_epoch_secs,
-        repo_url: s.repo_url,
-        local_path: s.local_path,
+        sources: s.sources,
     }
 }
 
@@ -91,23 +97,44 @@ async fn create_session(
     Extension(svc): Extension<Arc<SessionService>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Private-repo PAT: resolved from credstore under the caller's tenant.
-    let git_token = match req.git_token_ref.as_deref().filter(|r| !r.trim().is_empty()) {
-        Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref.trim()).await.map_err(
-            |e| CanonicalError::internal(format!("repo token resolution failed: {e:#}")).create(),
-        )?),
-        None => None,
-    };
+    // Map DTOs to specs, resolving per-repo PATs from credstore under the
+    // caller's tenant.
+    let mut repos = Vec::with_capacity(req.repos.len());
+    for r in req.repos {
+        let kind = match r.kind.as_str() {
+            "git" => RepoKind::Git,
+            "local" => RepoKind::Local,
+            other => {
+                return Err(CanonicalError::internal(format!(
+                    "source '{}': unknown kind '{other}' (expected git|local)",
+                    r.name
+                ))
+                .create());
+            }
+        };
+        let token = match r.token_ref.as_deref().filter(|t| !t.trim().is_empty()) {
+            Some(token_ref) => Some(svc.resolve_git_token(&ctx, token_ref.trim()).await.map_err(
+                |e| {
+                    CanonicalError::internal(format!(
+                        "source '{}': token resolution failed: {e:#}",
+                        r.name
+                    ))
+                    .create()
+                },
+            )?),
+            None => None,
+        };
+        repos.push(RepoSpec {
+            name: r.name,
+            kind,
+            url: r.url,
+            path: r.path,
+            branch: r.branch,
+            token,
+        });
+    }
     let (session, existed) = svc
-        .create(
-            ctx.subject_tenant_id(),
-            ctx.subject_id(),
-            req.workspace_id,
-            req.repo_url,
-            req.local_path,
-            req.git_branch,
-            git_token,
-        )
+        .create(ctx.subject_tenant_id(), ctx.subject_id(), req.workspace_id, repos)
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
     let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
