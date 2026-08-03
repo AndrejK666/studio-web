@@ -246,20 +246,23 @@ function Login({
 /* ── App shell ── */
 
 type View =
-  | "workspaces"
-  | "projects"
-  | "chats"
   | "organizations"
+  | "workspaces"
+  | "chats"
   | "members"
   | "files"
   | "system"
   | "profile";
 
+// Order follows the domain model's control plane: the tenant admin hierarchy
+// (Organizations) frames everything, Workspaces are the working contexts
+// inside it. Projects are NOT a top-level surface — in the model a Project is
+// a managed object living in a workspace's context (graph object), so they
+// are managed from the Workspace Dashboard.
 const NAV: { id: View; icon: string; label: string }[] = [
-  { id: "workspaces", icon: "▦", label: "Workspaces" },
-  { id: "projects", icon: "◳", label: "Projects" },
-  { id: "chats", icon: "💬", label: "Chats" },
   { id: "organizations", icon: "🏢", label: "Organizations" },
+  { id: "workspaces", icon: "▦", label: "Workspaces" },
+  { id: "chats", icon: "💬", label: "Chats" },
   { id: "members", icon: "👥", label: "Members" },
   { id: "files", icon: "📄", label: "Files" },
   { id: "system", icon: "⚙", label: "System" },
@@ -267,7 +270,7 @@ const NAV: { id: View; icon: string; label: string }[] = [
 ];
 
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
-  const [view, setView] = useState<View>("workspaces");
+  const [view, setView] = useState<View>("organizations");
   const [home, setHome] = useState<Tenant | null>(null);
   const [orgs, setOrgs] = useState<Tenant[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -396,7 +399,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpenDashboard={setDash}
           />
         )}
-        {view === "projects" && <ProjectsView token={token} workspaces={workspaces} filters={filters} />}
         {view === "organizations" && (
           <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} filters={filters} onChanged={refresh} />
         )}
@@ -894,6 +896,8 @@ function WorkspaceDashboard({
           {users?.length ?? "…"} member(s) · {projects?.length ?? "…"} project(s)
         </p>
       </div>
+
+      <WorkspaceProjectsCard token={token} ws={ws} onChanged={() => void load()} />
 
       <div className="card">
         <h2>Automation — trust ramp</h2>
@@ -1507,25 +1511,27 @@ function AskAI({ token, ws }: { token: string; ws: Workspace }) {
   );
 }
 
-/* ── Projects (RG-backed, ADR-0002) ── */
+/* ── Projects (workspace-scoped card; RG-backed, ADR-0002) ──
+   In the domain model a Project is a managed object of type Project — a
+   graph object inside a workspace's context, not a control-plane citizen.
+   Hence no top-level Projects view: they live on the Workspace Dashboard. */
 
-function ProjectsView({
+function WorkspaceProjectsCard({
   token,
-  workspaces,
-  filters,
+  ws,
+  onChanged,
 }: {
   token: string;
-  workspaces: Workspace[];
-  filters: Filters;
+  ws: Workspace;
+  onChanged?: () => void;
 }) {
-  const [wsId, setWsId] = useState("");
+  const wsId = ws.id;
   const [projects, setProjects] = useState<Group[] | null>(null);
   const [name, setName] = useState("");
   const [openProject, setOpenProject] = useState<Group | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!wsId) return;
     setError(null);
     setOpenProject(null);
     try {
@@ -1556,6 +1562,7 @@ function ProjectsView({
       });
       setName("");
       await load();
+      onChanged?.();
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 400
@@ -1565,8 +1572,7 @@ function ProjectsView({
     }
   }
 
-  const ws = workspaces.find((w) => w.id === wsId);
-  const visible = (projects ?? []).filter((p) => matches(filters.query, p.name, p.id));
+  const visible = projects ?? [];
 
   async function removeProject(p: Group) {
     if (!window.confirm(`Delete project “${p.name}” (memberships included)?`)) return;
@@ -1574,6 +1580,7 @@ function ProjectsView({
     try {
       await api.deleteGroup(token, p.id, true); // force: cascade memberships
       await load();
+      onChanged?.();
     } catch (err) {
       setError(errText(err));
     }
@@ -1581,31 +1588,19 @@ function ProjectsView({
 
   return (
     <>
-      <h1>Projects</h1>
-      <p className="subtitle">
-        The workspace's effort containers. In the domain model a Project is itself a managed
-        object of type Project in the Knowledge Graph; until the graph ships they are
-        Resource Group-backed (ADR-0002).
-      </p>
       <div className="card">
-        <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
-          <option value="">Select a workspace…</option>
-          {workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name} ({w.orgName})
-            </option>
-          ))}
-        </select>
+        <h2>Projects</h2>
+        <p className="hint">
+          This workspace's effort containers. In the domain model a Project is a managed object
+          of type Project in the Knowledge Graph; until the graph ships they are Resource
+          Group-backed (ADR-0002).
+        </p>
 
-        {wsId && projects && (
+        {projects && (
           <>
             {projects.length === 0 ? (
               <p className="empty" style={{ marginTop: 12 }}>
-                No projects in “{ws?.name}” yet.
-              </p>
-            ) : visible.length === 0 ? (
-              <p className="empty" style={{ marginTop: 12 }}>
-                No projects match the current filters.
+                No projects in “{ws.name}” yet.
               </p>
             ) : (
               <ul className="rows" style={{ marginTop: 12 }}>
@@ -1639,7 +1634,7 @@ function ProjectsView({
         {error && <div className="error">{error}</div>}
       </div>
 
-      {openProject && ws && (
+      {openProject && (
         <ProjectMembers
           key={openProject.id}
           token={token}
