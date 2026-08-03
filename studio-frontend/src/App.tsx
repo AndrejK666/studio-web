@@ -712,7 +712,7 @@ function WorkspaceDashboard({
       const repos = await Promise.all(
         (settings.repos ?? []).map(async (r) => {
           const pat = pats[r.name]?.trim();
-          if (pat && (r.source === "github" || r.source === "gitlab")) {
+          if (pat && r.source !== "local") {
             const ref = `studio-repo-${ws.id}-${r.name}`;
             await api.putSecret(token, ref, pat, PAT_SECRET_TYPE);
             return { ...r, token_ref: ref };
@@ -926,42 +926,44 @@ function WorkspaceDashboard({
                   )}
                   {r.source === "git" && (
                     <input
-                      placeholder="https://example.com/org/repo.git"
+                      placeholder="https://gitlab.constr.dev/group/repo.git (self-hosted: use this)"
                       style={{ flex: 1, minWidth: 280 }}
                       value={r.url ?? ""}
                       onChange={(e) => patchRepo(i, { url: e.target.value })}
                     />
                   )}
                   {(r.source === "github" || r.source === "gitlab") && (
+                    <input
+                      placeholder={`org/repo (${ADAPTER_HOSTS[r.source]})`}
+                      style={{ flex: 1, minWidth: 200 }}
+                      value={slugFromUrl(r.url, ADAPTER_HOSTS[r.source])}
+                      onChange={(e) =>
+                        patchRepo(i, {
+                          url: e.target.value.trim()
+                            ? `https://${ADAPTER_HOSTS[r.source]}/${e.target.value.trim()}.git`
+                            : "",
+                        })
+                      }
+                    />
+                  )}
+                  {r.source !== "local" && (
                     <>
                       <input
-                        placeholder={`org/repo (${ADAPTER_HOSTS[r.source]})`}
-                        style={{ flex: 1, minWidth: 200 }}
-                        value={slugFromUrl(r.url, ADAPTER_HOSTS[r.source])}
-                        onChange={(e) =>
-                          patchRepo(i, {
-                            url: e.target.value.trim()
-                              ? `https://${ADAPTER_HOSTS[r.source]}/${e.target.value.trim()}.git`
-                              : "",
-                          })
-                        }
-                      />
-                      <input
                         type="password"
-                        placeholder={r.token_ref ? `secret '${r.token_ref}' — enter to rotate` : "PAT (optional)"}
-                        style={{ width: 220 }}
+                        placeholder={
+                          r.token_ref ? `secret '${r.token_ref}' — enter to rotate` : "PAT (private repos)"
+                        }
+                        style={{ width: 200 }}
                         value={pats[r.name] ?? ""}
                         onChange={(e) => setPats({ ...pats, [r.name]: e.target.value })}
                       />
+                      <input
+                        placeholder="branch"
+                        style={{ width: 110 }}
+                        value={r.branch ?? ""}
+                        onChange={(e) => patchRepo(i, { branch: e.target.value })}
+                      />
                     </>
-                  )}
-                  {r.source !== "local" && (
-                    <input
-                      placeholder="branch"
-                      style={{ width: 110 }}
-                      value={r.branch ?? ""}
-                      onChange={(e) => patchRepo(i, { branch: e.target.value })}
-                    />
                   )}
                 </div>
               </div>

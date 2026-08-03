@@ -81,6 +81,27 @@ through `http_client.custom_ca_certificate_paths`) and maps claims into the
 platform SecurityContext. mini-chat's background S2S goes through the same
 realm (`s2s_oauth`, confidential client `mini-chat`).
 
+### Cloning from a self-hosted GitLab (or GitHub Enterprise)
+
+The GitHub/GitLab chips compose `github.com` / `gitlab.com` URLs. For a
+self-hosted host use the **Git URL** source with the full HTTPS clone URL and
+a PAT:
+
+| Field | Value |
+|---|---|
+| name | `csh_hypotheses_back` (becomes the directory) |
+| source | **Git URL** |
+| url | `https://gitlab.constr.dev/hypotheses/csh_hypotheses_back.git` |
+| PAT | a GitLab personal access token with the `read_repository` scope |
+| mount at | optional — e.g. `.workspace-sources/hypotheses/csh_hypotheses_back` to match a CLI-created workspace layout |
+
+HTTPS, not SSH: the session container has no SSH key or agent, while a PAT
+travels as a credstore secret reference and is injected into the clone through
+an inline credential helper (never written to `.git/config`). If the workspace
+manifest lists `git@…` SSH remotes (as CLI-created ones do), the portal's
+HTTPS source is what actually materializes the working copy; the manifest entry
+stays untouched.
+
 ### Using your own IdP (Keycloak, Azure AD, Auth0, …)
 
 1. Create a **public client** with **PKCE (S256)**, redirect URI
