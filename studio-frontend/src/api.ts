@@ -181,6 +181,14 @@ export const api = {
   tenantChildren: (token: string, tenantId: string) =>
     request<Page<Tenant>>(`/account-management/v1/tenants/${tenantId}/children`, token),
 
+  deleteTenant: (token: string, tenantId: string) =>
+    request<void>(`/account-management/v1/tenants/${tenantId}`, token, { method: "DELETE" }),
+
+  deleteGroup: (token: string, groupId: string, force = false) =>
+    request<void>(`/resource-group/v1/groups/${groupId}${force ? "?force=true" : ""}`, token, {
+      method: "DELETE",
+    }),
+
   createTenant: (
     token: string,
     input: { name: string; parent_id: string; tenant_type: string },

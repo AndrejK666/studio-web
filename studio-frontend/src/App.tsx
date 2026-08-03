@@ -556,6 +556,17 @@ function WorkspacesView({
     }
   }
 
+  async function remove(w: Workspace) {
+    if (!window.confirm(`Delete workspace “${w.name}”? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await api.deleteTenant(token, w.id);
+      onChanged();
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
   return (
     <>
       <h1>Workspaces</h1>
@@ -583,6 +594,9 @@ function WorkspacesView({
                 <button onClick={() => onOpenDashboard(w)}>Dashboard</button>
                 <button className="primary" onClick={() => onOpenStudio(w)}>
                   Open Studio
+                </button>
+                <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
+                  ✕
                 </button>
               </li>
             ))}
@@ -1395,6 +1409,17 @@ function ProjectsView({
   const ws = workspaces.find((w) => w.id === wsId);
   const visible = (projects ?? []).filter((p) => matches(filters.query, p.name, p.id));
 
+  async function removeProject(p: Group) {
+    if (!window.confirm(`Delete project “${p.name}” (memberships included)?`)) return;
+    setError(null);
+    try {
+      await api.deleteGroup(token, p.id, true); // force: cascade memberships
+      await load();
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
   return (
     <>
       <h1>Projects</h1>
@@ -1433,6 +1458,9 @@ function ProjectsView({
                     </div>
                     <span className="badge">project</span>
                     <button onClick={() => setOpenProject(p)}>members</button>
+                    <button className="ghost" title="Delete project" onClick={() => void removeProject(p)}>
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -1611,6 +1639,17 @@ function OrganizationsView({
     }
   }
 
+  async function removeOrg(org: Tenant) {
+    if (!window.confirm(`Delete organization “${org.name}”? Delete its workspaces first.`)) return;
+    setError(null);
+    try {
+      await api.deleteTenant(token, org.id);
+      onChanged();
+    } catch (e) {
+      setError(errText(e)); // 409 with children — expected guidance
+    }
+  }
+
   async function decide(c: import("./api").Conversion, status: "approved" | "rejected") {
     setError(null);
     try {
@@ -1669,6 +1708,9 @@ function OrganizationsView({
                   onClick={() => void requestMode(o)}
                 >
                   {o.self_managed ? "→ managed" : "→ self-managed"}
+                </button>
+                <button className="ghost" title="Delete organization" onClick={() => void removeOrg(o)}>
+                  ✕
                 </button>
               </li>
             ))}
