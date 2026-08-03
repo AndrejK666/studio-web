@@ -1,0 +1,60 @@
+# Defaults are dev-safe: no production hostnames, no real credentials.
+# Required per environment: database.existingSecret, auth (IDP) secret.
+global:
+  hostname: ""            # e.g. constructor.local (never a prod default)
+  customDomains: []
+  environmentName: "dev"
+  environmentType: "prod" # policy: default reflects production behavior
+
+backend:
+  image:
+    repository: ghcr.io/constructorfabric/studio-web-backend
+    tag: ""                # REQUIRED: fixed at chart publication (no latest)
+  replicas: 1
+  port: 8090
+  configProfile: "docker"
+  # Postgres is operator-managed; connection comes ONLY from this Secret
+  # (keys: host, port, user, password, dbname).
+  database:
+    existingSecret: "studio-postgres-app"
+  # Platform IDP (OIDC issuer + client) — external, per-service Secret
+  # (keys: issuer_url, client_id, client_secret).
+  auth:
+    existingSecret: "studio-web-idp"
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 80
+
+frontend:
+  image:
+    repository: ghcr.io/constructorfabric/studio-web-frontend
+    tag: ""                # REQUIRED: fixed at chart publication
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  autoscaling:
+    enabled: false
+
+ingress:
+  enabled: true
+  className: "nginx"
+  # Private by default; public exposure (ext-ingress + basic auth) is an
+  # explicit per-environment override (INFRA-3725).
+  annotations: {}
+  tls: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

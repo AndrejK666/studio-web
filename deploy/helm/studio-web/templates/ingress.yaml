@@ -1,0 +1,29 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "studio-web.fullname" . }}
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range prepend .Values.global.customDomains .Values.global.hostname }}
+    {{- if . }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /cf
+            pathType: Prefix
+            backend: { service: { name: {{ include "studio-web.fullname" $ }}-backend, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ include "studio-web.fullname" $ }}-frontend, port: { name: http } } }
+    {{- end }}
+    {{- end }}
+{{- end }}

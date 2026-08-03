@@ -1,0 +1,6 @@
+apiVersion: v2
+name: studio-web
+description: Constructor Studio portal (backend gears assembly + frontend). Infrastructure (Postgres) and the IdP are operator/externally managed and consumed via existing Secrets/ConfigMaps per the Helm charts management policy.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

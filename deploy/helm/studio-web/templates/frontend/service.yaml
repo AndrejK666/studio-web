@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "studio-web.fullname" . }}-frontend
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "studio-web.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  ports: [{ name: http, port: 80, targetPort: http }]

@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "studio-web.fullname" . }}-frontend
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: frontend
+    spec:
+      serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ required "frontend.image.tag is required (immutable, fixed at chart publication)" .Values.frontend.image.tag }}"
+          ports: [{ name: http, containerPort: {{ .Values.frontend.port }} }]
+          readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 3, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
+          resources: {{- toYaml .Values.frontend.resources | nindent 12 }}
