@@ -2156,10 +2156,29 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      const usable = (repos ?? []).filter((r) =>
+      // Re-read settings at launch time: the card may have been open since
+      // before the last "Save repositories", and a stale snapshot silently
+      // launches without the new sources/targets/token refs.
+      let freshRepos = repos ?? [];
+      let freshRoot = root;
+      try {
+        const s = await api.workspaceSettings(token, ws.id);
+        freshRepos = s?.repos ?? [];
+        freshRoot = {
+          path: s?.root_path?.trim() || undefined,
+          repoUrl: s?.root_repo_url?.trim() || undefined,
+          branch: s?.root_branch?.trim() || undefined,
+          tokenRef: s?.root_token_ref?.trim() || undefined,
+        };
+        setRepos(freshRepos);
+        setRoot(freshRoot);
+      } catch {
+        // Settings unreachable — fall back to the snapshot we have.
+      }
+      const usable = freshRepos.filter((r) =>
         r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
       );
-      const s = await api.createStudioSession(token, ws.id, usable, root);
+      const s = await api.createStudioSession(token, ws.id, usable, freshRoot);
       setSession(s);
       if (s.state === "running") window.open(s.url, "_blank", "noopener");
     } catch (e) {
