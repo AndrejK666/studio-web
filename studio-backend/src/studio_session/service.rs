@@ -369,18 +369,38 @@ impl SessionService {
         Ok((session, false))
     }
 
-    /// Write the canonical `.cf-workspace.toml` (`[sources.<id>]` sections —
-    /// the format owned by the Theia Studio extension's Workspace Sources).
-    /// Only materialized when the file does not exist yet: once created, the
-    /// Studio's own config mutation service is the editor of record.
+    /// Materialize the canonical `.cf-workspace.toml` (`[sources.<id>]`
+    /// sections — the format owned by the Theia Studio extension's Workspace
+    /// Sources). A missing file is created from scratch; an existing file
+    /// (e.g. a CLI-created workspace) is APPENDED with sources it does not
+    /// list yet — existing content is never modified or reordered.
     fn materialize_workspace_toml(&self, ws_dir: &str, repos: &[RepoSpec]) -> anyhow::Result<()> {
         let path = format!("{ws_dir}/.cf-workspace.toml");
-        if std::path::Path::new(&path).exists() {
-            tracing::debug!("studio-session: {path} already exists — leaving as-is");
+        let existing = std::fs::read_to_string(&path).ok();
+        let missing: Vec<&RepoSpec> = match &existing {
+            Some(content) => repos
+                .iter()
+                .filter(|r| {
+                    !content.contains(&format!("[sources.{}]", r.name))
+                        && !content.contains(&format!("[sources.\"{}\"]", r.name))
+                })
+                .collect(),
+            None => repos.iter().collect(),
+        };
+        if existing.is_some() && missing.is_empty() {
             return Ok(());
         }
-        let mut toml = String::from("version = \"1.0\"\n");
-        for r in repos {
+        let mut toml = match existing {
+            Some(content) => {
+                let mut c = content;
+                if !c.ends_with('\n') {
+                    c.push('\n');
+                }
+                c
+            }
+            None => String::from("version = \"1.0\"\n"),
+        };
+        for r in missing {
             let target = r
                 .target
                 .as_deref()
