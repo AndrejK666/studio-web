@@ -79,21 +79,61 @@ export function App() {
   const [token, setToken] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [expired, setExpired] = useState(false);
+  const [restoring, setRestoring] = useState(true);
 
-  // Any 401 from the API ends the session: SSO access tokens expire (Keycloak
-  // default: 1 h) and the portal holds no refresh token yet, so the honest
-  // behaviour is to ask for a new sign-in instead of showing 401s forever.
+  /** Renew the access token silently; returns true when the session lives on. */
+  const renew = useCallback(async (): Promise<boolean> => {
+    const { refreshSsoSession } = await import("./oidc");
+    const session = await refreshSsoSession().catch(() => null);
+    if (!session) return false;
+    try {
+      const who = await api.me(session.accessToken);
+      setToken(session.accessToken);
+      setMe(who);
+      // Renew a minute before expiry; the IdP keeps the SSO session alive far
+      // longer than one access token, so this is invisible to the user.
+      window.setTimeout(() => void renew(), Math.max(30, session.expiresIn - 60) * 1000);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Page load: restore a session from the stored refresh token (survives F5).
+  useEffect(() => {
+    (async () => {
+      const { hasSsoSession } = await import("./oidc");
+      if (hasSsoSession()) await renew();
+      setRestoring(false);
+    })();
+  }, [renew]);
+
+  // Any 401: try a silent renewal first (access tokens are short-lived), and
+  // only end the session when the IdP declines.
   useEffect(() => {
     const onUnauthenticated = () => {
-      setToken((t) => {
-        if (t) setExpired(true);
-        return null;
-      });
-      setMe(null);
+      void (async () => {
+        if (await renew()) return;
+        const { clearSsoSession } = await import("./oidc");
+        clearSsoSession();
+        setToken((t) => {
+          if (t) setExpired(true);
+          return null;
+        });
+        setMe(null);
+      })();
     };
     window.addEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated);
     return () => window.removeEventListener(UNAUTHENTICATED_EVENT, onUnauthenticated);
-  }, []);
+  }, [renew]);
+
+  if (restoring && !token) {
+    return (
+      <main className="narrow">
+        <p className="hint">Restoring session…</p>
+      </main>
+    );
+  }
 
   if (!token || !me) {
     return (
@@ -107,7 +147,17 @@ export function App() {
       />
     );
   }
-  return <Shell token={token} me={me} onLogout={() => { setToken(null); setMe(null); }} />;
+  return (
+    <Shell
+      token={token}
+      me={me}
+      onLogout={() => {
+        void import("./oidc").then(({ clearSsoSession }) => clearSsoSession());
+        setToken(null);
+        setMe(null);
+      }}
+    />
+  );
 }
 
 /* ── Login ── */
@@ -129,11 +179,11 @@ function Login({
   useEffect(() => {
     import("./oidc").then(({ completeSsoLogin }) =>
       completeSsoLogin()
-        .then(async (t) => {
-          if (!t) return;
+        .then(async (session) => {
+          if (!session) return;
           setBusy(true);
-          const who = await api.me(t);
-          onLogin(t, who);
+          const who = await api.me(session.accessToken);
+          onLogin(session.accessToken, who);
         })
         .catch((e) => {
           setBusy(false);

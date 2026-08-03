@@ -72,6 +72,11 @@ Then in the portal press "Sign in with SSO" — users `admin` / `demo`
 <https://localhost:8443>: open that URL once and accept the certificate
 before the first login. Admin console: same URL, `admin`/`admin`.
 
+Sessions renew silently: the refresh token is kept in `sessionStorage` and
+used to mint a new access token a minute before expiry, after any 401, and on
+page load — so a reload keeps you signed in and the hourly access-token expiry
+is invisible. Sign out (or closing the tab) drops it.
+
 How it fits together: the portal does Authorization Code + PKCE
 (`src/oidc.ts`, no dependencies), Keycloak issues a JWT whose `sub` is the
 user UUID and whose `tenant_id` claim (from a user attribute, see
