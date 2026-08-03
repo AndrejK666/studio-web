@@ -304,3 +304,24 @@ gears:
       port_range_end: 41099
       max_session_secs: 14400
       git_mode: "disabled"
+
+  # oidc-authn-plugin is link-time active in every profile (gears discover
+  # via inventory), and it REQUIRES a config section. In this static-token
+  # profile it is configured valid but DEPRIORITIZED: static-authn-plugin
+  # (priority 100) wins the vendor selection, so this section is inert.
+  oidc-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 10
+      jwt:
+        supported_algorithms: ["RS256", "ES256"]
+        require_audience: false
+        trusted_issuers:
+          - issuer: "https://localhost:8443/realms/studio"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          token_scopes: "scope"
+      s2s_oauth:
+        discovery_url: "https://localhost:8443/realms/studio"
+        default_subject_type: "gts.cf.core.security.subject_service.v1~"

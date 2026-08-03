@@ -305,3 +305,12 @@ gears:
       port_range_end: 41099
       max_session_secs: 14400     # 4h, then the reaper stops the container
       git_mode: "disabled"
+
+  # static-authn-plugin is link-time active here too; pinned BELOW the OIDC
+  # plugin so it never wins the vendor selection in this profile.
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 1
+      mode: static_tokens
+      tokens: []
