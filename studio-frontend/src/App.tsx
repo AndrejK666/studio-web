@@ -776,10 +776,11 @@ function WorkspaceDashboard({
       </div>
 
       <div className="card">
-        <h2>Automation settings</h2>
+        <h2>Automation — trust ramp</h2>
         <p className="hint">
-          Stored as tenant metadata (GTS-validated by the backend): who is allowed to act, and how
-          autonomously.
+          The domain model's trust ramp, per workspace: <b>manual</b> = read-only insight,{" "}
+          <b>recommendations</b> = prepared actions awaiting approval, <b>autonomous</b> = approved
+          automation for the categories below. Stored as tenant metadata (GTS-validated).
         </p>
         {settings && (
           <form onSubmit={saveSettings}>
@@ -827,9 +828,10 @@ function WorkspaceDashboard({
       </div>
 
       <div className="card">
-        <h2>Repositories</h2>
+        <h2>Workspace sources</h2>
         <p className="hint">
-          Workspace sources: each becomes <code>./&lt;name&gt;</code> in the IDE and a{" "}
+          How the organization's repositories enter this workspace (the domain model's ingress):
+          each source becomes <code>./&lt;name&gt;</code> in the IDE and a{" "}
           <code>[sources.&lt;name&gt;]</code> entry in <code>.cf-workspace.toml</code>. Multiple
           sources per workspace; tokens go to credstore, only references are stored here.
         </p>
@@ -976,26 +978,33 @@ function WorkspaceDashboard({
       <AskAI token={token} ws={ws} />
 
       <div className="card">
-        <h2>Coming soon</h2>
+        <h2>Coming soon (surfaces reserved per the domain model)</h2>
         <ul className="rows">
           <li>
             <div className="grow">
-              <div className="name">Object graph & traceability</div>
-              <div className="sub">journeys J20/J22 — requires the studio-graph gear</div>
+              <div className="name">Knowledge Graph</div>
+              <div className="sub">the workspace's managed objects and relations (§3.2) — requires the graph gear</div>
             </div>
             <span className="badge">preview</span>
           </li>
           <li>
             <div className="grow">
-              <div className="name">Recommendations inbox</div>
-              <div className="sub">worker findings awaiting review — requires workers</div>
+              <div className="name">Findings & recommendations</div>
+              <div className="sub">gaps, drift, contradictions → prepared actions (trust ramp §6.1)</div>
             </div>
             <span className="badge">preview</span>
           </li>
           <li>
             <div className="grow">
-              <div className="name">Activity / worker runs</div>
-              <div className="sub">guided interactions (awaiting_input) — requires workers + EVT</div>
+              <div className="name">Workflow runs</div>
+              <div className="sub">library-published pipelines and their executions (§3.3)</div>
+            </div>
+            <span className="badge">preview</span>
+          </li>
+          <li>
+            <div className="grow">
+              <div className="name">Kits & ontology</div>
+              <div className="sub">object types, templates, workflows the workspace activates (§7)</div>
             </div>
             <span className="badge">preview</span>
           </li>
@@ -1390,7 +1399,9 @@ function ProjectsView({
     <>
       <h1>Projects</h1>
       <p className="subtitle">
-        Projects group work and people inside a workspace (Resource Group-backed, ADR-0002).
+        The workspace's effort containers. In the domain model a Project is itself a managed
+        object of type Project in the Knowledge Graph; until the graph ships they are
+        Resource Group-backed (ADR-0002).
       </p>
       <div className="card">
         <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
@@ -1633,7 +1644,10 @@ function OrganizationsView({
   return (
     <>
       <h1>Organizations</h1>
-      <p className="subtitle">Organizations group workspaces; the tenant type barrier is enforced by the backend.</p>
+      <p className="subtitle">
+        One tenant per organization; this list is the tenant admin hierarchy (control plane —
+        it governs management, never data). Workspaces live inside each tenant.
+      </p>
       <div className="card">
         {orgs.length === 0 ? (
           <p className="empty">No organizations yet.</p>
@@ -1753,7 +1767,10 @@ function MembersView({
   return (
     <>
       <h1>Members</h1>
-      <p className="subtitle">Users are provisioned through the pluggable IdP contract.</p>
+      <p className="subtitle">
+        Control-plane citizens: provisioned through the pluggable IdP contract. Roles arrive as
+        Role Grants (member × role × scope) with the access-control milestone.
+      </p>
       <div className="card">
         <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
           <option value="">Select a tenant…</option>
