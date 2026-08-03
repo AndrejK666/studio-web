@@ -379,13 +379,21 @@ export const api = {
       }),
     }),
 
-  /** credstore: create/rotate a secret (used for repo PATs). */
+  /**
+   * credstore: create a secret (used for repo access tokens).
+   *
+   * `sharing: "tenant"` is deliberate — a repository credential belongs to the
+   * workspace, so any member launching a session can use it. (The
+   * `personal_token` secret type would reject tenant sharing: it is
+   * private-only by definition.)
+   */
   putSecret: (token: string, reference: string, value: string, secretType?: string) =>
     request<unknown>("/credstore/v1/secrets", token, {
       method: "POST",
       body: JSON.stringify({
         reference,
         value,
+        sharing: "tenant",
         ...(secretType ? { type: secretType } : {}),
       }),
     }),

@@ -731,8 +731,10 @@ const REPO_SOURCES: { id: import("./api").RepoSource; label: string }[] = [
 ];
 
 const ADAPTER_HOSTS: Record<string, string> = { github: "github.com", gitlab: "gitlab.com" };
-const PAT_SECRET_TYPE =
-  "gts.cf.core.credstore.secret.v1~cf.core.credstore.personal_token.v1~";
+// Repository credentials are workspace-scoped (tenant sharing), so the
+// api_key secret type is the right one — personal_token is private-only by
+// definition and credstore rejects tenant sharing for it.
+const PAT_SECRET_TYPE = "gts.cf.core.credstore.secret.v1~cf.core.credstore.api_key.v1~";
 
 function slugFromUrl(url: string | undefined, host: string): string {
   if (!url) return "";
