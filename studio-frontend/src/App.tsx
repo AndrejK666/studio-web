@@ -296,15 +296,20 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [homeTenant, page] = await Promise.all([
-        api.tenant(token, me.subject_tenant_id),
-        api.tenantChildren(token, me.subject_tenant_id).catch((e) => {
-          // A 404 here means the home tenant is gone (deleted) — show an
-          // empty portal with a clear note rather than a raw API error.
-          if (e instanceof ApiError && e.status === 404) return { items: [] };
-          throw e;
-        }),
-      ]);
+      // The home tenant comes from the validated token. If it no longer
+      // exists (deleted), say so plainly instead of raising a raw 404.
+      const homeTenant = await api.tenant(token, me.subject_tenant_id).catch((e) => {
+        if (e instanceof ApiError && e.status === 404) {
+          throw new Error(
+            `Your home tenant (${me.subject_tenant_id}) no longer exists — it was probably deleted. ` +
+              `Re-create it or sign in as a user whose home tenant is alive.`,
+          );
+        }
+        throw e;
+      });
+      const page = await api
+        .tenantChildren(token, me.subject_tenant_id)
+        .catch((e) => (e instanceof ApiError && e.status === 404 ? { items: [] } : Promise.reject(e)));
       setHome(homeTenant);
       const children = page.items ?? [];
       const orgList = children.filter((t) => t.tenant_type === TENANT_TYPES.organization);
@@ -317,13 +322,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       // not an error — skip such orgs instead of failing the whole view.
       const nested = await Promise.all(
         orgList.map(async (org): Promise<Workspace[]> => {
+          // A self-managed org raises the barrier by design — don't even ask
+          // (the 404 would be correct, but it clutters the browser console).
+          if (org.self_managed) return [];
           try {
             const kids = await api.tenantChildren(token, org.id);
             return (kids.items ?? [])
               .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
               .map((t) => ({ ...t, orgName: org.name }));
           } catch {
-            return []; // barrier (404) or no access — org stays visible, contents don't
+            return []; // barrier or no access — org stays visible, contents don't
           }
         }),
       );
