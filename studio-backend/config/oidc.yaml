@@ -225,8 +225,10 @@ gears:
         # Shared secret (no tenant_id). Put your real OpenAI key here for the
         # Ask AI feature; without it chats are created but streaming replies
         # fail at the provider with 401.
+        # LLM API key comes from the environment, never from the file:
+        #   export STUDIO_LLM_API_KEY=<Mistral/OpenAI key>  (before cargo run)
         - key: "openai-key"
-          value: "sk-REPLACE_ME"
+          value: "${STUDIO_LLM_API_KEY}"
 
   mini-chat:
     database:
