@@ -331,7 +331,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   useEffect(() => {
     try {
-      sessionStorage.setItem("studio.spaces", JSON.stringify(spaces.map((s) => s.wsId)));
+      sessionStorage.setItem(
+        "studio.spaces",
+        JSON.stringify(spaces.map((s) => ({ wsId: s.wsId, wsName: s.wsName }))),
+      );
     } catch {
       /* non-fatal */
     }
@@ -347,36 +350,60 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  const pendingLaunchRef = useRef<string | null>(null);
+
   useEffect(() => {
-    // One-shot restore once the workspaces are known.
-    if (restoredRef.current || workspaces.length === 0) return;
+    // One-shot restore, WITHOUT waiting for the workspace list: names come
+    // from sessionStorage, liveness from one sessions call — the IDE frame
+    // starts loading seconds earlier than the AM catalog finishes.
+    if (restoredRef.current) return;
     restoredRef.current = true;
     void (async () => {
-      let saved: string[] = [];
+      let saved: { wsId: string; wsName: string }[] = [];
       try {
-        saved = JSON.parse(sessionStorage.getItem("studio.spaces") ?? "[]") as string[];
+        const raw = JSON.parse(sessionStorage.getItem("studio.spaces") ?? "[]") as unknown[];
+        saved = raw
+          .map((e) =>
+            typeof e === "string"
+              ? { wsId: e, wsName: "Workspace" } // legacy format
+              : (e as { wsId: string; wsName: string }),
+          )
+          .filter((e) => e?.wsId);
       } catch {
         /* corrupt state — start clean */
       }
       const urlWs = initialSpaceRef.current;
-      const wanted = new Set([...saved, ...(urlWs ? [urlWs] : [])]);
-      if (wanted.size === 0) return;
+      if (urlWs && !saved.some((s) => s.wsId === urlWs)) {
+        saved.push({ wsId: urlWs, wsName: "Workspace" });
+      }
+      if (saved.length === 0) return;
       const live = await api.studioSessions(token).then(
         (p) => p.items.filter((s) => s.state !== "stopped"),
         () => [],
       );
-      for (const wsId of wanted) {
-        const ws = workspaces.find((w) => w.id === wsId);
-        if (!ws) continue;
-        const session = live.find((s) => s.workspace_id === wsId);
+      for (const entry of saved) {
+        const session = live.find((s) => s.workspace_id === entry.wsId);
         if (session) {
-          openSpace(ws, session, wsId === urlWs);
-        } else if (wsId === urlWs) {
-          setStudio(ws); // launcher card auto-launches, then opens the space
+          openSpace(
+            { id: entry.wsId, name: entry.wsName } as Workspace,
+            session,
+            entry.wsId === urlWs,
+          );
+        } else if (entry.wsId === urlWs) {
+          pendingLaunchRef.current = entry.wsId; // needs the workspace object
         }
       }
     })();
-  }, [workspaces, token, openSpace]);
+  }, [token, openSpace]);
+
+  useEffect(() => {
+    // Dead-session fallback: the launcher needs the real Workspace object,
+    // so this half waits for the catalog.
+    if (!pendingLaunchRef.current || workspaces.length === 0) return;
+    const ws = workspaces.find((w) => w.id === pendingLaunchRef.current);
+    pendingLaunchRef.current = null;
+    if (ws) setStudio(ws);
+  }, [workspaces]);
 
   /* ── Portal ↔ IDE bridge (postMessage) ──
      Outbound: theme on iframe load + on portal theme change. Inbound:
