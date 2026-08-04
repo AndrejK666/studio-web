@@ -437,6 +437,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             <code title={me.subject_id}>{me.subject_id.slice(0, 8)}…</code>
           </span>
           <span>{home ? `Home: ${home.name}` : ""}</span>
+          {/* The home tenant IS the access scope — say so explicitly. */}
+          {home && (
+            <span
+              className="scope-line"
+              title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
+            >
+              {home.tenant_type === TENANT_TYPES.organization
+                ? `Scope: ${home.name} subtree`
+                : `Scope: entire platform${
+                    orgs.filter((o) => o.self_managed).length
+                      ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
+                      : ""
+                  }`}
+            </span>
+          )}
           <button onClick={onLogout}>Sign out</button>
         </div>
       </aside>
@@ -491,7 +506,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "organizations" && (
-          <OrganizationsView token={token} homeId={me.subject_tenant_id} home={home} orgs={orgs} filters={filters} onChanged={refresh} />
+          <OrganizationsView token={token} homeId={me.subject_tenant_id} home={home} orgs={orgs} workspaces={workspaces} filters={filters} onChanged={refresh} />
         )}
         {view === "members" && (
           <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
@@ -1525,10 +1540,42 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
   ];
   const visibleCards = cards.filter((c) => filters.sections[c.key]);
 
+  // Permission catalog: every `gts.cf.toolkit.authz.permission.v1~…`
+  // instance registered in the types-registry. Extracted by id pattern so
+  // the card survives shape changes in the entities payload.
+  const permissions = Array.from(
+    new Set(
+      (JSON.stringify(entities ?? "").match(
+        /gts\.cf\.toolkit\.authz\.permission\.v1~[a-zA-Z0-9_.]+\.v\d+/g,
+      ) ?? []),
+    ),
+  ).sort();
+
   return (
     <>
       <h1>System</h1>
       <p className="subtitle">Live observability over the platform gears of this assembly.</p>
+
+      <div className="card">
+        <h2>Privileges ({permissions.length} permissions registered)</h2>
+        <p className="error" style={{ marginBottom: 10 }}>
+          Enforcement: static allow-all — the PDP is not wired yet (ADR-0004 P3). Access is
+          governed by tenant scope + self-managed barriers only; the permissions below are the
+          registered vocabulary the future PDP and Role Grants will enforce.
+        </p>
+        {permissions.length === 0 ? (
+          <p className="empty">No permission instances found in the types-registry.</p>
+        ) : (
+          <ul className="perm-list">
+            {permissions.map((p) => (
+              <li key={p}>
+                <code>{p.replace("gts.cf.toolkit.authz.permission.v1~", "")}</code>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {visibleCards.length === 0 && (
         <p className="empty">All sections are hidden — enable them in the filter panel.</p>
       )}
@@ -1858,6 +1905,7 @@ function OrganizationsView({
   homeId,
   home,
   orgs,
+  workspaces,
   filters,
   onChanged,
 }: {
@@ -1865,6 +1913,7 @@ function OrganizationsView({
   homeId: string;
   home: Tenant | null;
   orgs: Tenant[];
+  workspaces: Workspace[];
   filters: Filters;
   onChanged: () => void;
 }) {
@@ -1892,6 +1941,20 @@ function OrganizationsView({
   }, [loadInbound]);
 
   async function requestMode(org: Tenant) {
+    // The barrier is easy to raise and deliberately hard to lower — make
+    // sure nobody locks themselves out by accident again.
+    if (
+      !org.self_managed &&
+      !window.confirm(
+        `Make “${org.name}” self-managed?\n\n` +
+          "This raises a VISIBILITY BARRIER: you (and every platform admin) lose " +
+          "access to the organization and everything inside it — its workspaces " +
+          "disappear from your lists. Only an admin whose home is inside the " +
+          "organization can request the conversion back to managed; you would " +
+          "then approve it here.",
+      )
+    )
+      return;
     setError(null);
     try {
       await api.requestConversion(token, org.id, org.self_managed ? "managed" : "self_managed");
@@ -1949,6 +2012,65 @@ function OrganizationsView({
         One tenant per organization; this list is the tenant admin hierarchy (control plane —
         it governs management, never data). Workspaces live inside each tenant.
       </p>
+
+      {/* Access map: the tenant hierarchy IS the privilege system — your
+          home tenant anchors your scope (its subtree), self-managed raises
+          a visibility barrier. One picture instead of a 404 hunt. */}
+      {home && (
+        <div className="card">
+          <h2>Access map</h2>
+          <p className="hint">
+            Your scope is your home tenant's subtree. 🔒 self-managed = a visibility barrier:
+            that subtree is governed by its own admins and hidden from you.
+          </p>
+          <ul className="access-tree">
+            <li>
+              <span className="access-node">
+                🏛 <b>{home.name}</b>
+                <span className="badge you">you are here</span>
+              </span>
+              <ul>
+                {home.tenant_type === TENANT_TYPES.organization
+                  ? workspaces.map((w) => (
+                      <li key={w.id}>
+                        <span className="access-node">▦ {w.name}</span>
+                      </li>
+                    ))
+                  : orgs.map((o) => (
+                      <li key={o.id} className={o.self_managed ? "access-dim" : ""}>
+                        <span className="access-node">
+                          🏢 {o.name}
+                          {o.self_managed && (
+                            <span
+                              className="badge selfmanaged"
+                              title="Visibility barrier: governed by its own admins; only a dual-consent conversion (requested from inside) lifts it"
+                            >
+                              🔒 subtree hidden from you
+                            </span>
+                          )}
+                        </span>
+                        {!o.self_managed && (
+                          <ul>
+                            {workspaces
+                              .filter((w) => w.orgName === o.name)
+                              .map((w) => (
+                                <li key={w.id}>
+                                  <span className="access-node">▦ {w.name}</span>
+                                </li>
+                              ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+              </ul>
+            </li>
+          </ul>
+          <p className="hint">
+            Enforcement today: scope + barriers only — fine-grained permissions are registered
+            in the types-registry (see System) but the PDP is not wired yet (allow-all).
+          </p>
+        </div>
+      )}
 
       {/* Org-homed users see their OWN organization here — this is the only
           place a self-managed org can request the managed conversion from
@@ -2148,6 +2270,23 @@ function MembersView({
                 ))}
               </ul>
             )}
+            {/* The invite target sets the user's HOME TENANT = their whole
+                access scope. Inviting into the platform root grants
+                platform-wide visibility — almost never what you want. */}
+            {(() => {
+              const target = all.find((t) => t.id === tenantId);
+              if (!target) return null;
+              const isRoot = target.tenant_type !== TENANT_TYPES.organization
+                && target.tenant_type !== TENANT_TYPES.workspace;
+              return (
+                <p className={isRoot ? "error" : "hint"} style={{ marginTop: 12 }}>
+                  Inviting into: <b>{target.name}</b> — this becomes the user's home tenant and
+                  access scope ({isRoot
+                    ? "⚠ the PLATFORM ROOT: the user will see every managed organization. Pick an organization or workspace unless you really mean a platform admin."
+                    : "they will see this tenant's subtree only"}).
+                </p>
+              );
+            })()}
             <form className="inline" onSubmit={invite}>
               <input
                 placeholder="username to invite"

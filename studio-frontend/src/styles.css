@@ -155,6 +155,22 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
    inside cap their own line lengths, the shell itself fills the screen. */
 .content { flex: 1; min-width: 0; padding: 1.75rem 2.25rem 4rem; }
 
+/* ── Access map (tenant hierarchy = privilege system) ── */
+.access-tree, .access-tree ul { list-style: none; margin: 0; padding: 0; }
+.access-tree ul { margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--border); }
+.access-tree li { margin: 6px 0; }
+.access-node { display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px; }
+.access-dim > .access-node { opacity: 0.55; }
+.badge.you { background: var(--accent, #6366f1); color: #fff; }
+.scope-line { font-size: 11.5px; opacity: 0.8; }
+
+/* ── Permission catalog (System) ── */
+.perm-list {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 12px;
+}
+.perm-list code { font-size: 12px; }
+
 /* ── Spaces: sessions embedded in the portal window ── */
 .spaces-host {
   flex: 1; min-width: 0; height: 100vh; position: sticky; top: 0;
