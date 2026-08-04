@@ -491,7 +491,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "organizations" && (
-          <OrganizationsView token={token} homeId={me.subject_tenant_id} orgs={orgs} filters={filters} onChanged={refresh} />
+          <OrganizationsView token={token} homeId={me.subject_tenant_id} home={home} orgs={orgs} filters={filters} onChanged={refresh} />
         )}
         {view === "members" && (
           <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
@@ -1856,12 +1856,14 @@ function ProjectMembers({
 function OrganizationsView({
   token,
   homeId,
+  home,
   orgs,
   filters,
   onChanged,
 }: {
   token: string;
   homeId: string;
+  home: Tenant | null;
   orgs: Tenant[];
   filters: Filters;
   onChanged: () => void;
@@ -1947,6 +1949,34 @@ function OrganizationsView({
         One tenant per organization; this list is the tenant admin hierarchy (control plane —
         it governs management, never data). Workspaces live inside each tenant.
       </p>
+
+      {/* Org-homed users see their OWN organization here — this is the only
+          place a self-managed org can request the managed conversion from
+          (dual consent: the org asks, the platform approves). */}
+      {home && home.tenant_type === TENANT_TYPES.organization && (
+        <div className="card">
+          <h2>Your organization</h2>
+          <ul className="rows">
+            <li>
+              <div className="grow">
+                <div className="name">{home.name}</div>
+                <div className="sub">{home.id}</div>
+              </div>
+              <span className={`badge ${home.self_managed ? "selfmanaged" : ""}`}>
+                {home.self_managed ? "self-managed" : "managed"}
+              </span>
+              <button
+                className="ghost"
+                title="Creates a pending dual-consent request; the platform side approves it"
+                onClick={() => void requestMode(home)}
+              >
+                {home.self_managed ? "→ managed" : "→ self-managed"}
+              </button>
+            </li>
+          </ul>
+        </div>
+      )}
+
       <div className="card">
         {orgs.length === 0 ? (
           <p className="empty">No organizations yet.</p>
@@ -1962,13 +1992,27 @@ function OrganizationsView({
                 </div>
                 <span className="badge">{shortTypeName(o.tenant_type)}</span>
                 {o.self_managed && <span className="badge selfmanaged">self-managed</span>}
-                <button
-                  className="ghost"
-                  title="Dual-consent mode conversion: creates a pending request the org side must approve"
-                  onClick={() => void requestMode(o)}
-                >
-                  {o.self_managed ? "→ managed" : "→ self-managed"}
-                </button>
+                {o.self_managed ? (
+                  // Behind the barrier this tenant is not accessible to us:
+                  // the managed-conversion must be REQUESTED from inside by
+                  // the org's own admin; it then appears in the pending
+                  // list below for approval.
+                  <span
+                    className="hint"
+                    style={{ margin: 0 }}
+                    title="Self-managed = visibility barrier. Sign in as an admin of this organization and request the conversion from its Organizations view; approve it here."
+                  >
+                    → managed: requested from inside
+                  </span>
+                ) : (
+                  <button
+                    className="ghost"
+                    title="Dual-consent mode conversion: creates a pending request the org side must approve"
+                    onClick={() => void requestMode(o)}
+                  >
+                    → self-managed
+                  </button>
+                )}
                 <button className="ghost" title="Delete organization" onClick={() => void removeOrg(o)}>
                   ✕
                 </button>
