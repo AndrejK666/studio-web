@@ -288,20 +288,87 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   >([]);
   const [activeSpace, setActiveSpace] = useState<string | null>(null);
 
-  const openSpace = useCallback((ws: Workspace, session: { id: string; url: string }) => {
-    setSpaces((prev) =>
-      prev.some((s) => s.wsId === ws.id)
-        ? prev.map((s) => (s.wsId === ws.id ? { ...s, url: session.url, sessionId: session.id } : s))
-        : [...prev, { wsId: ws.id, wsName: ws.name, url: session.url, sessionId: session.id }],
-    );
-    setActiveSpace(ws.id);
-    setStudio(null);
-  }, []);
+  const openSpace = useCallback(
+    (ws: Workspace, session: { id: string; url: string }, activate = true) => {
+      setSpaces((prev) =>
+        prev.some((s) => s.wsId === ws.id)
+          ? prev.map((s) =>
+              s.wsId === ws.id ? { ...s, url: session.url, sessionId: session.id } : s,
+            )
+          : [...prev, { wsId: ws.id, wsName: ws.name, url: session.url, sessionId: session.id }],
+      );
+      if (activate) setActiveSpace(ws.id);
+      setStudio(null);
+    },
+    [],
+  );
 
   const closeSpace = useCallback((wsId: string) => {
     setSpaces((prev) => prev.filter((s) => s.wsId !== wsId));
     setActiveSpace((a) => (a === wsId ? null : a));
   }, []);
+
+  /* ── Space routing & restore ──
+     The URL mirrors the active space (/space/{wsId} ↔ /), the list of open
+     spaces persists in sessionStorage, and after a reload every space with
+     a LIVE session is remounted silently — the one from the URL activated.
+     A dead session in the URL falls back to the launcher (auto-launch). */
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    // URL ← state (replace, not push: spaces are switched often).
+    const path = activeSpace ? `/space/${activeSpace}` : "/";
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+  }, [activeSpace]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("studio.spaces", JSON.stringify(spaces.map((s) => s.wsId)));
+    } catch {
+      /* non-fatal */
+    }
+  }, [spaces]);
+
+  useEffect(() => {
+    // Back/forward buttons switch space ↔ portal.
+    const onPop = () => {
+      const m = window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/);
+      setActiveSpace(m ? m[1] : null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    // One-shot restore once the workspaces are known.
+    if (restoredRef.current || workspaces.length === 0) return;
+    restoredRef.current = true;
+    void (async () => {
+      let saved: string[] = [];
+      try {
+        saved = JSON.parse(sessionStorage.getItem("studio.spaces") ?? "[]") as string[];
+      } catch {
+        /* corrupt state — start clean */
+      }
+      const urlWs = window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/)?.[1] ?? null;
+      const wanted = new Set([...saved, ...(urlWs ? [urlWs] : [])]);
+      if (wanted.size === 0) return;
+      const live = await api.studioSessions(token).then(
+        (p) => p.items.filter((s) => s.state !== "stopped"),
+        () => [],
+      );
+      for (const wsId of wanted) {
+        const ws = workspaces.find((w) => w.id === wsId);
+        if (!ws) continue;
+        const session = live.find((s) => s.workspace_id === wsId);
+        if (session) {
+          openSpace(ws, session, wsId === urlWs);
+        } else if (wsId === urlWs) {
+          setStudio(ws); // launcher card auto-launches, then opens the space
+        }
+      }
+    })();
+  }, [workspaces, token, openSpace]);
 
   /* ── Portal ↔ IDE bridge (postMessage) ──
      Outbound: theme on iframe load + on portal theme change. Inbound:
