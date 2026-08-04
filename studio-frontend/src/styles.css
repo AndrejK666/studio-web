@@ -243,8 +243,27 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .catalog-name { font-weight: 600; display: flex; align-items: center; gap: 10px; }
 .catalog-icon { width: 22px; text-align: center; }
 
-.home-hero { margin: 0.5rem 0 1.5rem; }
+.home-hero {
+  margin: 0.5rem 0 1.5rem;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+}
 .home-hero h1 { font-size: 2rem; }
+.hero-links { display: flex; gap: 18px; flex-shrink: 0; padding-top: 10px; }
+.hero-links a {
+  color: var(--muted); text-decoration: none; font-size: 13.5px; font-weight: 600;
+}
+.hero-links a:hover { color: var(--accent); }
+
+/* Full-page create-organization onboarding (empty state) */
+.hero-create {
+  min-height: 70vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px;
+  background: radial-gradient(600px 340px at 50% 30%, var(--accent-soft) 0%, transparent 70%);
+  border-radius: var(--radius);
+}
+.hero-create h1 { font-size: 2.2rem; }
+.hero-create-card { width: min(440px, 90%); margin-top: 0.5rem; }
+.hero-create-btn { width: min(440px, 90%); padding: 11px; font-size: 14.5px; }
 .hero-gradient {
   background: linear-gradient(90deg, var(--accent), #8b5cf6, #c084fc);
   -webkit-background-clip: text; background-clip: text; color: transparent;

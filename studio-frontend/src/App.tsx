@@ -2301,13 +2301,23 @@ function HomeView({
   return (
     <>
       <div className="home-hero">
-        <h1>
-          <span className="hero-gradient">Constructor Studio</span>
-        </h1>
-        <p className="subtitle">
-          Your workspace for building with AI over real repositories — the control plane of the
-          Studio domain model.
-        </p>
+        <div>
+          <h1>
+            <span className="hero-gradient">Constructor Studio</span>
+          </h1>
+          <p className="subtitle">
+            Your workspace for building with AI over real repositories — the control plane of the
+            Studio domain model.
+          </p>
+        </div>
+        <div className="hero-links">
+          <a href="https://github.com/constructorfabric/studio-web" target="_blank" rel="noopener noreferrer">
+            🐙 GitHub
+          </a>
+          <a href="/cf/docs" target="_blank" rel="noopener noreferrer">
+            ⧉ Docs &amp; API
+          </a>
+        </div>
       </div>
 
       <div className="home-grid">
@@ -2785,6 +2795,45 @@ function OrganizationsView({
     } finally {
       setBusy(false);
     }
+  }
+
+  // Empty-state onboarding: a platform admin with no organizations yet gets
+  // the full-page "create your team" hero instead of a bare list.
+  if (orgs.length === 0 && home && home.tenant_type !== TENANT_TYPES.organization) {
+    return (
+      <div className="hero-create">
+        <h1>
+          <span className="hero-gradient">Create your organization</span>
+        </h1>
+        <p className="subtitle" style={{ maxWidth: 460, textAlign: "center" }}>
+          An organization is a tenant in the admin hierarchy — your workspaces, members and
+          repositories will live inside it.
+        </p>
+        <div className="card hero-create-card">
+          <label className="field">
+            Organization name
+            <input
+              placeholder="My organization"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <p className="hint">
+            Created managed (platform admins keep access); it can request self-managed mode
+            later via dual consent.
+          </p>
+          {error && <div className="error">{error}</div>}
+        </div>
+        <button
+          className="primary hero-create-btn"
+          disabled={busy || !name.trim()}
+          onClick={(e) => void create(e as unknown as FormEvent)}
+        >
+          Create organization
+        </button>
+      </div>
+    );
   }
 
   return (
