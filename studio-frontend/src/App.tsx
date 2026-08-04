@@ -286,7 +286,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [spaces, setSpaces] = useState<
     { wsId: string; wsName: string; url: string; sessionId: string }[]
   >([]);
-  const [activeSpace, setActiveSpace] = useState<string | null>(null);
+  // Initialized FROM the URL: the sync effect below runs on mount and would
+  // otherwise rewrite /space/{id} to / before the restore logic reads it.
+  const [activeSpace, setActiveSpace] = useState<string | null>(
+    () => window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/)?.[1] ?? null,
+  );
 
   const openSpace = useCallback(
     (ws: Workspace, session: { id: string; url: string }, activate = true) => {
@@ -314,6 +318,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
      a LIVE session is remounted silently — the one from the URL activated.
      A dead session in the URL falls back to the launcher (auto-launch). */
   const restoredRef = useRef(false);
+  // The URL as it was BEFORE any state→URL sync could touch it.
+  const initialSpaceRef = useRef<string | null>(
+    window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/)?.[1] ?? null,
+  );
 
   useEffect(() => {
     // URL ← state (replace, not push: spaces are switched often).
@@ -350,7 +358,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       } catch {
         /* corrupt state — start clean */
       }
-      const urlWs = window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/)?.[1] ?? null;
+      const urlWs = initialSpaceRef.current;
       const wanted = new Set([...saved, ...(urlWs ? [urlWs] : [])]);
       if (wanted.size === 0) return;
       const live = await api.studioSessions(token).then(
@@ -591,6 +599,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               </div>
             ) : null;
           })()}
+        {activeSpace && !spaces.some((s) => s.wsId === activeSpace) && (
+          <p className="hint" style={{ padding: 16 }}>
+            Reconnecting the space…
+          </p>
+        )}
         {spaces.map((s) => (
           <iframe
             key={s.wsId}
