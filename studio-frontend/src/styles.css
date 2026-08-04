@@ -187,11 +187,18 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 12px; color: var(--muted);
 }
 .account-menu > button { text-align: left; }
+.home-hero { margin: 0.5rem 0 1.5rem; }
+.home-hero h1 { font-size: 2rem; }
+.hero-gradient {
+  background: linear-gradient(90deg, var(--accent), #8b5cf6, #c084fc);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .home-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 16px; align-items: start;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px; align-items: stretch;
 }
 .home-grid .card { margin: 0; }
+.home-grid .span-all { grid-column: 1 / -1; }
 .home-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .home-links a, .linklike {
   background: none; border: none; padding: 0; cursor: pointer;
@@ -312,24 +319,26 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 }
 
 /* ── Dark theme (server-side preference via simple-user-settings) ── */
+/* One palette with the embedded IDE (the session splash and Theia dark run
+   on the #1e1e2e family) — switching portal ↔ space must not change hue. */
 :root[data-theme="dark"] {
-  --bg: #0f1420;
-  --surface: #1a2233;
-  --border: #2a3550;
-  --text: #e5eaf5;
-  --muted: #8b98b5;
+  --bg: #181825;
+  --surface: #1e1e2e;
+  --border: #313244;
+  --text: #cdd6f4;
+  --muted: #8f96b3;
   --accent: #818cf8;
   --accent-hover: #6d79f2;
-  --accent-soft: #262f52;
+  --accent-soft: #2a2a45;
   --danger-soft: #3a1f26;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 :root[data-theme="dark"] body {
-  background: radial-gradient(1000px 400px at 80% -10%, #1e2a4d 0%, transparent 60%), var(--bg);
+  background: radial-gradient(1000px 400px at 80% -10%, #232338 0%, transparent 60%), var(--bg);
 }
 :root[data-theme="dark"] input,
 :root[data-theme="dark"] select {
-  background: #131a2a; color: var(--text);
+  background: #181825; color: var(--text);
 }
 :root[data-theme="dark"] .sidebar nav button:hover { background: #222c44; }
 :root[data-theme="dark"] .hint code { background: #222c44; }

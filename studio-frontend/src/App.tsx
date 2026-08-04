@@ -1750,18 +1750,30 @@ function FilesView({ token, filters }: { token: string; filters: Filters }) {
     matches(filters.query, f.name, f.file_name, f.id),
   );
 
+  const storageItems: unknown[] | null = Array.isArray(storages)
+    ? storages
+    : storages && typeof storages === "object" && "items" in storages &&
+        Array.isArray((storages as { items: unknown[] }).items)
+      ? (storages as { items: unknown[] }).items
+      : null;
+
   return (
     <>
       <h1>Files</h1>
       <p className="subtitle">
-        file-storage gear. Uploads go through signed URLs served by a separate sidecar, which
-        this dev assembly doesn't run yet — the view is read-only for now.
+        The file-storage gear is the platform's blob store: in the domain model it backs
+        Documents, Text Content and chat Attachments. Today it serves mini-chat attachments;
+        uploads go through signed URLs from a separate sidecar this dev assembly doesn't run —
+        so the view is read-only and usually empty.
       </p>
       {error && <div className="error">{error}</div>}
       <div className="card">
         <h2>Files</h2>
         {!files || files.length === 0 ? (
-          <p className="empty">No files.</p>
+          <p className="empty">
+            Nothing stored yet — files appear here once chats get attachments (or the upload
+            sidecar is deployed).
+          </p>
         ) : visibleFiles.length === 0 ? (
           <p className="empty">No files match the current filters.</p>
         ) : (
@@ -1777,10 +1789,12 @@ function FilesView({ token, filters }: { token: string; filters: Filters }) {
           </ul>
         )}
       </div>
-      <div className="card">
-        <h2>Storages</h2>
-        <pre style={{ overflow: "auto", fontSize: 12 }}>{JSON.stringify(storages, null, 2)}</pre>
-      </div>
+      {storageItems && storageItems.length > 0 && (
+        <div className="card">
+          <h2>Storage backends ({storageItems.length})</h2>
+          <pre style={{ overflow: "auto", fontSize: 12 }}>{JSON.stringify(storageItems, null, 2)}</pre>
+        </div>
+      )}
     </>
   );
 }
@@ -2230,14 +2244,18 @@ function HomeView({
 
   return (
     <>
-      <h1>Constructor Studio</h1>
-      <p className="subtitle">
-        Your workspace for building with AI over real repositories — the control plane of the
-        Studio domain model.
-      </p>
+      <div className="home-hero">
+        <h1>
+          <span className="hero-gradient">Constructor Studio</span>
+        </h1>
+        <p className="subtitle">
+          Your workspace for building with AI over real repositories — the control plane of the
+          Studio domain model.
+        </p>
+      </div>
 
       <div className="home-grid">
-        <div className="card">
+        <div className="card span-all">
           <h2>Continue</h2>
           {continueItems.length === 0 ? (
             <p className="empty">No live sessions. Open a workspace to start one.</p>
