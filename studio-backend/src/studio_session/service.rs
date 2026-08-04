@@ -287,6 +287,10 @@ impl SessionService {
             format!("STUDIO_ACTOR_ID={actor_id}"),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
             format!("STUDIO_SESSION_TOKEN={session_token}"),
+            // Gateway URL as seen FROM the container — the session gate
+            // proxies /studio-api/* here so the IDE frontend can call the
+            // gears same-origin (no CORS, no token storage server-side).
+            "STUDIO_GATEWAY_URL=http://host.docker.internal:8090".to_string(),
         ];
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).

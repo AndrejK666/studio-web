@@ -411,6 +411,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => mo.disconnect();
   }, []);
+
+  useEffect(() => {
+    // Silent renew: hand the fresh token to every mounted space.
+    document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame").forEach((f) => {
+      const origin = f.dataset.origin;
+      if (origin) f.contentWindow?.postMessage({ type: "studio.token", apiToken: token }, origin);
+    });
+  }, [token]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [panelOpen, setPanelOpen] = useState<boolean>(() => {
     try {
@@ -592,10 +600,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             allow="clipboard-read; clipboard-write"
             data-origin={spaceOrigin(s.url)}
             onLoad={(e) => {
-              // Handshake: hand the current theme to the freshly loaded IDE.
+              // Handshake: theme + the caller's API token (the IDE calls the
+              // gears same-origin through the session gate's /studio-api/*).
               const theme = document.documentElement.dataset.theme ?? "light";
               e.currentTarget.contentWindow?.postMessage(
-                { type: "studio.init", theme },
+                { type: "studio.init", theme, apiToken: token },
                 spaceOrigin(s.url),
               );
             }}

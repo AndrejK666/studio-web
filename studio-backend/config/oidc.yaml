@@ -34,7 +34,10 @@ logging:
 gears:
   api-gateway:
     config:
-      bind_addr: "127.0.0.1:8090"
+      # 0.0.0.0: session containers reach the gateway via
+      # host.docker.internal (the gate's /studio-api/* bridge); auth is
+      # enforced by the oidc plugin on every request either way.
+      bind_addr: "0.0.0.0:8090"
       prefix_path: "/cf"
       enable_docs: true
       cors_enabled: false
