@@ -302,6 +302,48 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     setSpaces((prev) => prev.filter((s) => s.wsId !== wsId));
     setActiveSpace((a) => (a === wsId ? null : a));
   }, []);
+
+  /* ── Portal ↔ IDE bridge (postMessage) ──
+     Outbound: theme on iframe load + on portal theme change. Inbound:
+     studio.status {dirty} — origin-checked against known space URLs. */
+  const [spaceDirty, setSpaceDirty] = useState<Record<string, number>>({});
+  const spaceOrigin = (url: string): string => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return "";
+    }
+  };
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const sp = spaces.find((s) => spaceOrigin(s.url) === e.origin);
+      if (!sp) return; // only embedded sessions are trusted senders
+      const d = e.data as { type?: string; dirty?: number };
+      if (d?.type === "studio.status" && typeof d.dirty === "number") {
+        const dirty = d.dirty; // narrow before the closure
+        setSpaceDirty((prev) =>
+          prev[sp.wsId] === dirty ? prev : { ...prev, [sp.wsId]: dirty },
+        );
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [spaces]);
+
+  useEffect(() => {
+    // Broadcast portal theme changes to every mounted space.
+    const send = () => {
+      const theme = document.documentElement.dataset.theme ?? "light";
+      document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame").forEach((f) => {
+        const origin = f.dataset.origin;
+        if (origin) f.contentWindow?.postMessage({ type: "studio.theme", theme }, origin);
+      });
+    };
+    const mo = new MutationObserver(send);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => mo.disconnect();
+  }, []);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [panelOpen, setPanelOpen] = useState<boolean>(() => {
     try {
@@ -415,9 +457,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   <button
                     className={activeSpace === s.wsId ? "active" : ""}
                     onClick={() => setActiveSpace(s.wsId)}
-                    title={`Switch to ${s.wsName}`}
+                    title={`Switch to ${s.wsName}${
+                      spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
+                    }`}
                   >
                     <span className="ico">⚙</span> {s.wsName}
+                    {(spaceDirty[s.wsId] ?? 0) > 0 && <span className="dirty-dot">●</span>}
                   </button>
                   <button
                     className="ghost space-x"
@@ -478,6 +523,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             src={s.url}
             title={`Studio — ${s.wsName}`}
             allow="clipboard-read; clipboard-write"
+            data-origin={spaceOrigin(s.url)}
+            onLoad={(e) => {
+              // Handshake: hand the current theme to the freshly loaded IDE.
+              const theme = document.documentElement.dataset.theme ?? "light";
+              e.currentTarget.contentWindow?.postMessage(
+                { type: "studio.init", theme },
+                spaceOrigin(s.url),
+              );
+            }}
             style={{ display: activeSpace === s.wsId ? "block" : "none" }}
           />
         ))}
