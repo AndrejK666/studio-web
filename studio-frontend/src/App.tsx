@@ -261,6 +261,80 @@ type View =
   | "system"
   | "profile";
 
+/** Monochrome line icons (lucide-style): consistent stroke, currentColor —
+ *  they inherit the nav's text/accent color instead of emoji potpourri. */
+function NavIcon({ name }: { name: string }) {
+  const paths: Record<string, React.ReactNode> = {
+    home: (
+      <>
+        <path d="m3 11 9-8 9 8" />
+        <path d="M5 10v11h14V10" />
+      </>
+    ),
+    org: (
+      <>
+        <rect x="4" y="3" width="16" height="18" rx="1" />
+        <path d="M9 7h1.5M13.5 7H15M9 11h1.5M13.5 11H15M9 15h1.5M13.5 15H15M10 21v-3h4v3" />
+      </>
+    ),
+    grid: (
+      <>
+        <rect x="3" y="3" width="7.5" height="7.5" rx="1" />
+        <rect x="13.5" y="3" width="7.5" height="7.5" rx="1" />
+        <rect x="3" y="13.5" width="7.5" height="7.5" rx="1" />
+        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1" />
+      </>
+    ),
+    users: (
+      <>
+        <circle cx="9" cy="8" r="3.5" />
+        <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+        <path d="M16 4.8a3.5 3.5 0 0 1 0 6.4M21 20c0-2.6-1.7-4.9-4-5.7" />
+      </>
+    ),
+    key: (
+      <>
+        <circle cx="8" cy="15" r="4" />
+        <path d="m11 12 9-9M17 4l3 3M14 7l2.5 2.5" />
+      </>
+    ),
+    chat: <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.4-.8L3 21l1.9-5.6A8.4 8.4 0 1 1 21 11.5z" />,
+    file: (
+      <>
+        <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" />
+        <path d="M14 3v5h5" />
+      </>
+    ),
+    plug: (
+      <>
+        <path d="M8 3 4 7l4 4M4 7h16" />
+        <path d="m16 13 4 4-4 4M20 17H4" />
+      </>
+    ),
+    cog: (
+      <>
+        <circle cx="12" cy="12" r="3.2" />
+        <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="17"
+      height="17"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[name] ?? <circle cx="12" cy="12" r="8" />}
+    </svg>
+  );
+}
+
 // Sectioned nav (console-style), grouped by the domain model's layers:
 // the CONTROL PLANE (tenant admin hierarchy, working contexts, citizens,
 // credentials), the WORK surfaces, and MONITORING. Projects are NOT a
@@ -268,27 +342,27 @@ type View =
 // a workspace's context, managed from the Workspace Dashboard. Profile
 // moved to the bottom account menu.
 const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; label: string }[] }[] = [
-  { title: null, items: [{ id: "home", icon: "⌂", label: "Home" }] },
+  { title: null, items: [{ id: "home", icon: "home", label: "Home" }] },
   {
     title: "Control plane",
     items: [
-      { id: "organizations", icon: "🏢", label: "Organizations" },
-      { id: "workspaces", icon: "▦", label: "Workspaces" },
-      { id: "members", icon: "👥", label: "Members" },
-      { id: "secrets", icon: "🔑", label: "Secrets" },
+      { id: "organizations", icon: "org", label: "Organizations" },
+      { id: "workspaces", icon: "grid", label: "Workspaces" },
+      { id: "members", icon: "users", label: "Members" },
+      { id: "secrets", icon: "key", label: "Secrets" },
     ],
   },
   {
     title: "Work",
     items: [
-      { id: "chats", icon: "💬", label: "Chats" },
-      { id: "files", icon: "📄", label: "Files" },
-      { id: "connectors", icon: "⇄", label: "Connectors" },
+      { id: "chats", icon: "chat", label: "Chats" },
+      { id: "files", icon: "file", label: "Files" },
+      { id: "connectors", icon: "plug", label: "Connectors" },
     ],
   },
   {
     title: "Monitor",
-    items: [{ id: "system", icon: "⚙", label: "System" }],
+    items: [{ id: "system", icon: "cog", label: "System" }],
   },
 ];
 
@@ -520,6 +594,23 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       });
   }, [token]);
 
+  // Who is signed in — from the token claims (display only; the backend
+  // validates). Static dev tokens are opaque → fall back to the subject id.
+  const claims = decodeJwtClaims(token);
+  const claimStr = (k: string): string | null => {
+    const v = claims?.[k];
+    return typeof v === "string" && v.trim() ? v : null;
+  };
+  const userName =
+    claimStr("name") ?? claimStr("preferred_username") ?? `${me.subject_id.slice(0, 8)}…`;
+  const userEmail = claimStr("email");
+  const userInitials = userName
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
   const panelView: PanelView = dash ? "dashboard" : view;
 
   const refresh = useCallback(async () => {
@@ -630,12 +721,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 <button
                   key={n.id}
                   className={view === n.id && !activeSpace ? "active" : ""}
+                  title={n.label}
                   onClick={() => {
                     setView(n.id);
                     setActiveSpace(null); // portal navigation leaves the space
                   }}
                 >
-                  <span className="ico">{n.icon}</span> {n.label}
+                  <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
                 </button>
               ))}
             </div>
@@ -672,7 +764,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           {accountMenu && (
             <div className="account-menu">
               <div className="account-menu-head">
-                <code title={me.subject_id}>{me.subject_id.slice(0, 8)}…</code>
+                <span className="account-user">{userName}</span>
+                {userEmail && <span>{userEmail}</span>}
                 <span>{home ? `Home: ${home.name}` : ""}</span>
                 {/* The home tenant IS the access scope — say so explicitly. */}
                 {home && (
@@ -716,16 +809,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onClick={() => setAccountMenu((v) => !v)}
             title="Account"
           >
-            <span className="account-avatar">
-              {(home?.name ?? "S").slice(0, 1).toUpperCase()}
-            </span>
+            <span className="account-avatar">{userInitials}</span>
             <span className="account-lines">
-              <span className="account-name">{home?.name ?? "Studio"}</span>
-              <span className="scope-line">
-                {home?.tenant_type === TENANT_TYPES.organization
-                  ? `${home.name} subtree`
-                  : "entire platform"}
-              </span>
+              <span className="account-name">{userName}</span>
+              <span className="scope-line">{userEmail ?? home?.name ?? ""}</span>
             </span>
           </button>
         </div>
