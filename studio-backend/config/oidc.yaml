@@ -237,10 +237,14 @@ gears:
         client_id: "mini-chat"
         client_secret: "mini-chat-dev-secret"
       providers:
+        # Free dev LLM: Mistral "Experiment" plan (console.mistral.ai →
+        # API Keys; free, rate-limited). Standard OpenAI-compatible
+        # /v1/chat/completions, which mini-chat speaks natively. To go back
+        # to OpenAI: kind openai_responses + host api.openai.com.
         openai:
-          kind: openai_responses
+          kind: openai_chat_completions
           storage_kind: openai
-          host: "api.openai.com"
+          host: "api.mistral.ai"
           auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
           auth_config:
             header: "Authorization"
@@ -252,9 +256,9 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       model_catalog:
-        - id: "gpt-5.2"
-          provider_model_id: "gpt-5.2"
-          display_name: "GPT-5.2"
+        - id: "mistral-small"
+          provider_model_id: "mistral-small-latest"
+          display_name: "Mistral Small (free tier)"
           tier: Standard
           enabled: true
           system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
@@ -268,7 +272,7 @@ gears:
           description: "Default Studio assistant model"
           version: "2025-01"
           icon: ""
-          provider_display_name: "OpenAI"
+          provider_display_name: "Mistral"
           multiplier_display: "1x"
           provider_id: "openai"
           max_num_results: 10
