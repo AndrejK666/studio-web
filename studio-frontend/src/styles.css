@@ -195,6 +195,33 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .account-orgs button { display: flex; align-items: center; gap: 8px; width: 100%; }
 .account-avatar.small { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; }
 .admin-title { color: var(--accent); }
+.org-select-wrap { position: relative; }
+.org-select {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  padding: 7px 10px; text-align: left;
+}
+.org-select-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600; font-size: 13px;
+}
+.org-select .chev { color: var(--muted); font-size: 10px; }
+.org-menu {
+  position: absolute; top: 105%; left: 0; right: 0; z-index: 30;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.org-menu button {
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  border: none; background: none; padding: 8px 10px;
+}
+button.danger {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+}
+button.danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
+.danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.sidebar.collapsed .org-select-name, .sidebar.collapsed .org-select .chev { display: none; }
 .account-menu > button { text-align: left; }
 /* ── Collapsible sidebar ── */
 .sidebar-toggle {

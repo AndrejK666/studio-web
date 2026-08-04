@@ -378,9 +378,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // organizations / members / workspaces administration.
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminView, setAdminView] = useState<AdminView>("organizations");
-  const openAdmin = (v: AdminView = "organizations") => {
+  // Which organization the admin area is scoped to ("__new__" = create hero).
+  const [adminOrgId, setAdminOrgId] = useState<string | null>(null);
+  const [adminOrgMenu, setAdminOrgMenu] = useState(false);
+  const openAdmin = (v: AdminView = "organizations", orgId?: string) => {
     setAdminOpen(true);
     setAdminView(v);
+    if (orgId) setAdminOrgId(orgId);
     setActiveSpace(null);
     setDash(null);
     setStudio(null);
@@ -628,6 +632,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     .slice(0, 2)
     .toUpperCase();
 
+  // Resolved AFTER home/orgs state exists (declaration order matters).
+  const adminOrg =
+    orgs.find((o) => o.id === adminOrgId) ??
+    (home?.tenant_type === TENANT_TYPES.organization ? (home as Tenant) : orgs[0]) ??
+    null;
+
   const panelView: PanelView = dash ? "dashboard" : view;
 
   const refresh = useCallback(async () => {
@@ -732,6 +742,43 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   <span className="ico">←</span> Back to Studio
                 </button>
               </div>
+              {/* Org selector: every admin view below is scoped to it. */}
+              <div className="nav-section org-select-wrap">
+                <button className="org-select" onClick={() => setAdminOrgMenu((v) => !v)}>
+                  <span className="account-avatar small">
+                    {(adminOrgId === "__new__" ? "+" : (adminOrg?.name ?? "?")).slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="org-select-name">
+                    {adminOrgId === "__new__" ? "New organization" : adminOrg?.name ?? "Select organization"}
+                  </span>
+                  <span className="chev">▾</span>
+                </button>
+                {adminOrgMenu && (
+                  <div className="org-menu">
+                    {orgs.map((o) => (
+                      <button
+                        key={o.id}
+                        onClick={() => {
+                          setAdminOrgId(o.id);
+                          setAdminOrgMenu(false);
+                        }}
+                      >
+                        <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
+                        {o.name} {o.self_managed ? "🔒" : ""}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => {
+                        setAdminOrgId("__new__");
+                        setAdminView("organizations");
+                        setAdminOrgMenu(false);
+                      }}
+                    >
+                      ＋ New organization
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="nav-section">
                 <div className="nav-section-title admin-title">Administration</div>
                 {ADMIN_NAV.map((n) => (
@@ -833,7 +880,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 <div className="account-orgs">
                   <div className="account-orgs-title">Your organizations</div>
                   {orgs.map((o) => (
-                    <button key={o.id} onClick={() => openAdmin("organizations")}>
+                    <button key={o.id} onClick={() => openAdmin("organizations", o.id)}>
                       <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
                       {o.name}
                       {o.self_managed && <span className="badge selfmanaged">🔒</span>}
@@ -948,18 +995,26 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 home={home}
                 orgs={orgs}
                 workspaces={workspaces}
-                filters={filters}
+                selectedOrgId={adminOrgId}
                 onChanged={refresh}
+                onCreated={(id) => setAdminOrgId(id || null)}
               />
             )}
             {adminView === "members" && (
-              <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
+              <MembersView
+                token={token}
+                home={home}
+                orgs={orgs}
+                workspaces={workspaces}
+                filters={filters}
+                fixedTenantId={adminOrg?.id ?? null}
+              />
             )}
             {adminView === "workspaces" && (
               <WorkspacesView
                 token={token}
-                orgs={orgs}
-                workspaces={workspaces}
+                orgs={adminOrg ? [adminOrg] : orgs}
+                workspaces={adminOrg ? workspaces.filter((w) => w.orgName === adminOrg.name) : workspaces}
                 filters={filters}
                 onChanged={refresh}
                 onOpenStudio={(ws) => {
@@ -1009,12 +1064,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {view === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
         {view === "connectors" && <ConnectorsView token={token} workspaces={workspaces} filters={filters} />}
-        {view === "organizations" && (
-          <OrganizationsView token={token} homeId={me.subject_tenant_id} home={home} orgs={orgs} workspaces={workspaces} filters={filters} onChanged={refresh} />
-        )}
-        {view === "members" && (
-          <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
-        )}
+        {/* organizations/members render only inside the Admin area now. */}
         {view === "chats" && <ChatsView token={token} filters={filters} />}
         {view === "files" && <FilesView token={token} filters={filters} />}
         {view === "system" && <SystemView token={token} filters={filters} />}
@@ -2878,22 +2928,20 @@ function OrganizationsView({
   home,
   orgs,
   workspaces,
-  filters,
+  selectedOrgId,
   onChanged,
+  onCreated,
 }: {
   token: string;
   homeId: string;
   home: Tenant | null;
   orgs: Tenant[];
   workspaces: Workspace[];
-  filters: Filters;
+  /** Org selected in the admin header; "__new__" opens the create hero. */
+  selectedOrgId: string | null;
   onChanged: () => void;
+  onCreated: (id: string) => void;
 }) {
-  const visibleOrgs = orgs
-    .filter((o) => matches(filters.query, o.name, o.id))
-    .filter((o) =>
-      filters.mode === "all" ? true : filters.mode === "self" ? o.self_managed : !o.self_managed,
-    );
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2963,13 +3011,14 @@ function OrganizationsView({
     setBusy(true);
     setError(null);
     try {
-      await api.createTenant(token, {
+      const created = await api.createTenant(token, {
         name,
         parent_id: homeId,
         tenant_type: TENANT_TYPES.organization,
       });
       setName("");
       onChanged();
+      onCreated((created as Tenant)?.id ?? "");
     } catch (err) {
       setError(errText(err));
     } finally {
@@ -2977,9 +3026,12 @@ function OrganizationsView({
     }
   }
 
-  // Empty-state onboarding: a platform admin with no organizations yet gets
-  // the full-page "create your team" hero instead of a bare list.
-  if (orgs.length === 0 && home && home.tenant_type !== TENANT_TYPES.organization) {
+  // Full-page create hero: for the very first organization AND for the
+  // "+ New organization" entry from the admin org selector.
+  if (
+    selectedOrgId === "__new__" ||
+    (orgs.length === 0 && home && home.tenant_type !== TENANT_TYPES.organization)
+  ) {
     return (
       <div className="hero-create">
         <h1>
@@ -3016,13 +3068,76 @@ function OrganizationsView({
     );
   }
 
+  // Resolve the org the admin header selected (an org-homed user's own org
+  // wins when nothing is selected — that's all they can administer).
+  const selected =
+    orgs.find((o) => o.id === selectedOrgId) ??
+    (home?.tenant_type === TENANT_TYPES.organization ? home : orgs[0]) ??
+    null;
+  const orgWorkspaces = selected ? workspaces.filter((w) => w.orgName === selected.name) : [];
+
   return (
     <>
-      <h1>Organizations</h1>
+      <h1>Organization</h1>
       <p className="subtitle">
-        One tenant per organization; this list is the tenant admin hierarchy (control plane —
-        it governs management, never data). Workspaces live inside each tenant.
+        One tenant per organization (the admin hierarchy governs management, never data);
+        workspaces and members live inside it. Switch organizations in the sidebar header.
       </p>
+
+      {selected && (
+        <div className="card">
+          <h2>{selected.name}</h2>
+          <ul className="rows">
+            <li>
+              <div className="grow">
+                <div className="sub">Organization ID</div>
+                <div className="name"><code>{selected.id}</code></div>
+              </div>
+              <button
+                className="ghost"
+                title="Copy ID"
+                onClick={() => void navigator.clipboard?.writeText(selected.id)}
+              >
+                ⧉
+              </button>
+            </li>
+            <li>
+              <div className="grow">
+                <div className="sub">Type / mode</div>
+                <div className="name">
+                  <span className="badge">{shortTypeName(selected.tenant_type)}</span>{" "}
+                  <span className={`badge ${selected.self_managed ? "selfmanaged" : "workspace"}`}>
+                    {selected.self_managed ? "self-managed 🔒" : "managed"}
+                  </span>
+                </div>
+              </div>
+              {selected.self_managed && selected.id !== home?.id ? (
+                <span
+                  className="hint"
+                  style={{ margin: 0 }}
+                  title="Self-managed = visibility barrier. An admin homed inside this organization requests the conversion; you approve it here."
+                >
+                  → managed: requested from inside
+                </span>
+              ) : (
+                <button
+                  className="ghost"
+                  title="Dual-consent mode conversion: creates a pending request the other side approves"
+                  onClick={() => void requestMode(selected)}
+                >
+                  {selected.self_managed ? "→ managed" : "→ self-managed"}
+                </button>
+              )}
+            </li>
+            <li>
+              <div className="grow">
+                <div className="sub">Workspaces / visible members</div>
+                <div className="name">{orgWorkspaces.length} workspace(s)</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+      )}
 
       {/* Access map: the tenant hierarchy IS the privilege system — your
           home tenant anchors your scope (its subtree), self-managed raises
@@ -3083,84 +3198,26 @@ function OrganizationsView({
         </div>
       )}
 
-      {/* Org-homed users see their OWN organization here — this is the only
-          place a self-managed org can request the managed conversion from
-          (dual consent: the org asks, the platform approves). */}
-      {home && home.tenant_type === TENANT_TYPES.organization && (
-        <div className="card">
-          <h2>Your organization</h2>
+      {selected && selected.id !== home?.id && (
+        <div className="card danger-zone">
+          <h2>Danger zone</h2>
           <ul className="rows">
             <li>
               <div className="grow">
-                <div className="name">{home.name}</div>
-                <div className="sub">{home.id}</div>
+                <div className="name">Delete organization</div>
+                <div className="sub">
+                  Permanently deletes the tenant. Its workspaces must be deleted first (the
+                  platform refuses to cascade); Keycloak users keep existing.
+                </div>
               </div>
-              <span className={`badge ${home.self_managed ? "selfmanaged" : ""}`}>
-                {home.self_managed ? "self-managed" : "managed"}
-              </span>
-              <button
-                className="ghost"
-                title="Creates a pending dual-consent request; the platform side approves it"
-                onClick={() => void requestMode(home)}
-              >
-                {home.self_managed ? "→ managed" : "→ self-managed"}
+              <button className="danger" onClick={() => void removeOrg(selected)}>
+                Delete organization
               </button>
             </li>
           </ul>
         </div>
       )}
-
-      <div className="card">
-        {orgs.length === 0 ? (
-          <p className="empty">No organizations yet.</p>
-        ) : visibleOrgs.length === 0 ? (
-          <p className="empty">No organizations match the current filters.</p>
-        ) : (
-          <ul className="rows">
-            {visibleOrgs.map((o) => (
-              <li key={o.id}>
-                <div className="grow">
-                  <div className="name">{o.name}</div>
-                  <div className="sub">{o.id}</div>
-                </div>
-                <span className="badge">{shortTypeName(o.tenant_type)}</span>
-                {o.self_managed && <span className="badge selfmanaged">self-managed</span>}
-                {o.self_managed ? (
-                  // Behind the barrier this tenant is not accessible to us:
-                  // the managed-conversion must be REQUESTED from inside by
-                  // the org's own admin; it then appears in the pending
-                  // list below for approval.
-                  <span
-                    className="hint"
-                    style={{ margin: 0 }}
-                    title="Self-managed = visibility barrier. Sign in as an admin of this organization and request the conversion from its Organizations view; approve it here."
-                  >
-                    → managed: requested from inside
-                  </span>
-                ) : (
-                  <button
-                    className="ghost"
-                    title="Dual-consent mode conversion: creates a pending request the org side must approve"
-                    onClick={() => void requestMode(o)}
-                  >
-                    → self-managed
-                  </button>
-                )}
-                <button className="ghost" title="Delete organization" onClick={() => void removeOrg(o)}>
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <form className="inline" onSubmit={create}>
-          <input placeholder="New organization name" value={name} onChange={(e) => setName(e.target.value)} />
-          <button className="primary" disabled={busy || !name}>
-            Create
-          </button>
-        </form>
-        {error && <div className="error">{error}</div>}
-      </div>
+      {error && <div className="error">{error}</div>}
 
       {inbound.length > 0 && (
         <div className="card">
@@ -3195,15 +3252,22 @@ function MembersView({
   orgs,
   workspaces,
   filters,
+  fixedTenantId,
 }: {
   token: string;
   home: Tenant | null;
   orgs: Tenant[];
   workspaces: Workspace[];
   filters: Filters;
+  /** Admin-area scoping: lock the view to this tenant, hide the picker. */
+  fixedTenantId?: string | null;
 }) {
   const all = [...(home ? [home] : []), ...orgs, ...workspaces];
-  const [tenantId, setTenantId] = useState<string>("");
+  const [tenantId, setTenantId] = useState<string>(fixedTenantId ?? "");
+  useEffect(() => {
+    if (fixedTenantId && fixedTenantId !== tenantId) setTenantId(fixedTenantId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixedTenantId]);
   const [users, setUsers] = useState<User[] | null>(null);
   const [username, setUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -3251,14 +3315,16 @@ function MembersView({
         Role Grants (member × role × scope) with the access-control milestone.
       </p>
       <div className="card">
-        <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
-          <option value="">Select a tenant…</option>
-          {all.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name} ({shortTypeName(t.tenant_type)})
-            </option>
-          ))}
-        </select>
+        {!fixedTenantId && (
+          <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+            <option value="">Select a tenant…</option>
+            {all.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} ({shortTypeName(t.tenant_type)})
+              </option>
+            ))}
+          </select>
+        )}
 
         {users && (
           <>
