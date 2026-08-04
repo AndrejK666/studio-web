@@ -613,7 +613,24 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
-      <div className="spaces-host" style={{ display: activeSpace ? "flex" : "none" }}>
+      {/* While the portal is active the host stays rendered but parked as a
+          transparent background layer — display:none would throttle every
+          embedded session's WebSocket (see .space-frames note). */}
+      <div
+        className="spaces-host"
+        style={
+          activeSpace
+            ? { display: "flex" }
+            : {
+                display: "flex",
+                position: "fixed",
+                inset: 0,
+                zIndex: -1,
+                opacity: 0,
+                pointerEvents: "none",
+              }
+        }
+      >
         {activeSpace &&
           (() => {
             const sp = spaces.find((s) => s.wsId === activeSpace);
@@ -631,26 +648,35 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             Reconnecting the space…
           </p>
         )}
-        {spaces.map((s) => (
-          <iframe
-            key={s.wsId}
-            className="space-frame"
-            src={s.url}
-            title={`Studio — ${s.wsName}`}
-            allow="clipboard-read; clipboard-write"
-            data-origin={spaceOrigin(s.url)}
-            onLoad={(e) => {
-              // Handshake: theme + the caller's API token (the IDE calls the
-              // gears same-origin through the session gate's /studio-api/*).
-              const theme = document.documentElement.dataset.theme ?? "light";
-              e.currentTarget.contentWindow?.postMessage(
-                { type: "studio.init", theme, apiToken: token },
-                spaceOrigin(s.url),
-              );
-            }}
-            style={{ display: activeSpace === s.wsId ? "block" : "none" }}
-          />
-        ))}
+        {/* Inactive frames stay RENDERED (opacity 0, stacked) — display:none
+            makes Chrome throttle hidden cross-origin iframes, Theia misses
+            its WebSocket keepalive and the session reconnect-loops. */}
+        <div className="space-frames">
+          {spaces.map((s) => (
+            <iframe
+              key={s.wsId}
+              className="space-frame"
+              src={s.url}
+              title={`Studio — ${s.wsName}`}
+              allow="clipboard-read; clipboard-write"
+              data-origin={spaceOrigin(s.url)}
+              onLoad={(e) => {
+                // Handshake: theme + the caller's API token (the IDE calls the
+                // gears same-origin through the session gate's /studio-api/*).
+                const theme = document.documentElement.dataset.theme ?? "light";
+                e.currentTarget.contentWindow?.postMessage(
+                  { type: "studio.init", theme, apiToken: token },
+                  spaceOrigin(s.url),
+                );
+              }}
+              style={
+                activeSpace === s.wsId
+                  ? { opacity: 1, zIndex: 1, pointerEvents: "auto" }
+                  : { opacity: 0, zIndex: 0, pointerEvents: "none" }
+              }
+            />
+          ))}
+        </div>
       </div>
 
       <div className="content" style={activeSpace ? { display: "none" } : undefined}>
