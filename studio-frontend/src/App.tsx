@@ -280,6 +280,28 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [error, setError] = useState<string | null>(null);
   const [studio, setStudio] = useState<Workspace | null>(null);
   const [dash, setDash] = useState<Workspace | null>(null);
+  // Spaces: embedded IDE sessions living INSIDE the portal window. Every
+  // space keeps its iframe mounted (hidden, not unmounted), so switching
+  // between the portal and sessions never reloads Theia.
+  const [spaces, setSpaces] = useState<
+    { wsId: string; wsName: string; url: string; sessionId: string }[]
+  >([]);
+  const [activeSpace, setActiveSpace] = useState<string | null>(null);
+
+  const openSpace = useCallback((ws: Workspace, session: { id: string; url: string }) => {
+    setSpaces((prev) =>
+      prev.some((s) => s.wsId === ws.id)
+        ? prev.map((s) => (s.wsId === ws.id ? { ...s, url: session.url, sessionId: session.id } : s))
+        : [...prev, { wsId: ws.id, wsName: ws.name, url: session.url, sessionId: session.id }],
+    );
+    setActiveSpace(ws.id);
+    setStudio(null);
+  }, []);
+
+  const closeSpace = useCallback((wsId: string) => {
+    setSpaces((prev) => prev.filter((s) => s.wsId !== wsId));
+    setActiveSpace((a) => (a === wsId ? null : a));
+  }, []);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [panelOpen, setPanelOpen] = useState<boolean>(() => {
     try {
@@ -376,12 +398,38 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           {NAV.map((n) => (
             <button
               key={n.id}
-              className={view === n.id ? "active" : ""}
-              onClick={() => setView(n.id)}
+              className={view === n.id && !activeSpace ? "active" : ""}
+              onClick={() => {
+                setView(n.id);
+                setActiveSpace(null); // portal navigation leaves the space
+              }}
             >
               <span className="ico">{n.icon}</span> {n.label}
             </button>
           ))}
+          {spaces.length > 0 && (
+            <div className="nav-spaces">
+              <div className="nav-spaces-title">Spaces</div>
+              {spaces.map((s) => (
+                <div key={s.wsId} className="space-row">
+                  <button
+                    className={activeSpace === s.wsId ? "active" : ""}
+                    onClick={() => setActiveSpace(s.wsId)}
+                    title={`Switch to ${s.wsName}`}
+                  >
+                    <span className="ico">⚙</span> {s.wsName}
+                  </button>
+                  <button
+                    className="ghost space-x"
+                    title="Close space (the session keeps running)"
+                    onClick={() => closeSpace(s.wsId)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </nav>
         <div className="spacer" />
         <div className="whoami">
@@ -393,7 +441,34 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         </div>
       </aside>
 
-      <div className="content">
+      {/* Spaces host: all session iframes stay mounted; only the active one
+          is visible, so switching never reloads the IDE. */}
+      <div className="spaces-host" style={{ display: activeSpace ? "flex" : "none" }}>
+        {activeSpace &&
+          (() => {
+            const sp = spaces.find((s) => s.wsId === activeSpace);
+            return sp ? (
+              <div className="space-bar">
+                <span>⚙ {sp.wsName}</span>
+                <a href={sp.url} target="_blank" rel="noopener noreferrer">
+                  open in tab ↗
+                </a>
+              </div>
+            ) : null;
+          })()}
+        {spaces.map((s) => (
+          <iframe
+            key={s.wsId}
+            className="space-frame"
+            src={s.url}
+            title={`Studio — ${s.wsName}`}
+            allow="clipboard-read; clipboard-write"
+            style={{ display: activeSpace === s.wsId ? "block" : "none" }}
+          />
+        ))}
+      </div>
+
+      <div className="content" style={activeSpace ? { display: "none" } : undefined}>
         {error && <div className="error">{error}</div>}
         {dash ? (
           <WorkspaceDashboard
@@ -427,18 +502,27 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
-        {studio && <StudioLauncher token={token} ws={studio} onClose={() => setStudio(null)} />}
+        {studio && (
+          <StudioLauncher
+            token={token}
+            ws={studio}
+            onClose={() => setStudio(null)}
+            onOpen={(s) => openSpace(studio, s)}
+          />
+        )}
       </div>
 
-      <FilterPanel
-        view={panelView}
-        token={token}
-        filters={filters}
-        onChange={setFilters}
-        open={panelOpen}
-        onToggle={() => setPanelOpen((v) => !v)}
-        orgs={orgs}
-      />
+      {!activeSpace && (
+        <FilterPanel
+          view={panelView}
+          token={token}
+          filters={filters}
+          onChange={setFilters}
+          open={panelOpen}
+          onToggle={() => setPanelOpen((v) => !v)}
+          orgs={orgs}
+        />
+      )}
     </div>
   );
 }
@@ -2190,10 +2274,13 @@ function StudioLauncher({
   token,
   ws,
   onClose,
+  onOpen,
 }: {
   token: string;
   ws: Workspace;
   onClose: () => void;
+  /** Opens the session as an embedded space (same window, no new tab). */
+  onOpen: (session: { id: string; url: string }) => void;
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repos, setRepos] = useState<import("./api").RepoEntry[] | null>(null);
@@ -2224,20 +2311,9 @@ function StudioLauncher({
       .catch(() => setRepos([]));
   }, [token, ws.id]);
 
-  // Poll a starting session until Theia answers, then open it.
-  useEffect(() => {
-    if (!session || session.state !== "starting") return;
-    const t = setInterval(async () => {
-      try {
-        const s = await api.studioSession(token, session.id);
-        setSession(s);
-        if (s.state === "running") window.open(s.url, "_blank", "noopener");
-      } catch (e) {
-        setError(errText(e));
-      }
-    }, 2000);
-    return () => clearInterval(t);
-  }, [session, token]);
+  // No polling needed for opening: the space embeds the session URL right
+  // away and the container-side splash keeps the frame alive until Theia
+  // takes the port over.
 
   // "Open Studio" means open the Studio — launch as soon as the sources are
   // known instead of asking for a second click. Creation is idempotent per
@@ -2277,7 +2353,9 @@ function StudioLauncher({
       );
       const s = await api.createStudioSession(token, ws.id, usable, freshRoot);
       setSession(s);
-      if (s.state === "running") window.open(s.url, "_blank", "noopener");
+      // Straight into the embedded space — starting sessions show the
+      // in-container splash until the IDE is up.
+      onOpen({ id: s.id, url: s.url });
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -2351,14 +2429,12 @@ function StudioLauncher({
             <span className={`badge ${session.state === "running" ? "workspace" : ""}`}>
               {session.state}
             </span>
-            {session.state === "running" && (
-              <button
-                className="primary"
-                onClick={() => window.open(session.url, "_blank", "noopener")}
-              >
-                Open IDE
-              </button>
-            )}
+            <button
+              className="primary"
+              onClick={() => onOpen({ id: session.id, url: session.url })}
+            >
+              Open space
+            </button>
             <button className="ghost" onClick={stop}>
               Stop session
             </button>
