@@ -223,6 +223,37 @@ button.danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c;
 .danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 .sidebar.collapsed .org-select-name, .sidebar.collapsed .org-select .chev { display: none; }
 .account-menu > button { text-align: left; }
+/* ── Login page (creative full-bleed) ── */
+.login-page {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background:
+    linear-gradient(var(--accent-soft) 0 0) 0 0 / 28% 22% no-repeat,
+    linear-gradient(color-mix(in srgb, var(--accent) 12%, transparent) 0 0) 78% 8% / 24% 30% no-repeat,
+    linear-gradient(var(--accent-soft) 0 0) 88% 74% / 22% 26% no-repeat,
+    linear-gradient(color-mix(in srgb, #8b5cf6 10%, transparent) 0 0) 6% 82% / 26% 18% no-repeat,
+    var(--bg);
+}
+.login-panel {
+  width: min(460px, 92%);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow);
+  padding: 3rem 2.75rem 2.25rem;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.login-logo { width: 48px; height: 48px; font-size: 26px; border-radius: 12px; margin-bottom: 8px; }
+.login-title { font-size: 2.1rem; margin: 0; }
+.login-sso { width: 100%; padding: 12px; font-size: 15px; margin-top: 10px; }
+.login-providers { display: flex; gap: 10px; }
+.login-providers button {
+  flex: 1; display: flex; align-items: center; justify-content: center; padding: 11px 0;
+}
+.login-dev { margin-top: 18px; }
+.login-dev summary {
+  cursor: pointer; color: var(--muted); font-size: 12.5px; list-style: none;
+}
+.login-dev summary:hover { color: var(--accent); }
+.login-dev form { margin-top: 10px; }
+
 /* ── Collapsible sidebar ── */
 .sidebar-toggle {
   border: none; background: none; color: var(--muted);

@@ -211,39 +211,57 @@ function Login({
     }
   }
 
+  const sso = (idpHint?: string) =>
+    import("./oidc").then(({ startSsoLogin }) => startSsoLogin(idpHint));
+
   return (
-    <main className="narrow">
-      <div className="wordmark" style={{ marginBottom: "1.5rem" }}>
-        <div className="logo">S</div>
-        <h1>Constructor Studio</h1>
-      </div>
-      <div className="card">
-        <form onSubmit={submit}>
-          <label className="field">
-            Access token
-            <input value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
-          </label>
-          <button className="primary" disabled={busy || !value} style={{ width: "100%" }}>
-            {busy ? "Signing in…" : "Sign in"}
+    <div className="login-page">
+      <div className="login-panel">
+        <div className="logo login-logo">S</div>
+        <h1 className="login-title">
+          <span className="hero-gradient">Let’s start building</span>
+        </h1>
+        <p className="subtitle">Sign in to Constructor Studio</p>
+
+        <button className="primary login-sso" disabled={busy} onClick={() => void sso()}>
+          {busy ? "Signing in…" : "Continue with Constructor ID"}
+        </button>
+
+        {/* Federated providers — routed through Keycloak (kc_idp_hint).
+            They work once the matching Identity Provider is configured in
+            the realm; until then Keycloak falls back to its own form. */}
+        <div className="login-providers">
+          <button title="Google (via Keycloak identity federation)" disabled={busy} onClick={() => void sso("google")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.1h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.3-2.1 3.7-5.1 3.7-8.6z"/><path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.7-2.9c-1 .7-2.4 1.2-4.2 1.2-3.1 0-5.8-2.1-6.7-5l-3.9 3C3.3 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.3 14.4a7.4 7.4 0 0 1 0-4.7l-3.9-3a12 12 0 0 0 0 10.7l3.9-3z"/><path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.3 0 3.3 2.7 1.4 6.7l3.9 3c.9-2.9 3.6-5 6.7-5z"/></svg>
           </button>
-          <button
-            type="button"
-            style={{ width: "100%", marginTop: 8 }}
-            disabled={busy}
-            onClick={() => import("./oidc").then(({ startSsoLogin }) => startSsoLogin())}
-          >
-            Sign in with SSO (Keycloak)
+          <button title="GitHub (via Keycloak identity federation)" disabled={busy} onClick={() => void sso("github")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C19.3 4.7 20.3 5 20.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
           </button>
-          {error && <div className="error">{error}</div>}
-        </form>
+          <button title="Microsoft (via Keycloak identity federation)" disabled={busy} onClick={() => void sso("microsoft")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg>
+          </button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        {/* Static-profile escape hatch: dev tokens, tucked away. */}
+        <details className="login-dev">
+          <summary>Developer sign-in (static token)</summary>
+          <form onSubmit={submit} className="inline">
+            <input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="studio-admin-token"
+            />
+            <button disabled={busy || !value}>Sign in</button>
+          </form>
+          <p className="hint">
+            Works with the static profiles only; SSO needs <code>config/oidc.yaml</code> +{" "}
+            <code>docker compose up -d keycloak</code> (admin/demo, password <code>studio</code>).
+          </p>
+        </details>
       </div>
-      <p className="hint" style={{ marginTop: "1rem" }}>
-        Dev tokens (<code>studio-admin-token</code>, <code>studio-user-token</code>) work with the
-        static profiles; SSO needs the backend on <code>config/oidc.yaml</code> and{" "}
-        <code>docker compose up -d keycloak</code> (users <code>admin</code>/<code>demo</code>,
-        password <code>studio</code>; accept the self-signed cert on first visit).
-      </p>
-    </main>
+    </div>
   );
 }
 

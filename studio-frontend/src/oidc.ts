@@ -53,8 +53,13 @@ function storeSession(body: {
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 300 };
 }
 
-/** Redirect to the IdP's authorization endpoint (never returns). */
-export async function startSsoLogin(): Promise<void> {
+/**
+ * Redirect to the IdP's authorization endpoint (never returns).
+ * `idpHint` (Keycloak `kc_idp_hint`) jumps straight to a federated identity
+ * provider — google / github / microsoft — when one is configured in the
+ * realm (Identity Providers section); otherwise Keycloak shows its own form.
+ */
+export async function startSsoLogin(idpHint?: string): Promise<void> {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   sessionStorage.setItem(VERIFIER_KEY, verifier);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
@@ -66,6 +71,7 @@ export async function startSsoLogin(): Promise<void> {
     code_challenge: b64url(new Uint8Array(digest)),
     code_challenge_method: "S256",
   });
+  if (idpHint) params.set("kc_idp_hint", idpHint);
   window.location.href = `${ISSUER}/protocol/openid-connect/auth?${params.toString()}`;
 }
 
