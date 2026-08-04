@@ -76,6 +76,11 @@ pub struct Session {
     pub created_at_epoch_secs: u64,
     /// Human-readable source summaries, e.g. "docs (git)".
     pub sources: Vec<String>,
+    /// Per-session access token: the in-container gate only serves requests
+    /// carrying it (first visit `?token=…` → HttpOnly cookie). Scoped to
+    /// this one session; NOT the caller's platform token. Empty for
+    /// sessions adopted from an older image (gate disabled there anyway).
+    pub session_token: String,
 }
 
 pub struct SessionService {
@@ -268,10 +273,20 @@ impl SessionService {
         let session_id = Uuid::new_v4();
         let name = format!("cf-studio-session-{workspace_id}");
 
+        // Session gate token: random 256-bit, hex. The container's entry
+        // proxy refuses requests without it, so a guessed/leaked port on
+        // the loopback no longer means a free IDE.
+        let session_token = {
+            let a = Uuid::new_v4().simple().to_string();
+            let b = Uuid::new_v4().simple().to_string();
+            format!("{a}{b}")
+        };
+
         let mut env = vec![
             format!("STUDIO_WORKSPACE_ID={workspace_id}"),
             format!("STUDIO_ACTOR_ID={actor_id}"),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
+            format!("STUDIO_SESSION_TOKEN={session_token}"),
         ];
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).
@@ -375,6 +390,7 @@ impl SessionService {
             port,
             state: SessionState::Starting,
             created_at_epoch_secs: now_secs(),
+            session_token,
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
@@ -571,6 +587,10 @@ impl SessionService {
                     },
                     created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or_else(now_secs),
                     sources: Vec::new(),
+                    // Adopted containers keep their own token in env; we
+                    // cannot recover it, so the portal can't re-open them
+                    // gated — a relaunch mints a fresh one.
+                    session_token: String::new(),
                 },
             );
             adopted += 1;

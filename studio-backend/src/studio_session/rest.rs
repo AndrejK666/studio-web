@@ -98,11 +98,19 @@ pub struct SessionListDto {
 }
 
 fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
+    // The gate token travels once, in the URL the portal embeds: the
+    // in-container proxy swaps it for an HttpOnly cookie and redirects to
+    // the clean path. Only callers who may read the session get it here.
+    let url = if s.session_token.is_empty() {
+        svc.session_url(s.port)
+    } else {
+        format!("{}?token={}", svc.session_url(s.port), s.session_token)
+    };
     SessionDto {
         id: s.id,
         workspace_id: s.workspace_id,
         state: s.state.as_str().to_string(),
-        url: svc.session_url(s.port),
+        url,
         created_at_epoch_secs: s.created_at_epoch_secs,
         sources: s.sources,
     }
