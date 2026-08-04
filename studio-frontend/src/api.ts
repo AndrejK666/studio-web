@@ -415,6 +415,26 @@ export const api = {
       });
     }
   },
+  /**
+   * Secret health probe: credstore has NO list endpoint, so surfaces build
+   * from refs known to workspace settings and check each with a GET.
+   * "ok" = readable; "broken" = exists but fails closed (fence-poisoned) or
+   * missing — either way a rotate (putSecret) heals it.
+   */
+  checkSecret: async (token: string, reference: string): Promise<"ok" | "broken"> => {
+    try {
+      await request<unknown>(`/credstore/v1/secrets/${encodeURIComponent(reference)}`, token);
+      return "ok";
+    } catch {
+      return "broken";
+    }
+  },
+
+  deleteSecret: (token: string, reference: string) =>
+    request<unknown>(`/credstore/v1/secrets/${encodeURIComponent(reference)}`, token, {
+      method: "DELETE",
+    }),
+
   studioSession: (token: string, id: string) =>
     request<StudioSession>(`/studio-session/v1/sessions/${id}`, token),
   studioSessions: (token: string) =>

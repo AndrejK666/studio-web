@@ -249,31 +249,51 @@ function Login({
 /* ── App shell ── */
 
 type View =
+  | "home"
   | "organizations"
   | "workspaces"
   | "chats"
   | "members"
   | "files"
+  | "secrets"
+  | "connectors"
   | "system"
   | "profile";
 
-// Order follows the domain model's control plane: the tenant admin hierarchy
-// (Organizations) frames everything, Workspaces are the working contexts
-// inside it. Projects are NOT a top-level surface — in the model a Project is
-// a managed object living in a workspace's context (graph object), so they
-// are managed from the Workspace Dashboard.
-const NAV: { id: View; icon: string; label: string }[] = [
-  { id: "organizations", icon: "🏢", label: "Organizations" },
-  { id: "workspaces", icon: "▦", label: "Workspaces" },
-  { id: "chats", icon: "💬", label: "Chats" },
-  { id: "members", icon: "👥", label: "Members" },
-  { id: "files", icon: "📄", label: "Files" },
-  { id: "system", icon: "⚙", label: "System" },
-  { id: "profile", icon: "●", label: "Profile" },
+// Sectioned nav (console-style), grouped by the domain model's layers:
+// the CONTROL PLANE (tenant admin hierarchy, working contexts, citizens,
+// credentials), the WORK surfaces, and MONITORING. Projects are NOT a
+// top-level surface — in the model a Project is a managed object living in
+// a workspace's context, managed from the Workspace Dashboard. Profile
+// moved to the bottom account menu.
+const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; label: string }[] }[] = [
+  { title: null, items: [{ id: "home", icon: "⌂", label: "Home" }] },
+  {
+    title: "Control plane",
+    items: [
+      { id: "organizations", icon: "🏢", label: "Organizations" },
+      { id: "workspaces", icon: "▦", label: "Workspaces" },
+      { id: "members", icon: "👥", label: "Members" },
+      { id: "secrets", icon: "🔑", label: "Secrets" },
+    ],
+  },
+  {
+    title: "Work",
+    items: [
+      { id: "chats", icon: "💬", label: "Chats" },
+      { id: "files", icon: "📄", label: "Files" },
+      { id: "connectors", icon: "⇄", label: "Connectors" },
+    ],
+  },
+  {
+    title: "Monitor",
+    items: [{ id: "system", icon: "⚙", label: "System" }],
+  },
 ];
 
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
-  const [view, setView] = useState<View>("organizations");
+  const [view, setView] = useState<View>("home");
+  const [accountMenu, setAccountMenu] = useState(false);
   const [home, setHome] = useState<Tenant | null>(null);
   const [orgs, setOrgs] = useState<Tenant[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -547,17 +567,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           <strong>Studio</strong>
         </div>
         <nav>
-          {NAV.map((n) => (
-            <button
-              key={n.id}
-              className={view === n.id && !activeSpace ? "active" : ""}
-              onClick={() => {
-                setView(n.id);
-                setActiveSpace(null); // portal navigation leaves the space
-              }}
-            >
-              <span className="ico">{n.icon}</span> {n.label}
-            </button>
+          {NAV_SECTIONS.map((sec) => (
+            <div key={sec.title ?? "_top"} className="nav-section">
+              {sec.title && <div className="nav-section-title">{sec.title}</div>}
+              {sec.items.map((n) => (
+                <button
+                  key={n.id}
+                  className={view === n.id && !activeSpace ? "active" : ""}
+                  onClick={() => {
+                    setView(n.id);
+                    setActiveSpace(null); // portal navigation leaves the space
+                  }}
+                >
+                  <span className="ico">{n.icon}</span> {n.label}
+                </button>
+              ))}
+            </div>
           ))}
           {spaces.length > 0 && (
             <div className="nav-spaces">
@@ -588,26 +613,65 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         </nav>
         <div className="spacer" />
         <div className="whoami">
-          <span>
-            <code title={me.subject_id}>{me.subject_id.slice(0, 8)}…</code>
-          </span>
-          <span>{home ? `Home: ${home.name}` : ""}</span>
-          {/* The home tenant IS the access scope — say so explicitly. */}
-          {home && (
-            <span
-              className="scope-line"
-              title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
-            >
-              {home.tenant_type === TENANT_TYPES.organization
-                ? `Scope: ${home.name} subtree`
-                : `Scope: entire platform${
-                    orgs.filter((o) => o.self_managed).length
-                      ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
-                      : ""
-                  }`}
-            </span>
+          {accountMenu && (
+            <div className="account-menu">
+              <div className="account-menu-head">
+                <code title={me.subject_id}>{me.subject_id.slice(0, 8)}…</code>
+                <span>{home ? `Home: ${home.name}` : ""}</span>
+                {/* The home tenant IS the access scope — say so explicitly. */}
+                {home && (
+                  <span
+                    className="scope-line"
+                    title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
+                  >
+                    {home.tenant_type === TENANT_TYPES.organization
+                      ? `Scope: ${home.name} subtree`
+                      : `Scope: entire platform${
+                          orgs.filter((o) => o.self_managed).length
+                            ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
+                            : ""
+                        }`}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  setView("profile");
+                  setActiveSpace(null);
+                  setAccountMenu(false);
+                }}
+              >
+                Profile
+              </button>
+              <button
+                onClick={() => {
+                  setView("organizations");
+                  setActiveSpace(null);
+                  setAccountMenu(false);
+                }}
+              >
+                Your organizations ({orgs.length})
+              </button>
+              <button onClick={onLogout}>Sign out</button>
+            </div>
           )}
-          <button onClick={onLogout}>Sign out</button>
+          <button
+            className="account-button"
+            onClick={() => setAccountMenu((v) => !v)}
+            title="Account"
+          >
+            <span className="account-avatar">
+              {(home?.name ?? "S").slice(0, 1).toUpperCase()}
+            </span>
+            <span className="account-lines">
+              <span className="account-name">{home?.name ?? "Studio"}</span>
+              <span className="scope-line">
+                {home?.tenant_type === TENANT_TYPES.organization
+                  ? `${home.name} subtree`
+                  : "entire platform"}
+              </span>
+            </span>
+          </button>
         </div>
       </aside>
 
@@ -701,6 +765,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpenDashboard={setDash}
           />
         )}
+        {view === "home" && (
+          <HomeView
+            token={token}
+            home={home}
+            orgs={orgs}
+            workspaces={workspaces}
+            spaces={spaces}
+            onOpenSpace={(wsId) => setActiveSpace(wsId)}
+            onOpenStudio={setStudio}
+            onOpenDashboard={setDash}
+            onNavigate={setView}
+          />
+        )}
+        {view === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
+        {view === "connectors" && <ConnectorsView token={token} workspaces={workspaces} filters={filters} />}
         {view === "organizations" && (
           <OrganizationsView token={token} homeId={me.subject_tenant_id} home={home} orgs={orgs} workspaces={workspaces} filters={filters} onChanged={refresh} />
         )}
@@ -2095,6 +2174,390 @@ function ProjectMembers({
 }
 
 /* ── Organizations ── */
+
+/* ── Home hub ── */
+
+function HomeView({
+  token,
+  home,
+  orgs,
+  workspaces,
+  spaces,
+  onOpenSpace,
+  onOpenStudio,
+  onOpenDashboard,
+  onNavigate,
+}: {
+  token: string;
+  home: Tenant | null;
+  orgs: Tenant[];
+  workspaces: Workspace[];
+  spaces: { wsId: string; wsName: string }[];
+  onOpenSpace: (wsId: string) => void;
+  onOpenStudio: (ws: Workspace) => void;
+  onOpenDashboard: (ws: Workspace) => void;
+  onNavigate: (v: View) => void;
+}) {
+  const [live, setLive] = useState<import("./api").StudioSession[]>([]);
+  const [gearCount, setGearCount] = useState<string>("…");
+
+  useEffect(() => {
+    void api.studioSessions(token).then(
+      (p) => setLive(p.items.filter((s) => s.state !== "stopped")),
+      () => setLive([]),
+    );
+    void api.gears(token).then(
+      (g: unknown) => {
+        const items =
+          Array.isArray(g) ? g
+          : g && typeof g === "object" && "items" in g && Array.isArray((g as { items: unknown[] }).items)
+            ? (g as { items: unknown[] }).items
+            : null;
+        setGearCount(items ? String(items.length) : "—");
+      },
+      () => setGearCount("—"),
+    );
+  }, [token]);
+
+  const hidden = orgs.filter((o) => o.self_managed).length;
+  const continueItems = workspaces
+    .map((ws) => ({
+      ws,
+      space: spaces.find((s) => s.wsId === ws.id),
+      session: live.find((s) => s.workspace_id === ws.id),
+    }))
+    .filter((x) => x.space || x.session);
+
+  return (
+    <>
+      <h1>Constructor Studio</h1>
+      <p className="subtitle">
+        Your workspace for building with AI over real repositories — the control plane of the
+        Studio domain model.
+      </p>
+
+      <div className="home-grid">
+        <div className="card">
+          <h2>Continue</h2>
+          {continueItems.length === 0 ? (
+            <p className="empty">No live sessions. Open a workspace to start one.</p>
+          ) : (
+            <ul className="rows">
+              {continueItems.map(({ ws, space, session }) => (
+                <li key={ws.id}>
+                  <div className="grow">
+                    <div className="name">⚙ {ws.name}</div>
+                    <div className="sub">{ws.orgName}{session ? ` · session ${session.state}` : ""}</div>
+                  </div>
+                  {space ? (
+                    <button className="primary" onClick={() => onOpenSpace(ws.id)}>
+                      Switch to space
+                    </button>
+                  ) : (
+                    <button className="primary" onClick={() => onOpenStudio(ws)}>
+                      Reopen
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Build</h2>
+          <ul className="home-links">
+            <li>
+              <button className="linklike" onClick={() => onNavigate("workspaces")}>
+                Workspaces — open the Studio IDE →
+              </button>
+            </li>
+            {workspaces[0] && (
+              <li>
+                <button className="linklike" onClick={() => onOpenDashboard(workspaces[0])}>
+                  Workspace dashboard (sources, automation, projects) →
+                </button>
+              </li>
+            )}
+            <li>
+              <button className="linklike" onClick={() => onNavigate("connectors")}>
+                Connect a repository →
+              </button>
+            </li>
+            <li>
+              <button className="linklike" onClick={() => onNavigate("chats")}>
+                Ask AI (workspace chats) →
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <div className="card">
+          <h2>Platform</h2>
+          <ul className="rows">
+            <li>
+              <div className="grow"><div className="sub">Scope</div>
+                <div className="name">
+                  {home?.tenant_type === TENANT_TYPES.organization
+                    ? `${home.name} subtree`
+                    : `entire platform${hidden ? ` · ${hidden} self-managed hidden` : ""}`}
+                </div>
+              </div>
+            </li>
+            <li>
+              <div className="grow"><div className="sub">Organizations / Workspaces</div>
+                <div className="name">{orgs.length} / {workspaces.length}</div>
+              </div>
+            </li>
+            <li>
+              <div className="grow"><div className="sub">Gears running</div>
+                <div className="name">{gearCount}</div>
+              </div>
+              <button className="ghost" onClick={() => onNavigate("system")}>System →</button>
+            </li>
+          </ul>
+        </div>
+
+        <div className="card">
+          <h2>Documentation</h2>
+          <ul className="home-links">
+            <li><a href="https://github.com/constructorfabric/studio-web#readme" target="_blank" rel="noopener noreferrer">README — running the stack →</a></li>
+            <li><a href="https://github.com/constructorfabric/studio-web/tree/main/docs/adr" target="_blank" rel="noopener noreferrer">Architecture decisions (ADR) →</a></li>
+            <li><a href="https://github.com/constructorfabric/studio-web/blob/main/docs/domain-alignment.md" target="_blank" rel="noopener noreferrer">Domain model alignment →</a></li>
+          </ul>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ── Secrets (credstore surface) ──
+   credstore has NO list endpoint (gears feedback #5), so the view builds
+   from refs the workspace settings know about, probes each with GET, and
+   heals broken ones with the unconditional-PUT rotate. */
+
+interface SecretRow {
+  ref: string;
+  usedBy: string[];
+}
+
+function useKnownSecretRefs(token: string, workspaces: Workspace[]): SecretRow[] | null {
+  const [rows, setRows] = useState<SecretRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const map = new Map<string, Set<string>>();
+      await Promise.all(
+        workspaces.map(async (ws) => {
+          const s = await api.workspaceSettings(token, ws.id).catch(() => null);
+          if (!s) return;
+          const add = (ref?: string | null, what = "") => {
+            const r = ref?.trim();
+            if (!r) return;
+            if (!map.has(r)) map.set(r, new Set());
+            map.get(r)?.add(`${ws.name}${what}`);
+          };
+          add(s.root_token_ref, " (workspace root)");
+          for (const repo of s.repos ?? []) add(repo.token_ref, ` / ${repo.name}`);
+        }),
+      );
+      if (!cancelled) {
+        setRows(
+          [...map.entries()]
+            .map(([ref, used]) => ({ ref, usedBy: [...used].sort() }))
+            .sort((a, b) => a.ref.localeCompare(b.ref)),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, workspaces]);
+  return rows;
+}
+
+function SecretsView({
+  token,
+  workspaces,
+  filters,
+}: {
+  token: string;
+  workspaces: Workspace[];
+  filters: Filters;
+}) {
+  const rows = useKnownSecretRefs(token, workspaces);
+  const [status, setStatus] = useState<Record<string, "ok" | "broken" | "checking">>({});
+  const [error, setError] = useState<string | null>(null);
+
+  async function check(ref: string) {
+    setStatus((s) => ({ ...s, [ref]: "checking" }));
+    const r = await api.checkSecret(token, ref);
+    setStatus((s) => ({ ...s, [ref]: r }));
+  }
+
+  async function rotate(ref: string) {
+    const value = window.prompt(`New value for “${ref}” (e.g. a fresh PAT):`);
+    if (!value?.trim()) return;
+    setError(null);
+    try {
+      await api.putSecret(token, ref, value.trim(), PAT_SECRET_TYPE);
+      await check(ref);
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  async function remove(ref: string) {
+    if (!window.confirm(`Delete secret “${ref}”? Workspace settings keep the reference — launches will clone without credentials until a new value is saved.`)) return;
+    setError(null);
+    try {
+      await api.deleteSecret(token, ref);
+      setStatus((s) => ({ ...s, [ref]: "broken" }));
+    } catch (e) {
+      setError(errText(e));
+    }
+  }
+
+  const visible = (rows ?? []).filter((r) => matches(filters.query, r.ref, r.usedBy.join(" ")));
+
+  return (
+    <>
+      <h1>Secrets</h1>
+      <p className="subtitle">
+        Repository credentials in the credstore gear. Values are write-only; this view lists the
+        references known to workspace settings, probes their health, and rotates broken ones
+        (the store has no list API — anything saved outside the portal won't appear here).
+      </p>
+      <div className="card">
+        {rows === null ? (
+          <p className="empty">Loading references from workspace settings…</p>
+        ) : visible.length === 0 ? (
+          <p className="empty">No secret references found in any workspace settings.</p>
+        ) : (
+          <ul className="rows">
+            {visible.map((r) => (
+              <li key={r.ref}>
+                <div className="grow">
+                  <div className="name"><code>{r.ref}</code></div>
+                  <div className="sub">used by: {r.usedBy.join(", ")}</div>
+                </div>
+                {status[r.ref] === "ok" && <span className="badge workspace">readable ✓</span>}
+                {status[r.ref] === "broken" && (
+                  <span className="badge selfmanaged" title="Exists but unreadable (or missing) — rotate to heal">
+                    broken ✗
+                  </span>
+                )}
+                <button className="ghost" disabled={status[r.ref] === "checking"} onClick={() => void check(r.ref)}>
+                  {status[r.ref] === "checking" ? "…" : "Check"}
+                </button>
+                <button className="ghost" onClick={() => void rotate(r.ref)}>Rotate</button>
+                <button className="ghost" title="Delete the stored value" onClick={() => void remove(r.ref)}>✕</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {error && <div className="error">{error}</div>}
+      </div>
+    </>
+  );
+}
+
+/* ── Connectors (aggregate of workspace sources) ── */
+
+function ConnectorsView({
+  token,
+  workspaces,
+  filters,
+}: {
+  token: string;
+  workspaces: Workspace[];
+  filters: Filters;
+}) {
+  const [all, setAll] = useState<{ ws: Workspace; settings: WorkspaceSettings | null }[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      workspaces.map(async (ws) => ({
+        ws,
+        settings: await api.workspaceSettings(token, ws.id).catch(() => null),
+      })),
+    ).then((r) => {
+      if (!cancelled) setAll(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, workspaces]);
+
+  const rows = (all ?? []).filter(
+    ({ ws, settings }) =>
+      matches(filters.query, ws.name, ws.orgName) &&
+      ((settings?.repos?.length ?? 0) > 0 || settings?.root_repo_url?.trim()),
+  );
+
+  return (
+    <>
+      <h1>Connectors</h1>
+      <p className="subtitle">
+        Ingress into workspaces (domain model §4). Today that is the Git connector — repositories
+        cloned into sessions with credstore-held PATs; each workspace manages its own list on the
+        dashboard.
+      </p>
+
+      <div className="card">
+        <h2>Git repositories</h2>
+        {all === null ? (
+          <p className="empty">Loading workspace sources…</p>
+        ) : rows.length === 0 ? (
+          <p className="empty">No repositories connected yet — bind them on a workspace dashboard.</p>
+        ) : (
+          <ul className="rows">
+            {rows.flatMap(({ ws, settings }) => {
+              const items = [];
+              if (settings?.root_repo_url?.trim()) {
+                items.push(
+                  <li key={`${ws.id}-root`}>
+                    <div className="grow">
+                      <div className="name">{settings.root_repo_url}</div>
+                      <div className="sub">{ws.name} · workspace root</div>
+                    </div>
+                    <span className="badge">git</span>
+                    {settings.root_token_ref && <span className="badge workspace">PAT ✓</span>}
+                  </li>,
+                );
+              }
+              for (const r of settings?.repos ?? []) {
+                items.push(
+                  <li key={`${ws.id}-${r.name}`}>
+                    <div className="grow">
+                      <div className="name">{r.url ?? r.path ?? r.name}</div>
+                      <div className="sub">
+                        {ws.name} · {r.name}
+                        {r.target ? ` → ${r.target}` : ""}
+                      </div>
+                    </div>
+                    <span className="badge">{r.source}</span>
+                    {r.token_ref && <span className="badge workspace">PAT ✓</span>}
+                  </li>,
+                );
+              }
+              return items;
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Other connectors</h2>
+        <p className="hint">
+          Not covered yet (honest per the gear-coverage map): Jira, Slack, GitHub App sync — they
+          arrive with the connector gear; nothing is stubbed until then.
+        </p>
+      </div>
+    </>
+  );
+}
 
 function OrganizationsView({
   token,
