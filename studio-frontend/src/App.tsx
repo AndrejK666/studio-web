@@ -10,6 +10,7 @@ import {
   USER_MEMBER_HANDLE,
   type Group,
   type Me,
+  type RepoEntry,
   type Tenant,
   type User,
   type WorkspaceSettings,
@@ -294,6 +295,21 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
   const [view, setView] = useState<View>("home");
   const [accountMenu, setAccountMenu] = useState(false);
+  const [productMenu, setProductMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("studio.sidebar") === "collapsed";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("studio.sidebar", sidebarCollapsed ? "collapsed" : "open");
+    } catch {
+      /* non-fatal */
+    }
+  }, [sidebarCollapsed]);
   const [home, setHome] = useState<Tenant | null>(null);
   const [orgs, setOrgs] = useState<Tenant[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -561,10 +577,50 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="wordmark">
-          <div className="logo">S</div>
-          <strong>Studio</strong>
+      <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+        {/* Product switcher (console pattern): the portal is one door of the
+            product family — API docs and the IdP admin are the real others. */}
+        <div className="wordmark product-switch">
+          <button className="product-button" onClick={() => setProductMenu((v) => !v)}>
+            <div className="logo">S</div>
+            <strong>Studio</strong>
+            <span className="chev">▾</span>
+          </button>
+          <button
+            className="sidebar-toggle"
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => {
+              setSidebarCollapsed((v) => !v);
+              setProductMenu(false);
+              setAccountMenu(false);
+            }}
+          >
+            {sidebarCollapsed ? "⟩" : "⟨"}
+          </button>
+          {productMenu && (
+            <div className="product-menu">
+              <button onClick={() => setProductMenu(false)}>
+                <span className="ico">▦</span> Studio <span className="check">✓</span>
+              </button>
+              <button
+                onClick={() => {
+                  window.open("/cf/docs", "_blank", "noopener");
+                  setProductMenu(false);
+                }}
+              >
+                <span className="ico">⧉</span> Docs &amp; API
+              </button>
+              <button
+                title="Keycloak administration console (dev IdP)"
+                onClick={() => {
+                  window.open("https://localhost:8443/admin/", "_blank", "noopener");
+                  setProductMenu(false);
+                }}
+              >
+                <span className="ico">🛡</span> Admin (IdP)
+              </button>
+            </div>
+          )}
         </div>
         <nav>
           {NAV_SECTIONS.map((sec) => (
@@ -2567,11 +2623,60 @@ function ConnectorsView({
       </div>
 
       <div className="card">
-        <h2>Other connectors</h2>
+        <h2>All connectors</h2>
         <p className="hint">
-          Not covered yet (honest per the gear-coverage map): Jira, Slack, GitHub App sync — they
-          arrive with the connector gear; nothing is stubbed until then.
+          The catalog. “Available” works today through workspace sources; “Planned” arrives with
+          the connector gear (Connector / Sync Run entities in the domain model) — listed, not
+          faked.
         </p>
+        {(() => {
+          const count = (pred: (r: RepoEntry) => boolean) =>
+            (all ?? []).reduce(
+              (n, { settings }) => n + (settings?.repos ?? []).filter(pred).length,
+              0,
+            );
+          const gitlabCount =
+            count((r) => r.source === "gitlab" || Boolean(r.url?.includes("gitlab"))) +
+            (all ?? []).filter(({ settings }) => settings?.root_repo_url?.includes("gitlab")).length;
+          const githubCount = count(
+            (r) => r.source === "github" || Boolean(r.url?.includes("github")),
+          );
+          const localCount = count((r) => r.source === "local");
+          const catalog: { icon: string; name: string; type: string; status: "Available" | "Planned"; connections: number | null }[] = [
+            { icon: "🦊", name: "GitLab", type: "Git hosting", status: "Available", connections: gitlabCount },
+            { icon: "🐙", name: "GitHub", type: "Git hosting", status: "Available", connections: githubCount },
+            { icon: "📁", name: "Local folder", type: "Filesystem", status: "Available", connections: localCount },
+            { icon: "📘", name: "Atlassian (Jira / Confluence)", type: "Issue tracking", status: "Planned", connections: null },
+            { icon: "💬", name: "Slack", type: "Chat", status: "Planned", connections: null },
+            { icon: "🐙", name: "GitHub App (webhooks / sync)", type: "Git sync", status: "Planned", connections: null },
+            { icon: "📝", name: "Notion", type: "Docs", status: "Planned", connections: null },
+            { icon: "☁️", name: "Google Drive", type: "Docs", status: "Planned", connections: null },
+          ];
+          return (
+            <div className="catalog">
+              <div className="catalog-row catalog-head">
+                <span>Name</span>
+                <span>Type</span>
+                <span>Status</span>
+                <span>Connections</span>
+              </div>
+              {catalog.map((c) => (
+                <div className={`catalog-row ${c.status === "Planned" ? "catalog-dim" : ""}`} key={c.name}>
+                  <span className="catalog-name">
+                    <span className="catalog-icon">{c.icon}</span> {c.name}
+                  </span>
+                  <span className="sub">{c.type}</span>
+                  <span>
+                    <span className={`badge ${c.status === "Available" ? "workspace" : ""}`}>
+                      {c.status}
+                    </span>
+                  </span>
+                  <span className="sub">{c.connections ?? "—"}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </>
   );
