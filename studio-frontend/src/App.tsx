@@ -2311,6 +2311,13 @@ function HomeView({
           </p>
         </div>
         <div className="hero-links">
+          {/* Discord invite comes from env so each deployment points at its
+              own server; without it the link hides itself. */}
+          {import.meta.env.VITE_DISCORD_URL && (
+            <a href={import.meta.env.VITE_DISCORD_URL as string} target="_blank" rel="noopener noreferrer">
+              🎮 Discord
+            </a>
+          )}
           <a href="https://github.com/constructorfabric/studio-web" target="_blank" rel="noopener noreferrer">
             🐙 GitHub
           </a>
