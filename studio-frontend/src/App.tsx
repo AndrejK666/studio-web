@@ -998,6 +998,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 selectedOrgId={adminOrgId}
                 onChanged={refresh}
                 onCreated={(id) => setAdminOrgId(id || null)}
+                onNew={() => setAdminOrgId("__new__")}
               />
             )}
             {adminView === "members" && (
@@ -2931,6 +2932,7 @@ function OrganizationsView({
   selectedOrgId,
   onChanged,
   onCreated,
+  onNew,
 }: {
   token: string;
   homeId: string;
@@ -2941,6 +2943,8 @@ function OrganizationsView({
   selectedOrgId: string | null;
   onChanged: () => void;
   onCreated: (id: string) => void;
+  /** Opens the create hero (sets the selector to "__new__" upstream). */
+  onNew: () => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -3064,6 +3068,11 @@ function OrganizationsView({
         >
           Create organization
         </button>
+        {orgs.length > 0 && (
+          <button className="ghost" onClick={() => onCreated("")}>
+            ← Back to {orgs[0]?.name ?? "organizations"}
+          </button>
+        )}
       </div>
     );
   }
@@ -3078,11 +3087,18 @@ function OrganizationsView({
 
   return (
     <>
-      <h1>Organization</h1>
-      <p className="subtitle">
-        One tenant per organization (the admin hierarchy governs management, never data);
-        workspaces and members live inside it. Switch organizations in the sidebar header.
-      </p>
+      <div className="topbar">
+        <div>
+          <h1>Organization</h1>
+          <p className="subtitle" style={{ margin: 0 }}>
+            One tenant per organization (the admin hierarchy governs management, never data);
+            workspaces and members live inside it. Switch organizations in the sidebar header.
+          </p>
+        </div>
+        <button className="primary" onClick={onNew}>
+          ＋ New organization
+        </button>
+      </div>
 
       {selected && (
         <div className="card">
