@@ -341,20 +341,15 @@ function NavIcon({ name }: { name: string }) {
 // top-level surface — in the model a Project is a managed object living in
 // a workspace's context, managed from the Workspace Dashboard. Profile
 // moved to the bottom account menu.
+// The MAIN portal is pure work (console pattern): administration —
+// organizations, members, secrets — lives in the separate Admin area,
+// reached from the account menu / product switcher.
 const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; label: string }[] }[] = [
   { title: null, items: [{ id: "home", icon: "home", label: "Home" }] },
   {
-    title: "Control plane",
-    items: [
-      { id: "organizations", icon: "org", label: "Organizations" },
-      { id: "workspaces", icon: "grid", label: "Workspaces" },
-      { id: "members", icon: "users", label: "Members" },
-      { id: "secrets", icon: "key", label: "Secrets" },
-    ],
-  },
-  {
     title: "Work",
     items: [
+      { id: "workspaces", icon: "grid", label: "Workspaces" },
       { id: "chats", icon: "chat", label: "Chats" },
       { id: "files", icon: "file", label: "Files" },
       { id: "connectors", icon: "plug", label: "Connectors" },
@@ -366,10 +361,32 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
   },
 ];
 
+type AdminView = "organizations" | "members" | "workspaces" | "secrets";
+
+const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
+  { id: "organizations", icon: "org", label: "Organization" },
+  { id: "members", icon: "users", label: "Members" },
+  { id: "workspaces", icon: "grid", label: "Workspaces" },
+  { id: "secrets", icon: "key", label: "Secrets" },
+];
+
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
   const [view, setView] = useState<View>("home");
   const [accountMenu, setAccountMenu] = useState(false);
   const [productMenu, setProductMenu] = useState(false);
+  // Admin area (console pattern): a separate mode with its own sidebar for
+  // organizations / members / workspaces administration.
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminView, setAdminView] = useState<AdminView>("organizations");
+  const openAdmin = (v: AdminView = "organizations") => {
+    setAdminOpen(true);
+    setAdminView(v);
+    setActiveSpace(null);
+    setDash(null);
+    setStudio(null);
+    setAccountMenu(false);
+    setProductMenu(false);
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("studio.sidebar") === "collapsed";
@@ -701,37 +718,63 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               >
                 <span className="ico">⧉</span> Docs &amp; API
               </button>
-              <button
-                title="Keycloak administration console (dev IdP)"
-                onClick={() => {
-                  window.open("https://localhost:8443/admin/", "_blank", "noopener");
-                  setProductMenu(false);
-                }}
-              >
-                <span className="ico">🛡</span> Admin (IdP)
+              <button title="Organizations, members, workspaces administration" onClick={() => openAdmin()}>
+                <span className="ico">🛡</span> Admin
               </button>
             </div>
           )}
         </div>
         <nav>
-          {NAV_SECTIONS.map((sec) => (
-            <div key={sec.title ?? "_top"} className="nav-section">
-              {sec.title && <div className="nav-section-title">{sec.title}</div>}
-              {sec.items.map((n) => (
-                <button
-                  key={n.id}
-                  className={view === n.id && !activeSpace ? "active" : ""}
-                  title={n.label}
-                  onClick={() => {
-                    setView(n.id);
-                    setActiveSpace(null); // portal navigation leaves the space
-                  }}
-                >
-                  <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+          {adminOpen ? (
+            <>
+              <div className="nav-section">
+                <button title="Back to Studio" onClick={() => setAdminOpen(false)}>
+                  <span className="ico">←</span> Back to Studio
                 </button>
-              ))}
-            </div>
-          ))}
+              </div>
+              <div className="nav-section">
+                <div className="nav-section-title admin-title">Administration</div>
+                {ADMIN_NAV.map((n) => (
+                  <button
+                    key={n.id}
+                    className={adminView === n.id ? "active" : ""}
+                    title={n.label}
+                    onClick={() => setAdminView(n.id)}
+                  >
+                    <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+                  </button>
+                ))}
+              </div>
+              <div className="nav-section">
+                <div className="nav-section-title admin-title">IdP</div>
+                <button
+                  title="Keycloak administration console"
+                  onClick={() => window.open("https://localhost:8443/admin/", "_blank", "noopener")}
+                >
+                  <span className="ico">🛡</span> IdP console ↗
+                </button>
+              </div>
+            </>
+          ) : (
+            NAV_SECTIONS.map((sec) => (
+              <div key={sec.title ?? "_top"} className="nav-section">
+                {sec.title && <div className="nav-section-title">{sec.title}</div>}
+                {sec.items.map((n) => (
+                  <button
+                    key={n.id}
+                    className={view === n.id && !activeSpace ? "active" : ""}
+                    title={n.label}
+                    onClick={() => {
+                      setView(n.id);
+                      setActiveSpace(null); // portal navigation leaves the space
+                    }}
+                  >
+                    <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
           {spaces.length > 0 && (
             <div className="nav-spaces">
               <div className="nav-spaces-title">Spaces</div>
@@ -739,7 +782,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 <div key={s.wsId} className="space-row">
                   <button
                     className={activeSpace === s.wsId ? "active" : ""}
-                    onClick={() => setActiveSpace(s.wsId)}
+                    onClick={() => {
+                      setActiveSpace(s.wsId);
+                      setAdminOpen(false); // a space is a Studio surface
+                    }}
                     title={`Switch to ${s.wsName}${
                       spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
                     }`}
@@ -783,8 +829,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   </span>
                 )}
               </div>
+              {orgs.length > 0 && (
+                <div className="account-orgs">
+                  <div className="account-orgs-title">Your organizations</div>
+                  {orgs.map((o) => (
+                    <button key={o.id} onClick={() => openAdmin("organizations")}>
+                      <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
+                      {o.name}
+                      {o.self_managed && <span className="badge selfmanaged">🔒</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 onClick={() => {
+                  setAdminOpen(false);
                   setView("profile");
                   setActiveSpace(null);
                   setAccountMenu(false);
@@ -792,15 +851,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               >
                 Profile
               </button>
-              <button
-                onClick={() => {
-                  setView("organizations");
-                  setActiveSpace(null);
-                  setAccountMenu(false);
-                }}
-              >
-                Your organizations ({orgs.length})
-              </button>
+              <button onClick={() => openAdmin()}>Admin settings</button>
               <button onClick={onLogout}>Sign out</button>
             </div>
           )}
@@ -888,7 +939,42 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
       <div className="content" style={activeSpace ? { display: "none" } : undefined}>
         {error && <div className="error">{error}</div>}
-        {dash ? (
+        {adminOpen ? (
+          <>
+            {adminView === "organizations" && (
+              <OrganizationsView
+                token={token}
+                homeId={me.subject_tenant_id}
+                home={home}
+                orgs={orgs}
+                workspaces={workspaces}
+                filters={filters}
+                onChanged={refresh}
+              />
+            )}
+            {adminView === "members" && (
+              <MembersView token={token} home={home} orgs={orgs} workspaces={workspaces} filters={filters} />
+            )}
+            {adminView === "workspaces" && (
+              <WorkspacesView
+                token={token}
+                orgs={orgs}
+                workspaces={workspaces}
+                filters={filters}
+                onChanged={refresh}
+                onOpenStudio={(ws) => {
+                  setAdminOpen(false);
+                  setStudio(ws);
+                }}
+                onOpenDashboard={(ws) => {
+                  setAdminOpen(false);
+                  setDash(ws);
+                }}
+              />
+            )}
+            {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
+          </>
+        ) : dash ? (
           <WorkspaceDashboard
             token={token}
             ws={dash}
