@@ -22,6 +22,24 @@ pub struct ProxyState {
     /// None = key not configured; requests fail with a clear message instead
     /// of failing the whole backend boot.
     pub api_key: Option<String>,
+    /// Model name advertised to IDE clients (they don't pick — the server
+    /// decides which model the proxy serves).
+    pub model: String,
+    /// Theia ai-openai `developerMessageSettings` value for this provider.
+    pub developer_message_settings: String,
+}
+
+/// What an IDE needs to self-configure its OpenAI-compatible client against
+/// this proxy. Deliberately excludes anything secret — the caller brings its
+/// own (user) token; the provider key never leaves the backend.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LlmClientConfigDto {
+    /// Model name to request (proxied upstream model).
+    pub model: String,
+    /// System-prompt role handling for this provider: user | system |
+    /// developer | mergeWithFollowingUserMessage | skip.
+    pub developer_message_settings: String,
 }
 
 impl ProxyState {
@@ -89,6 +107,19 @@ async fn list_models(
     state.forward(reqwest::Method::GET, "/models", None).await
 }
 
+/// GET /studio-llm/v1/client-config — server-decided client settings
+/// (model name, prompt-role handling). Keeps provider choice out of the
+/// IDE image: the Theia portal bridge reads this and configures ai-openai.
+async fn client_config(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(state): Extension<Arc<ProxyState>>,
+) -> ApiResult<JsonBody<LlmClientConfigDto>> {
+    Ok(Json(LlmClientConfigDto {
+        model: state.model.clone(),
+        developer_message_settings: state.developer_message_settings.clone(),
+    }))
+}
+
 /* ── Routes ── */
 
 pub fn register_routes(
@@ -125,6 +156,22 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(list_models)
         .json_response(StatusCode::OK, "Upstream model list, passed through verbatim")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-llm/v1/client-config")
+        .operation_id("studio_llm.client_config")
+        .summary("Client settings for the proxied LLM (model, prompt-role handling)")
+        .description(
+            "Lets IDE sessions self-configure their OpenAI-compatible client \
+             without baking a provider choice into the image. Contains no secrets.",
+        )
+        .tag("StudioLlm")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(client_config)
+        .json_response_with_schema::<LlmClientConfigDto>(openapi, StatusCode::OK, "Client settings")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

@@ -33,6 +33,8 @@ impl Gear for LlmProxyGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: LlmProxyConfig = ctx.config_or_default()?;
         let api_key = cfg.resolve_api_key();
+        let base_url = cfg.resolve_base_url();
+        let model = cfg.resolve_model();
         if api_key.is_none() {
             warn!(
                 env = %cfg.api_key_env,
@@ -41,9 +43,10 @@ impl Gear for LlmProxyGear {
             );
         }
         info!(
-            base_url = %cfg.base_url,
+            base_url = %base_url,
+            model = %model,
             key_present = api_key.is_some(),
-            "studio-llm-proxy: configured"
+            "studio-llm-proxy: configured (override via STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL / STUDIO_LLM_API_KEY)"
         );
 
         // Long timeout: chat completions stream for minutes. connect_timeout
@@ -55,8 +58,10 @@ impl Gear for LlmProxyGear {
 
         let state = Arc::new(ProxyState {
             client,
-            base_url: cfg.base_url.trim_end_matches('/').to_string(),
+            base_url,
             api_key,
+            model,
+            developer_message_settings: cfg.developer_message_settings.clone(),
         });
         self.state
             .set(state)
