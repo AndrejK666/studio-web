@@ -181,13 +181,42 @@ impl SessionService {
         repos: Vec<RepoSpec>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
         {
-            let sessions = self.sessions.read().await;
-            if let Some(existing) = sessions.values().find(|s| {
-                s.workspace_id == workspace_id
-                    && s.tenant_id == tenant_id
-                    && s.state != SessionState::Stopped
-            }) {
-                return Ok((existing.clone(), true));
+            let existing = {
+                let sessions = self.sessions.read().await;
+                sessions
+                    .values()
+                    .find(|s| {
+                        s.workspace_id == workspace_id
+                            && s.tenant_id == tenant_id
+                            && s.state != SessionState::Stopped
+                    })
+                    .cloned()
+            };
+            if let Some(existing) = existing {
+                // Reuse only when the container is actually alive. It may
+                // have been removed out-of-band (docker rm -f, host cleanup)
+                // while the in-memory registry still lists the session —
+                // reusing then hands the portal a dead port.
+                let alive = match self
+                    .docker
+                    .inspect_container(
+                        &existing.container_id,
+                        None::<bollard::container::InspectContainerOptions>,
+                    )
+                    .await
+                {
+                    Ok(info) => info.state.as_ref().and_then(|s| s.running).unwrap_or(false),
+                    Err(_) => false,
+                };
+                if alive {
+                    return Ok((existing, true));
+                }
+                tracing::warn!(
+                    session_id = %existing.id,
+                    container_id = %existing.container_id,
+                    "studio-session: registered session has no live container — discarding it and launching fresh"
+                );
+                self.sessions.write().await.remove(&existing.id);
             }
         }
 
