@@ -5,8 +5,10 @@
 # CI uses the plain ./Dockerfile with a prebuilt binary instead.
 
 FROM rust:1.97-bookworm AS build
+# libprotobuf-dev ships the well-known types (google/protobuf/empty.proto …)
+# that gears-rust SDK protos import; protoc alone fails without them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    protobuf-compiler cmake \
+    protobuf-compiler libprotobuf-dev cmake \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
