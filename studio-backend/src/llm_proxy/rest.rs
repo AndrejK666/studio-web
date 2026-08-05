@@ -52,6 +52,12 @@ impl ProxyState {
         path: &str,
         body: Option<Bytes>,
     ) -> ApiResult<axum::response::Response> {
+        if self.base_url.is_empty() {
+            return Err(CanonicalError::internal(
+                "no LLM upstream configured (set STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL / STUDIO_LLM_API_KEY and restart)",
+            )
+            .create());
+        }
         let Some(key) = self.api_key.as_deref() else {
             return Err(CanonicalError::internal(
                 "LLM upstream key is not configured (set STUDIO_LLM_API_KEY and restart)",
@@ -132,9 +138,9 @@ pub fn register_routes(
         .summary("OpenAI-compatible chat completions (proxied to the configured LLM upstream)")
         .description(
             "Verbatim passthrough of an OpenAI chat-completions request to the \
-             configured upstream (Mistral by default). The upstream API key is \
-             attached server-side; callers authenticate with their Studio token. \
-             `stream: true` responses are piped through as SSE.",
+             configured upstream. The upstream API key is attached server-side; \
+             callers authenticate with their Studio token. `stream: true` \
+             responses are piped through as SSE.",
         )
         .tag("StudioLlm")
         .authenticated()

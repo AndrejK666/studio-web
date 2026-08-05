@@ -188,8 +188,9 @@ Platform: `account-management` (tenants/users/conversions + pluggable IdP —
 see ADR-0001/0004), `resource-group` (groups/memberships; backs Projects,
 ADR-0002), `credstore` (secrets; metadata in PG + value-store plugin),
 `oagw` (egress gateway with SSRF guard) → `mini-chat` (chats + SSE
-streaming; provider configured to Mistral free tier via
-`openai_chat_completions`), `file-storage`, `simple-user-settings`.
+streaming; any OpenAI-compatible provider via `openai_chat_completions` —
+host from `STUDIO_LLM_HOST`, key from `STUDIO_LLM_API_KEY`),
+`file-storage`, `simple-user-settings`.
 
 Ours (in-crate): **`studio_session`** — per-workspace Theia IDE containers
 via bollard: mints a session gate token, injects env (repos, PATs resolved

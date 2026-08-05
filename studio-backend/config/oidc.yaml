@@ -222,13 +222,13 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       secrets:
-        # Shared secret (no tenant_id). Put your real OpenAI key here for the
+        # Shared secret (no tenant_id) with the LLM provider key for the
         # Ask AI feature; without it chats are created but streaming replies
         # fail at the provider with 401.
-        # LLM API key comes from the environment, never from the file:
-        #   export STUDIO_LLM_API_KEY=<Mistral/OpenAI key>  (before cargo run)
+        # The key comes from the environment, never from the file:
+        #   export STUDIO_LLM_API_KEY=<provider key>  (before cargo run)
         - key: "openai-key"
-          value: "${STUDIO_LLM_API_KEY}"
+          value: "${STUDIO_LLM_API_KEY:-}"
 
   mini-chat:
     database:
@@ -239,14 +239,16 @@ gears:
         client_id: "mini-chat"
         client_secret: "mini-chat-dev-secret"
       providers:
-        # Free dev LLM: Mistral "Experiment" plan (console.mistral.ai →
-        # API Keys; free, rate-limited). Standard OpenAI-compatible
-        # /v1/chat/completions, which mini-chat speaks natively. To go back
-        # to OpenAI: kind openai_responses + host api.openai.com.
+        # Any OpenAI-compatible /v1/chat/completions provider. The host comes
+        # from STUDIO_LLM_HOST (hostname only, no scheme/path — OAGW builds
+        # the URL); api.openai.com is just the fallback so boot never fails.
+        # Match the model below (model_catalog: provider_model_id) to what
+        # the chosen provider serves. For OpenAI's Responses API instead:
+        # kind openai_responses.
         openai:
           kind: openai_chat_completions
           storage_kind: openai
-          host: "api.mistral.ai"
+          host: "${STUDIO_LLM_HOST:-api.openai.com}"
           auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
           auth_config:
             header: "Authorization"
@@ -258,9 +260,12 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       model_catalog:
-        - id: "mistral-small"
-          provider_model_id: "mistral-small-latest"
-          display_name: "Mistral Small (free tier)"
+        # NB: this plugin's config does NOT expand ${VAR} (gears feedback
+        # item) — provider_model_id is a literal. Keep it in sync with the
+        # provider configured above / STUDIO_LLM_HOST.
+        - id: "studio-default"
+          provider_model_id: "gpt-4o-mini"
+          display_name: "Studio assistant"
           tier: Standard
           enabled: true
           system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
@@ -274,7 +279,7 @@ gears:
           description: "Default Studio assistant model"
           version: "2025-01"
           icon: ""
-          provider_display_name: "Mistral"
+          provider_display_name: "OpenAI-compatible"
           multiplier_display: "1x"
           provider_id: "openai"
           max_num_results: 10
@@ -334,17 +339,16 @@ gears:
       git_mode: "disabled"
 
   # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
-  # Provider-agnostic: any OpenAI-compatible endpoint (OpenAI, Mistral, Groq,
-  # OpenRouter, self-hosted vLLM, ...). The IDE never learns the provider —
-  # it reads GET /studio-llm/v1/client-config and authenticates with the
-  # user's Studio token; this gear attaches the server-held key upstream.
-  # Env overrides beat these values (switch providers without config edits):
-  #   STUDIO_LLM_BASE_URL, STUDIO_LLM_MODEL, STUDIO_LLM_API_KEY
+  # Provider-agnostic, NO default provider: unconfigured = in-IDE AI off.
+  # The IDE never learns the provider — it reads GET /studio-llm/v1/client-config
+  # and authenticates with the user's Studio token; this gear attaches the
+  # server-held key upstream. Configure via env (beats YAML):
+  #   STUDIO_LLM_BASE_URL  e.g. https://api.openai.com/v1, http://localhost:11434/v1
+  #   STUDIO_LLM_MODEL     e.g. gpt-4o-mini, qwen2.5-coder
+  #   STUDIO_LLM_API_KEY   the provider key (server-side only)
   studio-llm-proxy:
     config:
-      base_url: "https://api.mistral.ai/v1"   # dev default (free tier)
-      model: "mistral-small-latest"
-      developer_message_settings: "system"    # safest for non-OpenAI providers
+      developer_message_settings: "system"    # safest across providers
       api_key_env: "STUDIO_LLM_API_KEY"
 
   # static-authn-plugin is link-time active here too; pinned BELOW the OIDC

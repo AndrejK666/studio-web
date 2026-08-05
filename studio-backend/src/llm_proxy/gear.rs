@@ -35,19 +35,17 @@ impl Gear for LlmProxyGear {
         let api_key = cfg.resolve_api_key();
         let base_url = cfg.resolve_base_url();
         let model = cfg.resolve_model();
-        if api_key.is_none() {
+        if base_url.is_empty() || model.is_empty() || api_key.is_none() {
             warn!(
-                env = %cfg.api_key_env,
-                "studio-llm-proxy: no upstream API key (env unset and no literal in config) — \
-                 /studio-llm requests will fail until it is provided"
+                base_url_set = !base_url.is_empty(),
+                model_set = !model.is_empty(),
+                key_set = api_key.is_some(),
+                "studio-llm-proxy: upstream not (fully) configured — in-IDE AI stays off. \
+                 Set STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL / STUDIO_LLM_API_KEY (or the YAML equivalents)"
             );
+        } else {
+            info!(base_url = %base_url, model = %model, "studio-llm-proxy: configured");
         }
-        info!(
-            base_url = %base_url,
-            model = %model,
-            key_present = api_key.is_some(),
-            "studio-llm-proxy: configured (override via STUDIO_LLM_BASE_URL / STUDIO_LLM_MODEL / STUDIO_LLM_API_KEY)"
-        );
 
         // Long timeout: chat completions stream for minutes. connect_timeout
         // still keeps dead upstreams from hanging the handler.
