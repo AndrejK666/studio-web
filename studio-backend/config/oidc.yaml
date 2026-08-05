@@ -333,6 +333,15 @@ gears:
       max_session_secs: 14400     # 4h, then the reaper stops the container
       git_mode: "disabled"
 
+  # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
+  # Theia's ai-openai provider points at {gateway}/cf/studio-llm/v1 with the
+  # user's Studio token as apiKey; this gear forwards to the real upstream
+  # with the server-held key (same STUDIO_LLM_API_KEY as the mini-chat seed).
+  studio-llm-proxy:
+    config:
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: "STUDIO_LLM_API_KEY"
+
   # static-authn-plugin is link-time active here too; pinned BELOW the OIDC
   # plugin so it never wins the vendor selection in this profile.
   static-authn-plugin:
