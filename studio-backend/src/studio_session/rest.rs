@@ -240,7 +240,7 @@ async fn create_session(
     } else {
         StatusCode::CREATED
     };
-    Ok((status, Json(to_dto(&svc, session))))
+    Ok((status, Json(to_dto(svc, session))))
 }
 
 async fn list_sessions(
@@ -255,7 +255,7 @@ async fn list_sessions(
         .list(ctx.subject_tenant_id())
         .await
         .into_iter()
-        .map(|s| to_dto(&svc, s))
+        .map(|s| to_dto(svc, s))
         .collect();
     Ok(Json(SessionListDto { items }))
 }
@@ -271,7 +271,7 @@ async fn get_session(
             .with_resource(id.to_string())
             .create()
     })?;
-    Ok(Json(to_dto(&svc, session)))
+    Ok(Json(to_dto(svc, session)))
 }
 
 async fn delete_session(

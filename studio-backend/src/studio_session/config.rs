@@ -86,10 +86,10 @@ impl StudioSessionConfig {
     /// Expand a leading `~` against $HOME (same convention the toolkit uses
     /// for `server.home_dir`).
     pub fn workspaces_root_expanded(&self) -> String {
-        if let Some(rest) = self.workspaces_root.strip_prefix("~/") {
-            if let Ok(home) = std::env::var("HOME") {
-                return format!("{home}/{rest}");
-            }
+        if let Some(rest) = self.workspaces_root.strip_prefix("~/")
+            && let Ok(home) = std::env::var("HOME")
+        {
+            return format!("{home}/{rest}");
         }
         self.workspaces_root.clone()
     }
