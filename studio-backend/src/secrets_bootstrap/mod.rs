@@ -16,9 +16,7 @@
 //! fails because of a seed: problems are warnings, consumers keep retrying.
 
 use async_trait::async_trait;
-use credstore_sdk::{
-    CredStoreClientV1, SecretRef, SecretValue, SharingMode, WritePrecondition,
-};
+use credstore_sdk::{CredStoreClientV1, SecretRef, SecretValue, SharingMode, WritePrecondition};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use toolkit::{Gear, GearCtx};
@@ -56,7 +54,10 @@ const BOOTSTRAP_ACTOR: Uuid = Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_00
 
 #[toolkit::gear(name = "studio-secrets-bootstrap", deps = [credstore], capabilities = [stateful])]
 pub struct SecretsBootstrapGear {
-    state: std::sync::OnceLock<(SecretsBootstrapConfig, std::sync::Arc<dyn CredStoreClientV1>)>,
+    state: std::sync::OnceLock<(
+        SecretsBootstrapConfig,
+        std::sync::Arc<dyn CredStoreClientV1>,
+    )>,
 }
 
 impl Default for SecretsBootstrapGear {
@@ -72,7 +73,10 @@ impl Gear for SecretsBootstrapGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: SecretsBootstrapConfig = ctx.config_or_default()?;
         let client = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
-        info!(seeds = cfg.secrets.len(), "studio-secrets-bootstrap: initialized");
+        info!(
+            seeds = cfg.secrets.len(),
+            "studio-secrets-bootstrap: initialized"
+        );
         self.state
             .set((cfg, client))
             .map_err(|_| anyhow::anyhow!("studio-secrets-bootstrap already initialized"))?;
@@ -135,7 +139,10 @@ async fn heal_seed(client: &dyn CredStoreClientV1, ctx: &SecurityContext, seed: 
     let key = match SecretRef::new(reference) {
         Ok(k) => k,
         Err(e) => {
-            warn!(reference, "studio-secrets-bootstrap: invalid secret ref: {e}");
+            warn!(
+                reference,
+                "studio-secrets-bootstrap: invalid secret ref: {e}"
+            );
             return;
         }
     };
@@ -144,14 +151,23 @@ async fn heal_seed(client: &dyn CredStoreClientV1, ctx: &SecurityContext, seed: 
     // from config every boot, so an accessible secret is also current).
     match client.get(ctx, &key).await {
         Ok(Some(_)) => {
-            info!(reference, "studio-secrets-bootstrap: secret accessible — no heal needed");
+            info!(
+                reference,
+                "studio-secrets-bootstrap: secret accessible — no heal needed"
+            );
             return;
         }
         Ok(None) => {
-            info!(reference, "studio-secrets-bootstrap: secret missing or fence-poisoned — healing");
+            info!(
+                reference,
+                "studio-secrets-bootstrap: secret missing or fence-poisoned — healing"
+            );
         }
         Err(e) => {
-            warn!(reference, "studio-secrets-bootstrap: get failed ({e}) — attempting heal anyway");
+            warn!(
+                reference,
+                "studio-secrets-bootstrap: get failed ({e}) — attempting heal anyway"
+            );
         }
     }
 
@@ -168,7 +184,10 @@ async fn heal_seed(client: &dyn CredStoreClientV1, ctx: &SecurityContext, seed: 
         .await
     {
         Ok(()) => {
-            info!(reference, "studio-secrets-bootstrap: healed (put If-Match:*)");
+            info!(
+                reference,
+                "studio-secrets-bootstrap: healed (put If-Match:*)"
+            );
             return;
         }
         Err(e) if e.is_not_found() || e.is_already_exists() => {

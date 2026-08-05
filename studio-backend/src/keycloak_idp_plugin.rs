@@ -35,9 +35,9 @@ use uuid::Uuid;
 
 use account_management_sdk::{
     IdpDeprovisionFailure, IdpDeprovisionTenantRequest, IdpDeprovisionUserRequest,
-    IdpListUsersRequest, IdpPluginClient, IdpPluginSpecV1, IdpProvisionFailure,
-    IdpProvisionResult, IdpProvisionTenantRequest, IdpProvisionUserRequest, IdpUser,
-    IdpUserDuplicateField, IdpUserFilterField, IdpUserOperationFailure,
+    IdpListUsersRequest, IdpPluginClient, IdpPluginSpecV1, IdpProvisionFailure, IdpProvisionResult,
+    IdpProvisionTenantRequest, IdpProvisionUserRequest, IdpUser, IdpUserDuplicateField,
+    IdpUserFilterField, IdpUserOperationFailure,
 };
 
 /* ── Config ── */
@@ -268,8 +268,8 @@ impl KeycloakAdmin {
 }
 
 /* ── OData snapshot helpers ─────────────────────────────────────────────
-   Copied from gears-rust static-idp-plugin (domain/client.rs) — identical
-   SPI semantics; the snapshot source differs. Keep in sync on SDK bumps. */
+Copied from gears-rust static-idp-plugin (domain/client.rs) — identical
+SPI semantics; the snapshot source differs. Keep in sync on SDK bumps. */
 
 fn matches_filter(user: &IdpUser, filter: &FilterNode<IdpUserFilterField>) -> bool {
     match filter {
@@ -453,14 +453,15 @@ impl IdpPluginClient for KeycloakAdmin {
             .ensure_tiebreaker("id", SortDir::Asc);
         snapshot.sort_by(|a, b| compare_by_order(a, b, &effective_order));
 
-        let cursor: Option<CursorV1> = match req.pagination.cursor() {
-            None => None,
-            Some(raw) => Some(CursorV1::decode(raw).map_err(|err| {
-                IdpUserOperationFailure::Rejected {
-                    detail: format!("keycloak-idp-plugin: invalid cursor: {err}"),
-                }
-            })?),
-        };
+        let cursor: Option<CursorV1> =
+            match req.pagination.cursor() {
+                None => None,
+                Some(raw) => Some(CursorV1::decode(raw).map_err(|err| {
+                    IdpUserOperationFailure::Rejected {
+                        detail: format!("keycloak-idp-plugin: invalid cursor: {err}"),
+                    }
+                })?),
+            };
         if let Some(c) = cursor.as_ref()
             && let Err(err) = toolkit_odata::validate_cursor_against(c, &effective_order, None)
         {
@@ -580,7 +581,10 @@ impl Gear for KeycloakIdpPlugin {
             "keycloak-idp-plugin: configured"
         );
 
-        let service = Arc::new(KeycloakAdmin { http, cfg: cfg.clone() });
+        let service = Arc::new(KeycloakAdmin {
+            http,
+            cfg: cfg.clone(),
+        });
 
         let (instance_id, instance_json) = PluginV1::<IdpPluginSpecV1>::build_registration(
             "cf.studio._.keycloak_idp.v1",

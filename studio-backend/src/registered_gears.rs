@@ -19,8 +19,8 @@ use tenant_resolver as _;
 use types_registry as _;
 
 // Dev auth plugins (static tokens; swap for OIDC plugins in production)
-use static_authn_plugin as _;
 use oidc_authn_plugin as _; // real login (config/oidc.yaml profile)
+use static_authn_plugin as _;
 use static_authz_plugin as _;
 
 // Account Management + its static IdP echo plugin.

@@ -4,14 +4,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
 use bollard::Docker;
-use credstore_sdk::{CredStoreClientV1, SecretRef};
-use toolkit_security::SecurityContext;
 use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, ListContainersOptions,
     RemoveContainerOptions, StopContainerOptions,
 };
 use bollard::service::{HostConfig, PortBinding};
+use credstore_sdk::{CredStoreClientV1, SecretRef};
 use tokio::sync::RwLock;
+use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::config::StudioSessionConfig;
@@ -142,14 +142,17 @@ impl SessionService {
 
     /// Fail early with a clear message if the Theia image is missing.
     pub async fn ensure_image(&self) -> anyhow::Result<()> {
-        self.docker.inspect_image(&self.cfg.image).await.map_err(|_| {
-            anyhow!(
-                "Theia image '{}' not found — build it first: \
+        self.docker
+            .inspect_image(&self.cfg.image)
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "Theia image '{}' not found — build it first: \
                  cd fabric-poc/poc/theia && docker build -t {} .",
-                self.cfg.image,
-                self.cfg.image
-            )
-        })?;
+                    self.cfg.image,
+                    self.cfg.image
+                )
+            })?;
         Ok(())
     }
 
@@ -226,7 +229,10 @@ impl SessionService {
         let mut seen = std::collections::HashSet::new();
         for r in &repos {
             if r.name.is_empty()
-                || !r.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+                || !r
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
             {
                 return Err(anyhow!("source name '{}' must match [a-z0-9_-]+", r.name));
             }
@@ -270,7 +276,11 @@ impl SessionService {
 
         // Workspace root: an existing Studio workspace folder (CLI-created,
         // bring-your-own) or the managed per-workspace directory.
-        let ws_dir = match root_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        let ws_dir = match root_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
             Some(p) => {
                 if !std::path::Path::new(p).is_dir() {
                     return Err(anyhow!(
@@ -330,7 +340,12 @@ impl SessionService {
                 "STUDIO_ROOT_URL={}",
                 root.url.as_deref().unwrap_or("").trim()
             ));
-            if let Some(b) = root.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+            if let Some(b) = root
+                .branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|b| !b.is_empty())
+            {
                 env.push(format!("STUDIO_ROOT_BRANCH={b}"));
             }
             if let Some(t) = &root.token {
@@ -442,9 +457,7 @@ impl SessionService {
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
-                .chain(repos
-                .iter()
-                .map(|r| {
+                .chain(repos.iter().map(|r| {
                     format!(
                         "{} ({})",
                         r.name,
@@ -598,10 +611,7 @@ impl SessionService {
             .docker
             .list_containers(Some(ListContainersOptions {
                 all: true,
-                filters: HashMap::from([(
-                    "label".to_string(),
-                    vec![format!("{SESSION_LABEL}=1")],
-                )]),
+                filters: HashMap::from([("label".to_string(), vec![format!("{SESSION_LABEL}=1")])]),
                 ..Default::default()
             }))
             .await
@@ -613,7 +623,9 @@ impl SessionService {
             let labels = c.labels.unwrap_or_default();
             let (Some(ws), Some(tenant), Some(port)) = (
                 labels.get(WS_LABEL).and_then(|v| v.parse::<Uuid>().ok()),
-                labels.get(TENANT_LABEL).and_then(|v| v.parse::<Uuid>().ok()),
+                labels
+                    .get(TENANT_LABEL)
+                    .and_then(|v| v.parse::<Uuid>().ok()),
                 labels.get(PORT_LABEL).and_then(|v| v.parse::<u16>().ok()),
             ) else {
                 continue;

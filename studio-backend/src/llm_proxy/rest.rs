@@ -84,7 +84,9 @@ impl ProxyState {
         }
         builder
             .body(Body::from_stream(upstream.bytes_stream()))
-            .map_err(|e| CanonicalError::internal(format!("proxy response build failed: {e}")).create())
+            .map_err(|e| {
+                CanonicalError::internal(format!("proxy response build failed: {e}")).create()
+            })
     }
 }
 
@@ -161,7 +163,10 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .handler(list_models)
-        .json_response(StatusCode::OK, "Upstream model list, passed through verbatim")
+        .json_response(
+            StatusCode::OK,
+            "Upstream model list, passed through verbatim",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

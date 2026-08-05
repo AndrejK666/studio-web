@@ -235,7 +235,11 @@ async fn create_session(
         )
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
-    let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
+    let status = if existed {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
     Ok((status, Json(to_dto(&svc, session))))
 }
 

@@ -53,16 +53,23 @@ impl Gear for StudioSessionGear {
         let service = match SessionService::new(cfg) {
             Ok(s) => s,
             Err(e) => {
-                warn!("studio-session: Docker unavailable ({e:#}) — sessions disabled for this run");
+                warn!(
+                    "studio-session: Docker unavailable ({e:#}) — sessions disabled for this run"
+                );
                 return Ok(());
             }
         };
 
         // credstore client: resolves repo PATs for private clones (optional —
         // sessions without tokens work regardless).
-        match ctx.client_hub().get::<dyn credstore_sdk::CredStoreClientV1>() {
+        match ctx
+            .client_hub()
+            .get::<dyn credstore_sdk::CredStoreClientV1>()
+        {
             Ok(client) => service.set_credstore(client).await,
-            Err(e) => warn!("studio-session: credstore client unavailable ({e}); private repo tokens disabled"),
+            Err(e) => warn!(
+                "studio-session: credstore client unavailable ({e}); private repo tokens disabled"
+            ),
         }
 
         // Re-attach sessions that survived a backend restart.
