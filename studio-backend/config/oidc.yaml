@@ -341,6 +341,18 @@ gears:
       max_session_secs: 14400     # 4h, then the reaper stops the container
       git_mode: "disabled"
 
+  # ── Self-heal for config-seeded credstore secrets ──
+  # The dev value-store is in-memory: after every backend restart the PG
+  # metadata for seeded refs is fence-poisoned and GET fails closed (mini-chat
+  # then spins on 'skipping OAGW provisioning'). This gear re-PUTs each seed
+  # (If-Match:* / create) at start, so no manual curl is ever needed.
+  studio-secrets-bootstrap:
+    config:
+      secrets:
+        - ref: "openai-key"
+          value_env: "STUDIO_LLM_API_KEY"
+          sharing: "shared"
+
   # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
   # Provider-agnostic gear; this PROFILE defaults to Groq's free tier
   # (console.groq.com → API Keys; free, no card, rate-limited). Env beats
