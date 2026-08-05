@@ -319,7 +319,9 @@ impl SessionService {
             // Gateway URL as seen FROM the container — the session gate
             // proxies /studio-api/* here so the IDE frontend can call the
             // gears same-origin (no CORS, no token storage server-side).
-            "STUDIO_GATEWAY_URL=http://host.docker.internal:8090".to_string(),
+            // The /cf path is the api-gateway prefix_path: the gate prepends
+            // it when forwarding, so in-IDE clients use gateway-rooted paths.
+            "STUDIO_GATEWAY_URL=http://host.docker.internal:8090/cf".to_string(),
         ];
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).
@@ -388,6 +390,19 @@ impl SessionService {
             )])),
             ..Default::default()
         };
+
+        // A dead container may still hold the deterministic name (entrypoint
+        // crash leaves it Exited; a stale one survives backend restarts).
+        // We only reach this point when no LIVE session exists for the
+        // workspace (the reuse path above checks liveness), so removing the
+        // name-holder is always safe.
+        if let Err(e) = self.remove_container(&name).await {
+            tracing::debug!("studio-session: no stale container '{name}' to clear ({e:#})");
+        } else {
+            tracing::warn!(
+                "studio-session: removed stale container '{name}' left over from a failed/killed session"
+            );
+        }
 
         let created = self
             .docker
