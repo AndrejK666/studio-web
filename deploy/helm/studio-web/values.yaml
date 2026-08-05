@@ -8,11 +8,12 @@ global:
 
 backend:
   image:
-    repository: ghcr.io/constructorfabric/studio-web-backend
+    # Matches release.yml: ghcr.io/<github repo>/studio-backend
+    repository: ghcr.io/constructorfabric/studio-web/studio-backend
     tag: ""                # REQUIRED: fixed at chart publication (no latest)
   replicas: 1
   port: 8090
-  configProfile: "docker"
+  configProfile: "k8s"
   # Postgres is operator-managed; connection comes ONLY from this Secret
   # (keys: host, port, user, password, dbname).
   database:
@@ -21,6 +22,20 @@ backend:
   # (keys: issuer_url, client_id, client_secret).
   auth:
     existingSecret: "studio-web-idp"
+  # Application secrets (keys: llm_api_key [required], fs_signing_seed
+  # [required], s2s_client_secret [optional], idp_admin_secret [optional]).
+  appSecrets:
+    existingSecret: "studio-web-app"
+  # LLM egress endpoint (non-secret half; the key lives in appSecrets).
+  # Any OpenAI-compatible provider; defaults = Groq free tier.
+  llm:
+    baseUrl: "https://api.groq.com/openai/v1"  # Theia AI proxy upstream
+    host: "api.groq.com"                       # mini-chat/OAGW upstream host
+    model: "llama-3.3-70b-versatile"
+  # Keycloak Admin API base URL for user invites (keycloak-idp-plugin).
+  # Empty = invites disabled (plugin self-deprioritizes).
+  idpAdmin:
+    baseUrl: ""
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
@@ -32,10 +47,12 @@ backend:
 
 frontend:
   image:
-    repository: ghcr.io/constructorfabric/studio-web-frontend
+    repository: ghcr.io/constructorfabric/studio-web/studio-frontend
     tag: ""                # REQUIRED: fixed at chart publication
   replicas: 1
-  port: 8080
+  port: 8080               # nginx-unprivileged listens on 8080 (non-root)
+  # Optional Discord invite shown on the Home hub (runtime env.js).
+  discordUrl: ""
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
@@ -54,7 +71,8 @@ serviceAccount:
   create: true
   name: ""
 
+# Non-root is enforced; the concrete uid comes from each image (backend:
+# the `studio` system user, frontend: nginx-unprivileged uid 101) — pinning
+# one pod-wide uid would break whichever image doesn't own its files.
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000

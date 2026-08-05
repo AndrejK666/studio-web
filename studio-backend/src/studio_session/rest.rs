@@ -15,6 +15,25 @@ use super::service::{RepoKind, RepoSpec, Session, SessionService};
 #[resource_error(gts_id!("cf.studio.session.session.v1~"))]
 pub struct StudioSessionError;
 
+/// Session driver handle for the REST layer. `None` = sessions disabled
+/// (config flag, or no Docker daemon on the host): the endpoints stay
+/// mounted and answer 503 so clients get a clear reason instead of 404s.
+#[derive(Clone)]
+pub struct Sessions(pub Option<Arc<SessionService>>);
+
+impl Sessions {
+    fn get(&self) -> ApiResult<&Arc<SessionService>> {
+        self.0.as_ref().ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "IDE sessions are not available in this deployment \
+                     (session driver disabled — see studio-session.enabled)",
+                )
+                .create()
+        })
+    }
+}
+
 struct License;
 impl AsRef<str> for License {
     fn as_ref(&self) -> &'static str {
@@ -120,9 +139,10 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
 
 async fn create_session(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(svc): Extension<Arc<SessionService>>,
+    Extension(sessions): Extension<Sessions>,
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<impl IntoResponse> {
+    let svc = sessions.get()?;
     // Map DTOs to specs, resolving per-repo PATs from credstore under the
     // caller's tenant.
     let mut repos = Vec::with_capacity(req.repos.len());
@@ -221,8 +241,12 @@ async fn create_session(
 
 async fn list_sessions(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(svc): Extension<Arc<SessionService>>,
+    Extension(sessions): Extension<Sessions>,
 ) -> ApiResult<JsonBody<SessionListDto>> {
+    // List degrades gracefully: no driver = no sessions (portal keeps working).
+    let Some(svc) = sessions.0.as_ref() else {
+        return Ok(Json(SessionListDto { items: Vec::new() }));
+    };
     let items = svc
         .list(ctx.subject_tenant_id())
         .await
@@ -234,9 +258,10 @@ async fn list_sessions(
 
 async fn get_session(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(svc): Extension<Arc<SessionService>>,
+    Extension(sessions): Extension<Sessions>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<JsonBody<SessionDto>> {
+    let svc = sessions.get()?;
     let session = svc.get(ctx.subject_tenant_id(), id).await.ok_or_else(|| {
         StudioSessionError::not_found("Session not found")
             .with_resource(id.to_string())
@@ -247,9 +272,10 @@ async fn get_session(
 
 async fn delete_session(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(svc): Extension<Arc<SessionService>>,
+    Extension(sessions): Extension<Sessions>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
+    let svc = sessions.get()?;
     let removed = svc
         .stop(ctx.subject_tenant_id(), id)
         .await
@@ -267,7 +293,7 @@ async fn delete_session(
 pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
-    service: Arc<SessionService>,
+    service: Option<Arc<SessionService>>,
 ) -> Router {
     router = OperationBuilder::post("/studio-session/v1/sessions")
         .operation_id("studio_session.create_session")
@@ -327,5 +353,5 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(service))
+    router.layer(Extension(Sessions(service)))
 }

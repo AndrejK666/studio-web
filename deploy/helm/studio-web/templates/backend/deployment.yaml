@@ -34,12 +34,39 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: user } }
             - name: STUDIO_PG_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: password } }
+            - name: STUDIO_PG_DBNAME
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.database.existingSecret }}, key: dbname } }
             - name: STUDIO_OIDC_ISSUER
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
             - name: STUDIO_OIDC_CLIENT_ID
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: client_id } }
             - name: STUDIO_OIDC_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: client_secret } }
+            # S2S client credentials (mini-chat -> IdP); optional — dev realm
+            # default applies when the key is absent.
+            - name: STUDIO_OIDC_S2S_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: s2s_client_secret, optional: true } }
+            # LLM egress (Theia AI proxy + mini-chat). Key is secret; provider
+            # endpoint/model are plain values (see backend.llm).
+            - name: STUDIO_LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: llm_api_key } }
+            - name: STUDIO_LLM_BASE_URL
+              value: {{ .Values.backend.llm.baseUrl | quote }}
+            - name: STUDIO_LLM_MODEL
+              value: {{ .Values.backend.llm.model | quote }}
+            - name: STUDIO_LLM_HOST
+              value: {{ .Values.backend.llm.host | quote }}
+            # file-storage URL-signing seed — per environment, never baked in.
+            - name: STUDIO_FS_SIGNING_SEED
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
+            # Keycloak Admin API for invites (keycloak-idp-plugin). Optional:
+            # without the secret the plugin self-deprioritizes (invites off).
+            {{- if .Values.backend.idpAdmin.baseUrl }}
+            - name: STUDIO_IDP_ADMIN_BASE_URL
+              value: {{ .Values.backend.idpAdmin.baseUrl | quote }}
+            - name: STUDIO_IDP_ADMIN_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: idp_admin_secret, optional: true } }
+            {{- end }}
           readinessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 15, periodSeconds: 20 }
           resources: {{- toYaml .Values.backend.resources | nindent 12 }}

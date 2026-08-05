@@ -3,6 +3,12 @@ use serde::Deserialize;
 /// Configuration for the studio-session gear.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StudioSessionConfig {
+    /// Master switch. `false` (k8s deployments until the Pod driver lands,
+    /// hosts without Docker): the gear boots, REST stays mounted, every
+    /// session operation answers 503 with a clear message instead of the
+    /// whole backend failing on a missing /var/run/docker.sock.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// Docker image for a Theia session (built from fabric-poc/poc/theia).
     #[serde(default = "default_image")]
     pub image: String,
@@ -35,6 +41,7 @@ pub struct StudioSessionConfig {
 impl Default for StudioSessionConfig {
     fn default() -> Self {
         Self {
+            enabled: default_enabled(),
             image: default_image(),
             workspaces_root: default_workspaces_root(),
             bind_host: default_bind_host(),
@@ -47,6 +54,9 @@ impl Default for StudioSessionConfig {
     }
 }
 
+fn default_enabled() -> bool {
+    true
+}
 fn default_image() -> String {
     "cf-studio-theia:latest".into()
 }

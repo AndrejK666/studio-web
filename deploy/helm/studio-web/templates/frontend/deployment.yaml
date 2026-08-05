@@ -20,6 +20,17 @@ spec:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ required "frontend.image.tag is required (immutable, fixed at chart publication)" .Values.frontend.image.tag }}"
           ports: [{ name: http, containerPort: {{ .Values.frontend.port }} }]
+          # Runtime env.js (window.__STUDIO_ENV__) — one image per release,
+          # per-environment values injected at container start.
+          env:
+            - name: STUDIO_OIDC_ISSUER
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
+            - name: STUDIO_OIDC_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: client_id } }
+            {{- if .Values.frontend.discordUrl }}
+            - name: STUDIO_DISCORD_URL
+              value: {{ .Values.frontend.discordUrl | quote }}
+            {{- end }}
           readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 3, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
           resources: {{- toYaml .Values.frontend.resources | nindent 12 }}

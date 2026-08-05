@@ -7,6 +7,10 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Runtime environment (cluster): regenerated at container start from
+         STUDIO_* env vars (docker/10-runtime-env.sh). In dev this serves the
+         empty placeholder from public/env.js. Must load before the bundle. -->
+    <script src="/env.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

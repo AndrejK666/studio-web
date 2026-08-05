@@ -1,0 +1,42 @@
+# Example environment values for the dmz-core-vhi-eu3 cluster.
+# The REAL file belongs in constructorfabric/studio-web-ci (Pattern B):
+# this copy documents the contract for DevOps.
+#
+# Secrets to pre-create in the namespace (the chart never creates them):
+#
+#   studio-postgres-app   host, port, user, password, dbname
+#       (operator-managed PG; the app user needs CREATEDB while
+#        database.auto_provision creates the per-gear databases)
+#   studio-web-idp        issuer_url, client_id, client_secret
+#       (OIDC realm the portal + backend validate against)
+#   studio-web-app        llm_api_key           [required]
+#                         fs_signing_seed       [required, e.g. `openssl rand -base64 32 | tr '+/' '-_'`]
+#                         s2s_client_secret     [optional: mini-chat confidential client]
+#                         idp_admin_secret      [optional: Keycloak admin client for invites]
+
+global:
+  hostname: "studio.dmz.cnstr.me"   # proposal — the `something` part is ours to pick
+  environmentName: "dmz"
+  environmentType: "prod"
+
+backend:
+  image:
+    tag: "v0.1.0"                   # immutable release tag (ghcr)
+  llm:
+    baseUrl: "https://api.groq.com/openai/v1"
+    host: "api.groq.com"
+    model: "llama-3.3-70b-versatile"
+  # idpAdmin:
+  #   baseUrl: "https://<keycloak-host>"   # enables portal user invites
+
+frontend:
+  image:
+    tag: "v0.1.0"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  # Private by default (INFRA-3725); TLS per cluster convention:
+  # tls:
+  #   - hosts: ["studio.dmz.cnstr.me"]
+  #     secretName: studio-dmz-tls

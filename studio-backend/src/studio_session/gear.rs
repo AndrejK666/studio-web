@@ -39,12 +39,24 @@ impl Default for StudioSessionGear {
 impl Gear for StudioSessionGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: StudioSessionConfig = ctx.config_or_default()?;
+        if !cfg.enabled {
+            info!("studio-session: disabled by config — session APIs will answer 503");
+            return Ok(()); // service stays unset; REST mounts the disabled stub
+        }
         info!(
             image = %cfg.image,
             ports = format!("{}-{}", cfg.port_range_start, cfg.port_range_end),
             "studio-session: initializing"
         );
-        let service = SessionService::new(cfg)?;
+        // No Docker daemon (k8s node, CI) must not fail the whole backend:
+        // boot with sessions unavailable instead.
+        let service = match SessionService::new(cfg) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("studio-session: Docker unavailable ({e:#}) — sessions disabled for this run");
+                return Ok(());
+            }
+        };
 
         // credstore client: resolves repo PATs for private clones (optional —
         // sessions without tokens work regardless).
@@ -75,11 +87,9 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
-        let service = self
-            .service
-            .get()
-            .ok_or_else(|| anyhow::anyhow!("studio-session service not initialized"))?
-            .clone();
+        // None = sessions disabled (config flag or no Docker): the routes
+        // still mount and answer 503 with a clear message.
+        let service = self.service.get().cloned();
         Ok(rest::register_routes(router, openapi, service))
     }
 }
@@ -93,11 +103,9 @@ impl toolkit::contracts::RunnableCapability for StudioSessionGear {
     /// tied to the runtime's cancellation token (same pattern as credstore's
     /// reaper tick).
     async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
-        let service = self
-            .service
-            .get()
-            .ok_or_else(|| anyhow::anyhow!("studio-session service not initialized"))?
-            .clone();
+        let Some(service) = self.service.get().cloned() else {
+            return Ok(()); // sessions disabled — nothing to reap
+        };
         tokio::spawn(async move {
             info!("studio-session: reaper started (tick 60s)");
             loop {

@@ -10,9 +10,15 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY studio-web/studio-frontend/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY studio-web/studio-frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist/ /usr/share/nginx/html/
-EXPOSE 80
+COPY studio-web/studio-frontend/docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
+USER root
+RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh \
+ && touch /usr/share/nginx/html/env.js \
+ && chown 101:101 /usr/share/nginx/html/env.js
+USER 101
+EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
-  CMD wget -q --spider http://127.0.0.1/ || exit 1
+  CMD wget -q --spider http://127.0.0.1:8080/ || exit 1

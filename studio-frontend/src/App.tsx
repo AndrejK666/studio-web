@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { env as runtimeEnv } from "./env";
 import {
   api,
   ApiError,
@@ -2589,10 +2590,11 @@ function HomeView({
           </p>
         </div>
         <div className="hero-links">
-          {/* Discord invite comes from env so each deployment points at its
-              own server; without it the link hides itself. */}
-          {import.meta.env.VITE_DISCORD_URL && (
-            <a href={import.meta.env.VITE_DISCORD_URL as string} target="_blank" rel="noopener noreferrer">
+          {/* Discord invite comes from env (runtime env.js in clusters,
+              VITE_ var in dev) so each deployment points at its own server;
+              without it the link hides itself. */}
+          {runtimeEnv.discordUrl && (
+            <a href={runtimeEnv.discordUrl} target="_blank" rel="noopener noreferrer">
               🎮 Discord
             </a>
           )}

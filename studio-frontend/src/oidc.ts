@@ -10,11 +10,10 @@
 // the refresh token is kept in sessionStorage and used to renew silently —
 // both on a timer and after a 401. That also survives a page reload.
 
-const ISSUER: string =
-  (import.meta.env.VITE_OIDC_ISSUER as string | undefined) ??
-  "https://localhost:8443/realms/studio";
-const CLIENT_ID: string =
-  (import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined) ?? "studio-portal";
+import { env } from "./env";
+
+const ISSUER: string = env.oidcIssuer ?? "https://localhost:8443/realms/studio";
+const CLIENT_ID: string = env.oidcClientId ?? "studio-portal";
 
 const VERIFIER_KEY = "studio.oidc.verifier";
 const REFRESH_KEY = "studio.oidc.refresh";
