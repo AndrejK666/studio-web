@@ -566,11 +566,29 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     }
   };
 
+  /* studio.init retry: the iframe's first load events are the session gate's
+     redirect/splash pages — Theia's bridge isn't listening yet, so a single
+     onLoad handshake is lost and the IDE never gets the theme/token. Repeat
+     until the bridge answers with studio.status (its ack to studio.init). */
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+  const initTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const stopInitRetry = (wsId: string) => {
+    const t = initTimersRef.current[wsId];
+    if (t !== undefined) {
+      clearInterval(t);
+      delete initTimersRef.current[wsId];
+    }
+  };
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const sp = spaces.find((s) => spaceOrigin(s.url) === e.origin);
       if (!sp) return; // only embedded sessions are trusted senders
       const d = e.data as { type?: string; dirty?: number };
+      if (typeof d?.type === "string" && d.type.startsWith("studio.")) {
+        stopInitRetry(sp.wsId); // the bridge is alive — handshake done
+      }
       if (d?.type === "studio.status" && typeof d.dirty === "number") {
         const dirty = d.dirty; // narrow before the closure
         setSpaceDirty((prev) =>
@@ -986,11 +1004,29 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               onLoad={(e) => {
                 // Handshake: theme + the caller's API token (the IDE calls the
                 // gears same-origin through the session gate's /studio-api/*).
-                const theme = document.documentElement.dataset.theme ?? "light";
-                e.currentTarget.contentWindow?.postMessage(
-                  { type: "studio.init", theme, apiToken: token },
-                  spaceOrigin(s.url),
-                );
+                // Retried every 2s until the bridge acks (studio.status): the
+                // first load events are the gate's redirect/splash, where
+                // nobody is listening yet. Splash reloads re-fire onLoad —
+                // reset the timer each time.
+                const frame = e.currentTarget;
+                const origin = spaceOrigin(s.url);
+                const post = () => {
+                  const theme = document.documentElement.dataset.theme ?? "light";
+                  frame.contentWindow?.postMessage(
+                    { type: "studio.init", theme, apiToken: tokenRef.current },
+                    origin,
+                  );
+                };
+                post();
+                stopInitRetry(s.wsId);
+                let tries = 0;
+                initTimersRef.current[s.wsId] = setInterval(() => {
+                  if (++tries > 150) {
+                    stopInitRetry(s.wsId); // ~5 min — session is not coming up
+                    return;
+                  }
+                  post();
+                }, 2000);
               }}
               style={
                 activeSpace === s.wsId
