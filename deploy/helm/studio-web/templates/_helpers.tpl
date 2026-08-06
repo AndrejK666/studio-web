@@ -1,5 +1,11 @@
 {{- define "studio-web.name" -}}{{ .Chart.Name }}{{- end -}}
-{{- define "studio-web.fullname" -}}{{ printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" }}{{- end -}}
+{{- define "studio-web.fullname" -}}
+{{- if contains .Chart.Name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
 {{- define "studio-web.labels" -}}
 app.kubernetes.io/name: {{ include "studio-web.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

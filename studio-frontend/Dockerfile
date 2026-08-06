@@ -4,7 +4,10 @@
 # k8s runAsNonRoot pod security (plain nginx needs root for port 80).
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Template (not a literal conf): the entrypoint's envsubst renders it with
+# BACKEND_HOST at start, so one image serves compose and k8s alike.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_HOST=studio-backend:8090
 COPY dist/ /usr/share/nginx/html/
 # Runtime env injection: regenerates env.js from STUDIO_* vars at start
 # (the entrypoint executes /docker-entrypoint.d/*.sh before serving).

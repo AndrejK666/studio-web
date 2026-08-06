@@ -23,6 +23,10 @@ spec:
           # Runtime env.js (window.__STUDIO_ENV__) — one image per release,
           # per-environment values injected at container start.
           env:
+            # In-pod /cf proxy target — nginx refuses to start if the
+            # upstream host doesn't resolve, so it must be the real Service.
+            - name: BACKEND_HOST
+              value: "{{ include "studio-web.fullname" . }}-backend:{{ .Values.backend.port }}"
             - name: STUDIO_OIDC_ISSUER
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
             - name: STUDIO_OIDC_CLIENT_ID
