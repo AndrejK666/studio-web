@@ -1,3 +1,18 @@
+# Every text file is stored with LF in the repository. Without this rule a
+# Windows checkout rewrites files to CRLF on disk and git then reports them as
+# modified forever: `git status` filled up with three dozen documents, READMEs
+# and even dev certificates that nobody had opened, and real changes had to be
+# picked out of that noise by hand before every commit.
+#
+# `text=auto` still leaves genuinely binary files alone — git decides by
+# content, not by extension. Working copies keep whatever endings the platform
+# checks out; only what is committed is normalised.
+* text=auto eol=lf
+
+# The rules below are implied by the line above and kept for one reason: they
+# say WHY these particular files must never be CRLF, which the blanket rule
+# cannot.
+#
 # Windows checkouts turn LF into CRLF, and a shell script with CRLF fails in a
 # Linux container in the most confusing way available: the kernel reads the
 # shebang as "/bin/sh\r", cannot find that interpreter, and the entrypoint
