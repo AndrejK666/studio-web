@@ -3776,8 +3776,9 @@ function StudioLauncher({
 
       {error && <div className="error">{error}</div>}
       <p className="hint">
-        Requires Docker on the backend host and the image built once:{" "}
-        <code>cd fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .</code>
+        Requires Docker on the backend host. The IDE image is pulled from the
+        registry automatically — the first launch after a backend start may ask
+        you to retry while the download finishes.
       </p>
     </div>
   );

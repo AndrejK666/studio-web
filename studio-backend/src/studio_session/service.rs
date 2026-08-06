@@ -89,6 +89,10 @@ pub struct SessionService {
     sessions: RwLock<HashMap<Uuid, Session>>,
     /// Resolves repo access tokens (PATs) stored as credstore secrets.
     credstore: RwLock<Option<Arc<dyn CredStoreClientV1>>>,
+    /// Wakes the background image keeper (see [`Self::image_keeper`]) for a
+    /// refresh pull. Launch requests never pull inline: a registry pull of a
+    /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
+    pull_notify: tokio::sync::Notify,
 }
 
 fn now_secs() -> u64 {
@@ -107,6 +111,7 @@ impl SessionService {
             docker,
             sessions: RwLock::new(HashMap::new()),
             credstore: RwLock::new(None),
+            pull_notify: tokio::sync::Notify::new(),
         }))
     }
 
@@ -140,25 +145,15 @@ impl SessionService {
         format!("http://{}:{port}/", self.cfg.public_host)
     }
 
-    /// Make sure the Theia image is available and, for mutable tags
-    /// (`always_pull`, default on for the CI-published `edge`), fresh:
-    /// a pull runs before every launch; a failed pull falls back to the
-    /// local copy (offline dev keeps working). Only when the image is
-    /// neither local nor pullable does the launch error out, with both
-    /// remedies in the message.
-    pub async fn ensure_image(&self) -> anyhow::Result<()> {
-        let local = self.docker.inspect_image(&self.cfg.image).await.is_ok();
-        if local && !self.cfg.always_pull {
-            return Ok(());
-        }
-        tracing::info!(
-            image = %self.cfg.image,
-            refresh = local,
-            "studio-session: pulling session image"
-        );
-        // NB: the Docker API ignores `docker login`'s client-side credential
-        // store — private registries need explicit credentials (env-driven,
-        // see StudioSessionConfig::registry_credentials).
+    async fn image_present(&self) -> bool {
+        self.docker.inspect_image(&self.cfg.image).await.is_ok()
+    }
+
+    /// One registry pull of the session image. NB: the Docker API ignores
+    /// `docker login`'s client-side credential store — private registries
+    /// need explicit credentials (env-driven, see
+    /// [`StudioSessionConfig::registry_credentials`]).
+    async fn pull_image(&self) -> anyhow::Result<()> {
         let pull = self.docker.create_image(
             Some(bollard::image::CreateImageOptions {
                 from_image: self.cfg.image.clone(),
@@ -168,27 +163,63 @@ impl SessionService {
             self.cfg.registry_credentials(),
         );
         use futures_util::TryStreamExt;
-        match pull.try_collect::<Vec<_>>().await {
-            Ok(_) => {
-                tracing::info!(image = %self.cfg.image, "studio-session: image up to date");
-                Ok(())
+        pull.try_collect::<Vec<_>>().await.map(|_| ()).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Background image keeper: pulls the session image at boot and
+    /// re-pulls on demand (`pull_notify`, fired after each launch when
+    /// `always_pull` — the CURRENT launch uses the local copy, the NEXT one
+    /// gets the refreshed mutable tag). Retries every 30 s while the image
+    /// is absent. Launch requests never wait on this: a multi-minute pull
+    /// inside a request would trip the 30 s gateway deadline (HTTP 504).
+    pub async fn image_keeper(svc: Arc<Self>) {
+        loop {
+            let present = svc.image_present().await;
+            tracing::info!(image = %svc.cfg.image, refresh = present, "studio-session: pulling session image");
+            match svc.pull_image().await {
+                Ok(()) => {
+                    tracing::info!(image = %svc.cfg.image, "studio-session: image up to date");
+                }
+                Err(e) if present => {
+                    tracing::warn!(
+                        image = %svc.cfg.image,
+                        "studio-session: refresh pull failed ({e}) — the local copy stays in use"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        image = %svc.cfg.image,
+                        "studio-session: image not available yet ({e}) — retrying in 30s. For the \
+                         private ghcr image set STUDIO_REGISTRY_USER + STUDIO_REGISTRY_TOKEN \
+                         (PAT with read:packages), or pull once manually (docker pull), or \
+                         build locally (fabric-poc/poc/theia)"
+                    );
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    continue;
+                }
             }
-            Err(e) if local => {
-                tracing::warn!(
-                    image = %self.cfg.image,
-                    "studio-session: refresh pull failed ({e}) — using the local copy"
-                );
-                Ok(())
-            }
-            Err(e) => Err(anyhow!(
-                "Theia image '{img}' is neither local nor pullable ({e}). For the \
-                 private ghcr image set STUDIO_REGISTRY_USER + STUDIO_REGISTRY_TOKEN \
-                 (PAT with read:packages) before starting the backend, or pull once \
-                 manually (`docker pull {img}`), or build locally: \
-                 cd fabric-poc/poc/theia && docker build -t {img} .",
-                img = self.cfg.image,
-            )),
+            // Image usable — sleep until a launch asks for a refresh.
+            svc.pull_notify.notified().await;
         }
+    }
+
+    /// Launch-path image check: instant, never pulls inline. A missing
+    /// image means the keeper is still downloading — tell the user to retry.
+    pub async fn ensure_image(&self) -> anyhow::Result<()> {
+        if self.image_present().await {
+            if self.cfg.always_pull {
+                // Freshness for the NEXT launch; this one starts immediately.
+                self.pull_notify.notify_one();
+            }
+            return Ok(());
+        }
+        self.pull_notify.notify_one();
+        Err(anyhow!(
+            "the IDE image '{}' is still being downloaded in the background \
+             (first run after boot) — retry the launch in a minute; progress \
+             is logged by studio-session",
+            self.cfg.image
+        ))
     }
 
     /// Create (or return the existing) session for a workspace.

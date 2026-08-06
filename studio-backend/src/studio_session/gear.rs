@@ -113,6 +113,9 @@ impl toolkit::contracts::RunnableCapability for StudioSessionGear {
         let Some(service) = self.service.get().cloned() else {
             return Ok(()); // sessions disabled — nothing to reap
         };
+        // Background image keeper: boot pull + notify-driven refreshes, so
+        // launch requests never pull inline (30s gateway deadline).
+        tokio::spawn(SessionService::image_keeper(service.clone()));
         tokio::spawn(async move {
             info!("studio-session: reaper started (tick 60s)");
             loop {
