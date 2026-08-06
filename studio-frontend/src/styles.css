@@ -170,6 +170,37 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 /* Current context highlighted in the account switcher. */
 .account-orgs button.on { color: var(--accent); }
 .account-orgs button .sub { color: var(--muted); font-size: 12px; }
+
+/* Account popover: identity on the left, context on the right. */
+.account-menu.two-pane { display: flex; padding: 0; overflow: hidden; }
+.account-menu.two-pane .pane-left { display: flex; flex-direction: column; min-width: 190px; padding: 8px; }
+.account-menu.two-pane .pane-right {
+  min-width: 230px; max-height: 60vh; overflow: auto; padding: 8px;
+  border-left: 1px solid var(--border); background: rgba(127, 127, 127, 0.05);
+}
+.ctx-search { width: 100%; margin-bottom: 8px; }
+.ctx-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 10px 2px 4px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted);
+}
+.ctx-head button {
+  padding: 0 7px; line-height: 1.5; font-size: 14px;
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+}
+.ctx-add { display: flex; gap: 6px; margin: 4px 0 6px; }
+.ctx-add input { flex: 1; min-width: 0; }
+.ctx-row { display: flex; align-items: center; gap: 4px; border-radius: 8px; }
+.ctx-row:hover { background: rgba(127, 127, 127, 0.12); }
+.ctx-row.on { box-shadow: inset 2px 0 0 var(--accent); }
+.ctx-row.on > button { color: var(--accent); }
+.ctx-row > button {
+  display: flex; align-items: center; gap: 8px; text-align: left;
+  background: none; border: none; padding: 7px 8px; width: 100%;
+}
+.ctx-gear { width: auto !important; opacity: 0.55; }
+.ctx-gear:hover { opacity: 1; }
+.pane-right .empty { margin: 4px 8px; font-size: 12px; }
 ul.rows li:has(> .grow > .nested) { align-items: flex-start; }
 
 form.inline input { flex: 1; min-width: 180px; }

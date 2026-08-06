@@ -901,85 +901,61 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <div className="spacer" />
         <div className="whoami">
           {accountMenu && (
-            <div className="account-menu">
-              <div className="account-menu-head">
-                <span className="account-user">{userName}</span>
-                {userEmail && <span>{userEmail}</span>}
-                <span>{home ? `Home: ${home.name}` : ""}</span>
-                {/* The home tenant IS the access scope — say so explicitly. */}
-                {home && (
-                  <span
-                    className="scope-line"
-                    title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
-                  >
-                    {home.tenant_type === TENANT_TYPES.organization
-                      ? `Scope: ${home.name} subtree`
-                      : `Scope: entire platform${
-                          orgs.filter((o) => o.self_managed).length
-                            ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
-                            : ""
-                        }`}
-                  </span>
-                )}
+            <div className="account-menu two-pane">
+              {/* Left: who you are and what you can do as yourself. */}
+              <div className="pane-left">
+                <div className="account-menu-head">
+                  <span className="account-user">{userName}</span>
+                  {userEmail && <span>{userEmail}</span>}
+                  {/* The home tenant IS the access scope — say so explicitly. */}
+                  {home && (
+                    <span
+                      className="scope-line"
+                      title="Your home tenant anchors what you can see: its whole subtree, pruned at self-managed barriers."
+                    >
+                      {home.tenant_type === TENANT_TYPES.organization
+                        ? `Scope: ${home.name} subtree`
+                        : `Scope: entire platform${
+                            orgs.filter((o) => o.self_managed).length
+                              ? ` · ${orgs.filter((o) => o.self_managed).length} self-managed hidden`
+                              : ""
+                          }`}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setAdminOpen(false);
+                    setView("profile");
+                    setActiveSpace(null);
+                    setAccountMenu(false);
+                  }}
+                >
+                  Profile
+                </button>
+                <button onClick={() => openAdmin()}>Admin settings</button>
+                <button onClick={onLogout}>Sign out</button>
               </div>
-              {orgs.length > 0 && (
-                <div className="account-orgs">
-                  <div className="account-orgs-title">Your organizations</div>
-                  {orgs.map((o) => (
-                    <button
-                      key={o.id}
-                      className={crumb.orgId === o.id && !crumb.wsId ? "on" : ""}
-                      onClick={() => {
-                        setAdminOpen(false);
-                        setCrumb({ orgId: o.id });
-                        setView("workspaces");
-                        setActiveSpace(null);
-                        setAccountMenu(false);
-                      }}
-                    >
-                      <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
-                      {o.name}
-                      {o.self_managed && <span className="badge selfmanaged">🔒</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {workspaces.length > 0 && (
-                <div className="account-orgs">
-                  <div className="account-orgs-title">Workspaces</div>
-                  {workspaces.map((w) => (
-                    <button
-                      key={w.id}
-                      className={crumb.wsId === w.id ? "on" : ""}
-                      onClick={() => {
-                        // Switching context, not navigating to a page about a
-                        // workspace: the app below becomes that workspace.
-                        setAdminOpen(false);
-                        setCrumb({ orgId: w.orgId, wsId: w.id });
-                        setView("workspaces");
-                        setActiveSpace(null);
-                        setAccountMenu(false);
-                      }}
-                    >
-                      <span className="account-avatar small">{w.name.slice(0, 1).toUpperCase()}</span>
-                      {w.name}
-                      <span className="sub"> · {w.orgName}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button
-                onClick={() => {
+
+              {/* Right: where you are working. Workspaces belong to the
+                  organization above them rather than sharing one flat column,
+                  because that is the actual containment. */}
+              <ContextPane
+                token={token}
+                home={home}
+                orgs={orgs}
+                workspaces={workspaces}
+                crumb={crumb}
+                onPick={(next) => {
                   setAdminOpen(false);
-                  setView("profile");
+                  setCrumb(next);
+                  setView("workspaces");
                   setActiveSpace(null);
                   setAccountMenu(false);
                 }}
-              >
-                Profile
-              </button>
-              <button onClick={() => openAdmin()}>Admin settings</button>
-              <button onClick={onLogout}>Sign out</button>
+                onAdminOrg={(id) => openAdmin("organizations", id)}
+                onChanged={() => void refresh()}
+              />
             </div>
           )}
           <button
@@ -1387,6 +1363,165 @@ function FilterPanel({
 
 /* ── Workspaces ── */
 
+/** The right pane of the account popover: pick where you are working.
+ *
+ *  Organizations first, then the workspaces OF the selected organization —
+ *  not one flat column, because a workspace only exists inside an organization
+ *  and a list that hides that makes people pick the wrong one. */
+function ContextPane({
+  token,
+  home,
+  orgs,
+  workspaces,
+  crumb,
+  onPick,
+  onAdminOrg,
+  onChanged,
+}: {
+  token: string;
+  home: Tenant | null;
+  orgs: Tenant[];
+  workspaces: Workspace[];
+  crumb: Crumb;
+  onPick: (c: Crumb) => void;
+  onAdminOrg: (id: string) => void;
+  onChanged: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [adding, setAdding] = useState<"org" | "ws" | null>(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Which organization's workspaces to show: the one in context, else the one
+  // owning the workspace in context, else the first.
+  const activeOrgId = crumb.orgId ?? workspaces.find((w) => w.id === crumb.wsId)?.orgId ?? orgs[0]?.id;
+  const orgList = orgs.filter((o) => matches(q, o.name));
+  const wsList = workspaces.filter((w) => w.orgId === activeOrgId && matches(q, w.name));
+
+  async function create(kind: "org" | "ws") {
+    const parent = kind === "org" ? home?.id : activeOrgId;
+    if (!parent || !name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.createTenant(token, {
+        name: name.trim(),
+        parent_id: parent,
+        tenant_type: kind === "org" ? TENANT_TYPES.organization : TENANT_TYPES.workspace,
+      });
+      setName("");
+      setAdding(null);
+      onChanged();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="pane-right">
+      <input
+        className="ctx-search"
+        placeholder="Search…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+
+      <div className="ctx-head">
+        <span>Your organizations</span>
+        <button
+          type="button"
+          title="New organization"
+          onClick={() => setAdding(adding === "org" ? null : "org")}
+        >
+          +
+        </button>
+      </div>
+      {adding === "org" && (
+        <div className="ctx-add">
+          <input
+            autoFocus
+            placeholder="Organization name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void create("org");
+            }}
+          />
+          <button type="button" disabled={busy || !name.trim()} onClick={() => void create("org")}>
+            Create
+          </button>
+        </div>
+      )}
+      {orgList.map((o) => (
+        <div key={o.id} className={`ctx-row${activeOrgId === o.id ? " on" : ""}`}>
+          <button type="button" className="grow" onClick={() => onPick({ orgId: o.id })}>
+            <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
+            {o.name}
+            {o.self_managed && <span className="badge selfmanaged">🔒</span>}
+          </button>
+          {/* The gear is administration, deliberately a separate target from
+              the row that only switches context. */}
+          <button
+            type="button"
+            className="ctx-gear"
+            title="Administer this organization"
+            onClick={() => onAdminOrg(o.id)}
+          >
+            ⚙
+          </button>
+        </div>
+      ))}
+
+      <div className="ctx-head">
+        <span>Workspaces</span>
+        <button
+          type="button"
+          title="New workspace"
+          disabled={!activeOrgId}
+          onClick={() => setAdding(adding === "ws" ? null : "ws")}
+        >
+          +
+        </button>
+      </div>
+      {adding === "ws" && (
+        <div className="ctx-add">
+          <input
+            autoFocus
+            placeholder="Workspace name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void create("ws");
+            }}
+          />
+          <button type="button" disabled={busy || !name.trim()} onClick={() => void create("ws")}>
+            Create
+          </button>
+        </div>
+      )}
+      {wsList.length === 0 ? (
+        <p className="empty">No workspaces here yet.</p>
+      ) : (
+        wsList.map((w) => (
+          <div key={w.id} className={`ctx-row${crumb.wsId === w.id ? " on" : ""}`}>
+            <button
+              type="button"
+              className="grow"
+              onClick={() => onPick({ orgId: w.orgId, wsId: w.id })}
+            >
+              <span className="account-avatar small">{w.name.slice(0, 1).toUpperCase()}</span>
+              {w.name}
+            </button>
+          </div>
+        ))
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
 /* ── Browse: organization → workspace drill-down ───────────────────────────
  *
  * The portal's spine. Every level shows what it contains and what it owns, and
