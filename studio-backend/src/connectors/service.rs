@@ -77,6 +77,12 @@ impl ConnectionScope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Connection {
     pub id: Uuid,
+    /// Tenant whose catalogue row holds this connection — the organization or
+    /// the workspace the creator picked. Recorded because `resolve_metadata`
+    /// returns an inherited row without saying whose it was, and both the UI
+    /// ("inherited from the organization") and `delete` (which must edit the
+    /// owning row) need to know.
+    pub owner_tenant_id: Uuid,
     /// Driver key: `gitlab`, `github`, …
     pub provider: String,
     pub label: String,
@@ -86,6 +92,30 @@ pub struct Connection {
     /// `personal` | `workspace` | `organization`
     pub scope: String,
     pub created_at_epoch_secs: u64,
+}
+
+/// One request to add a connection.
+///
+/// A struct rather than a six-argument list: `provider`, `label`, `base_url`,
+/// `token` and `scope` are all strings describing one intent, and positional
+/// parameters of the same type are exactly the kind that get silently swapped.
+#[derive(Debug, Clone)]
+pub struct NewConnection<'a> {
+    /// Where the catalogue row goes: an organization (inherited by all its
+    /// workspaces) or a single workspace. The caller decides; the gear must not
+    /// infer it from the session's tenant.
+    pub owner_tenant: Uuid,
+    /// Driver key from the provider list.
+    pub provider: &'a str,
+    /// Human label shown in the UI.
+    pub label: &'a str,
+    /// Installation root; `None` = the driver's default.
+    pub base_url: Option<&'a str>,
+    /// Credential, verified before anything is stored.
+    pub token: &'a str,
+    /// `personal` | `workspace` | `organization` — becomes the credstore
+    /// sharing mode of the stored token.
+    pub scope: &'a str,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -160,12 +190,13 @@ impl ConnectorService {
         GtsTypeId::new(CONNECTIONS_METADATA_TYPE)
     }
 
-    /// Catalogue visible to the caller: the tenant's own row, or the nearest
-    /// ancestor's when it has none of its own.
-    async fn load(&self, ctx: &SecurityContext) -> anyhow::Result<Catalogue> {
+    /// Catalogue visible from `tenant`: its own row, or the nearest ancestor's
+    /// when it has none. `tenant` is the context the caller is acting in — a
+    /// workspace, or an organization — not necessarily the caller's own tenant.
+    async fn load(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<Catalogue> {
         let entry = self
             .am
-            .resolve_metadata(ctx, ctx.subject_tenant_id(), Self::type_id())
+            .resolve_metadata(ctx, tenant, Self::type_id())
             .await
             .map_err(|e| anyhow!("cannot read the connection catalogue: {e}"))?;
         match entry {
@@ -174,15 +205,11 @@ impl ConnectorService {
         }
     }
 
-    /// Catalogue stored directly on the caller's tenant. Writes must not
-    /// silently absorb an inherited catalogue into the child tenant, so
-    /// mutations read the direct row only.
-    async fn load_own(&self, ctx: &SecurityContext) -> anyhow::Result<Catalogue> {
-        match self
-            .am
-            .get_metadata(ctx, ctx.subject_tenant_id(), Self::type_id())
-            .await
-        {
+    /// Catalogue stored directly on `tenant`. Writes must not silently absorb
+    /// an inherited catalogue into a child tenant, so mutations read the direct
+    /// row only.
+    async fn load_own(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<Catalogue> {
+        match self.am.get_metadata(ctx, tenant, Self::type_id()).await {
             Ok(e) => Ok(serde_json::from_value(e.value).unwrap_or_default()),
             // Absent row is the common case on the first connection; AM
             // raises NotFound for an unregistered schema, which the gear logs
@@ -191,11 +218,16 @@ impl ConnectorService {
         }
     }
 
-    async fn store(&self, ctx: &SecurityContext, catalogue: &Catalogue) -> anyhow::Result<()> {
+    async fn store(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        catalogue: &Catalogue,
+    ) -> anyhow::Result<()> {
         self.am
             .upsert_metadata(
                 ctx,
-                ctx.subject_tenant_id(),
+                tenant,
                 // #[non_exhaustive]: build through the constructor. No
                 // expected_version — last-write-wins is right here, the
                 // catalogue is edited by one person at a time and a lost
@@ -207,12 +239,21 @@ impl ConnectorService {
         Ok(())
     }
 
-    pub async fn list(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<Connection>> {
-        Ok(self.load(ctx).await?.items)
+    pub async fn list(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<Connection>> {
+        Ok(self.load(ctx, tenant).await?.items)
     }
 
-    async fn find(&self, ctx: &SecurityContext, id: Uuid) -> anyhow::Result<Connection> {
-        self.load(ctx)
+    async fn find(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<Connection> {
+        self.load(ctx, tenant)
             .await?
             .items
             .into_iter()
@@ -247,15 +288,24 @@ impl ConnectorService {
     /// Verify credentials, store them, and append the connection. The test
     /// runs *before* anything is written: a typo should not leave a dead
     /// entry behind.
+    ///
+    /// `owner_tenant` decides the reach of the connection: an organization,
+    /// where metadata inheritance makes it visible to every workspace under
+    /// it, or a single workspace. That choice belongs to the caller — the
+    /// gear must not guess it from the session's tenant.
     pub async fn create(
         &self,
         ctx: &SecurityContext,
-        provider: &str,
-        label: &str,
-        base_url: Option<&str>,
-        token: &str,
-        scope: &str,
+        req: NewConnection<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
+        let NewConnection {
+            owner_tenant,
+            provider,
+            label,
+            base_url,
+            token,
+            scope,
+        } = req;
         let driver = self.driver(provider)?;
         let label = label.trim();
         if label.is_empty() {
@@ -295,6 +345,7 @@ impl ConnectorService {
 
         let connection = Connection {
             id,
+            owner_tenant_id: owner_tenant,
             provider: provider.to_string(),
             label: label.to_string(),
             base_url,
@@ -302,9 +353,9 @@ impl ConnectorService {
             scope: scope.as_str().to_string(),
             created_at_epoch_secs: now_secs(),
         };
-        let mut catalogue = self.load_own(ctx).await?;
+        let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         catalogue.items.push(connection.clone());
-        self.store(ctx, &catalogue).await?;
+        self.store(ctx, owner_tenant, &catalogue).await?;
         Ok((connection, identity))
     }
 
@@ -335,13 +386,26 @@ impl ConnectorService {
             .await
     }
 
-    pub async fn delete(&self, ctx: &SecurityContext, id: Uuid) -> anyhow::Result<bool> {
-        let mut catalogue = self.load_own(ctx).await?;
+    /// `tenant` is the context the caller is looking from; the row is edited on
+    /// the connection's own tenant, so deleting an inherited connection from a
+    /// workspace touches the organization's catalogue — and fails with the
+    /// authorization error it should if the caller may not write there.
+    pub async fn delete(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<bool> {
+        let Ok(connection) = self.find(ctx, tenant, id).await else {
+            return Ok(false);
+        };
+        let owner = connection.owner_tenant_id;
+        let mut catalogue = self.load_own(ctx, owner).await?;
         let Some(pos) = catalogue.items.iter().position(|c| c.id == id) else {
             return Ok(false);
         };
         let removed = catalogue.items.remove(pos);
-        self.store(ctx, &catalogue).await?;
+        self.store(ctx, owner, &catalogue).await?;
         // Best-effort: an orphaned secret is harmless, a failed delete of the
         // catalogue entry would not be.
         if let Ok(key) = SecretRef::new(&removed.secret_ref)
@@ -361,9 +425,10 @@ impl ConnectorService {
     pub async fn test(
         &self,
         ctx: &SecurityContext,
+        tenant: Uuid,
         id: Uuid,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
-        let c = self.find(ctx, id).await?;
+        let c = self.find(ctx, tenant, id).await?;
         let driver = self.driver(&c.provider)?;
         let auth = self.auth(ctx, &c).await?;
         let identity = driver.test(&auth).await?;
@@ -373,11 +438,12 @@ impl ConnectorService {
     pub async fn repositories(
         &self,
         ctx: &SecurityContext,
+        tenant: Uuid,
         id: Uuid,
         search: Option<&str>,
         limit: u32,
     ) -> anyhow::Result<Vec<RemoteRepo>> {
-        let c = self.find(ctx, id).await?;
+        let c = self.find(ctx, tenant, id).await?;
         let driver = self.driver(&c.provider)?;
         let auth = self.auth(ctx, &c).await?;
         driver.list_repositories(&auth, search, limit).await

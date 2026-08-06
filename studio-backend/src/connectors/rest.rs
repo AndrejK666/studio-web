@@ -18,7 +18,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{DriverIdentity, RemoteRepo};
-use super::service::{Connection, ConnectorService};
+use super::service::{Connection, ConnectorService, NewConnection};
 
 /// Errors attributable to a connection as a resource.
 #[resource_error(gts_id!("cf.studio.connector.connection.v1~"))]
@@ -92,6 +92,11 @@ pub struct CreateConnectionRequest {
     /// personal | workspace | organization (default: workspace).
     #[serde(default)]
     pub scope: Option<String>,
+    /// Tenant the connection is attached to: an organization (inherited by all
+    /// its workspaces) or one workspace. Omitted = the caller's own tenant.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub owner_tenant_id: Option<Uuid>,
 }
 
 #[derive(Debug)]
@@ -119,6 +124,10 @@ pub struct IdentityDto {
 pub struct ConnectionDto {
     #[schema(value_type = String)]
     pub id: Uuid,
+    /// Tenant holding this connection. Equal to the tenant being viewed for a
+    /// connection of its own; an ancestor's id when it was inherited.
+    #[schema(value_type = String)]
+    pub owner_tenant_id: Uuid,
     pub provider: String,
     pub label: String,
     pub base_url: String,
@@ -165,6 +174,14 @@ pub struct RemoteRepoListDto {
     pub items: Vec<RemoteRepoDto>,
 }
 
+/// Which tenant's catalogue the request is about. The portal passes the
+/// workspace it is showing; omitted falls back to the caller's own tenant.
+#[derive(Debug, Deserialize)]
+pub struct ScopeQuery {
+    #[serde(default)]
+    tenant: Option<Uuid>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RepoQuery {
     /// Narrow the listing; server-side where the provider supports it.
@@ -173,11 +190,14 @@ pub struct RepoQuery {
     /// Page size, 1..=100.
     #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    tenant: Option<Uuid>,
 }
 
 fn to_dto(c: Connection) -> ConnectionDto {
     ConnectionDto {
         id: c.id,
+        owner_tenant_id: c.owner_tenant_id,
         provider: c.provider,
         label: c.label,
         base_url: c.base_url,
@@ -233,10 +253,11 @@ async fn list_providers(
 async fn list_connections(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
+    Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<ConnectionListDto>> {
     let svc = connectors.get()?;
     let items = svc
-        .list(&ctx)
+        .list(&ctx, q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()))
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(ConnectionListDto {
@@ -253,11 +274,16 @@ async fn create_connection(
     let (connection, identity) = svc
         .create(
             &ctx,
-            req.provider.trim(),
-            &req.label,
-            req.base_url.as_deref(),
-            &req.token,
-            req.scope.as_deref().unwrap_or("workspace"),
+            NewConnection {
+                owner_tenant: req
+                    .owner_tenant_id
+                    .unwrap_or_else(|| ctx.subject_tenant_id()),
+                provider: req.provider.trim(),
+                label: &req.label,
+                base_url: req.base_url.as_deref(),
+                token: &req.token,
+                scope: req.scope.as_deref().unwrap_or("workspace"),
+            },
         )
         .await
         // A rejected credential or an unknown provider is the caller's
@@ -296,9 +322,11 @@ async fn test_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
     Path(id): Path<Uuid>,
+    Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<ConnectionTestDto>> {
     let svc = connectors.get()?;
-    let (connection, identity) = svc.test(&ctx, id).await.map_err(|e| {
+    let tenant = q.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let (connection, identity) = svc.test(&ctx, tenant, id).await.map_err(|e| {
         // The connection exists but is no longer usable: a rotated token, a
         // secret the caller may not read, a provider that is down.
         StudioConnectorError::failed_precondition()
@@ -320,7 +348,13 @@ async fn list_repositories(
 ) -> ApiResult<JsonBody<RemoteRepoListDto>> {
     let svc = connectors.get()?;
     let items = svc
-        .repositories(&ctx, id, q.search.as_deref(), q.limit.unwrap_or(50))
+        .repositories(
+            &ctx,
+            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            id,
+            q.search.as_deref(),
+            q.limit.unwrap_or(50),
+        )
         .await
         // Covers both an unusable credential and a model-provider connection,
         // which has no repositories by definition.
@@ -342,10 +376,15 @@ async fn delete_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
     Path(id): Path<Uuid>,
+    Query(q): Query<ScopeQuery>,
 ) -> ApiResult<StatusCode> {
     let svc = connectors.get()?;
     let removed = svc
-        .delete(&ctx, id)
+        .delete(
+            &ctx,
+            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            id,
+        )
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     if !removed {

@@ -77,6 +77,8 @@ export interface ConnectorProvider {
 
 export interface Connection {
   id: string;
+  /** Tenant holding this connection: the viewed one, or an ancestor when inherited. */
+  owner_tenant_id: string;
   provider: string;
   label: string;
   base_url: string;
@@ -325,8 +327,12 @@ export const api = {
   connectorProviders: (token: string) =>
     request<{ items: ConnectorProvider[] }>("/studio-connector/v1/providers", token),
 
-  connections: (token: string) =>
-    request<{ items: Connection[] }>("/studio-connector/v1/connections", token),
+  /** Connections visible from `tenant` — its own, or inherited from an ancestor. */
+  connections: (token: string, tenant: string) =>
+    request<{ items: Connection[] }>(
+      `/studio-connector/v1/connections?tenant=${encodeURIComponent(tenant)}`,
+      token,
+    ),
 
   /** Verify a credential without storing it ("Test connection"). */
   probeConnection: (token: string, body: { provider: string; base_url?: string; token: string }) =>
@@ -338,25 +344,43 @@ export const api = {
   /** Verifies, then stores ("Test & save"). The token never comes back out. */
   createConnection: (
     token: string,
-    body: { provider: string; label: string; base_url?: string; token: string; scope?: string },
+    body: {
+      provider: string;
+      label: string;
+      base_url?: string;
+      token: string;
+      scope?: string;
+      /** Organization (inherited by its workspaces) or a single workspace. */
+      owner_tenant_id?: string;
+    },
   ) =>
     request<ConnectionTest>("/studio-connector/v1/connections", token, {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  testConnection: (token: string, id: string) =>
-    request<ConnectionTest>(`/studio-connector/v1/connections/${id}/test`, token, {
-      method: "POST",
-    }),
+  testConnection: (token: string, id: string, tenant: string) =>
+    request<ConnectionTest>(
+      `/studio-connector/v1/connections/${id}/test?tenant=${encodeURIComponent(tenant)}`,
+      token,
+      { method: "POST" },
+    ),
 
-  deleteConnection: (token: string, id: string) =>
-    request<void>(`/studio-connector/v1/connections/${id}`, token, { method: "DELETE" }),
+  /** Removes the row from the connection's OWNING tenant, so deleting an
+   *  inherited connection edits the organization's catalogue — and is refused
+   *  when the caller may not write there. */
+  deleteConnection: (token: string, id: string, tenant: string) =>
+    request<void>(
+      `/studio-connector/v1/connections/${id}?tenant=${encodeURIComponent(tenant)}`,
+      token,
+      { method: "DELETE" },
+    ),
 
-  connectionRepositories: (token: string, id: string, search?: string) => {
-    const q = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+  connectionRepositories: (token: string, id: string, tenant: string, search?: string) => {
+    const q = new URLSearchParams({ tenant });
+    if (search?.trim()) q.set("search", search.trim());
     return request<{ items: RemoteRepo[] }>(
-      `/studio-connector/v1/connections/${id}/repositories${q}`,
+      `/studio-connector/v1/connections/${id}/repositories?${q.toString()}`,
       token,
     );
   },

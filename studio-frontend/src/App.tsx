@@ -34,6 +34,10 @@ function errText(e: unknown): string {
 
 interface Workspace extends Tenant {
   orgName: string;
+  /// Parent tenant. A connection can be attached to it instead of the
+  /// workspace, which is what makes one PAT serve every workspace of an
+  /// organization.
+  orgId: string;
 }
 
 /* ── Filters (right panel) ── */
@@ -702,7 +706,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       const orgList = children.filter((t) => t.tenant_type === TENANT_TYPES.organization);
       const directWs = children
         .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
-        .map((t) => ({ ...t, orgName: homeTenant.name }));
+        .map((t) => ({ ...t, orgName: homeTenant.name, orgId: homeTenant.id }));
       // Workspaces live under organizations — fetch each org's children.
       // A self-managed org raises the visibility barrier: from outside its
       // subtree the backend answers 404. That's tenant isolation working,
@@ -716,7 +720,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             const kids = await api.tenantChildren(token, org.id);
             return (kids.items ?? [])
               .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
-              .map((t) => ({ ...t, orgName: org.name }));
+              .map((t) => ({ ...t, orgName: org.name, orgId: org.id }));
           } catch {
             return []; // barrier or no access — org stays visible, contents don't
           }
@@ -1453,23 +1457,262 @@ function WorkspacesView({
 
 const WORKER_CATEGORIES = ["documenting", "coding", "review", "analysis"];
 
-const REPO_SOURCES: { id: import("./api").RepoSource; label: string }[] = [
-  { id: "local", label: "Local folder" },
-  { id: "git", label: "Git URL" },
-  { id: "github", label: "GitHub" },
-  { id: "gitlab", label: "GitLab" },
-];
 
-const ADAPTER_HOSTS: Record<string, string> = { github: "github.com", gitlab: "gitlab.com" };
 // Repository credentials are workspace-scoped (tenant sharing), so the
 // api_key secret type is the right one — personal_token is private-only by
 // definition and credstore rejects tenant sharing for it.
 const PAT_SECRET_TYPE = "gts.cf.core.credstore.secret.v1~cf.core.credstore.api_key.v1~";
 
-function slugFromUrl(url: string | undefined, host: string): string {
-  if (!url) return "";
-  const m = url.match(new RegExp(`^https://${host.replace(".", "\\.")}/(.+?)(\\.git)?$`));
-  return m ? m[1] : "";
+/** Pick repositories from a connection and hand them back as source entries.
+ *
+ *  Deliberately does not persist: the dashboard keeps unsaved edits in its own
+ *  state behind one "Save sources" button, and a component writing metadata
+ *  behind its back would make that button lie. (The Connectors page has its own
+ *  browser that DOES persist, because there is no pending form there.) */
+function SourceFromConnector({
+  token,
+  ws,
+  mode,
+  onPick,
+}: {
+  token: string;
+  ws: Workspace;
+  /** "root" picks exactly one repository; "sources" picks any number. */
+  mode: "root" | "sources";
+  onPick: (entries: RepoEntry[]) => void;
+}) {
+  const [connections, setConnections] = useState<Connection[] | null>(null);
+  const [chosen, setChosen] = useState<string>("");
+  const [repos, setRepos] = useState<RemoteRepo[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    void (async () => {
+      try {
+        const [c, p] = await Promise.all([
+          api.connections(token, ws.id),
+          api.connectorProviders(token),
+        ]);
+        // Only source hosts can be browsed; a model-provider connection has no
+        // repositories, so offering it here would be a dead end.
+        const sources = c.items.filter(
+          (x) =>
+            p.items.find((pp) => pp.provider === x.provider)?.category === "source_code",
+        );
+        setConnections(sources);
+        setChosen((prev) => prev || sources[0]?.id || "");
+      } catch (e) {
+        setError(errText(e));
+        setConnections([]);
+      }
+    })();
+  }, [open, token, ws.id]);
+
+  const load = useCallback(
+    async (id: string, q: string) => {
+      if (!id) return;
+      setError(null);
+      try {
+        const r = await api.connectionRepositories(token, id, ws.id, q);
+        setRepos(r.items);
+      } catch (e) {
+        setError(errText(e));
+        setRepos([]);
+      }
+    },
+    [token, ws.id],
+  );
+
+  useEffect(() => {
+    if (open && chosen) void load(chosen, "");
+  }, [open, chosen, load]);
+
+  const connection = connections?.find((c) => c.id === chosen);
+
+  const toEntries = (): RepoEntry[] => {
+    if (!connection) return [];
+    const picked = (repos ?? []).filter((r) => checked[r.id]);
+    return picked.map((r) => ({
+      // Directory name must be [a-z0-9_-]+; the caller de-duplicates against
+      // what the workspace already has.
+      name:
+        r.name
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, "-")
+          .replace(/^-+|-+$/g, "") || `repo-${r.id}`,
+      source: connection.provider === "github" ? "github" : "gitlab",
+      url: r.clone_url,
+      branch: r.default_branch,
+      // The reference, never the token: studio-session reads credstore itself.
+      token_ref: connection.secret_ref,
+    }));
+  };
+
+  if (!open) {
+    return (
+      <div className="row">
+        <button type="button" onClick={() => setOpen(true)}>
+          {mode === "root" ? "Pick root from connector" : "+ Add from connector"}
+        </button>
+      </div>
+    );
+  }
+
+  const picks = (repos ?? []).filter((r) => checked[r.id]);
+
+  return (
+    <div className="nested">
+      {error && <p className="error">{error}</p>}
+      {connections === null ? (
+        <p className="empty">Loading connections…</p>
+      ) : connections.length === 0 ? (
+        <p className="empty">
+          No source connector for this workspace yet — add one on the Connectors page, then come
+          back.
+        </p>
+      ) : (
+        <>
+          <div className="row">
+            <select
+              value={chosen}
+              onChange={(e) => {
+                setChosen(e.target.value);
+                setChecked({});
+              }}
+            >
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} · {c.provider}
+                  {c.owner_tenant_id !== ws.id ? ` (from ${ws.orgName})` : ""}
+                </option>
+              ))}
+            </select>
+            <input
+              className="grow"
+              placeholder="Search repositories…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void load(chosen, search);
+                }
+              }}
+            />
+            <button type="button" onClick={() => void load(chosen, search)}>
+              Search
+            </button>
+          </div>
+
+          {repos === null ? (
+            <p className="empty">Loading repositories…</p>
+          ) : repos.length === 0 ? (
+            <p className="empty">Nothing reachable with this credential.</p>
+          ) : (
+            <ul className="rows">
+              {repos.map((r) => (
+                <li key={r.id}>
+                  <input
+                    type={mode === "root" ? "radio" : "checkbox"}
+                    name={mode === "root" ? `root-${ws.id}` : undefined}
+                    checked={Boolean(checked[r.id])}
+                    onChange={(e) =>
+                      setChecked(
+                        mode === "root"
+                          ? { [r.id]: e.target.checked }
+                          : (c) => ({ ...c, [r.id]: e.target.checked }),
+                      )
+                    }
+                  />
+                  <div className="grow">
+                    <div className="name">{r.full_path}</div>
+                    <div className="sub">
+                      {r.default_branch ?? "default branch"}
+                      {r.description ? ` · ${r.description}` : ""}
+                    </div>
+                  </div>
+                  {r.visibility && <span className="badge">{r.visibility}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="row">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setChecked({});
+              }}
+            >
+              Cancel
+            </button>
+            <span className="grow" />
+            <button
+              type="button"
+              className="primary"
+              disabled={picks.length === 0}
+              onClick={() => {
+                onPick(toEntries());
+                setOpen(false);
+                setChecked({});
+              }}
+            >
+              {mode === "root" ? "Use as root" : `Add ${picks.length || ""}`}
+            </button>
+          </div>
+          <p className="hint">
+            Nothing is written yet — the picks land in the form above and go out with “Save
+            sources”.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** A folder that already exists on the backend host, bind-mounted into the
+ *  session. No connector can supply this — it is not a remote at all — so it
+ *  stays a plain field. */
+function LocalFolderSource({ onAdd }: { onAdd: (entry: RepoEntry) => void }) {
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const clean = name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return (
+    <div className="row">
+      <input
+        style={{ width: 160 }}
+        placeholder="name (dir)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <input
+        className="grow"
+        placeholder="local folder on the backend host: /mnt/c/Repos/my-repo"
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+      />
+      <button
+        type="button"
+        disabled={!clean || !path.trim()}
+        onClick={() => {
+          onAdd({ name: clean, source: "local", path: path.trim() });
+          setName("");
+          setPath("");
+        }}
+      >
+        + Add local folder
+      </button>
+    </div>
+  );
 }
 
 function WorkspaceDashboard({
@@ -1688,198 +1931,138 @@ function WorkspaceDashboard({
       <div className="card">
         <h2>Workspace sources</h2>
         <p className="hint">
-          How the organization's repositories enter this workspace (the domain model's ingress):
-          each source becomes <code>./&lt;name&gt;</code> in the IDE and a{" "}
-          <code>[sources.&lt;name&gt;]</code> entry in <code>.cf-workspace.toml</code>. Multiple
-          sources per workspace; tokens go to credstore, only references are stored here.
+          How repositories enter this workspace (the domain model's ingress): each source becomes{" "}
+          <code>./&lt;name&gt;</code> in the IDE and a <code>[sources.&lt;name&gt;]</code> entry in{" "}
+          <code>.cf-workspace.toml</code>. Repositories come from a connector, so no clone URL or
+          token is typed here — the source keeps only a credstore reference, and{" "}
+          <code>studio-session</code> resolves it server-side.
         </p>
         {settings && (
           <form onSubmit={saveRepo}>
-            <div
-              className="field"
-              style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}
-            >
-              Workspace root — a Studio workspace is itself a repository (manifest, docs,
-              <code> .workspace-sources/</code>). Clone it, or point at a local folder.
-              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                <input
-                  placeholder="https://gitlab.constr.dev/hypotheses/hypothesis-workspace.git"
-                  style={{ flex: 1, minWidth: 300, fontWeight: 400 }}
-                  value={settings.root_repo_url ?? ""}
-                  onChange={(e) => setSettings({ ...settings, root_repo_url: e.target.value })}
-                />
-                <input
-                  type="password"
-                  placeholder={
-                    settings.root_token_ref
-                      ? `secret '${settings.root_token_ref}' — enter to rotate`
-                      : "PAT (private repo)"
-                  }
-                  style={{ width: 200, fontWeight: 400 }}
-                  value={pats["__root__"] ?? ""}
-                  onChange={(e) => setPats({ ...pats, __root__: e.target.value })}
-                />
-                {settings.root_token_ref && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    title="Forget the stored token reference (use the repo without credentials)"
-                    onClick={() => setSettings({ ...settings, root_token_ref: "" })}
-                  >
-                    forget token
-                  </button>
-                )}
-                <input
-                  placeholder="branch"
-                  style={{ width: 110, fontWeight: 400 }}
-                  value={settings.root_branch ?? ""}
-                  onChange={(e) => setSettings({ ...settings, root_branch: e.target.value })}
-                />
-              </div>
-              <input
-                placeholder="…or a local folder on the backend host: /mnt/c/Repos/hypothesis-workspace"
-                style={{ width: "100%", marginTop: 8, fontWeight: 400 }}
-                value={settings.root_path ?? ""}
-                onChange={(e) => setSettings({ ...settings, root_path: e.target.value })}
-              />
-            </div>
-
-            {(settings.repos ?? []).map((r, i) => (
-              <div
-                key={i}
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  marginBottom: 10,
-                }}
-              >
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <input
-                    placeholder="name (dir)"
-                    style={{ width: 140 }}
-                    value={r.name}
-                    onChange={(e) =>
-                      patchRepo(i, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-") })
-                    }
-                  />
-                  <div className="chipset">
-                    {REPO_SOURCES.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        className={`chip ${r.source === s.id ? "on" : ""}`}
-                        onClick={() => patchRepo(i, { source: s.id })}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
+            <h3 className="group">Workspace root</h3>
+            <p className="hint">
+              A Studio workspace is itself a repository (manifest, docs, <code>.workspace-sources/</code>).
+              Pick it from a connector, or point at a folder that already exists on the backend host.
+            </p>
+            {settings.root_repo_url?.trim() ? (
+              <ul className="rows">
+                <li>
+                  <div className="grow">
+                    <div className="name">{settings.root_repo_url}</div>
+                    <div className="sub">
+                      {settings.root_branch || "default branch"}
+                      {settings.root_token_ref ? " · token via credstore" : " · public"}
+                    </div>
                   </div>
+                  <span className="badge">root</span>
                   <button
                     type="button"
-                    className="ghost"
                     onClick={() =>
                       setSettings({
                         ...settings,
-                        repos: (settings.repos ?? []).filter((_, j) => j !== i),
+                        root_repo_url: undefined,
+                        root_branch: undefined,
+                        root_token_ref: undefined,
                       })
                     }
                   >
                     remove
                   </button>
-                </div>
-
-                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                  {r.source === "local" && (
-                    <input
-                      placeholder="/mnt/c/Repos/HYP/csh_hypotheses_back"
-                      style={{ flex: 1, minWidth: 240 }}
-                      value={r.path ?? ""}
-                      onChange={(e) => patchRepo(i, { path: e.target.value })}
-                    />
-                  )}
-                  {r.source === "git" && (
-                    <input
-                      placeholder="https://gitlab.constr.dev/group/repo.git (self-hosted: use this)"
-                      style={{ flex: 1, minWidth: 280 }}
-                      value={r.url ?? ""}
-                      onChange={(e) => patchRepo(i, { url: e.target.value })}
-                    />
-                  )}
-                  {(r.source === "github" || r.source === "gitlab") && (
-                    <input
-                      placeholder={`org/repo (${ADAPTER_HOSTS[r.source]})`}
-                      style={{ flex: 1, minWidth: 200 }}
-                      value={slugFromUrl(r.url, ADAPTER_HOSTS[r.source])}
-                      onChange={(e) =>
-                        patchRepo(i, {
-                          url: e.target.value.trim()
-                            ? `https://${ADAPTER_HOSTS[r.source]}/${e.target.value.trim()}.git`
-                            : "",
-                        })
-                      }
-                    />
-                  )}
-                  {r.source !== "local" && (
-                    <>
-                      <input
-                        type="password"
-                        placeholder={
-                          r.token_ref ? `secret '${r.token_ref}' — enter to rotate` : "PAT (private repos)"
-                        }
-                        style={{ width: 200 }}
-                        value={pats[r.name] ?? ""}
-                        onChange={(e) => setPats({ ...pats, [r.name]: e.target.value })}
-                      />
-                      {r.token_ref && (
-                        <button
-                          type="button"
-                          className="ghost"
-                          title="Forget the stored token reference"
-                          onClick={() => patchRepo(i, { token_ref: "" })}
-                        >
-                          forget token
-                        </button>
-                      )}
-                      <input
-                        placeholder="branch"
-                        style={{ width: 110 }}
-                        value={r.branch ?? ""}
-                        onChange={(e) => patchRepo(i, { branch: e.target.value })}
-                      />
-                    </>
-                  )}
-                  {/* Clone/mount target — every source kind. A CLI-created
-                      workspace expects its sources under
-                      .workspace-sources/<group>/<repo>; leaving this empty
-                      puts the source at ./<name>. */}
-                  <input
-                    placeholder="target (default: name)"
-                    title="Path inside the workspace, e.g. .workspace-sources/hypotheses/csh_hypotheses_back"
-                    style={{ width: 260 }}
-                    value={r.target ?? ""}
-                    onChange={(e) => patchRepo(i, { target: e.target.value })}
-                  />
-                </div>
-              </div>
-            ))}
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                onClick={() =>
+                </li>
+              </ul>
+            ) : (
+              <SourceFromConnector
+                token={token}
+                ws={ws}
+                mode="root"
+                onPick={(entries) => {
+                  const r = entries[0];
+                  if (!r) return;
                   setSettings({
                     ...settings,
-                    repos: [
-                      ...(settings.repos ?? []),
-                      { name: `repo-${(settings.repos?.length ?? 0) + 1}`, source: "git" },
-                    ],
-                  })
-                }
-              >
-                + Add source
-              </button>
-              <button className="primary">Save repositories</button>
+                    root_repo_url: r.url,
+                    root_branch: r.branch,
+                    root_token_ref: r.token_ref,
+                    root_path: undefined,
+                  });
+                }}
+              />
+            )}
+            <input
+              placeholder="…or a local folder on the backend host: /mnt/c/Repos/hypothesis-workspace"
+              value={settings.root_path ?? ""}
+              onChange={(e) => setSettings({ ...settings, root_path: e.target.value })}
+            />
+
+            <h3 className="group">Sources</h3>
+            {(settings.repos ?? []).length === 0 ? (
+              <p className="empty">No sources yet.</p>
+            ) : (
+              <ul className="rows">
+                {(settings.repos ?? []).map((r, i) => (
+                  <li key={`${r.name}-${i}`}>
+                    <div className="grow">
+                      <div className="name">{r.name}</div>
+                      <div className="sub">
+                        {r.source === "local" ? r.path : r.url}
+                        {r.token_ref ? " · token via credstore" : ""}
+                      </div>
+                    </div>
+                    <span className="badge">{r.source}</span>
+                    {r.source !== "local" && (
+                      <input
+                        style={{ width: 110 }}
+                        placeholder="branch"
+                        value={r.branch ?? ""}
+                        onChange={(e) => patchRepo(i, { branch: e.target.value || undefined })}
+                      />
+                    )}
+                    <input
+                      style={{ width: 150 }}
+                      placeholder={`target (default: ${r.name})`}
+                      value={r.target ?? ""}
+                      onChange={(e) => patchRepo(i, { target: e.target.value || undefined })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSettings({
+                          ...settings,
+                          repos: (settings.repos ?? []).filter((_, j) => j !== i),
+                        })
+                      }
+                    >
+                      remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <SourceFromConnector
+              token={token}
+              ws={ws}
+              mode="sources"
+              onPick={(entries) => {
+                const existing = settings.repos ?? [];
+                const taken = new Set(existing.map((r) => r.name));
+                const fresh = entries.filter((e) => {
+                  if (taken.has(e.name)) return false;
+                  taken.add(e.name);
+                  return true;
+                });
+                setSettings({ ...settings, repos: [...existing, ...fresh] });
+              }}
+            />
+
+            <LocalFolderSource
+              onAdd={(entry) =>
+                setSettings({ ...settings, repos: [...(settings.repos ?? []), entry] })
+              }
+            />
+
+            <div className="row">
+              <button className="primary">Save sources</button>
               {repoSaved && <span className="hint">saved ✓</span>}
             </div>
           </form>
@@ -2838,6 +3021,26 @@ function SecretsView({
 
 /* ── Connectors (aggregate of workspace sources) ── */
 
+/** Provider groups in the picker. Keys match ConnectorDriver::category(). */
+const CATEGORIES: { key: string; title: string; blurb: string }[] = [
+  {
+    key: "source_code",
+    title: "Source code",
+    blurb: "Browse repositories and attach them to this workspace.",
+  },
+  {
+    key: "ai",
+    title: "AI providers",
+    blurb:
+      "Credentials the IDE agents authenticate with — Anthropic for Claude Code, OpenAI for Codex.",
+  },
+];
+
+/** Where a connection is attached, and how widely its token is readable.
+ *  One choice sets both: the tenant holding the catalogue row (its reach) and
+ *  the credstore sharing mode of the token (who may read it). */
+type Reach = "organization" | "workspace" | "personal";
+
 function ConnectorsView({
   token,
   workspaces,
@@ -2847,9 +3050,11 @@ function ConnectorsView({
   workspaces: Workspace[];
   filters: Filters;
 }) {
-  // Providers come from the backend, which derives them from registered driver
-  // plugins — the list is "what this deployment can actually do", not a
-  // hardcoded catalog.
+  // Connectors are workspace-scoped: everything on this page is "for this
+  // workspace", including connections inherited from its organization.
+  const [wsId, setWsId] = useState(workspaces[0]?.id ?? "");
+  const ws = workspaces.find((w) => w.id === wsId) ?? workspaces[0];
+
   const [providers, setProviders] = useState<ConnectorProvider[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [disabled, setDisabled] = useState<string | null>(null);
@@ -2857,8 +3062,13 @@ function ConnectorsView({
   const [note, setNote] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
+    if (!ws) return;
+    setErr(null);
     try {
-      const [p, c] = await Promise.all([api.connectorProviders(token), api.connections(token)]);
+      const [p, c] = await Promise.all([
+        api.connectorProviders(token),
+        api.connections(token, ws.id),
+      ]);
       setProviders(p.items);
       setConnections(c.items);
       setDisabled(null);
@@ -2873,20 +3083,44 @@ function ConnectorsView({
         setErr(errText(e));
       }
     }
-  }, [token]);
+  }, [token, ws]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  if (!ws) {
+    return (
+      <>
+        <h1>Connectors</h1>
+        <p className="empty">Create a workspace first — connectors are attached to one.</p>
+      </>
+    );
+  }
+
   return (
     <>
       <h1>Connectors</h1>
       <p className="subtitle">
-        A connection is configured once and reused: pick repositories from a list instead of
-        pasting clone URLs into every workspace. Tokens go to credstore — after you submit one the
-        browser never sees it again.
+        How repositories and model credentials enter a workspace. Configure a connection once, then
+        pick repositories from a list instead of pasting clone URLs. Tokens go to credstore — after
+        you submit one the browser never sees it again.
       </p>
+
+      <div className="card">
+        <h2>Workspace</h2>
+        <p className="hint">
+          Connections below are the ones this workspace can use: its own, plus those its
+          organization shares with all of its workspaces.
+        </p>
+        <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name} · {w.orgName}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {err && <p className="error">{err}</p>}
       {note && <p className="hint">{note}</p>}
@@ -2900,6 +3134,7 @@ function ConnectorsView({
       {!disabled && (
         <AddConnector
           token={token}
+          workspace={ws}
           providers={providers ?? []}
           onAdded={(t) => {
             setNote(`Connected as ${t.account}${t.display_name ? ` (${t.display_name})` : ""}.`);
@@ -2911,11 +3146,11 @@ function ConnectorsView({
       {!disabled && (
         <ConnectionList
           token={token}
+          workspace={ws}
           providers={providers ?? []}
           connections={(connections ?? []).filter((c) =>
             matches(filters.query, c.label, c.provider, c.base_url),
           )}
-          workspaces={workspaces}
           loading={connections === null}
           onChanged={() => void reload()}
           onNote={setNote}
@@ -2925,29 +3160,16 @@ function ConnectorsView({
   );
 }
 
-/** Provider groups in the picker. Keys match ConnectorDriver::category(). */
-const CATEGORIES: { key: string; title: string; blurb: string }[] = [
-  {
-    key: "source_code",
-    title: "Source code",
-    blurb: "Browse repositories and attach them to a workspace.",
-  },
-  {
-    key: "ai",
-    title: "AI providers",
-    blurb:
-      "Credentials the IDE agents authenticate with — Anthropic for Claude Code, OpenAI for Codex.",
-  },
-];
-
 /** Provider picker, then the credential form. "Test connection" probes without
  *  saving; "Test & save" does both in one server-side step. */
 function AddConnector({
   token,
+  workspace,
   providers,
   onAdded,
 }: {
   token: string;
+  workspace: Workspace;
   providers: ConnectorProvider[];
   onAdded: (t: { account: string; display_name?: string }) => void;
 }) {
@@ -2956,7 +3178,9 @@ function AddConnector({
   const [baseUrl, setBaseUrl] = useState("");
   const [pat, setPat] = useState("");
   const [reveal, setReveal] = useState(false);
-  const [isGlobal, setIsGlobal] = useState(true);
+  // Organization by default: one PAT for gitlab.constr.dev is an organization
+  // asset, and re-entering it per workspace is how credentials get stale.
+  const [reach, setReach] = useState<Reach>("organization");
   const [busy, setBusy] = useState<"probe" | "save" | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -2967,7 +3191,7 @@ function AddConnector({
     setBaseUrl("");
     setPat("");
     setReveal(false);
-    setIsGlobal(true);
+    setReach("organization");
     setResult(null);
     setError(null);
   };
@@ -2985,7 +3209,7 @@ function AddConnector({
     return (
       <div className="card">
         <h2>Add connector</h2>
-        <p className="hint">Connect a workspace to an external tool or service.</p>
+        <p className="hint">Connect this workspace to an external tool or service.</p>
         {CATEGORIES.map(({ key, title, blurb }) => {
           const group = providers.filter((p) => p.category === key);
           if (group.length === 0) return null;
@@ -3034,9 +3258,11 @@ function AddConnector({
         const t = await api.createConnection(token, {
           ...body,
           label,
-          // Global = everyone in the tenant, otherwise only its creator. Both
-          // are enforced by credstore sharing modes, not by this checkbox.
-          scope: isGlobal ? "workspace" : "personal",
+          scope: reach,
+          // Reach and visibility come from one choice: the organization row is
+          // inherited by every workspace under it, a workspace row by that one
+          // workspace, and "personal" additionally keeps the token to its owner.
+          owner_tenant_id: reach === "organization" ? workspace.orgId : workspace.id,
         });
         onAdded(t);
         reset();
@@ -3060,17 +3286,23 @@ function AddConnector({
         </li>
       </ul>
 
-      <label className="check">
-        <input type="checkbox" checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
-        <span>
-          <strong>Global connection</strong>
-          <span className="sub"> Available to all users in the workspace.</span>
-        </span>
-      </label>
+      <label>Available to</label>
+      <select value={reach} onChange={(e) => setReach(e.target.value as Reach)}>
+        <option value="organization">{workspace.orgName} — all workspaces of this organization</option>
+        <option value="workspace">{workspace.name} — this workspace only</option>
+        <option value="personal">Only me — private to my account</option>
+      </select>
+      <p className="hint">
+        {reach === "organization"
+          ? "Stored on the organization and inherited by its workspaces; the token is readable across them."
+          : reach === "workspace"
+            ? "Stored on this workspace; everyone in it can use the token."
+            : "Stored on this workspace, but the token stays readable only by you."}
+      </p>
 
       <label>Label</label>
       <input
-        placeholder="e.g. My GitLab account"
+        placeholder={`e.g. My ${picked.display_name} account`}
         value={label}
         onChange={(e) => setLabel(e.target.value)}
       />
@@ -3123,20 +3355,20 @@ function AddConnector({
   );
 }
 
-/** Stored connections, each expandable into a repository browser. */
+/** Connections usable by one workspace, each expandable into a repository browser. */
 function ConnectionList({
   token,
+  workspace,
   providers,
   connections,
-  workspaces,
   loading,
   onChanged,
   onNote,
 }: {
   token: string;
+  workspace: Workspace;
   providers: ConnectorProvider[];
   connections: Connection[];
-  workspaces: Workspace[];
   loading: boolean;
   onChanged: () => void;
   onNote: (s: string) => void;
@@ -3149,7 +3381,7 @@ function ConnectionList({
       {loading ? (
         <p className="empty">Loading…</p>
       ) : connections.length === 0 ? (
-        <p className="empty">No connections yet.</p>
+        <p className="empty">Nothing connected for this workspace yet.</p>
       ) : (
         <ul className="rows">
           {connections.map((c) => {
@@ -3157,52 +3389,63 @@ function ConnectionList({
             // is a credential and nothing more.
             const browsable =
               providers.find((p) => p.provider === c.provider)?.category === "source_code";
+            // A row stored on an ancestor is shared with sibling workspaces —
+            // worth saying, because removing it affects them too.
+            const inherited = c.owner_tenant_id !== workspace.id;
             return (
-            <li key={c.id}>
-              <div className="grow">
-                <div className="name">{c.label}</div>
-                <div className="sub">
-                  {c.provider} · {c.base_url}
+              <li key={c.id}>
+                <div className="grow">
+                  <div className="name">{c.label}</div>
+                  <div className="sub">
+                    {c.provider} · {c.base_url}
+                  </div>
+                  {open === c.id && browsable && (
+                    <RepoBrowser
+                      token={token}
+                      connection={c}
+                      workspace={workspace}
+                      onNote={onNote}
+                    />
+                  )}
                 </div>
-                {open === c.id && browsable && (
-                  <RepoBrowser
-                    token={token}
-                    connection={c}
-                    workspaces={workspaces}
-                    onNote={onNote}
-                  />
+                {inherited && (
+                  <span className="badge" title={`Stored on ${c.owner_tenant_id}`}>
+                    from {workspace.orgName}
+                  </span>
                 )}
-              </div>
-              <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
-                {c.scope}
-              </span>
-              {browsable && (
-                <button onClick={() => setOpen(open === c.id ? null : c.id)}>
-                  {open === c.id ? "Hide repositories" : "Browse repositories"}
+                <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
+                  {c.scope}
+                </span>
+                {browsable && (
+                  <button onClick={() => setOpen(open === c.id ? null : c.id)}>
+                    {open === c.id ? "Hide repositories" : "Browse repositories"}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    void api
+                      .testConnection(token, c.id, workspace.id)
+                      .then((t) => onNote(`${c.label}: valid — ${t.account}`))
+                      .catch((e) => onNote(`${c.label}: ${errText(e)}`));
+                  }}
+                >
+                  Test
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  void api
-                    .testConnection(token, c.id)
-                    .then((t) => onNote(`${c.label}: valid — ${t.account}`))
-                    .catch((e) => onNote(`${c.label}: ${errText(e)}`));
-                }}
-              >
-                Test
-              </button>
-              <button
-                onClick={() => {
-                  if (!window.confirm(`Remove connection "${c.label}" and its token?`)) return;
-                  void api
-                    .deleteConnection(token, c.id)
-                    .then(onChanged)
-                    .catch((e) => onNote(errText(e)));
-                }}
-              >
-                Remove
-              </button>
-            </li>
+                <button
+                  onClick={() => {
+                    const warn = inherited
+                      ? `"${c.label}" belongs to ${workspace.orgName} and is shared with its other workspaces. Remove it for everyone?`
+                      : `Remove connection "${c.label}" and its token?`;
+                    if (!window.confirm(warn)) return;
+                    void api
+                      .deleteConnection(token, c.id, workspace.id)
+                      .then(onChanged)
+                      .catch((e) => onNote(errText(e)));
+                  }}
+                >
+                  Remove
+                </button>
+              </li>
             );
           })}
         </ul>
@@ -3214,33 +3457,32 @@ function ConnectionList({
 function RepoBrowser({
   token,
   connection,
-  workspaces,
+  workspace,
   onNote,
 }: {
   token: string;
   connection: Connection;
-  workspaces: Workspace[];
+  workspace: Workspace;
   onNote: (s: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [repos, setRepos] = useState<RemoteRepo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [ws, setWs] = useState(workspaces[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(
     async (q: string) => {
       setError(null);
       try {
-        const r = await api.connectionRepositories(token, connection.id, q);
+        const r = await api.connectionRepositories(token, connection.id, workspace.id, q);
         setRepos(r.items);
       } catch (e) {
         setError(errText(e));
         setRepos([]);
       }
     },
-    [token, connection.id],
+    [token, connection.id, workspace.id],
   );
 
   useEffect(() => {
@@ -3250,10 +3492,10 @@ function RepoBrowser({
   const picks = (repos ?? []).filter((r) => checked[r.id]);
 
   const attach = async () => {
-    if (!ws || picks.length === 0) return;
+    if (picks.length === 0) return;
     setBusy(true);
     try {
-      const current = (await api.workspaceSettings(token, ws)) ?? {};
+      const current = (await api.workspaceSettings(token, workspace.id)) ?? {};
       const existing = current.repos ?? [];
       const taken = new Set(existing.map((r) => r.name));
       const added: RepoEntry[] = [];
@@ -3279,10 +3521,12 @@ function RepoBrowser({
           token_ref: connection.secret_ref,
         });
       }
-      await api.putWorkspaceSettings(token, ws, { ...current, repos: [...existing, ...added] });
-      const wsName = workspaces.find((w) => w.id === ws)?.name ?? ws;
+      await api.putWorkspaceSettings(token, workspace.id, {
+        ...current,
+        repos: [...existing, ...added],
+      });
       onNote(
-        `Attached ${added.length} repositor${added.length === 1 ? "y" : "ies"} to ${wsName} — ` +
+        `Attached ${added.length} repositor${added.length === 1 ? "y" : "ies"} to ${workspace.name} — ` +
           `cloned on the next session launch.`,
       );
       setChecked({});
@@ -3336,20 +3580,9 @@ function RepoBrowser({
       )}
 
       <div className="row">
-        <select value={ws} onChange={(e) => setWs(e.target.value)}>
-          {workspaces.length === 0 && <option value="">No workspaces</option>}
-          {workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name} · {w.orgName}
-            </option>
-          ))}
-        </select>
-        <button
-          className="primary"
-          disabled={picks.length === 0 || !ws || busy}
-          onClick={() => void attach()}
-        >
-          {busy ? "Attaching…" : `Attach ${picks.length || ""} to workspace`}
+        <span className="grow" />
+        <button className="primary" disabled={picks.length === 0 || busy} onClick={() => void attach()}>
+          {busy ? "Attaching…" : `Add ${picks.length || ""} to ${workspace.name}`}
         </button>
       </div>
     </div>
