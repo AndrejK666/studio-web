@@ -371,7 +371,15 @@ function NavIcon({ name }: { name: string }) {
 // The MAIN portal is pure work (console pattern): administration —
 // organizations, members, secrets — lives in the separate Admin area,
 // reached from the account menu / product switcher.
-const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; label: string }[] }[] = [
+/** Where a nav item exists. A workspace section shown while an organization is
+ *  selected is a promise the app cannot keep — it can only answer "pick a
+ *  workspace first", which is a dead end dressed as a page. */
+type NavScope = "always" | "workspace";
+
+const NAV_SECTIONS: {
+  title: string | null;
+  items: { id: View; icon: string; label: string; scope?: NavScope }[];
+}[] = [
   { title: null, items: [{ id: "home", icon: "home", label: "Home" }] },
   {
     title: "Work",
@@ -380,11 +388,11 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
       // dashboard of whatever the switcher has selected — an organization
       // with its workspaces, or a workspace with its own content.
       { id: "workspaces", icon: "org", label: "Overview" },
-      { id: "projects", icon: "grid", label: "Projects" },
-      { id: "chats", icon: "chat", label: "Chats" },
-      { id: "files", icon: "file", label: "Files" },
-      { id: "connectors", icon: "plug", label: "Connectors" },
-      { id: "secrets", icon: "key", label: "Secrets" },
+      { id: "projects", icon: "grid", label: "Projects", scope: "workspace" },
+      { id: "chats", icon: "chat", label: "Chats", scope: "workspace" },
+      { id: "files", icon: "file", label: "Files", scope: "workspace" },
+      { id: "connectors", icon: "plug", label: "Connectors", scope: "workspace" },
+      { id: "secrets", icon: "key", label: "Secrets", scope: "workspace" },
     ],
   },
   {
@@ -409,6 +417,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   /** Name of the opened project, kept for the crumb: the group is not in any
    *  list the shell holds, and refetching it for a label would be silly. */
   const [projectLabel, setProjectLabel] = useState<string | undefined>();
+
+  // Leaving a workspace must not strand you on one of its sections: the item
+  // is gone from the sidebar, so the page would be unreachable and empty.
+  useEffect(() => {
+    const item = NAV_SECTIONS.flatMap((sec) => sec.items).find((i) => i.id === view);
+    if (item?.scope === "workspace" && !crumb.wsId) setView("workspaces");
+  }, [crumb.wsId, view]);
   const [accountMenu, setAccountMenu] = useState(false);
   const [productMenu, setProductMenu] = useState(false);
   // Admin area (console pattern): a separate mode with its own sidebar for
@@ -858,10 +873,24 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               </div>
             </>
           ) : (
-            NAV_SECTIONS.map((sec) => (
+            NAV_SECTIONS.map((sec) => {
+              // Workspace sections disappear while an organization is selected:
+              // the level decides what exists, so the sidebar always matches
+              // what the switcher says you are looking at.
+              const items = sec.items.filter((n) => n.scope !== "workspace" || crumb.wsId);
+              if (items.length === 0) return null;
+              return (
               <div key={sec.title ?? "_top"} className="nav-section">
-                {sec.title && <div className="nav-section-title">{sec.title}</div>}
-                {sec.items.map((n) => (
+                {sec.title && (
+                  <div className="nav-section-title">
+                    {sec.title === "Work" && crumb.wsId
+                      ? workspaces.find((w) => w.id === crumb.wsId)?.name ?? sec.title
+                      : sec.title === "Work" && crumb.orgId
+                        ? orgs.find((o) => o.id === crumb.orgId)?.name ?? sec.title
+                        : sec.title}
+                  </div>
+                )}
+                {items.map((n) => (
                   <button
                     key={n.id}
                     className={view === n.id && !activeSpace ? "active" : ""}
@@ -875,7 +904,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   </button>
                 ))}
               </div>
-            ))
+              );
+            })
           )}
           {spaces.length > 0 && (
             <div className="nav-spaces">
