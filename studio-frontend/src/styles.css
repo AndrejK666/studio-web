@@ -166,6 +166,10 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 .crumb-sep { color: var(--muted); margin-right: 6px; }
 .crumb-here { color: var(--muted); }
 .crumbs .linklike { font-size: 13px; }
+
+/* Current context highlighted in the account switcher. */
+.account-orgs button.on { color: var(--accent); }
+.account-orgs button .sub { color: var(--muted); font-size: 12px; }
 ul.rows li:has(> .grow > .nested) { align-items: flex-start; }
 
 form.inline input { flex: 1; min-width: 180px; }

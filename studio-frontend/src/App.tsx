@@ -926,10 +926,44 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 <div className="account-orgs">
                   <div className="account-orgs-title">Your organizations</div>
                   {orgs.map((o) => (
-                    <button key={o.id} onClick={() => openAdmin("organizations", o.id)}>
+                    <button
+                      key={o.id}
+                      className={crumb.orgId === o.id && !crumb.wsId ? "on" : ""}
+                      onClick={() => {
+                        setAdminOpen(false);
+                        setCrumb({ orgId: o.id });
+                        setView("workspaces");
+                        setActiveSpace(null);
+                        setAccountMenu(false);
+                      }}
+                    >
                       <span className="account-avatar small">{o.name.slice(0, 1).toUpperCase()}</span>
                       {o.name}
                       {o.self_managed && <span className="badge selfmanaged">🔒</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {workspaces.length > 0 && (
+                <div className="account-orgs">
+                  <div className="account-orgs-title">Workspaces</div>
+                  {workspaces.map((w) => (
+                    <button
+                      key={w.id}
+                      className={crumb.wsId === w.id ? "on" : ""}
+                      onClick={() => {
+                        // Switching context, not navigating to a page about a
+                        // workspace: the app below becomes that workspace.
+                        setAdminOpen(false);
+                        setCrumb({ orgId: w.orgId, wsId: w.id });
+                        setView("workspaces");
+                        setActiveSpace(null);
+                        setAccountMenu(false);
+                      }}
+                    >
+                      <span className="account-avatar small">{w.name.slice(0, 1).toUpperCase()}</span>
+                      {w.name}
+                      <span className="sub"> · {w.orgName}</span>
                     </button>
                   ))}
                 </div>
@@ -956,7 +990,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             <span className="account-avatar">{userInitials}</span>
             <span className="account-lines">
               <span className="account-name">{userName}</span>
-              <span className="scope-line">{userEmail ?? home?.name ?? ""}</span>
+              {/* The context lives here, next to the identity — the two
+                  questions "who am I" and "where am I" get one answer spot. */}
+              <span className="scope-line">
+                {workspaces.find((w) => w.id === crumb.wsId)?.name ??
+                  orgs.find((o) => o.id === crumb.orgId)?.name ??
+                  userEmail ??
+                  home?.name ??
+                  ""}
+              </span>
             </span>
           </button>
         </div>
