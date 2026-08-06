@@ -279,6 +279,7 @@ type View =
   | "home"
   | "organizations"
   | "workspaces"
+  | "projects"
   | "chats"
   | "members"
   | "files"
@@ -375,7 +376,11 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
   {
     title: "Work",
     items: [
-      { id: "workspaces", icon: "org", label: "Organizations" },
+      // "Overview" rather than "Organizations": what opens here is the
+      // dashboard of whatever the switcher has selected — an organization
+      // with its workspaces, or a workspace with its own content.
+      { id: "workspaces", icon: "org", label: "Overview" },
+      { id: "projects", icon: "grid", label: "Projects" },
       { id: "chats", icon: "chat", label: "Chats" },
       { id: "files", icon: "file", label: "Files" },
       { id: "connectors", icon: "plug", label: "Connectors" },
@@ -1152,7 +1157,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
-        {view === "connectors" && <ConnectorsView token={token} workspaces={workspaces} filters={filters} />}
+        {view === "projects" && (
+          <WorkspaceSectionView
+            title="Projects"
+            ws={workspaces.find((w) => w.id === crumb.wsId) ?? null}
+          >
+            {(ws) => <WorkspaceProjectsCard token={token} ws={ws} onChanged={() => void refresh()} />}
+          </WorkspaceSectionView>
+        )}
+        {view === "connectors" && (
+          <WorkspaceSectionView
+            title="Connectors"
+            ws={workspaces.find((w) => w.id === crumb.wsId) ?? null}
+          >
+            {(ws) => <ConnectorsView token={token} workspace={ws} filters={filters} />}
+          </WorkspaceSectionView>
+        )}
         {/* organizations/members render only inside the Admin area now. */}
         {view === "chats" && <ChatsView token={token} filters={filters} />}
         {view === "files" && <FilesView token={token} filters={filters} />}
@@ -1363,6 +1383,33 @@ function FilterPanel({
 
 /* ── Workspaces ── */
 
+/** A sidebar section that only means anything inside a workspace.
+ *
+ *  Connectors, Projects and friends are workspace-scoped now, so instead of
+ *  each growing its own workspace picker — a second answer to a question the
+ *  account switcher already answers — they refuse to render without one and
+ *  say where to choose it. */
+function WorkspaceSectionView({
+  title,
+  ws,
+  children,
+}: {
+  title: string;
+  ws: Workspace | null;
+  children: (ws: Workspace) => React.ReactNode;
+}) {
+  if (!ws) {
+    return (
+      <>
+        <h1>{title}</h1>
+        <p className="empty">
+          Pick a workspace first — the switcher at the bottom of the sidebar, under your name.
+        </p>
+      </>
+    );
+  }
+  return <>{children(ws)}</>;
+}
 /** The right pane of the account popover: pick where you are working.
  *
  *  Organizations first, then the workspaces OF the selected organization —
@@ -2389,8 +2436,6 @@ function WorkspaceDashboard({
           {users?.length ?? "…"} member(s) · {projects?.length ?? "…"} project(s)
         </p>
       </div>
-
-      <WorkspaceProjectsCard token={token} ws={ws} onChanged={() => void load()} />
 
       <div className="card">
         <h2>Automation — trust ramp</h2>
@@ -3559,18 +3604,14 @@ type Reach = "organization" | "workspace" | "personal";
 
 function ConnectorsView({
   token,
-  workspaces,
+  workspace: ws,
   filters,
 }: {
   token: string;
-  workspaces: Workspace[];
+  /** From the account switcher — this page no longer asks again. */
+  workspace: Workspace;
   filters: Filters;
 }) {
-  // Connectors are workspace-scoped: everything on this page is "for this
-  // workspace", including connections inherited from its organization.
-  const [wsId, setWsId] = useState(workspaces[0]?.id ?? "");
-  const ws = workspaces.find((w) => w.id === wsId) ?? workspaces[0];
-
   const [providers, setProviders] = useState<ConnectorProvider[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [disabled, setDisabled] = useState<string | null>(null);
@@ -3605,38 +3646,15 @@ function ConnectorsView({
     void reload();
   }, [reload]);
 
-  if (!ws) {
-    return (
-      <>
-        <h1>Connectors</h1>
-        <p className="empty">Create a workspace first — connectors are attached to one.</p>
-      </>
-    );
-  }
-
   return (
     <>
       <h1>Connectors</h1>
       <p className="subtitle">
-        How repositories and model credentials enter a workspace. Configure a connection once, then
-        pick repositories from a list instead of pasting clone URLs. Tokens go to credstore — after
-        you submit one the browser never sees it again.
+        How repositories and model credentials enter <b>{ws.name}</b>: its own connections plus
+        those its organization shares with all of its workspaces. Configure one once, then pick
+        repositories from a list instead of pasting clone URLs. Tokens go to credstore — after you
+        submit one the browser never sees it again.
       </p>
-
-      <div className="card">
-        <h2>Workspace</h2>
-        <p className="hint">
-          Connections below are the ones this workspace can use: its own, plus those its
-          organization shares with all of its workspaces.
-        </p>
-        <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
-          {workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name} · {w.orgName}
-            </option>
-          ))}
-        </select>
-      </div>
 
       {err && <p className="error">{err}</p>}
       {note && <p className="hint">{note}</p>}
