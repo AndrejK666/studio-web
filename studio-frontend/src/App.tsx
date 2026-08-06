@@ -384,6 +384,7 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
       { id: "chats", icon: "chat", label: "Chats" },
       { id: "files", icon: "file", label: "Files" },
       { id: "connectors", icon: "plug", label: "Connectors" },
+      { id: "secrets", icon: "key", label: "Secrets" },
     ],
   },
   {
@@ -403,8 +404,11 @@ const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
 
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
   const [view, setView] = useState<View>("home");
-  /** Position in the organization → workspace drill-down. */
+  /** Position in the organization → workspace → project drill-down. */
   const [crumb, setCrumb] = useState<Crumb>({});
+  /** Name of the opened project, kept for the crumb: the group is not in any
+   *  list the shell holds, and refetching it for a label would be silly. */
+  const [projectLabel, setProjectLabel] = useState<string | undefined>();
   const [accountMenu, setAccountMenu] = useState(false);
   const [productMenu, setProductMenu] = useState(false);
   // Admin area (console pattern): a separate mode with its own sidebar for
@@ -1139,6 +1143,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             filters={filters}
             crumb={crumb}
             setCrumb={setCrumb}
+            projectLabel={projectLabel}
             onChanged={refresh}
             onOpenStudio={setStudio}
           />
@@ -1156,13 +1161,31 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onNavigate={setView}
           />
         )}
-        {view === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
+        {view === "secrets" && (
+          <WorkspaceSectionView
+            title="Secrets"
+            ws={workspaces.find((w) => w.id === crumb.wsId) ?? null}
+          >
+            {(ws) => <SecretsView token={token} workspaces={[ws]} filters={filters} />}
+          </WorkspaceSectionView>
+        )}
         {view === "projects" && (
           <WorkspaceSectionView
             title="Projects"
             ws={workspaces.find((w) => w.id === crumb.wsId) ?? null}
           >
-            {(ws) => <WorkspaceProjectsCard token={token} ws={ws} onChanged={() => void refresh()} />}
+            {(ws) => (
+              <WorkspaceProjectsCard
+                token={token}
+                ws={ws}
+                onChanged={() => void refresh()}
+                onOpen={(p) => {
+                  setProjectLabel(p.name);
+                  setCrumb({ orgId: ws.orgId, wsId: ws.id, projectId: p.id });
+                  setView("workspaces");
+                }}
+              />
+            )}
           </WorkspaceSectionView>
         )}
         {view === "connectors" && (
@@ -1580,6 +1603,8 @@ function ContextPane({
 interface Crumb {
   orgId?: string;
   wsId?: string;
+  /** Resource-Group id of the project (ADR-0002) — the level below a workspace. */
+  projectId?: string;
 }
 
 function Breadcrumbs({
@@ -1613,6 +1638,7 @@ function BrowseView({
   filters,
   crumb,
   setCrumb,
+  projectLabel,
   onChanged,
   onOpenStudio,
 }: {
@@ -1623,11 +1649,16 @@ function BrowseView({
   filters: Filters;
   crumb: Crumb;
   setCrumb: (c: Crumb) => void;
+  /** Label for the project crumb, remembered when the project was opened. */
+  projectLabel?: string;
   onChanged: () => void;
   onOpenStudio: (ws: Workspace) => void;
 }) {
   const org = orgs.find((o) => o.id === crumb.orgId);
   const ws = workspaces.find((w) => w.id === crumb.wsId);
+  // The project name is not in any list we already hold, so the crumb carries
+  // it: cheaper and steadier than refetching the group for a label.
+  const projectName = crumb.projectId ? projectLabel : undefined;
 
   const trail: { label: string; onClick?: () => void }[] = [
     { label: "Organizations", onClick: org ? () => setCrumb({}) : undefined },
@@ -1638,7 +1669,13 @@ function BrowseView({
       onClick: ws ? () => setCrumb({ orgId: org.id }) : undefined,
     });
   }
-  if (ws) trail.push({ label: ws.name });
+  if (ws) {
+    trail.push({
+      label: ws.name,
+      onClick: crumb.projectId ? () => setCrumb({ orgId: org?.id, wsId: ws.id }) : undefined,
+    });
+  }
+  if (crumb.projectId && ws) trail.push({ label: projectName ?? "project" });
 
   return (
     <>
@@ -1667,6 +1704,8 @@ function BrowseView({
             onChanged();
           }}
         />
+      ) : crumb.projectId ? (
+        <ProjectLevel name={projectName ?? "Project"} ws={ws} />
       ) : (
         <WorkspaceLevel
           token={token}
@@ -1849,6 +1888,37 @@ function OrganizationLevel({
   );
 }
 
+/** Level 3 — one project inside a workspace.
+ *
+ *  A placeholder with an honest boundary: a project today is a Resource Group
+ *  (ADR-0002) with members and a workspace binding, and nothing else has been
+ *  built to hang on it yet. The level exists so the path is complete and so
+ *  the next thing — plan phases from plan.toml, artifacts, traceability — has
+ *  a place to land instead of being wedged into the workspace page. */
+function ProjectLevel({ name, ws }: { name: string; ws: Workspace }) {
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>{name}</h1>
+          <p className="subtitle" style={{ margin: 0 }}>
+            project in {ws.name}
+          </p>
+        </div>
+      </div>
+      <div className="card">
+        <h2>Nothing here yet</h2>
+        <p className="hint">
+          A project is a Resource Group bound to this workspace (ADR-0002): it has a name and
+          members, and that is all it has so far. What belongs here next is the execution plan —
+          the phases, briefs and outputs the planner already writes to{" "}
+          <code>.cf-studio/.plans/</code> — surfaced from the server instead of living only on
+          disk. Members and settings move here once there is more than one thing to show.
+        </p>
+      </div>
+    </>
+  );
+}
 /** Level 2 — one workspace. Its own header, then everything it owns. */
 function WorkspaceLevel({
   token,
@@ -3044,10 +3114,14 @@ function WorkspaceProjectsCard({
   token,
   ws,
   onChanged,
+  onOpen,
 }: {
   token: string;
   ws: Workspace;
   onChanged?: () => void;
+  /** Drill into the project level. Absent when the card is embedded somewhere
+   *  that has no navigation of its own. */
+  onOpen?: (p: Group) => void;
 }) {
   const wsId = ws.id;
   const [projects, setProjects] = useState<Group[] | null>(null);
@@ -3135,6 +3209,7 @@ function WorkspaceProjectsCard({
                       <div className="sub">{p.id}</div>
                     </div>
                     <span className="badge">project</span>
+                    {onOpen && <button onClick={() => onOpen(p)}>Open</button>}
                     <button onClick={() => setOpenProject(p)}>members</button>
                     <button className="ghost" title="Delete project" onClick={() => void removeProject(p)}>
                       ✕
