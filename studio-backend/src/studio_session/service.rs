@@ -140,20 +140,36 @@ impl SessionService {
         format!("http://{}:{port}/", self.cfg.public_host)
     }
 
-    /// Fail early with a clear message if the Theia image is missing.
+    /// Make sure the Theia image is available: use the local one when
+    /// present, otherwise pull it from the registry (CI publishes it as
+    /// ghcr.io/constructorfabric/fabric-poc/cf-studio-theia). Only when both
+    /// fail does the launch error out, with both remedies in the message.
     pub async fn ensure_image(&self) -> anyhow::Result<()> {
-        self.docker
-            .inspect_image(&self.cfg.image)
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "Theia image '{}' not found — build it first: \
-                 cd fabric-poc/poc/theia && docker build -t {} .",
-                    self.cfg.image,
-                    self.cfg.image
-                )
-            })?;
-        Ok(())
+        if self.docker.inspect_image(&self.cfg.image).await.is_ok() {
+            return Ok(());
+        }
+        tracing::info!(image = %self.cfg.image, "studio-session: image not present locally — pulling");
+        let mut pull = self.docker.create_image(
+            Some(bollard::image::CreateImageOptions {
+                from_image: self.cfg.image.clone(),
+                ..Default::default()
+            }),
+            None,
+            None,
+        );
+        use futures_util::TryStreamExt;
+        match pull.try_collect::<Vec<_>>().await {
+            Ok(_) => {
+                tracing::info!(image = %self.cfg.image, "studio-session: image pulled");
+                Ok(())
+            }
+            Err(e) => Err(anyhow!(
+                "Theia image '{img}' is neither local nor pullable ({e}). Either \
+                 `docker login ghcr.io` + use the published image, or build it \
+                 locally: cd fabric-poc/poc/theia && docker build -t {img} .",
+                img = self.cfg.image,
+            )),
+        }
     }
 
     /// Create (or return the existing) session for a workspace.

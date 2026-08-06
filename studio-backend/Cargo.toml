@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 
 # ── studio-session gear (in-crate; per-workspace Theia IDE containers) ──
 bollard = "0.17"
+futures-util = "0.3" # image-pull stream in ensure_image
 async-trait = "0.1"
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
