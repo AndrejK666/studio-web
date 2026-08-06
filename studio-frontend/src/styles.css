@@ -172,10 +172,20 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 .account-orgs button .sub { color: var(--muted); font-size: 12px; }
 
 /* Account popover: identity on the left, context on the right. */
-.account-menu.two-pane { display: flex; padding: 0; overflow: hidden; }
-.account-menu.two-pane .pane-left { display: flex; flex-direction: column; min-width: 190px; padding: 8px; }
+/* The popover must escape the sidebar: inside it the two panes have ~200px
+   to share and collapse into one cramped column. Anchored to the account
+   button and floated over the content instead. */
+.account-menu.two-pane {
+  position: absolute; left: 8px; bottom: 100%; z-index: 60;
+  display: flex; padding: 0; overflow: hidden;
+  width: max-content; max-width: min(620px, calc(100vw - 32px));
+}
+.account-menu.two-pane .pane-left {
+  display: flex; flex-direction: column; gap: 4px;
+  width: 210px; flex: none; padding: 10px;
+}
 .account-menu.two-pane .pane-right {
-  min-width: 230px; max-height: 60vh; overflow: auto; padding: 8px;
+  width: 290px; flex: none; max-height: min(60vh, 520px); overflow: auto; padding: 10px;
   border-left: 1px solid var(--border); background: rgba(127, 127, 127, 0.05);
 }
 .ctx-search { width: 100%; margin-bottom: 8px; }
@@ -269,6 +279,7 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 12.5px; font-weight: 700; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.whoami { position: relative; }
 .account-menu {
   border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
   padding: 8px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px;
