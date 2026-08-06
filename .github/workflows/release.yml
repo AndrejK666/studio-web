@@ -17,17 +17,9 @@ jobs:
   backend-binary:
     runs-on: ubuntu-latest
     steps:
+      # The gears revision is pinned in Cargo.toml, so a tag rebuilt next
+      # week resolves the same sources as today.
       - uses: actions/checkout@v4
-        with:
-          path: studio-web
-      - uses: actions/checkout@v4
-        with:
-          repository: constructorfabric/gears-rust
-          # Pinned for reproducible releases (same rule as ci.yml): the tag
-          # you cut today and the retag next week must build identically.
-          ref: "71218154aa3a41991a5cbb827ac76c23b53a27a7"
-          path: gears-rust
-          # token: ${{ secrets.GEARS_RUST_TOKEN }}   # if private
 
       - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake
@@ -35,16 +27,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: studio-web/studio-backend
+          workspaces: studio-backend
 
       - name: Build (release)
-        working-directory: studio-web/studio-backend
+        working-directory: studio-backend
         run: cargo build --release --locked
 
       - uses: actions/upload-artifact@v4
         with:
           name: studio-backend-linux-x86_64
-          path: studio-web/studio-backend/target/release/studio-backend
+          path: studio-backend/target/release/studio-backend
 
   frontend-dist:
     runs-on: ubuntu-latest

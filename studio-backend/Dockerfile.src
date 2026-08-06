@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 # Build the Studio backend FROM SOURCE inside Docker (one-click compose path).
-# Build context must be the CFS root (gears-rust as a sibling of studio-web) —
-# see studio-web/docker-compose.yml and CFS/.dockerignore.
+# Build context is the studio-web directory: gears-rust is a git dependency
+# pinned in Cargo.toml, so cargo fetches it and no sibling checkout has to be
+# copied into the image.
 # CI uses the plain ./Dockerfile with a prebuilt binary instead.
 
 FROM rust:1.97-bookworm AS build
@@ -11,14 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler libprotobuf-dev cmake \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-COPY gears-rust/ gears-rust/
-COPY studio-web/studio-backend/ studio-web/studio-backend/
-
-WORKDIR /src/studio-web/studio-backend
+WORKDIR /src/studio-backend
+COPY studio-backend/ .
 # Cache cargo registry and build artifacts across rebuilds (BuildKit).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/studio-web/studio-backend/target \
+    --mount=type=cache,target=/src/studio-backend/target \
     cargo build --release --locked \
  && cp target/release/studio-backend /studio-backend
 
@@ -29,7 +27,7 @@ RUN apt-get update \
  && useradd --system --create-home --home /app studio
 WORKDIR /app
 COPY --from=build /studio-backend /app/studio-backend
-COPY studio-web/studio-backend/config/ /app/config/
+COPY studio-backend/config/ /app/config/
 RUN chown -R studio /app
 USER studio
 EXPOSE 8090

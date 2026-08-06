@@ -9,8 +9,8 @@
 #     docker compose up -d postgres
 #
 # NB: the backend image builds the 90-crate gears workspace — the first
-# `--build` takes a while; BuildKit caches make rebuilds fast. gears-rust must
-# be checked out as a sibling of studio-web (build context is the parent dir).
+# `--build` takes a while; BuildKit caches make rebuilds fast. No sibling
+# checkout is needed — gears-rust is a git dependency pinned in Cargo.toml.
 
 name: studio
 
@@ -59,8 +59,8 @@ services:
 
   backend:
     build:
-      context: ..
-      dockerfile: studio-web/studio-backend/Dockerfile.src
+      context: .
+      dockerfile: studio-backend/Dockerfile.src
     container_name: studio-backend
     environment:
       STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
@@ -94,8 +94,8 @@ services:
 
   frontend:
     build:
-      context: ..
-      dockerfile: studio-web/studio-frontend/Dockerfile.src
+      context: .
+      dockerfile: studio-frontend/Dockerfile.src
     container_name: studio-frontend
     ports:
       - "127.0.0.1:8080:8080"   # image is nginx-unprivileged: listens on 8080

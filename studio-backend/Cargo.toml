@@ -14,6 +14,11 @@ name = "studio-backend"
 path = "src/main.rs"
 
 [dependencies]
+# gears-rust is consumed as a git dependency pinned to one revision, not as a
+# sibling checkout. The pin lived in three places before (this file, ci.yml,
+# release.yml) and a fresh clone of studio-web did not build at all; now the
+# revision below is the single source of truth and `cargo build` works from a
+# bare clone. Bump deliberately, after a local build against the new rev.
 mimalloc = "0.1"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
@@ -31,8 +36,8 @@ tracing = "0.1"
 tokio-util = "0.7"
 utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4"] }
-toolkit-macros = { package = "cf-gears-toolkit-macros", path = "../../gears-rust/libs/toolkit-macros" }
-credstore-sdk = { package = "cf-gears-credstore-sdk", path = "../../gears-rust/gears/credstore/credstore-sdk" }
+toolkit-macros = { package = "cf-gears-toolkit-macros", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+credstore-sdk = { package = "cf-gears-credstore-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 # studio-connector: GtsTypeId on the account-management metadata boundary.
 # Same version gears-rust pins in its workspace manifest.
 gts = "0.11"
@@ -40,36 +45,36 @@ gts = "0.11"
 # ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
 # "stream" is for the llm-proxy gear (SSE passthrough to the LLM upstream).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-account-management-sdk = { package = "cf-gears-account-management-sdk", path = "../../gears-rust/gears/system/account-management/account-management-sdk" }
-toolkit-odata = { package = "cf-gears-toolkit-odata", path = "../../gears-rust/libs/toolkit-odata" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", path = "../../gears-rust/gears/system/types-registry/types-registry-sdk" }
-toolkit-security = { package = "cf-gears-toolkit-security", path = "../../gears-rust/libs/toolkit-security" }
-toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", path = "../../gears-rust/libs/toolkit-canonical-errors", features = ["axum"] }
+account-management-sdk = { package = "cf-gears-account-management-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+toolkit-security = { package = "cf-gears-toolkit-security", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7", features = ["axum"] }
 
 # ── Core toolkit ──
-toolkit = { package = "cf-gears-toolkit", path = "../../gears-rust/libs/toolkit", features = ["bootstrap"] }
+toolkit = { package = "cf-gears-toolkit", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7", features = ["bootstrap"] }
 
 # ── System gears (required set) ──
-api_gateway = { package = "cf-gears-api-gateway", path = "../../gears-rust/gears/system/api-gateway" }
-grpc_hub = { package = "cf-gears-grpc-hub", path = "../../gears-rust/gears/system/grpc-hub" }
-gear_orchestrator = { package = "cf-gears-gear-orchestrator", path = "../../gears-rust/gears/system/gear-orchestrator" }
-nodes_registry = { package = "cf-gears-nodes-registry", path = "../../gears-rust/gears/system/nodes-registry/nodes-registry" }
-types_registry = { package = "cf-gears-types-registry", path = "../../gears-rust/gears/system/types-registry/types-registry" }
-tenant_resolver = { package = "cf-gears-tenant-resolver", path = "../../gears-rust/gears/system/tenant-resolver/tenant-resolver" }
-authn_resolver = { package = "cf-gears-authn-resolver", path = "../../gears-rust/gears/system/authn-resolver/authn-resolver" }
-authz_resolver = { package = "cf-gears-authz-resolver", path = "../../gears-rust/gears/system/authz-resolver/authz-resolver" }
-resource_group = { package = "cf-gears-resource-group", path = "../../gears-rust/gears/system/resource-group/resource-group" }
+api_gateway = { package = "cf-gears-api-gateway", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+grpc_hub = { package = "cf-gears-grpc-hub", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+nodes_registry = { package = "cf-gears-nodes-registry", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+types_registry = { package = "cf-gears-types-registry", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+tenant_resolver = { package = "cf-gears-tenant-resolver", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+authn_resolver = { package = "cf-gears-authn-resolver", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+authz_resolver = { package = "cf-gears-authz-resolver", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+resource_group = { package = "cf-gears-resource-group", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 
 # ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
-static_authn_plugin = { package = "cf-gears-static-authn-plugin", path = "../../gears-rust/gears/system/authn-resolver/plugins/static-authn-plugin" }
+static_authn_plugin = { package = "cf-gears-static-authn-plugin", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 # Real login: OIDC JWT validation (used by config/oidc.yaml with Keycloak from compose)
-oidc_authn_plugin = { package = "cf-gears-oidc-authn-plugin", path = "../../gears-rust/gears/system/authn-resolver/plugins/oidc-authn-plugin" }
-static_authz_plugin = { package = "cf-gears-static-authz-plugin", path = "../../gears-rust/gears/system/authz-resolver/plugins/static-authz-plugin" }
+oidc_authn_plugin = { package = "cf-gears-oidc-authn-plugin", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+static_authz_plugin = { package = "cf-gears-static-authz-plugin", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 
 # ── The gear under demonstration ──
 # account-management ships its own Tenant Resolver plugin (src/tr_plugin) in-crate.
-account_management = { package = "cf-gears-account-management", path = "../../gears-rust/gears/system/account-management/account-management" }
-static_idp_plugin = { package = "cf-gears-static-idp-plugin", path = "../../gears-rust/gears/system/account-management/plugins/static-idp-plugin" }
+account_management = { package = "cf-gears-account-management", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+static_idp_plugin = { package = "cf-gears-static-idp-plugin", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 
 # ── Feature gears: AI chat, per-user settings, file storage ──
 # mini-chat hard-depends on oagw (LLM egress); oagw depends on credstore.
@@ -77,9 +82,9 @@ static_idp_plugin = { package = "cf-gears-static-idp-plugin", path = "../../gear
 # (src/infra/plugins/static_model_policy); the standalone
 # gears/mini-chat/plugins/static-model-policy-plugin dir is a leftover
 # Cargo.toml with no sources (gears issue candidate #5).
-mini_chat = { package = "cf-gears-mini-chat", path = "../../gears-rust/gears/mini-chat/mini-chat" }
-api_egress = { package = "cf-gears-oagw", path = "../../gears-rust/gears/system/oagw/oagw" }
-credstore = { package = "cf-gears-credstore", path = "../../gears-rust/gears/credstore/credstore" }
-static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", path = "../../gears-rust/gears/credstore/plugins/static-credstore-plugin" }
-simple_user_settings = { package = "cf-gears-simple-user-settings", path = "../../gears-rust/gears/simple-user-settings/simple-user-settings" }
-file_storage = { package = "cf-gears-file-storage", path = "../../gears-rust/gears/file-storage/file-storage" }
+mini_chat = { package = "cf-gears-mini-chat", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+api_egress = { package = "cf-gears-oagw", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+credstore = { package = "cf-gears-credstore", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+simple_user_settings = { package = "cf-gears-simple-user-settings", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
+file_storage = { package = "cf-gears-file-storage", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
