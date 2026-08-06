@@ -177,7 +177,9 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
    button and floated over the content instead. */
 .account-menu.two-pane {
   position: absolute; left: 8px; bottom: 100%; z-index: 60;
-  display: flex; padding: 0; overflow: hidden;
+  /* flex-direction is explicit: the base .account-menu is a column, and
+     inheriting it here is what stacked the panes instead of pairing them. */
+  display: flex; flex-direction: row; padding: 0; overflow: hidden;
   width: max-content; max-width: min(620px, calc(100vw - 32px));
 }
 .account-menu.two-pane .pane-left {
