@@ -110,6 +110,27 @@ input, select {
 input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 form.inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 0.9rem; }
+
+/* ── Connectors: add-connector form and repository browser ── */
+/* Horizontal group used for button rows and label+control pairs. */
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
+.row .grow { flex: 1; min-width: 160px; }
+/* A "Global connection" style checkbox line: box on the left, copy beside it. */
+label.check { display: flex; gap: 10px; align-items: flex-start; margin-top: 0.9rem; }
+label.check input { width: auto; margin: 3px 0 0; }
+/* Repository browser lives inside a connection row — inset it so the
+   nesting is visible without a second card. */
+.nested {
+  margin: 0.7rem 0 0.2rem; padding: 0.7rem 0.9rem;
+  border-left: 2px solid var(--border); border-radius: 0 8px 8px 0;
+  background: rgba(127, 127, 127, 0.06);
+}
+.nested ul.rows li { padding-left: 0; }
+.nested input[type="checkbox"] { width: auto; margin: 0 4px 0 0; }
+/* Provider group heading inside the add-connector card. */
+h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); }
+
 form.inline input { flex: 1; min-width: 180px; }
 
 label.field { display: block; margin-bottom: 0.9rem; font-size: 13px; font-weight: 600; color: var(--muted); }

@@ -33,6 +33,9 @@ utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4"] }
 toolkit-macros = { package = "cf-gears-toolkit-macros", path = "../../gears-rust/libs/toolkit-macros" }
 credstore-sdk = { package = "cf-gears-credstore-sdk", path = "../../gears-rust/gears/credstore/credstore-sdk" }
+# studio-connector: GtsTypeId on the account-management metadata boundary.
+# Same version gears-rust pins in its workspace manifest.
+gts = "0.11"
 
 # ── keycloak-idp-plugin (in-crate; real user provisioning, ADR-0004) ──
 # "stream" is for the llm-proxy gear (SSE passthrough to the LLM upstream).

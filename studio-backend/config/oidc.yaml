@@ -127,6 +127,28 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        # Connector driver contract. Each driver plugin registers a
+        # PluginV1 instance derived from this type, so `GET
+        # /studio-connector/v1/providers` is really "what is in the
+        # types registry", not a hardcoded list.
+        - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connector provider plugin specification"
+          type: "object"
+        # Connection catalogue of one tenant. Tokens are NOT here — only
+        # credstore references. inheritance_policy: inherit lets a
+        # workspace see its organization's connections; per AM contract
+        # the nearest row wins whole, it does not merge with ancestors.
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connections (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            # inherit: a workspace sees its organization's connections.
+            # The nearest row wins whole (AM does not merge across the
+            # chain), so a tenant with its own catalogue shadows its
+            # ancestors rather than adding to them.
+            inheritance_policy: "inherit"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
           # Free-form payload: the GTS OP#12 narrowing check treats the base
           # tenant_metadata envelope as a CLOSED empty object, so a derived
@@ -366,6 +388,47 @@ gears:
         - ref: "anthropic-key"
           value_env: "STUDIO_ANTHROPIC_API_KEY"
           sharing: "shared"
+
+  # ── Source connectors (driver plugins + tenant connection catalogue) ──
+  # Each driver is a plugin: it registers a PluginV1 instance under
+  # cf.studio.connector.plugin.v1~ and publishes a scoped ConnectorDriver
+  # client. Dropping a plugin from registered_gears.rs makes that provider
+  # disappear from the API — no other config changes needed.
+  gitlab-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  github-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  bitbucket-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  # Model providers. These are the credentials the IDE agents authenticate
+  # with: an Anthropic key powers @theia/ai-claude-code, an OpenAI key powers
+  # @theia/ai-codex. The OpenAI driver also validates any OpenAI-compatible
+  # endpoint (Groq, vLLM, our own studio-llm-proxy) via the instance URL.
+  anthropic-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  openai-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  # Owns the connection catalogue (tenant metadata) and the REST surface.
+  # Tokens live in credstore; the scope chosen on create maps onto the
+  # credstore sharing mode (personal -> private, workspace -> tenant,
+  # organization -> shared).
+  studio-connector:
+    config: {}
 
   # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──
   # Provider-agnostic gear; this PROFILE defaults to Groq's free tier

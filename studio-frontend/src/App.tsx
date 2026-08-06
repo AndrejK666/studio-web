@@ -9,8 +9,11 @@ import {
   shortTypeName,
   TENANT_TYPES,
   USER_MEMBER_HANDLE,
+  type Connection,
+  type ConnectorProvider,
   type Group,
   type Me,
+  type RemoteRepo,
   type RepoEntry,
   type Tenant,
   type User,
@@ -2844,138 +2847,512 @@ function ConnectorsView({
   workspaces: Workspace[];
   filters: Filters;
 }) {
-  const [all, setAll] = useState<{ ws: Workspace; settings: WorkspaceSettings | null }[] | null>(null);
+  // Providers come from the backend, which derives them from registered driver
+  // plugins — the list is "what this deployment can actually do", not a
+  // hardcoded catalog.
+  const [providers, setProviders] = useState<ConnectorProvider[] | null>(null);
+  const [connections, setConnections] = useState<Connection[] | null>(null);
+  const [disabled, setDisabled] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const [p, c] = await Promise.all([api.connectorProviders(token), api.connections(token)]);
+      setProviders(p.items);
+      setConnections(c.items);
+      setDisabled(null);
+    } catch (e) {
+      // 503 = no driver plugin registered in this build. Say so plainly instead
+      // of showing an empty list that reads as "nothing connected".
+      if (e instanceof ApiError && e.status === 503) {
+        setDisabled(errText(e));
+        setProviders([]);
+        setConnections([]);
+      } else {
+        setErr(errText(e));
+      }
+    }
+  }, [token]);
 
   useEffect(() => {
-    let cancelled = false;
-    void Promise.all(
-      workspaces.map(async (ws) => ({
-        ws,
-        settings: await api.workspaceSettings(token, ws.id).catch(() => null),
-      })),
-    ).then((r) => {
-      if (!cancelled) setAll(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [token, workspaces]);
-
-  const rows = (all ?? []).filter(
-    ({ ws, settings }) =>
-      matches(filters.query, ws.name, ws.orgName) &&
-      ((settings?.repos?.length ?? 0) > 0 || settings?.root_repo_url?.trim()),
-  );
+    void reload();
+  }, [reload]);
 
   return (
     <>
       <h1>Connectors</h1>
       <p className="subtitle">
-        Ingress into workspaces (domain model §4). Today that is the Git connector — repositories
-        cloned into sessions with credstore-held PATs; each workspace manages its own list on the
-        dashboard.
+        A connection is configured once and reused: pick repositories from a list instead of
+        pasting clone URLs into every workspace. Tokens go to credstore — after you submit one the
+        browser never sees it again.
       </p>
 
+      {err && <p className="error">{err}</p>}
+      {note && <p className="hint">{note}</p>}
+      {disabled && (
+        <div className="card">
+          <h2>Connectors unavailable</h2>
+          <p className="empty">{disabled}</p>
+        </div>
+      )}
+
+      {!disabled && (
+        <AddConnector
+          token={token}
+          providers={providers ?? []}
+          onAdded={(t) => {
+            setNote(`Connected as ${t.account}${t.display_name ? ` (${t.display_name})` : ""}.`);
+            void reload();
+          }}
+        />
+      )}
+
+      {!disabled && (
+        <ConnectionList
+          token={token}
+          providers={providers ?? []}
+          connections={(connections ?? []).filter((c) =>
+            matches(filters.query, c.label, c.provider, c.base_url),
+          )}
+          workspaces={workspaces}
+          loading={connections === null}
+          onChanged={() => void reload()}
+          onNote={setNote}
+        />
+      )}
+    </>
+  );
+}
+
+/** Provider groups in the picker. Keys match ConnectorDriver::category(). */
+const CATEGORIES: { key: string; title: string; blurb: string }[] = [
+  {
+    key: "source_code",
+    title: "Source code",
+    blurb: "Browse repositories and attach them to a workspace.",
+  },
+  {
+    key: "ai",
+    title: "AI providers",
+    blurb:
+      "Credentials the IDE agents authenticate with — Anthropic for Claude Code, OpenAI for Codex.",
+  },
+];
+
+/** Provider picker, then the credential form. "Test connection" probes without
+ *  saving; "Test & save" does both in one server-side step. */
+function AddConnector({
+  token,
+  providers,
+  onAdded,
+}: {
+  token: string;
+  providers: ConnectorProvider[];
+  onAdded: (t: { account: string; display_name?: string }) => void;
+}) {
+  const [picked, setPicked] = useState<ConnectorProvider | null>(null);
+  const [label, setLabel] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [pat, setPat] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [isGlobal, setIsGlobal] = useState(true);
+  const [busy, setBusy] = useState<"probe" | "save" | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setPicked(null);
+    setLabel("");
+    setBaseUrl("");
+    setPat("");
+    setReveal(false);
+    setIsGlobal(true);
+    setResult(null);
+    setError(null);
+  };
+
+  if (providers.length === 0) {
+    return (
       <div className="card">
-        <h2>Git repositories</h2>
-        {all === null ? (
-          <p className="empty">Loading workspace sources…</p>
-        ) : rows.length === 0 ? (
-          <p className="empty">No repositories connected yet — bind them on a workspace dashboard.</p>
-        ) : (
-          <ul className="rows">
-            {rows.flatMap(({ ws, settings }) => {
-              const items = [];
-              if (settings?.root_repo_url?.trim()) {
-                items.push(
-                  <li key={`${ws.id}-root`}>
+        <h2>Add connector</h2>
+        <p className="empty">No connector driver plugin is registered in this build.</p>
+      </div>
+    );
+  }
+
+  if (!picked) {
+    return (
+      <div className="card">
+        <h2>Add connector</h2>
+        <p className="hint">Connect a workspace to an external tool or service.</p>
+        {CATEGORIES.map(({ key, title, blurb }) => {
+          const group = providers.filter((p) => p.category === key);
+          if (group.length === 0) return null;
+          return (
+            <div key={key}>
+              <h3 className="group">{title}</h3>
+              <p className="hint">{blurb}</p>
+              <ul className="rows">
+                {group.map((p) => (
+                  <li key={p.provider}>
                     <div className="grow">
-                      <div className="name">{settings.root_repo_url}</div>
-                      <div className="sub">{ws.name} · workspace root</div>
-                    </div>
-                    <span className="badge">git</span>
-                    {settings.root_token_ref && <span className="badge workspace">PAT ✓</span>}
-                  </li>,
-                );
-              }
-              for (const r of settings?.repos ?? []) {
-                items.push(
-                  <li key={`${ws.id}-${r.name}`}>
-                    <div className="grow">
-                      <div className="name">{r.url ?? r.path ?? r.name}</div>
+                      <div className="name">{p.display_name}</div>
                       <div className="sub">
-                        {ws.name} · {r.name}
-                        {r.target ? ` → ${r.target}` : ""}
+                        {title.toLowerCase()} · {p.default_base_url}
                       </div>
                     </div>
-                    <span className="badge">{r.source}</span>
-                    {r.token_ref && <span className="badge workspace">PAT ✓</span>}
-                  </li>,
-                );
-              }
-              return items;
-            })}
-          </ul>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>All connectors</h2>
-        <p className="hint">
-          The catalog. “Available” works today through workspace sources; “Planned” arrives with
-          the connector gear (Connector / Sync Run entities in the domain model) — listed, not
-          faked.
-        </p>
-        {(() => {
-          const count = (pred: (r: RepoEntry) => boolean) =>
-            (all ?? []).reduce(
-              (n, { settings }) => n + (settings?.repos ?? []).filter(pred).length,
-              0,
-            );
-          const gitlabCount =
-            count((r) => r.source === "gitlab" || Boolean(r.url?.includes("gitlab"))) +
-            (all ?? []).filter(({ settings }) => settings?.root_repo_url?.includes("gitlab")).length;
-          const githubCount = count(
-            (r) => r.source === "github" || Boolean(r.url?.includes("github")),
-          );
-          const localCount = count((r) => r.source === "local");
-          const catalog: { icon: string; name: string; type: string; status: "Available" | "Planned"; connections: number | null }[] = [
-            { icon: "🦊", name: "GitLab", type: "Git hosting", status: "Available", connections: gitlabCount },
-            { icon: "🐙", name: "GitHub", type: "Git hosting", status: "Available", connections: githubCount },
-            { icon: "📁", name: "Local folder", type: "Filesystem", status: "Available", connections: localCount },
-            { icon: "📘", name: "Atlassian (Jira / Confluence)", type: "Issue tracking", status: "Planned", connections: null },
-            { icon: "💬", name: "Slack", type: "Chat", status: "Planned", connections: null },
-            { icon: "🐙", name: "GitHub App (webhooks / sync)", type: "Git sync", status: "Planned", connections: null },
-            { icon: "📝", name: "Notion", type: "Docs", status: "Planned", connections: null },
-            { icon: "☁️", name: "Google Drive", type: "Docs", status: "Planned", connections: null },
-          ];
-          return (
-            <div className="catalog">
-              <div className="catalog-row catalog-head">
-                <span>Name</span>
-                <span>Type</span>
-                <span>Status</span>
-                <span>Connections</span>
-              </div>
-              {catalog.map((c) => (
-                <div className={`catalog-row ${c.status === "Planned" ? "catalog-dim" : ""}`} key={c.name}>
-                  <span className="catalog-name">
-                    <span className="catalog-icon">{c.icon}</span> {c.name}
-                  </span>
-                  <span className="sub">{c.type}</span>
-                  <span>
-                    <span className={`badge ${c.status === "Available" ? "workspace" : ""}`}>
-                      {c.status}
+                    {/* Proof this is plugin-backed: the driver's GTS instance id. */}
+                    <span className="sub" title={p.instance_id}>
+                      {p.instance_id.split("~").filter(Boolean).slice(-1)[0]}
                     </span>
-                  </span>
-                  <span className="sub">{c.connections ?? "—"}</span>
-                </div>
-              ))}
+                    <button onClick={() => setPicked(p)}>Connect</button>
+                  </li>
+                ))}
+              </ul>
             </div>
           );
-        })()}
+        })}
       </div>
-    </>
+    );
+  }
+
+  const submit = async (mode: "probe" | "save") => {
+    setBusy(mode);
+    setError(null);
+    setResult(null);
+    try {
+      const body = {
+        provider: picked.provider,
+        base_url: baseUrl.trim() || undefined,
+        token: pat,
+      };
+      if (mode === "probe") {
+        const id = await api.probeConnection(token, body);
+        setResult(`Valid — ${id.account}${id.display_name ? ` (${id.display_name})` : ""}`);
+      } else {
+        const t = await api.createConnection(token, {
+          ...body,
+          label,
+          // Global = everyone in the tenant, otherwise only its creator. Both
+          // are enforced by credstore sharing modes, not by this checkbox.
+          scope: isGlobal ? "workspace" : "personal",
+        });
+        onAdded(t);
+        reset();
+      }
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="card">
+      <h2>Add connector</h2>
+      <ul className="rows">
+        <li>
+          <div className="grow">
+            <div className="name">{picked.display_name}</div>
+            <div className="sub">source code</div>
+          </div>
+        </li>
+      </ul>
+
+      <label className="check">
+        <input type="checkbox" checked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
+        <span>
+          <strong>Global connection</strong>
+          <span className="sub"> Available to all users in the workspace.</span>
+        </span>
+      </label>
+
+      <label>Label</label>
+      <input
+        placeholder="e.g. My GitLab account"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+      />
+
+      <label>Instance URL</label>
+      <input
+        placeholder={
+          picked.category === "ai"
+            ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
+            : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
+        }
+        value={baseUrl}
+        onChange={(e) => setBaseUrl(e.target.value)}
+      />
+
+      <label>{picked.credential_label}</label>
+      <div className="row">
+        <input
+          className="grow"
+          type={reveal ? "text" : "password"}
+          placeholder={picked.credential_hint}
+          value={pat}
+          onChange={(e) => setPat(e.target.value)}
+        />
+        <button onClick={() => setReveal((v) => !v)}>{reveal ? "Hide" : "Show"}</button>
+      </div>
+      <p className="hint">
+        Stored in credstore under a per-connection reference. Never logged, never returned by the
+        API.
+      </p>
+
+      {result && <p className="hint">{result}</p>}
+      {error && <p className="error">{error}</p>}
+
+      <div className="row">
+        <button onClick={reset}>← Back</button>
+        <span className="grow" />
+        <button disabled={!pat.trim() || busy !== null} onClick={() => void submit("probe")}>
+          {busy === "probe" ? "Testing…" : "Test connection"}
+        </button>
+        <button
+          className="primary"
+          disabled={!pat.trim() || !label.trim() || busy !== null}
+          onClick={() => void submit("save")}
+        >
+          {busy === "save" ? "Saving…" : "Test & save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Stored connections, each expandable into a repository browser. */
+function ConnectionList({
+  token,
+  providers,
+  connections,
+  workspaces,
+  loading,
+  onChanged,
+  onNote,
+}: {
+  token: string;
+  providers: ConnectorProvider[];
+  connections: Connection[];
+  workspaces: Workspace[];
+  loading: boolean;
+  onChanged: () => void;
+  onNote: (s: string) => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+
+  return (
+    <div className="card">
+      <h2>Connections</h2>
+      {loading ? (
+        <p className="empty">Loading…</p>
+      ) : connections.length === 0 ? (
+        <p className="empty">No connections yet.</p>
+      ) : (
+        <ul className="rows">
+          {connections.map((c) => {
+            // Only a source host has repositories; a model-provider connection
+            // is a credential and nothing more.
+            const browsable =
+              providers.find((p) => p.provider === c.provider)?.category === "source_code";
+            return (
+            <li key={c.id}>
+              <div className="grow">
+                <div className="name">{c.label}</div>
+                <div className="sub">
+                  {c.provider} · {c.base_url}
+                </div>
+                {open === c.id && browsable && (
+                  <RepoBrowser
+                    token={token}
+                    connection={c}
+                    workspaces={workspaces}
+                    onNote={onNote}
+                  />
+                )}
+              </div>
+              <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
+                {c.scope}
+              </span>
+              {browsable && (
+                <button onClick={() => setOpen(open === c.id ? null : c.id)}>
+                  {open === c.id ? "Hide repositories" : "Browse repositories"}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  void api
+                    .testConnection(token, c.id)
+                    .then((t) => onNote(`${c.label}: valid — ${t.account}`))
+                    .catch((e) => onNote(`${c.label}: ${errText(e)}`));
+                }}
+              >
+                Test
+              </button>
+              <button
+                onClick={() => {
+                  if (!window.confirm(`Remove connection "${c.label}" and its token?`)) return;
+                  void api
+                    .deleteConnection(token, c.id)
+                    .then(onChanged)
+                    .catch((e) => onNote(errText(e)));
+                }}
+              >
+                Remove
+              </button>
+            </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function RepoBrowser({
+  token,
+  connection,
+  workspaces,
+  onNote,
+}: {
+  token: string;
+  connection: Connection;
+  workspaces: Workspace[];
+  onNote: (s: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [repos, setRepos] = useState<RemoteRepo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [ws, setWs] = useState(workspaces[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(
+    async (q: string) => {
+      setError(null);
+      try {
+        const r = await api.connectionRepositories(token, connection.id, q);
+        setRepos(r.items);
+      } catch (e) {
+        setError(errText(e));
+        setRepos([]);
+      }
+    },
+    [token, connection.id],
+  );
+
+  useEffect(() => {
+    void load("");
+  }, [load]);
+
+  const picks = (repos ?? []).filter((r) => checked[r.id]);
+
+  const attach = async () => {
+    if (!ws || picks.length === 0) return;
+    setBusy(true);
+    try {
+      const current = (await api.workspaceSettings(token, ws)) ?? {};
+      const existing = current.repos ?? [];
+      const taken = new Set(existing.map((r) => r.name));
+      const added: RepoEntry[] = [];
+      for (const r of picks) {
+        // Directory name must be [a-z0-9_-]+. De-duplicate against what the
+        // workspace already has rather than shadowing an existing source.
+        const base =
+          r.name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-")
+            .replace(/^-+|-+$/g, "") || `repo-${r.id}`;
+        let candidate = base;
+        let n = 2;
+        while (taken.has(candidate)) candidate = `${base}-${n++}`;
+        taken.add(candidate);
+        added.push({
+          name: candidate,
+          source: connection.provider === "github" ? "github" : "gitlab",
+          url: r.clone_url,
+          branch: r.default_branch,
+          // studio-session resolves this from credstore itself, so the token
+          // stays server-side end to end.
+          token_ref: connection.secret_ref,
+        });
+      }
+      await api.putWorkspaceSettings(token, ws, { ...current, repos: [...existing, ...added] });
+      const wsName = workspaces.find((w) => w.id === ws)?.name ?? ws;
+      onNote(
+        `Attached ${added.length} repositor${added.length === 1 ? "y" : "ies"} to ${wsName} — ` +
+          `cloned on the next session launch.`,
+      );
+      setChecked({});
+    } catch (e) {
+      onNote(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="nested">
+      <div className="row">
+        <input
+          className="grow"
+          placeholder="Search repositories…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void load(search);
+          }}
+        />
+        <button onClick={() => void load(search)}>Search</button>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      {repos === null ? (
+        <p className="empty">Loading repositories…</p>
+      ) : repos.length === 0 ? (
+        <p className="empty">Nothing reachable with this credential.</p>
+      ) : (
+        <ul className="rows">
+          {repos.map((r) => (
+            <li key={r.id}>
+              <input
+                type="checkbox"
+                checked={Boolean(checked[r.id])}
+                onChange={(e) => setChecked((c) => ({ ...c, [r.id]: e.target.checked }))}
+              />
+              <div className="grow">
+                <div className="name">{r.full_path}</div>
+                <div className="sub">
+                  {r.default_branch ?? "default branch"}
+                  {r.description ? ` · ${r.description}` : ""}
+                </div>
+              </div>
+              {r.visibility && <span className="badge">{r.visibility}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="row">
+        <select value={ws} onChange={(e) => setWs(e.target.value)}>
+          {workspaces.length === 0 && <option value="">No workspaces</option>}
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name} · {w.orgName}
+            </option>
+          ))}
+        </select>
+        <button
+          className="primary"
+          disabled={picks.length === 0 || !ws || busy}
+          onClick={() => void attach()}
+        >
+          {busy ? "Attaching…" : `Attach ${picks.length || ""} to workspace`}
+        </button>
+      </div>
+    </div>
   );
 }
 

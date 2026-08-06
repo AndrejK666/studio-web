@@ -58,6 +58,54 @@ export interface RepoEntry {
   token_ref?: string;
 }
 
+/* ── studio-connector: source connections ── */
+
+/** A provider this deployment can serve, i.e. one whose driver plugin is linked. */
+export interface ConnectorProvider {
+  provider: string;
+  display_name: string;
+  default_base_url: string;
+  /** GTS instance id of the driver plugin — shown so the UI can prove it is plugin-backed. */
+  instance_id: string;
+  /** "source_code" = repositories can be browsed; "ai" = credential only. */
+  category: string;
+  /** Label for the credential field, e.g. "API Key" vs "Personal Access Token (PAT)". */
+  credential_label: string;
+  /** Placeholder hinting at the credential shape, e.g. "sk-ant-…". */
+  credential_hint: string;
+}
+
+export interface Connection {
+  id: string;
+  provider: string;
+  label: string;
+  base_url: string;
+  /** personal | workspace | organization */
+  scope: string;
+  /** credstore reference of the token — pass as token_ref when launching a session. */
+  secret_ref: string;
+  created_at_epoch_secs: number;
+}
+
+export interface ConnectorIdentity {
+  account: string;
+  display_name?: string;
+}
+
+export interface ConnectionTest extends ConnectorIdentity {
+  connection: Connection;
+}
+
+export interface RemoteRepo {
+  id: string;
+  name: string;
+  full_path: string;
+  clone_url: string;
+  default_branch?: string;
+  description?: string;
+  visibility?: string;
+}
+
 export interface WorkspaceSettings {
   automation_level?: "manual" | "recommendations" | "autonomous";
   approved_worker_categories?: string[];
@@ -270,6 +318,47 @@ export const api = {
       if (e instanceof ApiError && e.status === 404) return null; // not set yet
       throw e;
     }
+  },
+
+  /* ── studio-connector ── */
+
+  connectorProviders: (token: string) =>
+    request<{ items: ConnectorProvider[] }>("/studio-connector/v1/providers", token),
+
+  connections: (token: string) =>
+    request<{ items: Connection[] }>("/studio-connector/v1/connections", token),
+
+  /** Verify a credential without storing it ("Test connection"). */
+  probeConnection: (token: string, body: { provider: string; base_url?: string; token: string }) =>
+    request<ConnectorIdentity>("/studio-connector/v1/probe", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Verifies, then stores ("Test & save"). The token never comes back out. */
+  createConnection: (
+    token: string,
+    body: { provider: string; label: string; base_url?: string; token: string; scope?: string },
+  ) =>
+    request<ConnectionTest>("/studio-connector/v1/connections", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  testConnection: (token: string, id: string) =>
+    request<ConnectionTest>(`/studio-connector/v1/connections/${id}/test`, token, {
+      method: "POST",
+    }),
+
+  deleteConnection: (token: string, id: string) =>
+    request<void>(`/studio-connector/v1/connections/${id}`, token, { method: "DELETE" }),
+
+  connectionRepositories: (token: string, id: string, search?: string) => {
+    const q = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+    return request<{ items: RemoteRepo[] }>(
+      `/studio-connector/v1/connections/${id}/repositories${q}`,
+      token,
+    );
   },
 
   putWorkspaceSettings: (token: string, tenantId: string, value: WorkspaceSettings) =>

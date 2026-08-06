@@ -127,6 +127,21 @@ gears:
           x-gts-traits:
             allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
             idp_provisioning: false
+        # Connector driver contract (see oidc.yaml for the rationale).
+        - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connector provider plugin specification"
+          type: "object"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connections (free-form until gears issue #4)"
+          type: "object"
+          x-gts-traits:
+            # inherit: a workspace sees its organization's connections.
+            # The nearest row wins whole (AM does not merge across the
+            # chain), so a tenant with its own catalogue shadows its
+            # ancestors rather than adding to them.
+            inheritance_policy: "inherit"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
           # Free-form payload: the GTS OP#12 narrowing check treats the base
           # tenant_metadata envelope as a CLOSED empty object, so a derived
