@@ -96,3 +96,8 @@ services:
 
 volumes:
   studio_pg_data:
+    # Pinned to the volume created by the ORIGINAL studio-backend compose
+    # project (before `name: studio` unified everything): regrouping the
+    # containers must not orphan the Postgres data. Fresh machines simply
+    # get a volume with this name.
+    name: studio-backend_studio_pg_data
