@@ -159,6 +159,13 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 
 /* Workspace rows unfold in place; the caret is the only affordance needed. */
 .caret { display: inline-block; width: 12px; color: var(--muted); }
+
+/* Drill-down breadcrumbs: organization → workspace → project. */
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 0 0 0.4rem; font-size: 13px; }
+.crumb-sep { color: var(--muted); margin-right: 6px; }
+.crumb-here { color: var(--muted); }
+.crumbs .linklike { font-size: 13px; }
 ul.rows li:has(> .grow > .nested) { align-items: flex-start; }
 
 form.inline input { flex: 1; min-width: 180px; }

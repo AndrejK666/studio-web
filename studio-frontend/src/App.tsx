@@ -375,7 +375,7 @@ const NAV_SECTIONS: { title: string | null; items: { id: View; icon: string; lab
   {
     title: "Work",
     items: [
-      { id: "workspaces", icon: "grid", label: "Workspaces" },
+      { id: "workspaces", icon: "org", label: "Organizations" },
       { id: "chats", icon: "chat", label: "Chats" },
       { id: "files", icon: "file", label: "Files" },
       { id: "connectors", icon: "plug", label: "Connectors" },
@@ -398,6 +398,8 @@ const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
 
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
   const [view, setView] = useState<View>("home");
+  /** Position in the organization → workspace drill-down. */
+  const [crumb, setCrumb] = useState<Crumb>({});
   const [accountMenu, setAccountMenu] = useState(false);
   const [productMenu, setProductMenu] = useState(false);
   // Admin area (console pattern): a separate mode with its own sidebar for
@@ -1084,6 +1086,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   setAdminOpen(false);
                   setStudio(ws);
                 }}
+                onOpen={(ws) => {
+                  // Admin lists workspaces across the platform; opening one
+                  // hands over to the normal drill-down rather than growing a
+                  // second workspace page inside the admin zone.
+                  setAdminOpen(false);
+                  setCrumb({ orgId: ws.orgId, wsId: ws.id });
+                  setView("workspaces");
+                }}
               />
             )}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
@@ -1098,11 +1108,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         ) : (
           <>
         {view === "workspaces" && (
-          <WorkspacesView
+          <BrowseView
             token={token}
+            home={home}
             orgs={orgs}
             workspaces={workspaces}
             filters={filters}
+            crumb={crumb}
+            setCrumb={setCrumb}
             onChanged={refresh}
             onOpenStudio={setStudio}
           />
@@ -1332,6 +1345,319 @@ function FilterPanel({
 
 /* ── Workspaces ── */
 
+/* ── Browse: organization → workspace drill-down ───────────────────────────
+ *
+ * The portal's spine. Every level shows what it contains and what it owns, and
+ * the crumb says where you are — instead of a flat set of screens where
+ * "Connectors" and "Secrets" floated free of the thing they belong to.
+ * Projects become the level below a workspace.
+ */
+
+interface Crumb {
+  orgId?: string;
+  wsId?: string;
+}
+
+function Breadcrumbs({
+  items,
+}: {
+  items: { label: string; onClick?: () => void }[];
+}) {
+  return (
+    <nav className="crumbs">
+      {items.map((it, i) => (
+        <span key={`${it.label}-${i}`}>
+          {i > 0 && <span className="crumb-sep">/</span>}
+          {it.onClick ? (
+            <button type="button" className="linklike" onClick={it.onClick}>
+              {it.label}
+            </button>
+          ) : (
+            <span className="crumb-here">{it.label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+function BrowseView({
+  token,
+  home,
+  orgs,
+  workspaces,
+  filters,
+  crumb,
+  setCrumb,
+  onChanged,
+  onOpenStudio,
+}: {
+  token: string;
+  home: Tenant | null;
+  orgs: Tenant[];
+  workspaces: Workspace[];
+  filters: Filters;
+  crumb: Crumb;
+  setCrumb: (c: Crumb) => void;
+  onChanged: () => void;
+  onOpenStudio: (ws: Workspace) => void;
+}) {
+  const org = orgs.find((o) => o.id === crumb.orgId);
+  const ws = workspaces.find((w) => w.id === crumb.wsId);
+
+  const trail: { label: string; onClick?: () => void }[] = [
+    { label: "Organizations", onClick: org ? () => setCrumb({}) : undefined },
+  ];
+  if (org) {
+    trail.push({
+      label: org.name,
+      onClick: ws ? () => setCrumb({ orgId: org.id }) : undefined,
+    });
+  }
+  if (ws) trail.push({ label: ws.name });
+
+  return (
+    <>
+      <Breadcrumbs items={trail} />
+      {!org ? (
+        <OrganizationsLevel
+          token={token}
+          home={home}
+          orgs={orgs}
+          workspaces={workspaces}
+          filters={filters}
+          onChanged={onChanged}
+          onOpen={(o) => setCrumb({ orgId: o.id })}
+        />
+      ) : !ws ? (
+        <OrganizationLevel
+          token={token}
+          org={org}
+          workspaces={workspaces.filter((w) => w.orgId === org.id)}
+          filters={filters}
+          onChanged={onChanged}
+          onOpenStudio={onOpenStudio}
+          onOpenWorkspace={(w) => setCrumb({ orgId: org.id, wsId: w.id })}
+          onDeleted={() => {
+            setCrumb({});
+            onChanged();
+          }}
+        />
+      ) : (
+        <WorkspaceLevel
+          token={token}
+          ws={ws}
+          onOpenStudio={onOpenStudio}
+          onBack={() => setCrumb({ orgId: org.id })}
+        />
+      )}
+    </>
+  );
+}
+
+/** Level 0 — the organizations you can see, and creating one. */
+function OrganizationsLevel({
+  token,
+  home,
+  orgs,
+  workspaces,
+  filters,
+  onChanged,
+  onOpen,
+}: {
+  token: string;
+  home: Tenant | null;
+  orgs: Tenant[];
+  workspaces: Workspace[];
+  filters: Filters;
+  onChanged: () => void;
+  onOpen: (o: Tenant) => void;
+}) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const visible = orgs.filter((o) => matches(filters.query, o.name));
+
+  async function create(e: FormEvent) {
+    e.preventDefault();
+    if (!home) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.createTenant(token, {
+        name,
+        parent_id: home.id,
+        tenant_type: TENANT_TYPES.organization,
+      });
+      setName("");
+      onChanged();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h1>Organizations</h1>
+      <p className="subtitle">
+        An organization owns workspaces, the people in them, and the connectors they share. Open one
+        to work inside it.
+      </p>
+      <div className="card">
+        {visible.length === 0 ? (
+          <p className="empty">No organizations yet — create the first one below.</p>
+        ) : (
+          <ul className="rows">
+            {visible.map((o) => {
+              const count = workspaces.filter((w) => w.orgId === o.id).length;
+              return (
+                <li key={o.id}>
+                  <div
+                    className="grow"
+                    style={{ cursor: "pointer" }}
+                    onClick={() => onOpen(o)}
+                    title="Open this organization"
+                  >
+                    <div className="name">{o.name}</div>
+                    <div className="sub">
+                      {count} workspace{count === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  {o.self_managed && <span className="badge selfmanaged">self-managed</span>}
+                  <button onClick={() => onOpen(o)}>Open</button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <form className="inline" onSubmit={create}>
+          <input
+            placeholder="New organization name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <button className="primary" disabled={busy || !name || !home}>
+            Create
+          </button>
+        </form>
+        {error && <div className="error">{error}</div>}
+      </div>
+    </>
+  );
+}
+
+/** Level 1 — one organization: its workspaces, and what it owns for all of them. */
+function OrganizationLevel({
+  token,
+  org,
+  workspaces,
+  filters,
+  onChanged,
+  onOpenStudio,
+  onOpenWorkspace,
+  onDeleted,
+}: {
+  token: string;
+  org: Tenant;
+  workspaces: Workspace[];
+  filters: Filters;
+  onChanged: () => void;
+  onOpenStudio: (ws: Workspace) => void;
+  onOpenWorkspace: (ws: Workspace) => void;
+  onDeleted: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    if (workspaces.length > 0) {
+      window.alert(
+        `“${org.name}” still has ${workspaces.length} workspace(s). Delete them first — an ` +
+          `organization is not a folder you can drop with its contents inside.`,
+      );
+      return;
+    }
+    if (!window.confirm(`Delete organization “${org.name}”? This cannot be undone.`)) return;
+    try {
+      await api.deleteTenant(token, org.id);
+      onDeleted();
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>{org.name}</h1>
+          <p className="subtitle" style={{ margin: 0 }}>
+            organization · <code>{org.id.slice(0, 8)}…</code>
+          </p>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+
+      <WorkspacesView
+        token={token}
+        orgs={[org]}
+        workspaces={workspaces}
+        filters={filters}
+        heading={false}
+        onChanged={onChanged}
+        onOpenStudio={onOpenStudio}
+        onOpen={onOpenWorkspace}
+      />
+
+      <div className="card">
+        <h2>Danger zone</h2>
+        <p className="hint">
+          Deleting an organization is only possible once it is empty — the backend enforces it too,
+          this button just says so before you find out from a 409.
+        </p>
+        <button className="ghost" onClick={() => void remove()}>
+          Delete organization
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** Level 2 — one workspace. Its own header, then everything it owns. */
+function WorkspaceLevel({
+  token,
+  ws,
+  onOpenStudio,
+  onBack,
+}: {
+  token: string;
+  ws: Workspace;
+  onOpenStudio: (ws: Workspace) => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <h1>{ws.name}</h1>
+          <p className="subtitle" style={{ margin: 0 }}>
+            workspace of {ws.orgName} · <code>{ws.id.slice(0, 8)}…</code>
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="primary" onClick={() => onOpenStudio(ws)}>
+            Open Studio
+          </button>
+        </div>
+      </div>
+      {/* embedded: the header above already carries the name and Open Studio. */}
+      <WorkspaceDashboard token={token} ws={ws} embedded onBack={onBack} onOpenStudio={onOpenStudio} />
+    </>
+  );
+}
+
 function WorkspacesView({
   token,
   orgs,
@@ -1339,6 +1665,8 @@ function WorkspacesView({
   filters,
   onChanged,
   onOpenStudio,
+  onOpen,
+  heading = true,
 }: {
   token: string;
   orgs: Tenant[];
@@ -1346,12 +1674,13 @@ function WorkspacesView({
   filters: Filters;
   onChanged: () => void;
   onOpenStudio: (ws: Workspace) => void;
+  /** Drill into a workspace. */
+  onOpen: (ws: Workspace) => void;
+  /** Off when rendered as a level inside an organization, which has its own. */
+  heading?: boolean;
 }) {
   const [name, setName] = useState("");
-  const [orgId, setOrgId] = useState("");
-  /** Which workspace is unfolded. One at a time: the content is long, and two
-   *  open at once turns the list into a wall. */
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [orgId, setOrgId] = useState(orgs.length === 1 ? orgs[0].id : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1396,11 +1725,15 @@ function WorkspacesView({
 
   return (
     <>
-      <h1>Workspaces</h1>
-      <p className="subtitle">
-        Open a workspace to see and edit everything it owns — sources, automation, projects,
-        members — or go straight into its Studio.
-      </p>
+      {heading && (
+        <>
+          <h1>Workspaces</h1>
+          <p className="subtitle">
+            Open a workspace to see and edit everything it owns — sources, automation, projects,
+            members — or go straight into its Studio.
+          </p>
+        </>
+      )}
       <div className="card">
         {workspaces.length === 0 ? (
           <p className="empty">No workspaces yet — create the first one below.</p>
@@ -1408,47 +1741,28 @@ function WorkspacesView({
           <p className="empty">No workspaces match the current filters.</p>
         ) : (
           <ul className="rows">
-            {visible.map((w) => {
-              const open = expanded === w.id;
-              return (
-                <li key={w.id}>
-                  <div className="grow">
-                    <div
-                      style={{ cursor: "pointer" }}
-                      onClick={() => setExpanded(open ? null : w.id)}
-                      title={open ? "Collapse" : "Open this workspace"}
-                    >
-                      <div className="name">
-                        <span className="caret">{open ? "▾" : "▸"}</span> {w.name}
-                      </div>
-                      <div className="sub">{w.orgName}</div>
-                    </div>
-                    {/* The workspace's own content, in place: a separate
-                        Dashboard page made the list a menu of links to the
-                        thing you already selected. */}
-                    {open && (
-                      <div className="nested">
-                        <WorkspaceDashboard
-                          token={token}
-                          ws={w}
-                          embedded
-                          onBack={() => setExpanded(null)}
-                          onOpenStudio={onOpenStudio}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <span className="badge workspace">workspace</span>
-                  {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
-                  <button className="primary" onClick={() => onOpenStudio(w)}>
-                    Open Studio
-                  </button>
-                  <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
-                    ✕
-                  </button>
-                </li>
-              );
-            })}
+            {visible.map((w) => (
+              <li key={w.id}>
+                <div
+                  className="grow"
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onOpen(w)}
+                  title="Open this workspace"
+                >
+                  <div className="name">{w.name}</div>
+                  <div className="sub">{w.orgName}</div>
+                </div>
+                <span className="badge workspace">workspace</span>
+                {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
+                <button onClick={() => onOpen(w)}>Open</button>
+                <button className="primary" onClick={() => onOpenStudio(w)}>
+                  Open Studio
+                </button>
+                <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
+                  ✕
+                </button>
+              </li>
+            ))}
           </ul>
         )}
         <form className="inline" onSubmit={create}>
