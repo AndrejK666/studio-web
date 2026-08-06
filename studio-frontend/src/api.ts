@@ -175,6 +175,44 @@ export interface StudioSession {
   sources: string[];
 }
 
+/** Loopback names the session URL may carry — same machine, different "site". */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * Rewrite a session URL to the host the portal itself is served from.
+ *
+ * The IDE runs in an iframe and its auth gate uses a `SameSite=Lax` cookie,
+ * which the browser withholds from cross-site requests. `localhost` and
+ * `127.0.0.1` are the same machine but NOT the same site, so a portal opened
+ * on one and a session published on the other loses the cookie on every
+ * request after the initial `?token=` redirect — the IDE then answers
+ * "403 — session token required" from inside the frame. Ports are irrelevant
+ * to that comparison; only the host is.
+ *
+ * `SameSite=None` would be the other way out, but it requires `Secure`, and
+ * sessions are published over plain http on loopback.
+ *
+ * Only loopback hosts are rewritten: a real `public_host` (a deployment
+ * reachable by name) is deliberate configuration and must survive untouched.
+ */
+export function alignSessionHost(url: string): string {
+  const here = typeof window === "undefined" ? "" : window.location.hostname;
+  try {
+    const u = new URL(url);
+    if (LOOPBACK.has(u.hostname) && LOOPBACK.has(here)) {
+      u.hostname = here;
+    }
+    return u.toString();
+  } catch {
+    return url; // not a URL we understand — hand it back unchanged
+  }
+}
+
+const withAlignedHost = (s: StudioSession): StudioSession => ({
+  ...s,
+  url: alignSessionHost(s.url),
+});
+
 export interface StoredFile {
   id: string;
   name?: string;
@@ -497,7 +535,7 @@ export const api = {
           token_ref: r.token_ref || undefined,
         })),
       }),
-    }),
+    }).then(withAlignedHost),
 
   /**
    * credstore: create a secret (used for repo access tokens).
@@ -551,9 +589,11 @@ export const api = {
     }),
 
   studioSession: (token: string, id: string) =>
-    request<StudioSession>(`/studio-session/v1/sessions/${id}`, token),
+    request<StudioSession>(`/studio-session/v1/sessions/${id}`, token).then(withAlignedHost),
   studioSessions: (token: string) =>
-    request<{ items: StudioSession[] }>("/studio-session/v1/sessions", token),
+    request<{ items: StudioSession[] }>("/studio-session/v1/sessions", token).then((p) => ({
+      items: p.items.map(withAlignedHost),
+    })),
   deleteStudioSession: (token: string, id: string) =>
     request<void>(`/studio-session/v1/sessions/${id}`, token, { method: "DELETE" }),
 

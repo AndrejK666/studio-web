@@ -264,8 +264,9 @@ function Login({
             <button disabled={busy || !value}>Sign in</button>
           </form>
           <p className="hint">
-            Works with the static profiles only; SSO needs <code>config/oidc.yaml</code> +{" "}
-            <code>docker compose up -d keycloak</code> (admin/demo, password <code>studio</code>).
+            Works with the static profiles only (<code>config/dev.yaml</code>,{" "}
+            <code>config/postgres.yaml</code>). The compose stack signs in through Keycloak
+            instead — use the button above, admin or demo, password <code>studio</code>.
           </p>
         </details>
       </div>

@@ -712,6 +712,36 @@ impl SessionService {
             .ok_or_else(|| anyhow!("no free session ports in the configured range"))
     }
 
+    /// Read `STUDIO_SESSION_TOKEN` back out of a running container's env.
+    ///
+    /// Returns an empty string when the container cannot be inspected or was
+    /// started without the variable (an older image): the session is then
+    /// adopted ungated, exactly as before, and a relaunch mints a fresh
+    /// token. Losing the token is not worth failing a whole adoption pass.
+    async fn adopted_token(&self, container_id: &str) -> String {
+        if container_id.is_empty() {
+            return String::new();
+        }
+        let inspected = match self.docker.inspect_container(container_id, None).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    container_id,
+                    "studio-session: cannot inspect adopted container ({e}) — \
+                     it will need a relaunch to be opened from the portal"
+                );
+                return String::new();
+            }
+        };
+        inspected
+            .config
+            .and_then(|c| c.env)
+            .unwrap_or_default()
+            .iter()
+            .find_map(|kv| kv.strip_prefix("STUDIO_SESSION_TOKEN=").map(str::to_string))
+            .unwrap_or_default()
+    }
+
     /// Adopt labeled containers left over from a previous backend run, so a
     /// restart does not orphan running IDE sessions.
     pub async fn adopt_existing(&self) -> anyhow::Result<usize> {
@@ -739,6 +769,18 @@ impl SessionService {
                 continue;
             };
             let running = c.state.as_deref() == Some("running");
+            let container_id = c.id.clone().unwrap_or_default();
+            // Recover the gate token the container was started with. Without
+            // it the portal builds a URL with no ?token=, the in-container
+            // gate answers "403 — session token required", and the only way
+            // back in is to destroy a perfectly healthy session. `docker ps`
+            // does not carry env, so this costs one inspect per adopted
+            // container — a handful, once, at startup.
+            //
+            // This reads a value that is already in the container's env and
+            // visible to anyone who can talk to the same daemon, so it hands
+            // out nothing new: the alternative was simply losing it.
+            let session_token = self.adopted_token(&container_id).await;
             let id = Uuid::new_v4();
             sessions.insert(
                 id,
@@ -746,7 +788,7 @@ impl SessionService {
                     id,
                     workspace_id: ws,
                     tenant_id: tenant,
-                    container_id: c.id.unwrap_or_default(),
+                    container_id,
                     port,
                     state: if running {
                         SessionState::Running
@@ -755,10 +797,7 @@ impl SessionService {
                     },
                     created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or_else(now_secs),
                     sources: Vec::new(),
-                    // Adopted containers keep their own token in env; we
-                    // cannot recover it, so the portal can't re-open them
-                    // gated — a relaunch mints a fresh one.
-                    session_token: String::new(),
+                    session_token,
                 },
             );
             adopted += 1;

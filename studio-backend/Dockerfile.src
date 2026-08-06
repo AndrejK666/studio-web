@@ -1,4 +1,9 @@
-# syntax=docker/dockerfile:1.7
+# NB deliberately no `# syntax=docker/dockerfile:1.7` line: that directive
+# makes every build start by resolving the frontend image from Docker Hub,
+# and nothing here needs a feature the builder's own frontend lacks (no
+# heredocs, no cache mounts). Dropping it means a build with warm base-image
+# layers needs no registry at all — which also keeps a broken credential
+# helper from failing the build before it starts.
 # Build the Studio backend FROM SOURCE inside Docker (one-click compose path).
 # Build context is the studio-web directory: gears-rust is a git dependency
 # pinned in Cargo.toml, so cargo fetches it and no sibling checkout has to be
@@ -40,17 +45,26 @@ RUN cargo build --release --locked \
  && cp target/release/studio-backend /studio-backend
 
 FROM debian:bookworm-slim
+# gosu drops privileges in the entrypoint without the signal-forwarding and
+# TTY quirks of su/sudo — the process it execs stays PID 1.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl gosu \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --create-home --home /app studio
+ && groupadd --gid 1000 studio \
+ && useradd --system --uid 1000 --gid 1000 --create-home --home /app studio
+# uid/gid 1000 is not cosmetic: workspace directories this server creates are
+# bind-mounted into the Theia session containers, which run as `node` (uid
+# 1000) and must be able to write clones into them. A `--system` uid would
+# leave every workspace read-only for the IDE.
 WORKDIR /app
 COPY --from=build /studio-backend /app/studio-backend
 COPY studio-backend/config/ /app/config/
-RUN chown -R studio /app
-USER studio
+COPY studio-backend/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chown -R studio /app && chmod +x /usr/local/bin/entrypoint.sh
+# Stays root: the entrypoint needs it to join the Docker socket's group, and
+# hands the server to `studio` via gosu as its last act.
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=3s --retries=10 \
   CMD curl -sf http://127.0.0.1:8090/healthz || exit 1
-ENTRYPOINT ["/app/studio-backend"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["--config", "/app/config/docker.yaml", "run"]

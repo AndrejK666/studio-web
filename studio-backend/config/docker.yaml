@@ -1,6 +1,9 @@
 # Constructor Studio Backend — in-Docker profile (one-click compose).
-# Differences from postgres.yaml: DB host is the compose service name and the
-# HTTP server binds 0.0.0.0 so the frontend (nginx) container can reach it.
+# Differences from postgres.yaml: DB host is the compose service name, the
+# HTTP server binds 0.0.0.0 so the frontend (nginx) container can reach it,
+# and login goes through the compose Keycloak (oidc-authn-plugin) rather than
+# static tokens. config/oidc.yaml is the same idea for a backend running on
+# the HOST — it differs only in where Keycloak and Postgres live.
 
 server:
   home_dir: "~/.cf-studio-backend"
@@ -52,10 +55,15 @@ gears:
     config:
       vendor: "constructorfabric"
 
+  # Kept configured but DEPRIORITIZED: this profile logs in through Keycloak
+  # (oidc-authn-plugin, priority 100 below). The authn resolver picks exactly
+  # ONE plugin per vendor, so the portal's "Developer sign-in (static token)"
+  # does not work here — run the backend against config/postgres.yaml or
+  # config/dev.yaml if you want the token path instead.
   static-authn-plugin:
     config:
       vendor: "constructorfabric"
-      priority: 100
+      priority: 1000   # LOWER number wins; oidc (100) is in charge here
       mode: static_tokens
       tokens:
         - token: "studio-admin-token"
@@ -179,6 +187,23 @@ gears:
       vendor: "cf"
       priority: 100
 
+  # Real user provisioning (ADR-0004): the portal's "Invite" creates an actual
+  # Keycloak user with a tenant_id attribute and a temporary password. Wins
+  # over the static echo plugin above (50 < 100). Pure backend-to-Keycloak
+  # traffic, so it uses the compose service name — unlike the token issuer,
+  # which the browser must also be able to reach.
+  keycloak-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 50
+      base_url: "https://keycloak:8443"
+      realm: "studio"
+      client_id: "studio-admin"
+      client_secret: "studio-admin-dev-secret"
+      custom_ca_certificate_paths:
+        - "/app/certs/dev-ca.pem"
+      default_temp_password: "studio"
+
   # ── Feature gears: per-user settings, files, AI chat ──
 
   simple-user-settings:
@@ -214,18 +239,21 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       secrets:
-        # Shared secret (no tenant_id). Put your real OpenAI key here for the
-        # Ask AI feature; without it chats are created but streaming replies
-        # fail at the provider with 401.
-        # From the environment, never from the file. A literal placeholder
-        # here reads as a configured key and fails at the provider instead
-        # of at boot, which is the more expensive way to find out.
+        # These declare the references; the VALUES come from the environment
+        # via studio-secrets-bootstrap (STUDIO_LLM_API_KEY /
+        # STUDIO_ANTHROPIC_API_KEY), which re-PUTs them on every start.
+        #
+        # Do NOT write "${STUDIO_LLM_API_KEY}" here expecting expansion: only
+        # database DSNs are expanded (toolkit_utils::var_expand is wired into
+        # the DB layer, not the config loader), so a placeholder would be
+        # stored verbatim as the key and fail at the provider with a puzzling
+        # 401. Empty is the honest "not configured yet".
         - key: "openai-key"
-          value: "${STUDIO_LLM_API_KEY:-}"
+          value: ""
         # Anthropic key for the Claude Code agent in IDE sessions. Not
         # OpenAI-compatible: the agent calls Anthropic directly.
         - key: "anthropic-key"
-          value: "${STUDIO_ANTHROPIC_API_KEY:-}"
+          value: ""
 
   mini-chat:
     database:
@@ -343,23 +371,52 @@ gears:
       max_session_secs: 14400
       git_mode: "disabled"
 
-  # oidc-authn-plugin is link-time active in every profile (gears discover
-  # via inventory), and it REQUIRES a config section. In this static-token
-  # profile it is configured valid but DEPRIORITIZED: static-authn-plugin
-  # (priority 100) wins the vendor selection, so this section is inert.
+  # OpenAI-compatible endpoint the IDE's built-in Theia AI talks to (the
+  # in-container chat, not the Codex/Claude Code agents — those call their
+  # providers directly). Without this section the gear logs "upstream not
+  # (fully) configured" and in-IDE AI stays off, which is exactly what the
+  # docker profile did until now. Same upstream as oidc.yaml/k8s.yaml.
+  studio-llm-proxy:
+    config:
+      base_url: "https://api.groq.com/openai/v1"
+      model: "llama-3.3-70b-versatile"
+      developer_message_settings: "system"    # safest across providers
+      api_key_env: "STUDIO_LLM_API_KEY"
+
+  # Real login: validates the JWTs the portal obtains from the compose
+  # Keycloak. Wins the vendor selection here (100 < static's 1000).
+  #
+  # The two URLs below are deliberately different hosts for the SAME server.
+  # Keycloak mints tokens with `iss: https://localhost:8443/realms/studio`
+  # (KC_HOSTNAME — what the browser must be able to reach), but inside this
+  # container `localhost` is the backend itself, so discovery and JWKS have
+  # to go to the compose service name. `discovery_url` exists for exactly
+  # this split; without it the plugin would derive the discovery base from
+  # `iss` and try to fetch its own port. The dev certificate covers both
+  # names (SAN: DNS:localhost, DNS:keycloak, IP:127.0.0.1).
   oidc-authn-plugin:
     config:
       vendor: "constructorfabric"
-      priority: 1000   # LOWER number wins vendor selection; static (100) stays in charge here
+      priority: 100    # LOWER number wins vendor selection
       jwt:
         supported_algorithms: ["RS256", "ES256"]
         require_audience: false
         trusted_issuers:
           - issuer: "https://localhost:8443/realms/studio"
+            discovery_url: "https://keycloak:8443/realms/studio"
         claim_mapping:
-          subject_id: "sub"
-          subject_tenant_id: "tenant_id"
+          subject_id: "sub"              # Keycloak user id (UUID)
+          subject_tenant_id: "tenant_id" # user attribute -> claim (realm import)
           token_scopes: "scope"
+        first_party_clients:
+          - "studio-portal"
+      # The plugin refuses plain http for IdP endpoints, so dev Keycloak runs
+      # TLS with a self-signed chain; docker-compose.yml mounts its CA here.
+      http_client:
+        custom_ca_certificate_paths:
+          - "/app/certs/dev-ca.pem"
       s2s_oauth:
-        discovery_url: "https://localhost:8443/realms/studio"
+        # mini-chat exchanges client credentials against the same realm —
+        # backend-to-Keycloak, so the service name again.
+        discovery_url: "https://keycloak:8443/realms/studio"
         default_subject_type: "gts.cf.core.security.subject_service.v1~"

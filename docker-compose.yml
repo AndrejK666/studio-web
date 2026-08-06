@@ -1,9 +1,16 @@
 # Constructor Studio — one-click dev environment.
 #
-#   Full stack (postgres + backend built from source + frontend on nginx):
+#   Full stack (postgres + keycloak + backend built from source + frontend):
 #     docker compose up --build -d
-#     → portal:  http://localhost:8080   (token: studio-admin-token)
+#     → portal:  http://localhost:8080   ("Continue with Constructor ID",
+#                                         admin/studio or demo/studio)
 #     → api/docs: http://localhost:8090/cf/docs
+#
+# Login goes through the bundled Keycloak (config/docker.yaml selects
+# oidc-authn-plugin). The browser must accept its self-signed certificate
+# once — open https://localhost:8443 and proceed, otherwise the redirect to
+# the IdP dies silently. The portal's "Developer sign-in (static token)" is
+# inert in this profile; it belongs to config/dev.yaml and config/postgres.yaml.
 #
 #   Database only (daily dev: backend in WSL, frontend via npm run dev):
 #     docker compose up -d postgres
@@ -37,7 +44,11 @@ services:
   # TLS (certs in docker/keycloak/certs, CA trusted by the backend via
   # http_client.custom_ca_certificate_paths), realm imported on start.
   # Admin console: https://localhost:8443 (admin/admin). Realm users:
-  # admin/studio, demo/studio. NOT started by default `up` of backend+frontend
+  # admin/studio, demo/studio. The studio-portal client whitelists both
+  # localhost and 127.0.0.1 on :8080 (nginx) and :5173 (vite) — the portal
+  # derives redirect_uri from window.location.origin, so opening the same
+  # page under a hostname that is not in realm-studio.json fails the login
+  # with "Invalid parameter: redirect_uri". NOT started by default `up` of backend+frontend
   # workflows that don't need it — but included in the default profile for
   # one-click friendliness; comment out if unwanted.
   keycloak:
@@ -50,12 +61,29 @@ services:
       KC_HTTPS_CERTIFICATE_FILE: /opt/keycloak/certs/keycloak.crt
       KC_HTTPS_CERTIFICATE_KEY_FILE: /opt/keycloak/certs/keycloak.key
       KC_HOSTNAME: "https://localhost:8443"
+      # Frontchannel URLs (issuer, authorization endpoint) stay on the
+      # hostname above — the browser has to reach those. Backchannel URLs
+      # (token, JWKS, userinfo) are instead resolved from the Host header of
+      # the incoming request, so when the backend container fetches discovery
+      # from https://keycloak:8443 it gets endpoints on keycloak:8443 rather
+      # than on a localhost that means "myself" inside that container.
+      # Requires KC_HOSTNAME to be a full URL, which it is.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
     ports:
       - "127.0.0.1:8443:8443"
     volumes:
       - ./docker/keycloak/realm-studio.json:/opt/keycloak/data/import/realm-studio.json:ro
       - ./docker/keycloak/certs:/opt/keycloak/certs:ro
+    # The image has no shell utilities beyond bash, so the probe is a bash
+    # /dev/tcp connect against the management port rather than curl.
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   backend:
     build:
@@ -75,16 +103,27 @@ services:
       # without them a session launch fails with a bare "unauthorized".
       STUDIO_REGISTRY_USER: ${STUDIO_REGISTRY_USER:-}
       STUDIO_REGISTRY_TOKEN: ${STUDIO_REGISTRY_TOKEN:-}
+      # Read by the container ENTRYPOINT, not by any gear: it makes the
+      # bind-mount below writable for the unprivileged server user. Keep it
+      # equal to studio-session.workspaces_root in config/docker.yaml and to
+      # the bind path below — all three name the same directory.
+      STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in
       # this container — the gear passes it to the daemon as a host path.
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/cf-studio-workspaces:/srv/cf-studio-workspaces
+      # CA of the dev Keycloak certificate. The OIDC plugin refuses plain
+      # http for IdP endpoints, so the self-signed chain has to be trusted
+      # explicitly — the paths are named in overrides.docker/*.yaml.
+      - ./docker/keycloak/certs/dev-ca.pem:/app/certs/dev-ca.pem:ro
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/healthz"]

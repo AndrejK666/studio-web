@@ -244,21 +244,22 @@ gears:
       vendor: "constructorfabric"
       priority: 100
       secrets:
-        # Shared secret (no tenant_id) with the LLM provider key for the
-        # Ask AI feature; without it chats are created but streaming replies
-        # fail at the provider with 401.
-        # The key comes from the environment, never from the file. Free
-        # default is Groq: console.groq.com → API Keys (no card needed):
-        #   export STUDIO_LLM_API_KEY=gsk_...  (before cargo run)
+        # These entries only declare the references. The VALUES are supplied
+        # by studio-secrets-bootstrap from the environment on every start:
+        #   export STUDIO_LLM_API_KEY=gsk_...        (Ask AI; console.groq.com
+        #                                             → API Keys, no card)
+        #   export STUDIO_ANTHROPIC_API_KEY=sk-ant-... (Claude Code in IDE
+        #                                             sessions — not
+        #                                             OpenAI-compatible, never
+        #                                             goes through the proxy)
+        #
+        # Do NOT write "${STUDIO_LLM_API_KEY}" here expecting expansion: only
+        # database DSNs are expanded, so a placeholder would be stored
+        # verbatim as the key and fail at the provider with a puzzling 401.
         - key: "openai-key"
-          value: "${STUDIO_LLM_API_KEY:-}"
-        # Anthropic key for the Claude Code agent inside IDE sessions.
-        # Unlike openai-key this one is NOT OpenAI-compatible and never
-        # goes through studio-llm-proxy: the agent talks to Anthropic
-        # directly from the container. Unset = the agent stays off.
-        #   export STUDIO_ANTHROPIC_API_KEY=sk-ant-...
+          value: ""
         - key: "anthropic-key"
-          value: "${STUDIO_ANTHROPIC_API_KEY:-}"
+          value: ""
 
   mini-chat:
     database:
@@ -269,17 +270,17 @@ gears:
         client_id: "mini-chat"
         client_secret: "mini-chat-dev-secret"
       providers:
-        # Any OpenAI-compatible /chat/completions provider. Defaults to
-        # Groq's free tier (same key as the studio-llm-proxy above). Host
-        # comes from STUDIO_LLM_HOST (hostname only — OAGW builds the URL).
-        # NB when switching providers: api_path is a literal (no env
-        # expansion) — adjust it together with the host (plain providers
-        # use /v1/chat/completions; Groq nests under /openai). For OpenAI's
-        # Responses API instead: kind openai_responses.
+        # Any OpenAI-compatible /chat/completions provider; Groq's free tier
+        # by default (same key as studio-llm-proxy above). Nothing in this
+        # block is env-expanded — host and api_path are literals and must be
+        # changed together (plain providers use /v1/chat/completions, Groq
+        # nests under /openai). For OpenAI's Responses API: kind
+        # openai_responses. Per-deployment overrides go through
+        # APP__GEARS__MINI_CHAT__CONFIG__… env vars, which figment does read.
         openai:
           kind: openai_chat_completions
           storage_kind: openai
-          host: "${STUDIO_LLM_HOST:-api.groq.com}"
+          host: "api.groq.com"
           api_path: "/openai/v1/chat/completions"
           auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
           auth_config:
