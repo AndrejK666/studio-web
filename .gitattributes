@@ -1,0 +1,12 @@
+# Windows checkouts turn LF into CRLF, and a shell script with CRLF fails in a
+# Linux container in the most confusing way available: the kernel reads the
+# shebang as "/bin/sh\r", cannot find that interpreter, and the entrypoint
+# reports "not found" — about the file, which plainly exists.
+#
+# Anything executed inside a container stays LF regardless of the platform.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+entrypoint.sh   text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
