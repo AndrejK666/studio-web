@@ -20,18 +20,32 @@ docker compose up --build -d
 Requires Docker (Desktop with WSL integration is fine) and a `gears-rust` checkout as a
 sibling of this repo. The first build compiles the whole gears workspace — grab a
 coffee; rebuilds are cached. Stop with `docker compose down` (add `-v` to wipe data).
-To enable the Ask AI feature, put a real OpenAI key into
-`studio-backend/config/docker.yaml` → `static-credstore-plugin` before building.
 
-**Daily dev (fast iteration):** database in Docker, backend on the host (WSL), frontend via Vite:
+**Daily dev (fast iteration):** infra in Docker, backend on the host (WSL), frontend via Vite:
 
 ```bash
-docker compose up -d postgres                                   # once
-cd studio-backend && cargo run -- --config config/postgres.yaml run   # WSL
-cd studio-frontend && npm install && npm run dev                # http://localhost:5173
+docker compose up -d postgres keycloak          # once
+
+# Environment (put these in your shell profile / a sourced env file):
+export STUDIO_PG_PASSWORD=<compose postgres password>
+export STUDIO_LLM_API_KEY=<LLM provider key>          # AI chats + in-IDE Theia AI
+                                                      # free default: Groq — console.groq.com → API Keys
+export STUDIO_REGISTRY_USER=<your github login>       # pulls the IDE image from ghcr
+export STUDIO_REGISTRY_TOKEN=<PAT with read:packages> # (Docker API ignores `docker login`)
+
+cd studio-backend && cargo run -- --config config/oidc.yaml run       # WSL
+cd studio-frontend && npm install && npm run dev      # http://localhost:5173
 ```
 
-(or the zero-Docker variant: `--config config/dev.yaml` runs the backend on SQLite)
+Sign in with SSO (`admin`/`studio`) — see "OIDC login" below for the one-time
+self-signed-cert step. Static-token profiles remain for scripts:
+`config/postgres.yaml` (Postgres) and `config/dev.yaml` (zero-Docker, SQLite).
+
+Secrets self-heal on every boot (`studio-secrets-bootstrap` gear): the LLM key
+is re-seeded into credstore automatically — no manual curls after restarts.
+Switching the LLM provider is env-only: `STUDIO_LLM_BASE_URL`,
+`STUDIO_LLM_MODEL` (Theia AI proxy) and `STUDIO_LLM_HOST` (mini-chat/OAGW)
+override the Groq defaults; any OpenAI-compatible endpoint works.
 
 ## Theia IDE sessions (Open Studio)
 
@@ -39,18 +53,28 @@ cd studio-frontend && npm install && npm run dev                # http://localho
 `studio-session` gear (our first own gear — see
 `studio-backend/docs/adr/0003-theia-sessions.md`).
 
-One-time setup: build the IDE image (repo `fabric-poc` checked out next to
-this one):
+No local image build needed: CI publishes the IDE image on every `fabric-poc`
+push touching `poc/theia/**` (workflow `theia-image.yml`), and the gear pulls
+and refreshes it automatically:
 
-```bash
-cd ../fabric-poc/poc/theia
-docker build -t cf-studio-theia:latest .
-```
+- image: `ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge`
+- auth: the package is private — set `STUDIO_REGISTRY_USER` /
+  `STUDIO_REGISTRY_TOKEN` (PAT with `read:packages`) before starting the
+  backend. `docker login` alone is NOT enough: the gear talks to the Docker
+  API directly, which ignores the CLI credential store.
+- freshness: `always_pull: true` re-pulls the mutable `edge` tag on every
+  launch; a failed pull falls back to the local copy (offline-friendly).
+- hacking on the image locally: `cd ../fabric-poc/poc/theia && docker build
+  -t cf-studio-theia:latest .`, then in the config set
+  `image: cf-studio-theia:latest` + `always_pull: false`.
 
-Then in the portal: workspace → Open Studio → Launch. Optional Git URL is
+In the portal: workspace → Open Studio → Launch. Optional Git URL is
 cloned into the workspace on first launch. Sessions bind to loopback ports
 41000-41099, live 4 h (reaper), survive backend restarts (label adoption),
-and can be stopped from the launcher.
+and can be stopped from the launcher. Inside the IDE, Theia AI (chat with
+@Universal/@Coder agents, inline completion) is configured automatically by
+the portal bridge through the backend's `studio-llm-proxy` — the provider
+key never enters the container.
 
 Requirements: Docker daemon reachable from the backend (`/var/run/docker.sock`).
 In the full-docker profile the compose file mounts the socket and
@@ -129,7 +153,18 @@ stays untouched.
 
 ## CI/CD (GitHub Actions)
 
-- **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private.
-- **`release.yml`** — on tag `v*`: release binary + frontend dist → GitHub Release; Docker images (`studio-backend`, `studio-frontend` with nginx `/cf` proxy) → GHCR; then a `deploy` job gated by the `production` environment (target wiring is a TODO stub — helm/kubectl or ssh+compose).
+- **`ci.yml`** — on push/PR, path-filtered: backend (fmt, clippy `-D warnings`, build, test, `--list-gears` smoke) and frontend (test, build). The backend job checks out `constructorfabric/gears-rust` next to the repo — path dependencies expect `../../gears-rust`; add a `GEARS_RUST_TOKEN` secret if that repo is private. DCO is enforced — commit with `-s`.
+- **`release.yml`** — on tag `v*`: release binary + frontend dist → GitHub Release; Docker images → `ghcr.io/constructorfabric/studio-web/studio-{backend,frontend}`; then a `deploy` job gated by the `production` environment.
+- **Theia IDE image** — built in `fabric-poc` (`theia-image.yml`): `edge` on main pushes touching `poc/theia/**`, `vX.Y.Z` on `theia-v*` tags.
 
 Release: `git tag v0.1.0 && git push origin v0.1.0`.
+
+## Deploying to Kubernetes
+
+Chart in `deploy/helm/studio-web` (rendered/linted against the dmz values),
+environment values + pipeline in GitLab `constructorfabric/studio-web-ci`
+(Pattern B: clone the mirror → Trivy → mirror images to Harbor → helm).
+The Secret contract and prerequisites live in
+`deploy/helm/values-dmz.example.yaml` and `deploy/README.md`. Cluster v1
+runs with IDE sessions disabled (`studio-session.enabled=false` in
+`config/k8s.yaml`) until the per-session Pod driver lands (ADR-0003).
