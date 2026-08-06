@@ -130,6 +130,8 @@ pub struct ConnectionDto {
     pub owner_tenant_id: Uuid,
     pub provider: String,
     pub label: String,
+    /// Account the credential belongs to, captured when it was verified.
+    pub account: String,
     pub base_url: String,
     pub scope: String,
     /// credstore reference of the token — hand this to studio-session as
@@ -200,6 +202,7 @@ fn to_dto(c: Connection) -> ConnectionDto {
         owner_tenant_id: c.owner_tenant_id,
         provider: c.provider,
         label: c.label,
+        account: c.account,
         base_url: c.base_url,
         scope: c.scope,
         secret_ref: c.secret_ref,

@@ -1084,10 +1084,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   setAdminOpen(false);
                   setStudio(ws);
                 }}
-                onOpenDashboard={(ws) => {
-                  setAdminOpen(false);
-                  setDash(ws);
-                }}
               />
             )}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
@@ -1109,7 +1105,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             filters={filters}
             onChanged={refresh}
             onOpenStudio={setStudio}
-            onOpenDashboard={setDash}
           />
         )}
         {view === "home" && (
@@ -1344,7 +1339,6 @@ function WorkspacesView({
   filters,
   onChanged,
   onOpenStudio,
-  onOpenDashboard,
 }: {
   token: string;
   orgs: Tenant[];
@@ -1352,10 +1346,12 @@ function WorkspacesView({
   filters: Filters;
   onChanged: () => void;
   onOpenStudio: (ws: Workspace) => void;
-  onOpenDashboard: (ws: Workspace) => void;
 }) {
   const [name, setName] = useState("");
   const [orgId, setOrgId] = useState("");
+  /** Which workspace is unfolded. One at a time: the content is long, and two
+   *  open at once turns the list into a wall. */
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1401,7 +1397,10 @@ function WorkspacesView({
   return (
     <>
       <h1>Workspaces</h1>
-      <p className="subtitle">Pick a workspace to open its Studio, or create a new one.</p>
+      <p className="subtitle">
+        Open a workspace to see and edit everything it owns — sources, automation, projects,
+        members — or go straight into its Studio.
+      </p>
       <div className="card">
         {workspaces.length === 0 ? (
           <p className="empty">No workspaces yet — create the first one below.</p>
@@ -1409,28 +1408,47 @@ function WorkspacesView({
           <p className="empty">No workspaces match the current filters.</p>
         ) : (
           <ul className="rows">
-            {visible.map((w) => (
-              <li key={w.id}>
-                <div
-                  className="grow"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => onOpenDashboard(w)}
-                  title="Open workspace dashboard"
-                >
-                  <div className="name">{w.name}</div>
-                  <div className="sub">{w.orgName}</div>
-                </div>
-                <span className="badge workspace">workspace</span>
-                {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
-                <button onClick={() => onOpenDashboard(w)}>Dashboard</button>
-                <button className="primary" onClick={() => onOpenStudio(w)}>
-                  Open Studio
-                </button>
-                <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
-                  ✕
-                </button>
-              </li>
-            ))}
+            {visible.map((w) => {
+              const open = expanded === w.id;
+              return (
+                <li key={w.id}>
+                  <div className="grow">
+                    <div
+                      style={{ cursor: "pointer" }}
+                      onClick={() => setExpanded(open ? null : w.id)}
+                      title={open ? "Collapse" : "Open this workspace"}
+                    >
+                      <div className="name">
+                        <span className="caret">{open ? "▾" : "▸"}</span> {w.name}
+                      </div>
+                      <div className="sub">{w.orgName}</div>
+                    </div>
+                    {/* The workspace's own content, in place: a separate
+                        Dashboard page made the list a menu of links to the
+                        thing you already selected. */}
+                    {open && (
+                      <div className="nested">
+                        <WorkspaceDashboard
+                          token={token}
+                          ws={w}
+                          embedded
+                          onBack={() => setExpanded(null)}
+                          onOpenStudio={onOpenStudio}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <span className="badge workspace">workspace</span>
+                  {w.self_managed && <span className="badge selfmanaged">self-managed</span>}
+                  <button className="primary" onClick={() => onOpenStudio(w)}>
+                    Open Studio
+                  </button>
+                  <button className="ghost" title="Delete workspace" onClick={() => void remove(w)}>
+                    ✕
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
         <form className="inline" onSubmit={create}>
@@ -1720,11 +1738,16 @@ function WorkspaceDashboard({
   ws,
   onBack,
   onOpenStudio,
+  embedded = false,
 }: {
   token: string;
   ws: Workspace;
   onBack: () => void;
   onOpenStudio: (ws: Workspace) => void;
+  /** Rendered inside the workspace row rather than as its own page: the row
+   *  already shows the name and carries "Open Studio", so the topbar would be
+   *  a second copy of both. */
+  embedded?: boolean;
 }) {
   const [users, setUsers] = useState<User[] | null>(null);
   const [projects, setProjects] = useState<Group[] | null>(null);
@@ -1840,20 +1863,22 @@ function WorkspaceDashboard({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>{ws.name}</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            {ws.orgName} · <code>{ws.id.slice(0, 8)}…</code>
-          </p>
+      {!embedded && (
+        <div className="topbar">
+          <div>
+            <h1>{ws.name}</h1>
+            <p className="subtitle" style={{ margin: 0 }}>
+              {ws.orgName} · <code>{ws.id.slice(0, 8)}…</code>
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onBack}>← Back</button>
+            <button className="primary" onClick={() => onOpenStudio(ws)}>
+              Open Studio
+            </button>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={onBack}>← Back</button>
-          <button className="primary" onClick={() => onOpenStudio(ws)}>
-            Open Studio
-          </button>
-        </div>
-      </div>
+      )}
       {error && <div className="error">{error}</div>}
 
       <div className="card">
@@ -3355,7 +3380,9 @@ function AddConnector({
   );
 }
 
-/** Connections usable by one workspace, each expandable into a repository browser. */
+/** Connections usable by one workspace: type chips, category sections, one card
+ *  per connection. Health is checked on demand — the card says "not checked"
+ *  until you press Test, rather than showing a green badge we never earned. */
 function ConnectionList({
   token,
   workspace,
@@ -3374,82 +3401,162 @@ function ConnectionList({
   onNote: (s: string) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [health, setHealth] = useState<Record<string, "ok" | "bad" | "testing">>({});
+
+  const counts = connections.reduce<Record<string, number>>((acc, c) => {
+    acc[c.provider] = (acc[c.provider] ?? 0) + 1;
+    return acc;
+  }, {});
+  const shown = typeFilter ? connections.filter((c) => c.provider === typeFilter) : connections;
+  const nameOf = (p: string) => providers.find((x) => x.provider === p)?.display_name ?? p;
+  const categoryOf = (p: string) => providers.find((x) => x.provider === p)?.category;
+
+  const test = (c: Connection) => {
+    setHealth((h) => ({ ...h, [c.id]: "testing" }));
+    void api
+      .testConnection(token, c.id, workspace.id)
+      .then((t) => {
+        setHealth((h) => ({ ...h, [c.id]: "ok" }));
+        onNote(`${c.label}: valid — ${t.account}`);
+      })
+      .catch((e) => {
+        setHealth((h) => ({ ...h, [c.id]: "bad" }));
+        onNote(`${c.label}: ${errText(e)}`);
+      });
+  };
+
+  const remove = (c: Connection, inherited: boolean) => {
+    const warn = inherited
+      ? `"${c.label}" belongs to ${workspace.orgName} and is shared with its other workspaces. Remove it for everyone?`
+      : `Remove connection "${c.label}" and its token?`;
+    if (!window.confirm(warn)) return;
+    void api
+      .deleteConnection(token, c.id, workspace.id)
+      .then(onChanged)
+      .catch((e) => onNote(errText(e)));
+  };
+
+  if (loading) {
+    return (
+      <div className="card">
+        <h2>Connections</h2>
+        <p className="empty">Loading…</p>
+      </div>
+    );
+  }
+  if (connections.length === 0) {
+    return (
+      <div className="card">
+        <h2>Connections</h2>
+        <p className="empty">Nothing connected for this workspace yet.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
       <h2>Connections</h2>
-      {loading ? (
-        <p className="empty">Loading…</p>
-      ) : connections.length === 0 ? (
-        <p className="empty">Nothing connected for this workspace yet.</p>
-      ) : (
-        <ul className="rows">
-          {connections.map((c) => {
-            // Only a source host has repositories; a model-provider connection
-            // is a credential and nothing more.
-            const browsable =
-              providers.find((p) => p.provider === c.provider)?.category === "source_code";
-            // A row stored on an ancestor is shared with sibling workspaces —
-            // worth saying, because removing it affects them too.
-            const inherited = c.owner_tenant_id !== workspace.id;
-            return (
-              <li key={c.id}>
-                <div className="grow">
-                  <div className="name">{c.label}</div>
-                  <div className="sub">
-                    {c.provider} · {c.base_url}
+
+      {/* Type chips: several connections of the same provider are normal —
+          two GitLab installations, a personal and an organization token. */}
+      <div className="chips">
+        {Object.entries(counts).map(([p, n]) => (
+          <button
+            key={p}
+            type="button"
+            className={`chip${typeFilter === p ? " on" : ""}`}
+            onClick={() => setTypeFilter(typeFilter === p ? null : p)}
+          >
+            {nameOf(p)} <span className="chip-n">{n}</span>
+          </button>
+        ))}
+        {typeFilter && (
+          <button type="button" className="chip" onClick={() => setTypeFilter(null)}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {CATEGORIES.map(({ key, title }) => {
+        const group = shown.filter((c) => categoryOf(c.provider) === key);
+        if (group.length === 0) return null;
+        return (
+          <div key={key}>
+            <h3 className="group">{title}</h3>
+            <div className="conn-grid">
+              {group.map((c) => {
+                const browsable = categoryOf(c.provider) === "source_code";
+                // A row stored on an ancestor is shared with sibling workspaces —
+                // worth saying, because removing it affects them too.
+                const inherited = c.owner_tenant_id !== workspace.id;
+                const h = health[c.id];
+                return (
+                  <div className="conn" key={c.id}>
+                    <div className="conn-head">
+                      <span className="conn-ico" aria-hidden="true">
+                        {nameOf(c.provider).slice(0, 1)}
+                      </span>
+                      <div className="grow">
+                        <div className="name">
+                          {nameOf(c.provider)}
+                          {c.account ? ` · ${c.account}` : ""}
+                        </div>
+                        <div className="sub">
+                          {c.label} · {c.base_url}
+                        </div>
+                      </div>
+                      <div className="conn-badges">
+                        <span
+                          className={`badge ${h === "ok" ? "workspace" : ""}`}
+                          title={
+                            h
+                              ? undefined
+                              : "Health is not cached — press Test connection to check it now"
+                          }
+                        >
+                          {h === "ok"
+                            ? "healthy"
+                            : h === "bad"
+                              ? "failing"
+                              : h === "testing"
+                                ? "testing…"
+                                : "not checked"}
+                        </span>
+                        <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
+                          {inherited ? `${c.scope} · from ${workspace.orgName}` : c.scope}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="row">
+                      <button type="button" onClick={() => test(c)}>
+                        Test connection
+                      </button>
+                      {browsable && (
+                        <button type="button" onClick={() => setOpen(open === c.id ? null : c.id)}>
+                          {open === c.id ? "Hide repositories" : "Repositories"}
+                        </button>
+                      )}
+                      <span className="grow" />
+                      <button type="button" onClick={() => remove(c, inherited)}>
+                        Remove
+                      </button>
+                    </div>
+                    {open === c.id && browsable && (
+                      <RepoBrowser
+                        token={token}
+                        connection={c}
+                        workspace={workspace}
+                        onNote={onNote}
+                      />
+                    )}
                   </div>
-                  {open === c.id && browsable && (
-                    <RepoBrowser
-                      token={token}
-                      connection={c}
-                      workspace={workspace}
-                      onNote={onNote}
-                    />
-                  )}
-                </div>
-                {inherited && (
-                  <span className="badge" title={`Stored on ${c.owner_tenant_id}`}>
-                    from {workspace.orgName}
-                  </span>
-                )}
-                <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
-                  {c.scope}
-                </span>
-                {browsable && (
-                  <button onClick={() => setOpen(open === c.id ? null : c.id)}>
-                    {open === c.id ? "Hide repositories" : "Browse repositories"}
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    void api
-                      .testConnection(token, c.id, workspace.id)
-                      .then((t) => onNote(`${c.label}: valid — ${t.account}`))
-                      .catch((e) => onNote(`${c.label}: ${errText(e)}`));
-                  }}
-                >
-                  Test
-                </button>
-                <button
-                  onClick={() => {
-                    const warn = inherited
-                      ? `"${c.label}" belongs to ${workspace.orgName} and is shared with its other workspaces. Remove it for everyone?`
-                      : `Remove connection "${c.label}" and its token?`;
-                    if (!window.confirm(warn)) return;
-                    void api
-                      .deleteConnection(token, c.id, workspace.id)
-                      .then(onChanged)
-                      .catch((e) => onNote(errText(e)));
-                  }}
-                >
-                  Remove
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

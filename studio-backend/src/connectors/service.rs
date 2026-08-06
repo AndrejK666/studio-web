@@ -86,6 +86,12 @@ pub struct Connection {
     /// Driver key: `gitlab`, `github`, …
     pub provider: String,
     pub label: String,
+    /// Account the credential resolved to when it was verified — GitLab or
+    /// GitHub username, or a short capability line for a model provider. Kept
+    /// so the catalogue can say *whose* credential this is without a round trip
+    /// to the provider on every page load.
+    #[serde(default)]
+    pub account: String,
     pub base_url: String,
     /// credstore reference holding the token. Never returned over the API.
     pub secret_ref: String,
@@ -348,6 +354,7 @@ impl ConnectorService {
             owner_tenant_id: owner_tenant,
             provider: provider.to_string(),
             label: label.to_string(),
+            account: identity.account.clone(),
             base_url,
             secret_ref,
             scope: scope.as_str().to_string(),

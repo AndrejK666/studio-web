@@ -81,6 +81,8 @@ export interface Connection {
   owner_tenant_id: string;
   provider: string;
   label: string;
+  /** Account the credential belongs to, captured when it was verified. */
+  account: string;
   base_url: string;
   /** personal | workspace | organization */
   scope: string;

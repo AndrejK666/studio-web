@@ -131,6 +131,36 @@ label.check input { width: auto; margin: 3px 0 0; }
 h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
   letter-spacing: 0.04em; color: var(--muted); }
 
+/* Type chips above the connection catalogue. */
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0.6rem 0 0.2rem; }
+.chip {
+  padding: 5px 12px; border-radius: 999px; font-size: 13px;
+  background: var(--panel); border: 1px solid var(--border); cursor: pointer;
+}
+.chip.on { border-color: var(--accent); color: var(--accent); }
+.chip-n { opacity: 0.6; margin-left: 4px; }
+
+/* One card per connection. */
+.conn-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+.conn {
+  padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 12px;
+  background: rgba(127, 127, 127, 0.05);
+}
+.conn-head { display: flex; gap: 10px; align-items: flex-start; }
+.conn-ico {
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--panel); border: 1px solid var(--border);
+  font-weight: 700; font-size: 15px;
+}
+.conn-badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.conn .row { margin-top: 0.6rem; }
+.conn .nested { margin-top: 0.7rem; }
+
+/* Workspace rows unfold in place; the caret is the only affordance needed. */
+.caret { display: inline-block; width: 12px; color: var(--muted); }
+ul.rows li:has(> .grow > .nested) { align-items: flex-start; }
+
 form.inline input { flex: 1; min-width: 180px; }
 
 label.field { display: block; margin-bottom: 0.9rem; font-size: 13px; font-weight: 600; color: var(--muted); }
