@@ -9,9 +9,16 @@ pub struct StudioSessionConfig {
     /// whole backend failing on a missing /var/run/docker.sock.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// Docker image for a Theia session (built from fabric-poc/poc/theia).
+    /// Docker image for a Theia session. Default: the CI-published one
+    /// (fabric-poc/.github/workflows/theia-image.yml). Pulled automatically
+    /// when absent; a locally-built `cf-studio-theia:latest` also works.
     #[serde(default = "default_image")]
     pub image: String,
+    /// Refresh the image on every launch attempt — for mutable tags like
+    /// `edge`, where pull-on-missing alone would pin a stale image forever.
+    /// A failed refresh falls back to the local copy (offline-friendly).
+    #[serde(default = "default_always_pull")]
+    pub always_pull: bool,
     /// Host directory that stores per-workspace content; a subdirectory named
     /// by workspace id is bind-mounted into the container at /workspace.
     /// NB: when the backend itself runs in a container, this must be a HOST
@@ -43,6 +50,7 @@ impl Default for StudioSessionConfig {
         Self {
             enabled: default_enabled(),
             image: default_image(),
+            always_pull: default_always_pull(),
             workspaces_root: default_workspaces_root(),
             bind_host: default_bind_host(),
             public_host: default_public_host(),
@@ -58,7 +66,10 @@ fn default_enabled() -> bool {
     true
 }
 fn default_image() -> String {
-    "cf-studio-theia:latest".into()
+    "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge".into()
+}
+fn default_always_pull() -> bool {
+    true // the default image tag (edge) is mutable
 }
 fn default_workspaces_root() -> String {
     "~/.cf-studio-workspaces".into()

@@ -296,7 +296,8 @@ gears:
   # this container at the same location (see docker-compose.yml).
   studio-session:
     config:
-      image: "cf-studio-theia:latest"
+      image: "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge"
+      always_pull: true
       workspaces_root: "/srv/cf-studio-workspaces"
       bind_host: "127.0.0.1"
       public_host: "localhost"

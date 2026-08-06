@@ -140,16 +140,23 @@ impl SessionService {
         format!("http://{}:{port}/", self.cfg.public_host)
     }
 
-    /// Make sure the Theia image is available: use the local one when
-    /// present, otherwise pull it from the registry (CI publishes it as
-    /// ghcr.io/constructorfabric/fabric-poc/cf-studio-theia). Only when both
-    /// fail does the launch error out, with both remedies in the message.
+    /// Make sure the Theia image is available and, for mutable tags
+    /// (`always_pull`, default on for the CI-published `edge`), fresh:
+    /// a pull runs before every launch; a failed pull falls back to the
+    /// local copy (offline dev keeps working). Only when the image is
+    /// neither local nor pullable does the launch error out, with both
+    /// remedies in the message.
     pub async fn ensure_image(&self) -> anyhow::Result<()> {
-        if self.docker.inspect_image(&self.cfg.image).await.is_ok() {
+        let local = self.docker.inspect_image(&self.cfg.image).await.is_ok();
+        if local && !self.cfg.always_pull {
             return Ok(());
         }
-        tracing::info!(image = %self.cfg.image, "studio-session: image not present locally — pulling");
-        let mut pull = self.docker.create_image(
+        tracing::info!(
+            image = %self.cfg.image,
+            refresh = local,
+            "studio-session: pulling session image"
+        );
+        let pull = self.docker.create_image(
             Some(bollard::image::CreateImageOptions {
                 from_image: self.cfg.image.clone(),
                 ..Default::default()
@@ -160,13 +167,20 @@ impl SessionService {
         use futures_util::TryStreamExt;
         match pull.try_collect::<Vec<_>>().await {
             Ok(_) => {
-                tracing::info!(image = %self.cfg.image, "studio-session: image pulled");
+                tracing::info!(image = %self.cfg.image, "studio-session: image up to date");
+                Ok(())
+            }
+            Err(e) if local => {
+                tracing::warn!(
+                    image = %self.cfg.image,
+                    "studio-session: refresh pull failed ({e}) — using the local copy"
+                );
                 Ok(())
             }
             Err(e) => Err(anyhow!(
                 "Theia image '{img}' is neither local nor pullable ({e}). Either \
-                 `docker login ghcr.io` + use the published image, or build it \
-                 locally: cd fabric-poc/poc/theia && docker build -t {img} .",
+                 `docker login ghcr.io` (published image), or build locally: \
+                 cd fabric-poc/poc/theia && docker build -t {img} .",
                 img = self.cfg.image,
             )),
         }
