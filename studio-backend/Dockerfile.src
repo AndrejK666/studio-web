@@ -5,19 +5,38 @@
 # copied into the image.
 # CI uses the plain ./Dockerfile with a prebuilt binary instead.
 
-FROM rust:1.97-bookworm AS build
+# Dependencies and our own code are built in separate layers (cargo-chef).
+# Almost all of the time goes into the 28 gears crates and their tree, which
+# change only when Cargo.toml or Cargo.lock does — so that layer is reused
+# across every rebuild where only src/ moved, locally and in CI alike.
+#
+# NB this belongs HERE and not in the gears repository: cargo does not reuse
+# another workspace's target directory, so an image that pre-builds the gears
+# workspace would speed up nothing on our side. What is cacheable is OUR
+# dependency graph, and it is described by our lockfile.
+FROM rust:1.97-bookworm AS chef
 # libprotobuf-dev ships the well-known types (google/protobuf/empty.proto …)
 # that gears-rust SDK protos import; protoc alone fails without them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler libprotobuf-dev cmake \
- && rm -rf /var/lib/apt/lists/*
-
+ && rm -rf /var/lib/apt/lists/* \
+ && cargo install cargo-chef --locked
 WORKDIR /src/studio-backend
+
+# The recipe is a dependency-only projection of the manifest: it changes when
+# dependencies change and not when our sources do.
+FROM chef AS planner
 COPY studio-backend/ .
-# Cache cargo registry and build artifacts across rebuilds (BuildKit).
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/studio-backend/target \
-    cargo build --release --locked \
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /src/studio-backend/recipe.json recipe.json
+# No cache mounts here on purpose: the compiled dependencies must live in the
+# image layer, which is what makes the cache shareable (GHA, another machine)
+# rather than local to one BuildKit daemon.
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY studio-backend/ .
+RUN cargo build --release --locked \
  && cp target/release/studio-backend /studio-backend
 
 FROM debian:bookworm-slim
