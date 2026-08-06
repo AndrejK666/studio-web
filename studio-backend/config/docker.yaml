@@ -217,8 +217,15 @@ gears:
         # Shared secret (no tenant_id). Put your real OpenAI key here for the
         # Ask AI feature; without it chats are created but streaming replies
         # fail at the provider with 401.
+        # From the environment, never from the file. A literal placeholder
+        # here reads as a configured key and fails at the provider instead
+        # of at boot, which is the more expensive way to find out.
         - key: "openai-key"
-          value: "sk-REPLACE_ME"
+          value: "${STUDIO_LLM_API_KEY:-}"
+        # Anthropic key for the Claude Code agent in IDE sessions. Not
+        # OpenAI-compatible: the agent calls Anthropic directly.
+        - key: "anthropic-key"
+          value: "${STUDIO_ANTHROPIC_API_KEY:-}"
 
   mini-chat:
     database:
@@ -309,6 +316,21 @@ gears:
   # In-docker profile: the backend container needs /var/run/docker.sock
   # mounted, and workspaces_root must be a HOST path that is mounted into
   # this container at the same location (see docker-compose.yml).
+  # The dev value store is in-memory: its values die with the process while
+  # the credstore METADATA survives in Postgres, so every restart leaves the
+  # seeded references fence-poisoned until something re-PUTs them. This gear
+  # does that at start — without it Ask AI and the IDE agents come up dead
+  # after the first `docker compose restart backend`.
+  studio-secrets-bootstrap:
+    config:
+      secrets:
+        - ref: "openai-key"
+          value_env: "STUDIO_LLM_API_KEY"
+          sharing: "shared"
+        - ref: "anthropic-key"
+          value_env: "STUDIO_ANTHROPIC_API_KEY"
+          sharing: "shared"
+
   studio-session:
     config:
       image: "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge"

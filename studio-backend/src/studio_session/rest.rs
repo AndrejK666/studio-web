@@ -225,13 +225,7 @@ async fn create_session(
     };
 
     let (session, existed) = svc
-        .create(
-            &ctx,
-            req.workspace_id,
-            req.root_path,
-            root_repo,
-            repos,
-        )
+        .create(&ctx, req.workspace_id, req.root_path, root_repo, repos)
         .await
         .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
     let status = if existed {

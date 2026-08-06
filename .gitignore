@@ -21,3 +21,7 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+# Local compose overrides: provider keys and registry credentials live here.
+# .env.example is the tracked template.
+.env

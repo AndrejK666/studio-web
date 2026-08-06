@@ -64,6 +64,17 @@ services:
     container_name: studio-backend
     environment:
       STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      # Provider keys. Empty is a valid state: the features that need them
+      # stay off and say so, rather than the stack refusing to start.
+      #   Ask AI / mini-chat + the Codex agent  -> STUDIO_LLM_API_KEY
+      #   the Claude Code agent in IDE sessions -> STUDIO_ANTHROPIC_API_KEY
+      STUDIO_LLM_API_KEY: ${STUDIO_LLM_API_KEY:-}
+      STUDIO_ANTHROPIC_API_KEY: ${STUDIO_ANTHROPIC_API_KEY:-}
+      # The Theia session image lives in a private ghcr repo. The Docker API
+      # ignores the CLI credential store, so the gear needs its own pair —
+      # without them a session launch fails with a bare "unauthorized".
+      STUDIO_REGISTRY_USER: ${STUDIO_REGISTRY_USER:-}
+      STUDIO_REGISTRY_TOKEN: ${STUDIO_REGISTRY_TOKEN:-}
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in
