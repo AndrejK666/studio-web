@@ -156,13 +156,16 @@ impl SessionService {
             refresh = local,
             "studio-session: pulling session image"
         );
+        // NB: the Docker API ignores `docker login`'s client-side credential
+        // store — private registries need explicit credentials (env-driven,
+        // see StudioSessionConfig::registry_credentials).
         let pull = self.docker.create_image(
             Some(bollard::image::CreateImageOptions {
                 from_image: self.cfg.image.clone(),
                 ..Default::default()
             }),
             None,
-            None,
+            self.cfg.registry_credentials(),
         );
         use futures_util::TryStreamExt;
         match pull.try_collect::<Vec<_>>().await {
@@ -178,8 +181,10 @@ impl SessionService {
                 Ok(())
             }
             Err(e) => Err(anyhow!(
-                "Theia image '{img}' is neither local nor pullable ({e}). Either \
-                 `docker login ghcr.io` (published image), or build locally: \
+                "Theia image '{img}' is neither local nor pullable ({e}). For the \
+                 private ghcr image set STUDIO_REGISTRY_USER + STUDIO_REGISTRY_TOKEN \
+                 (PAT with read:packages) before starting the backend, or pull once \
+                 manually (`docker pull {img}`), or build locally: \
                  cd fabric-poc/poc/theia && docker build -t {img} .",
                 img = self.cfg.image,
             )),

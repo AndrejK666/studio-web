@@ -19,6 +19,16 @@ pub struct StudioSessionConfig {
     /// A failed refresh falls back to the local copy (offline-friendly).
     #[serde(default = "default_always_pull")]
     pub always_pull: bool,
+    /// Registry credentials for the pull, read from these env vars. The
+    /// Docker API does NOT use `docker login`'s client-side credential
+    /// store, so private registries (ghcr) need explicit credentials here:
+    ///   export STUDIO_REGISTRY_USER=<github user>
+    ///   export STUDIO_REGISTRY_TOKEN=<PAT with read:packages>
+    /// Unset = anonymous pull (public images only).
+    #[serde(default = "default_registry_user_env")]
+    pub registry_user_env: String,
+    #[serde(default = "default_registry_token_env")]
+    pub registry_token_env: String,
     /// Host directory that stores per-workspace content; a subdirectory named
     /// by workspace id is bind-mounted into the container at /workspace.
     /// NB: when the backend itself runs in a container, this must be a HOST
@@ -51,6 +61,8 @@ impl Default for StudioSessionConfig {
             enabled: default_enabled(),
             image: default_image(),
             always_pull: default_always_pull(),
+            registry_user_env: default_registry_user_env(),
+            registry_token_env: default_registry_token_env(),
             workspaces_root: default_workspaces_root(),
             bind_host: default_bind_host(),
             public_host: default_public_host(),
@@ -70,6 +82,31 @@ fn default_image() -> String {
 }
 fn default_always_pull() -> bool {
     true // the default image tag (edge) is mutable
+}
+fn default_registry_user_env() -> String {
+    "STUDIO_REGISTRY_USER".into()
+}
+fn default_registry_token_env() -> String {
+    "STUDIO_REGISTRY_TOKEN".into()
+}
+
+impl StudioSessionConfig {
+    /// Registry credentials for the image pull, when both env vars are set.
+    pub fn registry_credentials(&self) -> Option<bollard::auth::DockerCredentials> {
+        let read = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let username = read(&self.registry_user_env)?;
+        let password = read(&self.registry_token_env)?;
+        Some(bollard::auth::DockerCredentials {
+            username: Some(username),
+            password: Some(password),
+            ..Default::default()
+        })
+    }
 }
 fn default_workspaces_root() -> String {
     "~/.cf-studio-workspaces".into()
