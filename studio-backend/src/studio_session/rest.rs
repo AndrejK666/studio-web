@@ -226,8 +226,7 @@ async fn create_session(
 
     let (session, existed) = svc
         .create(
-            ctx.subject_tenant_id(),
-            ctx.subject_id(),
+            &ctx,
             req.workspace_id,
             req.root_path,
             root_repo,

@@ -230,6 +230,13 @@ gears:
         #   export STUDIO_LLM_API_KEY=gsk_...  (before cargo run)
         - key: "openai-key"
           value: "${STUDIO_LLM_API_KEY:-}"
+        # Anthropic key for the Claude Code agent inside IDE sessions.
+        # Unlike openai-key this one is NOT OpenAI-compatible and never
+        # goes through studio-llm-proxy: the agent talks to Anthropic
+        # directly from the container. Unset = the agent stays off.
+        #   export STUDIO_ANTHROPIC_API_KEY=sk-ant-...
+        - key: "anthropic-key"
+          value: "${STUDIO_ANTHROPIC_API_KEY:-}"
 
   mini-chat:
     database:
@@ -355,6 +362,9 @@ gears:
       secrets:
         - ref: "openai-key"
           value_env: "STUDIO_LLM_API_KEY"
+          sharing: "shared"
+        - ref: "anthropic-key"
+          value_env: "STUDIO_ANTHROPIC_API_KEY"
           sharing: "shared"
 
   # ── OpenAI-compatible LLM proxy for Theia AI inside IDE sessions ──

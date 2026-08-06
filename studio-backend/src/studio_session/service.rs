@@ -119,7 +119,8 @@ impl SessionService {
         *self.credstore.write().await = Some(client);
     }
 
-    /// Resolve a repo access token from credstore (tenant-scoped by ctx).
+    /// Resolve a UTF-8 secret from credstore (tenant-scoped by ctx). Used
+    /// for repo access tokens and for the agent provider keys below.
     /// Missing/inaccessible secret is an error: a private clone would fail
     /// later with a far less helpful message.
     pub async fn resolve_git_token(
@@ -139,6 +140,38 @@ impl SessionService {
             .ok_or_else(|| anyhow!("secret '{token_ref}' not found or not accessible"))?;
         String::from_utf8(secret.value.as_bytes().to_vec())
             .map_err(|_| anyhow!("secret '{token_ref}' is not valid UTF-8"))
+    }
+
+    /// Provider keys for the session container, read from credstore under
+    /// the caller's identity. Best-effort by design: a reference that is
+    /// absent or unreadable is logged and skipped, because a workspace
+    /// without an Anthropic key should still get an IDE (and a working
+    /// Codex agent), just without that one provider.
+    async fn agent_env(&self, ctx: &SecurityContext) -> Vec<String> {
+        let mut out = Vec::new();
+        for spec in &self.cfg.agent_secrets {
+            match self.resolve_git_token(ctx, &spec.secret_ref).await {
+                Ok(value) if !value.trim().is_empty() => {
+                    tracing::info!(
+                        env = %spec.env,
+                        reference = %spec.secret_ref,
+                        "studio-session: agent key provisioned into the session"
+                    );
+                    out.push(format!("{}={}", spec.env, value.trim()));
+                }
+                Ok(_) => tracing::warn!(
+                    env = %spec.env,
+                    reference = %spec.secret_ref,
+                    "studio-session: agent key is empty — agent stays unauthenticated"
+                ),
+                Err(e) => tracing::warn!(
+                    env = %spec.env,
+                    reference = %spec.secret_ref,
+                    "studio-session: agent key unavailable ({e}) — agent stays unauthenticated"
+                ),
+            }
+        }
+        out
     }
 
     pub fn session_url(&self, port: u16) -> String {
@@ -163,7 +196,10 @@ impl SessionService {
             self.cfg.registry_credentials(),
         );
         use futures_util::TryStreamExt;
-        pull.try_collect::<Vec<_>>().await.map(|_| ()).map_err(|e| anyhow!("{e}"))
+        pull.try_collect::<Vec<_>>()
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow!("{e}"))
     }
 
     /// Background image keeper: pulls the session image at boot and
@@ -242,13 +278,17 @@ impl SessionService {
     /// given.
     pub async fn create(
         &self,
-        tenant_id: Uuid,
-        actor_id: Uuid,
+        ctx: &SecurityContext,
         workspace_id: Uuid,
         root_path: Option<String>,
         root_repo: Option<RepoSpec>,
         repos: Vec<RepoSpec>,
     ) -> anyhow::Result<(Session, bool /* already_existed */)> {
+        // Both come from the caller's context — passing them separately
+        // only invites a mismatch between the identity we authorize with
+        // and the one we record.
+        let tenant_id = ctx.subject_tenant_id();
+        let actor_id = ctx.subject_id();
         {
             let existing = {
                 let sessions = self.sessions.read().await;
@@ -399,6 +439,8 @@ impl SessionService {
             // it when forwarding, so in-IDE clients use gateway-rooted paths.
             "STUDIO_GATEWAY_URL=http://host.docker.internal:8090/cf".to_string(),
         ];
+        // Provider keys for the native Theia agents (Codex, Claude Code).
+        env.extend(self.agent_env(ctx).await);
         // Workspace root repository (cloned by the entrypoint into an empty
         // /workspace on first launch).
         if let Some(root) = &root_repo {

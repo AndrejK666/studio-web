@@ -53,6 +53,16 @@ pub struct StudioSessionConfig {
     /// STUDIO_GIT_MODE passed to the container: disabled | commit | push.
     #[serde(default = "default_git_mode")]
     pub git_mode: String,
+    /// Provider credentials handed to a session container. Each entry
+    /// binds a credstore secret to an environment variable inside the
+    /// IDE, which is how the native Theia agents authenticate:
+    /// `@theia/ai-codex` reads OPENAI_API_KEY, `@theia/ai-claude-code`
+    /// reads ANTHROPIC_API_KEY. Resolved per launch under the caller's
+    /// identity, so a workspace only receives keys its tenant may read.
+    /// A missing or unreadable reference is a warning, not an error: the
+    /// session still starts, that agent just stays unauthenticated.
+    #[serde(default = "default_agent_secrets")]
+    pub agent_secrets: Vec<AgentSecret>,
 }
 
 impl Default for StudioSessionConfig {
@@ -70,6 +80,7 @@ impl Default for StudioSessionConfig {
             port_range_end: default_port_end(),
             max_session_secs: default_max_session_secs(),
             git_mode: default_git_mode(),
+            agent_secrets: default_agent_secrets(),
         }
     }
 }
@@ -128,6 +139,29 @@ fn default_max_session_secs() -> u64 {
 }
 fn default_git_mode() -> String {
     "disabled".into()
+}
+
+/// One `environment variable <- credstore reference` binding.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentSecret {
+    /// Variable name as seen by the process inside the container.
+    pub env: String,
+    /// credstore reference holding the value.
+    #[serde(rename = "ref")]
+    pub secret_ref: String,
+}
+
+fn default_agent_secrets() -> Vec<AgentSecret> {
+    vec![
+        AgentSecret {
+            env: "OPENAI_API_KEY".into(),
+            secret_ref: "openai-key".into(),
+        },
+        AgentSecret {
+            env: "ANTHROPIC_API_KEY".into(),
+            secret_ref: "anthropic-key".into(),
+        },
+    ]
 }
 
 impl StudioSessionConfig {
