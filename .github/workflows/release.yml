@@ -1,9 +1,24 @@
 name: Release
 
-# Tag-driven: push a tag `v*` (e.g. v0.1.0) to build, publish and deploy.
+# Three ways in:
+#   * a `v*` tag  — the real release: images tagged with the version + `latest`,
+#     a GitHub Release with the artifacts, and the deploy gate.
+#   * a push to main — images only, tagged `edge` and `sha-<short>`, so there is
+#     something to pull between releases (studio-session already expects an
+#     `:edge` tag for the Theia image; this gives the stack the same habit).
+#   * manual — the reason `workflow_dispatch` is here at all: without it the
+#     Actions page for this workflow has no "Run workflow" button, so a rebuild
+#     of an unchanged tree meant pushing an empty commit or a throwaway tag.
 on:
   push:
     tags: ["v*"]
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: "Also move the `latest` tag to this build"
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # GitHub Release
@@ -78,22 +93,61 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A tag release gets the version and `latest`; anything else gets `edge`
+      # and an immutable `sha-` tag. `latest` is deliberately NOT moved by a
+      # main push: something has to keep meaning "the last release".
+      - name: Work out the image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          short="sha-$(git rev-parse --short HEAD)"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "list=${{ github.ref_name }} latest $short" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.publish_latest }}" = "true" ]; then
+            echo "list=edge latest $short" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=edge $short" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build & push backend image
         run: |
-          docker build -f studio-backend/Dockerfile \
-            -t $IMAGE_PREFIX/studio-backend:${{ github.ref_name }} \
-            -t $IMAGE_PREFIX/studio-backend:latest studio-backend
-          docker push --all-tags $IMAGE_PREFIX/studio-backend
+          set -euo pipefail
+          args=()
+          for t in ${{ steps.tags.outputs.list }}; do
+            args+=(-t "$IMAGE_PREFIX/studio-backend:$t")
+          done
+          docker build -f studio-backend/Dockerfile "${args[@]}" studio-backend
+          # --all-tags would also push tags this run did not build.
+          for t in ${{ steps.tags.outputs.list }}; do
+            docker push "$IMAGE_PREFIX/studio-backend:$t"
+          done
 
       - name: Build & push frontend image
         run: |
-          docker build -f studio-frontend/Dockerfile \
-            -t $IMAGE_PREFIX/studio-frontend:${{ github.ref_name }} \
-            -t $IMAGE_PREFIX/studio-frontend:latest studio-frontend
-          docker push --all-tags $IMAGE_PREFIX/studio-frontend
+          set -euo pipefail
+          args=()
+          for t in ${{ steps.tags.outputs.list }}; do
+            args+=(-t "$IMAGE_PREFIX/studio-frontend:$t")
+          done
+          docker build -f studio-frontend/Dockerfile "${args[@]}" studio-frontend
+          for t in ${{ steps.tags.outputs.list }}; do
+            docker push "$IMAGE_PREFIX/studio-frontend:$t"
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "### Images published"
+            for t in ${{ steps.tags.outputs.list }}; do
+              echo "- \`$IMAGE_PREFIX/studio-backend:$t\`"
+              echo "- \`$IMAGE_PREFIX/studio-frontend:$t\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   github-release:
     needs: [backend-binary, frontend-dist]
+    # A main push publishes images, not releases.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -113,6 +167,7 @@ jobs:
 
   deploy:
     needs: [images]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment: production   # add reviewers in repo Settings -> Environments for a manual gate
     steps:
