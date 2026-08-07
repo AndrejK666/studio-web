@@ -71,15 +71,41 @@ services:
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
+      # Put the health endpoints back on the MAIN server instead of the
+      # management interface. Since Keycloak 25 health lives on the management
+      # port (9000), and that interface INHERITS the main server's TLS — with
+      # KC_HTTPS_CERTIFICATE_FILE set it comes up as
+      # "Management interface listening on https://0.0.0.0:9000" (it says so in
+      # the startup log). Keycloak's own docs state that HTTPS endpoints cannot
+      # be probed from inside this image, because curl and friends are
+      # deliberately removed from it. So health has to be somewhere plaintext,
+      # and the main server already has plain HTTP on 8080 via KC_HTTP_ENABLED.
+      #
+      # This option is deprecated upstream and will go away. When the image is
+      # bumped past 26.0, replace it with KC_HTTP_MANAGEMENT_SCHEME: "http"
+      # (26.2+) — health stays on 9000 but stops inheriting TLS — and point the
+      # probe below back at port 9000.
+      KC_LEGACY_OBSERVABILITY_INTERFACE: "true"
     ports:
       - "127.0.0.1:8443:8443"
     volumes:
       - ./docker/keycloak/realm-studio.json:/opt/keycloak/data/import/realm-studio.json:ro
       - ./docker/keycloak/certs:/opt/keycloak/certs:ro
-    # The image has no shell utilities beyond bash, so the probe is a bash
-    # /dev/tcp connect against the management port rather than curl.
+    # No curl in the image (removed upstream on purpose), so this is the bash
+    # /dev/tcp form the Keycloak documentation publishes. Port 8080 — plain
+    # HTTP on the main server — for the reason spelled out next to
+    # KC_LEGACY_OBSERVABILITY_INTERFACE above. The previous version of this
+    # probe spoke plaintext to the TLS listener on 9000: the TCP connect
+    # succeeded, the response was garbage, and it failed 471 times in a row
+    # while Keycloak was entirely healthy.
+    #
+    # Matching the status line rather than grepping the body for "UP" (HEAD has
+    # no body). The version is a character class deliberately: the upstream
+    # snippet hardcodes "HTTP/1.0 200", but a server answering an HTTP/1.0
+    # request with an HTTP/1.1 status line is both legal and common, and that
+    # difference is not worth another silent false negative.
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      test: ["CMD-SHELL", "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep -qE 'HTTP/1\\.[01] 200'; } 0<>/dev/tcp/127.0.0.1/8080"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -98,6 +124,13 @@ services:
       #   the Claude Code agent in IDE sessions -> STUDIO_ANTHROPIC_API_KEY
       STUDIO_LLM_API_KEY: ${STUDIO_LLM_API_KEY:-}
       STUDIO_ANTHROPIC_API_KEY: ${STUDIO_ANTHROPIC_API_KEY:-}
+      # Encryption key for credstore secret VALUES at rest (issue #66, base64,
+      # 32 bytes). Without it the backend falls back to the in-memory value
+      # store and every secret typed into the portal — source PATs, connector
+      # tokens — dies with the container on the next restart. Generate it once
+      # and keep it: a different key makes the stored values unreadable.
+      #   openssl rand -base64 32
+      STUDIO_CREDSTORE_KEY: ${STUDIO_CREDSTORE_KEY:-}
       # The Theia session image lives in a private ghcr repo. The Docker API
       # ignores the CLI credential store, so the gear needs its own pair —
       # without them a session launch fails with a bare "unauthorized".
@@ -121,10 +154,25 @@ services:
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:
+      # Postgres HAS to be healthy: the backend runs its migrations during boot
+      # and exits non-zero if the databases are not reachable.
       postgres:
         condition: service_healthy
+      # Keycloak only has to be STARTED, not healthy. Nothing in the backend's
+      # init path talks to it: oidc-authn-plugin just builds an HTTP client and
+      # registers itself (discovery + JWKS are fetched lazily, on the first
+      # token it validates), keycloak-idp-plugin gets its admin token on the
+      # first invite, and mini-chat's OAGW provisioning runs in
+      # RunnableCapability::start with its own retries. Gating on health only
+      # meant that one failing IdP probe took down the entire stack —
+      # including the API, which is perfectly usable meanwhile. Login starts
+      # working the moment Keycloak is actually ready, with no restart.
+      #
+      # Keycloak keeps its healthcheck: `docker compose ps` should still tell
+      # you the truth about it. Health is for observability here, depends_on
+      # is for ordering — conflating the two is what cost an evening.
       keycloak:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/healthz"]
       interval: 10s

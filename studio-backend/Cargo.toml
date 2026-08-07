@@ -35,7 +35,7 @@ inventory = "0.3"
 tracing = "0.1"
 tokio-util = "0.7"
 utoipa = "5"
-uuid = { version = "1", features = ["serde", "v4"] }
+uuid = { version = "1", features = ["serde", "v4", "v5"] }
 toolkit-macros = { package = "cf-gears-toolkit-macros", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 credstore-sdk = { package = "cf-gears-credstore-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 # studio-connector: GtsTypeId on the account-management metadata boundary.
@@ -50,6 +50,34 @@ toolkit-odata = { package = "cf-gears-toolkit-odata", git = "https://github.com/
 types-registry-sdk = { package = "cf-gears-types-registry-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 toolkit-security = { package = "cf-gears-toolkit-security", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7", features = ["axum"] }
+
+# ── studio-credstore-pg (in-crate; persistent credstore value store, issue #66) ──
+# The only value-store plugin CF/Gears ships keeps values in memory, so every
+# backend restart lost every secret a user had typed in. This gear stores them
+# encrypted in Postgres instead. `pg` + `sqlite` are named explicitly rather
+# than left to feature unification from the other gears: this crate is the one
+# that decides which engines the assembly can talk to.
+toolkit-db = { package = "cf-gears-toolkit-db", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7", features = ["pg", "sqlite"] }
+# Entity/migration definitions. Feature set and the runtime-tokio (NOT
+# runtime-tokio-rustls) choice mirror the gears-rust workspace manifest: the
+# rustls variant would activate `ring` alongside aws-lc-rs and make rustls
+# panic when it can no longer auto-detect a single provider.
+sea-orm = { version = "1.1", default-features = false, features = [
+    "runtime-tokio",
+    "with-uuid",
+    "with-time",
+    "macros",
+] }
+time = "0.3"
+# AES-256-GCM for values at rest, and the CSPRNG for nonces. Same crypto
+# library as the platform's TLS stack and credstore's own value fence, so a
+# `--features fips` build routes this through the validated module too.
+aws-lc-rs = "1.17"
+base64 = "0.22"
+
+# ── studio-project (in-crate; projects with two creation shapes, ADR-0005) ──
+# Membership stays on Resource Group per ADR-0002, so the gear needs RG's client.
+resource_group_sdk = { package = "cf-gears-resource-group-sdk", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7" }
 
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", git = "https://github.com/constructorfabric/gears-rust", rev = "71218154aa3a41991a5cbb827ac76c23b53a27a7", features = ["bootstrap"] }

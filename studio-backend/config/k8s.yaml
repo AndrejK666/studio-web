@@ -14,7 +14,11 @@ server:
   home_dir: "~/.cf-studio-backend"
 
 database:
-  auto_provision: true            # dev convenience: create missing databases on start
+  # NB: this does NOT create missing Postgres databases, despite what it sounds
+  # like — toolkit-db only consults it to create SQLite parent directories
+  # (manager.rs, finalize_sqlite_paths). Postgres databases come from
+  # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
+  auto_provision: true
   servers:
     pg_main:
       engine: "postgres"
@@ -238,6 +242,45 @@ gears:
     config:
       vendor: "constructorfabric"
 
+  # ── Persistent credstore value store (issue #66) ──
+  # This section is what decides whether secret VALUES survive a restart.
+  # credstore selects exactly ONE backend plugin per vendor and the LOWEST
+  # priority wins (toolkit::plugins::choose_plugin_instance), so at 50 this
+  # gear displaces static-credstore-plugin (100) outright — there is no chain
+  # and no fallback between the two.
+  #
+  # Values are sealed with AES-256-GCM under STUDIO_CREDSTORE_KEY (base64,
+  # 32 bytes -> `openssl rand -base64 32`). The key is deliberately NOT in this
+  # file: the config loader does not expand ${VAR} anyway, and a literal key
+  # here would travel in the image and show up in --print-config.
+  #
+  # Key unset      -> WARN, this gear stands down, static-credstore-plugin wins
+  #                   again and you get the pre-#66 behaviour (values die with
+  #                   the process) instead of a failed boot.
+  # Key malformed  -> boot fails loudly, because degrading quietly would only
+  #                   surface as lost secrets after the next restart.
+  # Key changed    -> old rows no longer decrypt and read as absent; they are
+  #                   re-sealed on the next write (bootstrap at boot, or the
+  #                   user re-entering a token).
+  studio-credstore-pg:
+    database:
+      server: "pg_main"
+      # Own database: the values live apart from credstore's metadata rows.
+      #
+      # It must EXIST before the first boot — `auto_provision` above does NOT
+      # create Postgres databases (see the note next to it). A fresh volume
+      # gets it from docker/initdb/01-create-databases.sql; on a volume that
+      # already exists, create it once by hand:
+      #   kubectl exec -i postgres-0 -- psql -U studio -d studio -c 'CREATE DATABASE studio_credstore_values OWNER studio;'
+      dbname: "studio_credstore_values"
+    config:
+      vendor: "constructorfabric"         # must equal credstore.vendor above
+      priority: 50                        # LOWER wins; the static plugin below is 100
+      key_env: "STUDIO_CREDSTORE_KEY"
+
+  # FALLBACK ONLY. While studio-credstore-pg above is registered, this plugin
+  # loses the vendor selection and the entries below are unreachable. It stays
+  # configured so a deployment with no STUDIO_CREDSTORE_KEY still boots.
   static-credstore-plugin:
     config:
       vendor: "constructorfabric"
@@ -356,15 +399,34 @@ gears:
   # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
   # Requires: Docker daemon on the host and the Theia image built once:
   #   cd ../fabric-poc/poc/theia && docker build -t cf-studio-theia:latest .
+  # ── Projects (ADR-0005) ──
+  # Two creation shapes (greenfield / modernize), journey stages with a
+  # mandatory Intent, and a forward-only status ladder — the reasons this is a
+  # gear and not Resource Group metadata. Membership stays on RG per ADR-0002,
+  # and this gear registers the RG project type at start, which retires the
+  # manual demo/setup-projects.sh step.
+  #
+  # Uploaded codebases go to the file-storage gear over REST; only the file id
+  # is stored here. There is no in-process path to storage to take even if we
+  # wanted one — FileStorageClientV1 is still a stub with one method.
+  studio-project:
+    database:
+      server: "pg_main"
+      dbname: "studio_projects"
+    config: {}
+
   studio-session:
     config:
       enabled: false   # no Docker in-cluster; Pod driver = future ADR-0003 step
 
   # ── Self-heal for config-seeded credstore secrets ──
-  # The dev value-store is in-memory: after every backend restart the PG
-  # metadata for seeded refs is fence-poisoned and GET fails closed (mini-chat
-  # then spins on 'skipping OAGW provisioning'). This gear re-PUTs each seed
-  # (If-Match:* / create) at start, so no manual curl is ever needed.
+  # Re-seeds the references declared above from the environment on every start.
+  # With studio-credstore-pg active the values already survive a restart, so
+  # this is normally a no-op that logs "secret accessible — no heal needed". It
+  # is still the ONLY source for openai-key / anthropic-key: on a first boot,
+  # after STUDIO_CREDSTORE_KEY changes (old rows stop decrypting and read as
+  # absent), and whenever the persistent store stands down and the in-memory
+  # fallback takes over.
   studio-secrets-bootstrap:
     config:
       secrets:

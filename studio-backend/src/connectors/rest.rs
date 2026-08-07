@@ -101,6 +101,22 @@ pub struct CreateConnectionRequest {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
+pub struct PatchConnectionRequest {
+    /// New label. Omitted = unchanged.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// New installation root. Omitted = unchanged; empty string = back to the
+    /// provider's default.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Replacement credential. Omitted = keep the stored one (the change is
+    /// still verified against it). Never returned.
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
 pub struct ProbeConnectionRequest {
     /// Driver key from `GET /providers`.
     pub provider: String,
@@ -266,6 +282,36 @@ async fn list_connections(
     Ok(Json(ConnectionListDto {
         items: items.into_iter().map(to_dto).collect(),
     }))
+}
+
+async fn patch_connection(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(connectors): Extension<Connectors>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ScopeQuery>,
+    Json(req): Json<PatchConnectionRequest>,
+) -> ApiResult<JsonBody<ConnectionTestDto>> {
+    let svc = connectors.get()?;
+    let tenant = q.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let (connection, identity) = svc
+        .update(
+            &ctx,
+            tenant,
+            id,
+            req.label.as_deref(),
+            req.base_url.as_deref(),
+            req.token.as_deref(),
+        )
+        .await
+        // A rejected credential, an unknown installation or an attempt to edit
+        // an inherited row are all the caller's problem, reported in the
+        // provider's own words.
+        .map_err(|e| {
+            StudioConnectorError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(to_test_dto(connection, identity)))
 }
 
 async fn create_connection(
@@ -506,6 +552,35 @@ pub fn register_routes(
         .path_param("id", "Connection id")
         .handler(list_repositories)
         .json_response_with_schema::<RemoteRepoListDto>(openapi, StatusCode::OK, "Repositories")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::patch("/studio-connector/v1/connections/{id}")
+        .operation_id("studio_connector.patch_connection")
+        .summary("Relabel a connection, move it, or rotate its credential")
+        .description(
+            "Every field is optional. The result is verified against the provider before \
+             anything is written, whether or not a new token was sent — so relocating an \
+             installation cannot leave a connection that has never been proven to work. \
+             The connection id and its credstore reference are preserved, which is the \
+             point: workspace sources reference a connection by id, so rotating an \
+             expired token must not mean deleting and re-adding it. Scope is not \
+             editable — it maps onto the secret's sharing mode.",
+        )
+        .tag("StudioConnectors")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Connection id")
+        .json_request::<PatchConnectionRequest>(openapi, "Fields to change")
+        .handler(patch_connection)
+        .json_response_with_schema::<ConnectionTestDto>(
+            openapi,
+            StatusCode::OK,
+            "Connection updated; body carries the account the credential belongs to",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

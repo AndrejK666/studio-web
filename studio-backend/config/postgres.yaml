@@ -11,7 +11,11 @@ server:
   home_dir: "~/.cf-studio-backend"
 
 database:
-  auto_provision: true            # dev convenience: create missing databases on start
+  # NB: this does NOT create missing Postgres databases, despite what it sounds
+  # like — toolkit-db only consults it to create SQLite parent directories
+  # (manager.rs, finalize_sqlite_paths). Postgres databases come from
+  # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
+  auto_provision: true
   servers:
     pg_main:
       engine: "postgres"
@@ -214,6 +218,11 @@ gears:
     config:
       vendor: "constructorfabric"
 
+  # No studio-credstore-pg section in this profile on purpose. The seeds below
+  # are real VALUES read from this file, and the persistent value store
+  # (issue #66) would win the vendor selection and orphan them — this profile
+  # has no studio-secrets-bootstrap to re-supply them from the environment.
+  # The profiles that do enable it (docker/oidc/k8s) get their values that way.
   static-credstore-plugin:
     config:
       vendor: "constructorfabric"
@@ -313,6 +322,22 @@ gears:
   # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
   # Requires a Docker daemon; the CI-published image is pulled/refreshed
   # automatically (docker login ghcr.io once if the package is private).
+  # ── Projects (ADR-0005) ──
+  # Two creation shapes (greenfield / modernize), journey stages with a
+  # mandatory Intent, and a forward-only status ladder — the reasons this is a
+  # gear and not Resource Group metadata. Membership stays on RG per ADR-0002,
+  # and this gear registers the RG project type at start, which retires the
+  # manual demo/setup-projects.sh step.
+  #
+  # Uploaded codebases go to the file-storage gear over REST; only the file id
+  # is stored here. There is no in-process path to storage to take even if we
+  # wanted one — FileStorageClientV1 is still a stub with one method.
+  studio-project:
+    database:
+      server: "pg_main"
+      dbname: "studio_projects"
+    config: {}
+
   studio-session:
     config:
       image: "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge"

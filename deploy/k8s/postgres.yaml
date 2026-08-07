@@ -21,6 +21,8 @@ data:
     CREATE DATABASE studio_file_storage OWNER studio;
     CREATE DATABASE studio_mini_chat OWNER studio;
     CREATE DATABASE studio_credstore OWNER studio;
+    CREATE DATABASE studio_credstore_values OWNER studio;
+    CREATE DATABASE studio_projects OWNER studio;
 ---
 apiVersion: apps/v1
 kind: StatefulSet

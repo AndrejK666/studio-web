@@ -48,4 +48,4 @@ helm upgrade --install studio-web deploy/helm/studio-web \
 
 Prerequisites: the three Secrets from `values-dmz.example.yaml`, an OIDC
 realm (issuer must serve real TLS), and a Postgres with a CREATEDB-capable
-app user (per-gear databases are auto-provisioned on first boot).
+app user. Per-gear databases are NOT auto-provisioned: `auto_provision` only creates SQLite directories, so the databases come from the initdb list in k8s/postgres.yaml, which runs once on an empty volume — add one by hand if you introduce a gear later.

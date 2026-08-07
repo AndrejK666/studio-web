@@ -429,6 +429,123 @@ impl ConnectorService {
         Ok(true)
     }
 
+    /// Change a connection in place: relabel it, point it at a different
+    /// installation, or rotate the credential.
+    ///
+    /// Whatever changed, the result is verified against the provider before
+    /// anything is written — the same rule `create` follows, for the same
+    /// reason: a stored credential that was never accepted is a failure
+    /// discovered later, by a clone, with no obvious cause.
+    ///
+    /// This exists because the alternative was delete-and-recreate, which
+    /// changes the connection id — and every workspace source references a
+    /// connection by id, so rotating an expired PAT would silently orphan them.
+    /// The id and the credstore reference are deliberately preserved.
+    ///
+    /// The scope is NOT changeable: it maps onto the secret's credstore sharing
+    /// mode, and moving a secret between sharing classes is a transition
+    /// credstore governs, not a field edit. Changing who can see a connection
+    /// stays a delete-and-recreate.
+    pub async fn update(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+        label: Option<&str>,
+        base_url: Option<&str>,
+        token: Option<&str>,
+    ) -> anyhow::Result<(Connection, DriverIdentity)> {
+        let existing = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&existing.provider)?;
+
+        let label = match label {
+            Some(l) => {
+                let l = l.trim();
+                if l.is_empty() {
+                    return Err(anyhow!("label must not be empty"));
+                }
+                l.to_string()
+            }
+            None => existing.label.clone(),
+        };
+
+        // An explicitly empty base_url means "back to the provider default",
+        // which is the only way to undo a typo'd self-hosted URL.
+        let base_url = match base_url {
+            Some(u) => {
+                let u = u.trim();
+                if u.is_empty() {
+                    driver.default_base_url().to_string()
+                } else {
+                    u.to_string()
+                }
+            }
+            None => existing.base_url.clone(),
+        };
+
+        // No new token: verify the change against the credential already
+        // stored, so relocating an installation cannot quietly leave a
+        // connection that has never been proven to work.
+        let rotating = token.is_some();
+        let token = match token {
+            Some(t) => {
+                let t = t.trim();
+                if t.is_empty() {
+                    return Err(anyhow!("token must not be empty"));
+                }
+                t.to_string()
+            }
+            None => self.auth(ctx, &existing).await?.token,
+        };
+
+        let identity = driver
+            .test(&ConnectionAuth {
+                base_url: base_url.clone(),
+                token: token.clone(),
+            })
+            .await
+            .context("the credential was rejected by the provider")?;
+
+        if rotating {
+            let key = SecretRef::new(&existing.secret_ref)
+                .map_err(|e| anyhow!("bad secret reference: {e}"))?;
+            let scope = ConnectionScope::parse(&existing.scope)?;
+            // If-Match:* overwrites whichever generation holds the reference —
+            // the SDK's documented rewrite path — so the reference itself, and
+            // therefore every source pointing at it, survives the rotation.
+            self.credstore
+                .put(
+                    ctx,
+                    &key,
+                    SecretValue::new(token.into_bytes()),
+                    scope.sharing(),
+                    WritePrecondition::Exists,
+                )
+                .await
+                .map_err(|e| anyhow!("cannot store the new token: {e}"))?;
+        }
+
+        // The catalogue row lives in the OWNING tenant, which is not
+        // necessarily the one being viewed: an inherited connection is edited
+        // where it is defined.
+        let owner = existing.owner_tenant_id;
+        let mut catalogue = self.load_own(ctx, owner).await?;
+        let Some(slot) = catalogue.items.iter_mut().find(|c| c.id == id) else {
+            return Err(anyhow!(
+                "connection {id} is inherited from tenant {owner} and cannot be edited from here"
+            ));
+        };
+        slot.label = label;
+        slot.base_url = base_url;
+        // Re-stamp the account: a rotated credential may belong to a different
+        // person, and a stale name here is exactly the kind of thing nobody
+        // notices until it matters.
+        slot.account = identity.account.clone();
+        let updated = slot.clone();
+        self.store(ctx, owner, &catalogue).await?;
+        Ok((updated, identity))
+    }
+
     pub async fn test(
         &self,
         ctx: &SecurityContext,
