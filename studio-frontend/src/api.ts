@@ -32,14 +32,72 @@ export const TENANT_TYPES = {
   workspace: "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~",
 } as const;
 
-// Projects are Resource Group-backed (ADR-0002): an RG group of this type,
-// bound to a workspace via metadata.workspace_id. Register the type once
-// with studio-backend/demo/setup-projects.sh.
+// Project MEMBERSHIP is Resource Group-backed: an RG group of this type, bound
+// to a workspace via metadata.workspace_id. The project RECORD moved out of RG
+// into the studio-project gear (ADR-0005) — see the `project` client below.
+// The gear registers this type itself at start, so setup-projects.sh is only
+// needed against a backend that predates it.
 export const PROJECT_RG_TYPE = "gts.cf.core.rg.type.v1~cf.studio.project.v1~";
 export const USER_MEMBER_HANDLE = "gts.cf.core.rg.type.v1~cf.core.am.user.v1~";
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
 export const WS_SETTINGS_TYPE = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
+
+/** One journey stage from `GET /studio-project/v1/stages`.
+ *  Fetched rather than hardcoded: the gear validates against this catalogue,
+ *  and a client-side copy that drifts shows up as a checkbox that does nothing. */
+export interface Stage {
+  key: string;
+  label: string;
+  /** Always applied — render it ticked and disabled. */
+  required: boolean;
+}
+
+/** The two creation shapes. A greenfield project has no source to import; a
+ *  modernization has exactly one. The backend rejects any other combination. */
+export type ProjectMode = "greenfield" | "modernize";
+
+/** Forward-only: draft -> active -> archived, and archived is terminal. */
+export type ProjectStatus = "draft" | "active" | "archived";
+
+export interface Project {
+  id: string;
+  workspace_id: string;
+  name: string;
+  mode: ProjectMode;
+  status: ProjectStatus;
+  stages: string[];
+  /** Greenfield only. */
+  brief?: string | null;
+  /** Modernize via repository. */
+  git_url?: string | null;
+  /** Modernize via an archive already in file-storage. */
+  file_id?: string | null;
+  members_group_id?: string | null;
+  /** `false` when the project has no RG member group — explain the missing
+   *  member list rather than rendering an empty one. */
+  members_available: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NewProjectInput {
+  name: string;
+  mode: ProjectMode;
+  /** Required stages are added by the backend whether or not they are sent. */
+  stages: string[];
+  /** Greenfield: the idea, pasted PRD or notes. */
+  brief?: string;
+  /** Modernize: mutually exclusive with file_id. */
+  git_url?: string;
+  /** Modernize: mutually exclusive with git_url. NB uploads need the
+   *  file-storage data-plane sidecar, which the compose stack does not run —
+   *  see the note on `project.uploadAvailable`. */
+  file_id?: string;
+  /** Omitted = the caller's own tenant. */
+  workspace_id?: string;
+}
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
 
@@ -345,6 +403,67 @@ export const api = {
       `/resource-group/v1/memberships/${groupId}/${resourceType}/${resourceId}`,
       token,
       { method: "POST" },
+    ),
+
+  /** Relabel a connection, move it to another installation, or rotate its
+   *  credential. Every field optional; the backend verifies the result against
+   *  the provider before writing, with or without a new token. The connection
+   *  id survives, which is why this exists — workspace sources reference it. */
+  patchConnection: (
+    token: string,
+    id: string,
+    input: { label?: string; base_url?: string; token?: string },
+    tenantId?: string,
+  ) =>
+    request<ConnectionTest>(
+      `/studio-connector/v1/connections/${id}${tenantId ? `?tenant=${tenantId}` : ""}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+
+  /* ── Projects (studio-project gear, ADR-0005) ── */
+
+  /** The stage catalogue the gear validates against. */
+  projectStages: (token: string) =>
+    request<{ items: Stage[] }>("/studio-project/v1/stages", token),
+
+  projects: (token: string, workspaceId?: string) =>
+    request<{ items: Project[] }>(
+      `/studio-project/v1/projects${workspaceId ? `?tenant=${workspaceId}` : ""}`,
+      token,
+    ),
+
+  project: (token: string, id: string, workspaceId?: string) =>
+    request<Project>(
+      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
+      token,
+    ),
+
+  createProject: (token: string, input: NewProjectInput) =>
+    request<Project>("/studio-project/v1/projects", token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  /** Rename, replace the stage selection, or move the status forward.
+   *  `stages` is a full replacement, not a delta. */
+  patchProject: (
+    token: string,
+    id: string,
+    input: { name?: string; stages?: string[]; status?: ProjectStatus },
+    workspaceId?: string,
+  ) =>
+    request<Project>(
+      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+
+  deleteProject: (token: string, id: string, workspaceId?: string) =>
+    request<void>(
+      `/studio-project/v1/projects/${id}${workspaceId ? `?tenant=${workspaceId}` : ""}`,
+      token,
+      { method: "DELETE" },
     ),
 
   /* ── Workspace settings (AM tenant metadata) ── */

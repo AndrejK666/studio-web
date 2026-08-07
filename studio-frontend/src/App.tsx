@@ -13,8 +13,10 @@ import {
   type ConnectorProvider,
   type Group,
   type Me,
+  type Project,
   type RemoteRepo,
   type RepoEntry,
+  type Stage,
   type Tenant,
   type User,
   type WorkspaceSettings,
@@ -402,12 +404,16 @@ const NAV_SECTIONS: {
   },
 ];
 
-type AdminView = "organizations" | "members" | "workspaces" | "secrets";
+type AdminView = "organizations" | "members" | "workspaces" | "connectors" | "secrets";
 
 const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
   { id: "organizations", icon: "org", label: "Organization" },
   { id: "members", icon: "users", label: "Members" },
   { id: "workspaces", icon: "grid", label: "Workspaces" },
+  // Organization-owned connections. The workspace-level page can only show them
+  // as inherited and read-only: a connection is edited in the tenant that owns
+  // it, and for an organization-scoped PAT that tenant is the organization.
+  { id: "connectors", icon: "plug", label: "Connectors" },
   { id: "secrets", icon: "key", label: "Secrets" },
 ];
 
@@ -1154,6 +1160,24 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 }}
               />
             )}
+            {adminView === "connectors" &&
+              (adminOrg ? (
+                /* ConnectorsView is written against a tenant that owns a
+                   connection catalogue, which an organization is. Passing the
+                   organization in the workspace slot makes `inherited` false for
+                   its own rows, so the Edit button is enabled here — which is the
+                   whole point of this section. */
+                <ConnectorsView
+                  token={token}
+                  workspace={{ ...adminOrg, orgId: adminOrg.id, orgName: adminOrg.name }}
+                  filters={filters}
+                />
+              ) : (
+                <div className="card">
+                  <h2>Connectors</h2>
+                  <p className="empty">Select an organization first.</p>
+                </div>
+              ))}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
           </>
         ) : dash ? (
@@ -3152,24 +3176,32 @@ function WorkspaceProjectsCard({
   onChanged?: () => void;
   /** Drill into the project level. Absent when the card is embedded somewhere
    *  that has no navigation of its own. */
-  onOpen?: (p: Group) => void;
+  onOpen?: (p: Project) => void;
 }) {
   const wsId = ws.id;
-  const [projects, setProjects] = useState<Group[] | null>(null);
-  const [name, setName] = useState("");
-  const [openProject, setOpenProject] = useState<Group | null>(null);
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  /** Fetched, not hardcoded: the gear validates against this catalogue, so a
+   *  local copy that drifts shows up as a checkbox that does nothing. */
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [openProject, setOpenProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Creation form. Mode is the first choice because it decides what the rest of
+  // the form even asks for — the two options are two different shapes, not one
+  // shape with a switch.
+  const [mode, setMode] = useState<"greenfield" | "modernize">("greenfield");
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [brief, setBrief] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
 
   const load = useCallback(async () => {
     setError(null);
     setOpenProject(null);
     try {
-      const page = await api.groups(token);
-      setProjects(
-        (page.items ?? []).filter(
-          (g) => g.type === PROJECT_RG_TYPE && g.metadata?.workspace_id === wsId,
-        ),
-      );
+      const page = await api.projects(token, wsId);
+      setProjects(page.items ?? []);
     } catch (e) {
       setError(errText(e));
     }
@@ -3179,35 +3211,66 @@ function WorkspaceProjectsCard({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.projectStages(token);
+        if (cancelled) return;
+        const items = res.items ?? [];
+        setStages(items);
+        // Everything on by default; unticking is easier than hunting for what
+        // you meant to include. Required stages are applied by the backend
+        // whether or not they are sent.
+        setPicked(items.map((s) => s.key));
+      } catch {
+        /* the catalogue is cosmetic — creation still works without it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  function toggle(key: string) {
+    setPicked((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
+  }
+
+  const canCreate =
+    !!name.trim() && !busy && (mode === "greenfield" || !!gitUrl.trim());
+
   async function create(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setBusy(true);
     try {
-      await api.createGroup(token, {
-        type: PROJECT_RG_TYPE,
-        name,
-        parent_id: null,
-        metadata: { workspace_id: wsId },
+      await api.createProject(token, {
+        name: name.trim(),
+        mode,
+        stages: picked,
+        workspace_id: wsId,
+        ...(mode === "greenfield"
+          ? brief.trim()
+            ? { brief: brief.trim() }
+            : {}
+          : { git_url: gitUrl.trim() }),
       });
       setName("");
+      setBrief("");
+      setGitUrl("");
       await load();
       onChanged?.();
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 400
-          ? `${errText(err)} — если тип проекта ещё не зарегистрирован, выполните studio-backend/demo/setup-projects.sh`
-          : errText(err),
-      );
+      setError(errText(err));
+    } finally {
+      setBusy(false);
     }
   }
 
-  const visible = projects ?? [];
-
-  async function removeProject(p: Group) {
-    if (!window.confirm(`Delete project “${p.name}” (memberships included)?`)) return;
+  async function move(p: Project, status: "active" | "archived") {
     setError(null);
     try {
-      await api.deleteGroup(token, p.id, true); // force: cascade memberships
+      await api.patchProject(token, p.id, { status }, wsId);
       await load();
       onChanged?.();
     } catch (err) {
@@ -3215,14 +3278,28 @@ function WorkspaceProjectsCard({
     }
   }
 
+  async function removeProject(p: Project) {
+    if (!window.confirm(`Delete project \u201c${p.name}\u201d (members included)?`)) return;
+    setError(null);
+    try {
+      await api.deleteProject(token, p.id, wsId);
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setError(errText(err));
+    }
+  }
+
+  const visible = projects ?? [];
+
   return (
     <>
       <div className="card">
         <h2>Projects</h2>
         <p className="hint">
-          This workspace's effort containers. In the domain model a Project is a managed object
-          of type Project in the Knowledge Graph; until the graph ships they are Resource
-          Group-backed (ADR-0002).
+          This workspace's effort containers. The project record lives in the studio-project
+          gear (ADR-0005); membership stays on Resource Group, so a project without a member
+          group says so rather than showing an empty list.
         </p>
 
         {projects && (
@@ -3237,38 +3314,148 @@ function WorkspaceProjectsCard({
                   <li key={p.id}>
                     <div className="grow">
                       <div className="name">{p.name}</div>
-                      <div className="sub">{p.id}</div>
+                      <div className="sub">
+                        {p.mode === "modernize" ? p.git_url || "uploaded archive" : "new build"}
+                        {" \u00b7 "}
+                        {p.stages.length} stages
+                      </div>
                     </div>
-                    <span className="badge">project</span>
+                    <span className="badge">{p.status}</span>
                     {onOpen && <button onClick={() => onOpen(p)}>Open</button>}
-                    <button onClick={() => setOpenProject(p)}>members</button>
-                    <button className="ghost" title="Delete project" onClick={() => void removeProject(p)}>
+                    {p.status === "draft" && (
+                      <button onClick={() => void move(p, "active")}>Activate</button>
+                    )}
+                    {p.status !== "archived" && (
+                      <button onClick={() => void move(p, "archived")}>Archive</button>
+                    )}
+                    <button
+                      onClick={() => setOpenProject(p)}
+                      disabled={!p.members_available}
+                      title={
+                        p.members_available
+                          ? "Project members"
+                          : "No member group for this project \u2014 resource-group was unavailable when it was created"
+                      }
+                    >
+                      members
+                    </button>
+                    <button
+                      className="ghost"
+                      title="Delete project"
+                      onClick={() => void removeProject(p)}
+                    >
                       ✕
                     </button>
                   </li>
                 ))}
               </ul>
             )}
-            <form className="inline" onSubmit={create}>
-              <input
-                placeholder="New project name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              <button className="primary" disabled={!name}>
-                Create project
-              </button>
+
+            <form onSubmit={create} style={{ marginTop: 16 }}>
+              {/* Two shapes, picked first: a greenfield project starts from a
+                  description, a modernization from existing code. */}
+              <div className="inline" style={{ gap: 8 }}>
+                <button
+                  type="button"
+                  className={mode === "greenfield" ? "primary" : ""}
+                  onClick={() => setMode("greenfield")}
+                >
+                  Build something new
+                </button>
+                <button
+                  type="button"
+                  className={mode === "modernize" ? "primary" : ""}
+                  onClick={() => setMode("modernize")}
+                >
+                  Modernize existing code
+                </button>
+              </div>
+
+              <div className="inline" style={{ marginTop: 8 }}>
+                <input
+                  placeholder="Project name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+
+              {stages.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div className="hint">Journey stages</div>
+                  <div className="inline" style={{ flexWrap: "wrap", gap: 12 }}>
+                    {stages.map((s) => (
+                      <label key={s.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          checked={s.required || picked.includes(s.key)}
+                          disabled={s.required}
+                          onChange={() => toggle(s.key)}
+                        />
+                        {s.label}
+                        {s.required && <span className="badge">required</span>}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {mode === "greenfield" ? (
+                <textarea
+                  style={{ marginTop: 8, width: "100%", minHeight: 96 }}
+                  placeholder="Describe the product idea, or paste a PRD / meeting notes (optional)"
+                  value={brief}
+                  onChange={(e) => setBrief(e.target.value)}
+                />
+              ) : (
+                <div style={{ marginTop: 8 }}>
+                  <div className="inline">
+                    <input
+                      style={{ flex: 1 }}
+                      placeholder="Repository URL to import, e.g. https://gitlab.constr.dev/team/app.git"
+                      value={gitUrl}
+                      onChange={(e) => setGitUrl(e.target.value)}
+                    />
+                  </div>
+                  {/* Deliberately visible and disabled rather than absent: the
+                      backend accepts a file_id, but file-storage moves bytes
+                      through a data-plane sidecar that this deployment does not
+                      run, so there is no way to obtain one. Showing the option
+                      greyed out with the reason beats a button that 500s. */}
+                  <label
+                    className="hint"
+                    style={{ display: "block", marginTop: 6, opacity: 0.6 }}
+                    title="file-storage needs its data-plane sidecar for uploads; it is not deployed here"
+                  >
+                    <input type="checkbox" disabled /> Upload an archive instead —
+                    unavailable in this deployment (file-storage sidecar not running)
+                  </label>
+                </div>
+              )}
+
+              <div className="inline" style={{ marginTop: 8 }}>
+                <button className="primary" disabled={!canCreate}>
+                  {busy ? "Creating\u2026" : "Create project"}
+                </button>
+              </div>
             </form>
           </>
         )}
         {error && <div className="error">{error}</div>}
       </div>
 
-      {openProject && (
+      {openProject && openProject.members_group_id && (
         <ProjectMembers
           key={openProject.id}
           token={token}
-          project={openProject}
+          /* ProjectMembers speaks RG: membership stayed there (ADR-0002), so the
+             group the gear created is what it needs. */
+          project={{
+            id: openProject.members_group_id,
+            type: PROJECT_RG_TYPE,
+            name: openProject.name,
+            hierarchy: { parent_id: null, tenant_id: wsId, depth: 0 },
+            metadata: { workspace_id: wsId },
+          }}
           workspace={ws}
           onClose={() => setOpenProject(null)}
         />
@@ -4016,6 +4203,7 @@ function ConnectionList({
   onNote: (s: string) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, "ok" | "bad" | "testing">>({});
 
@@ -4147,6 +4335,18 @@ function ConnectionList({
                       <button type="button" onClick={() => test(c)}>
                         Test connection
                       </button>
+                      <button
+                        type="button"
+                        disabled={inherited}
+                        title={
+                          inherited
+                            ? "Inherited connections are edited where they are defined \u2014 in the organization"
+                            : "Change the label or URL, or rotate the token"
+                        }
+                        onClick={() => setEditing(editing === c.id ? null : c.id)}
+                      >
+                        {editing === c.id ? "Cancel" : "Edit"}
+                      </button>
                       {browsable && (
                         <button type="button" onClick={() => setOpen(open === c.id ? null : c.id)}>
                           {open === c.id ? "Hide repositories" : "Repositories"}
@@ -4157,6 +4357,27 @@ function ConnectionList({
                         Remove
                       </button>
                     </div>
+                    {editing === c.id && (
+                      <EditConnection
+                        token={token}
+                        connection={c}
+                        workspaceId={workspace.id}
+                        onNote={onNote}
+                        onDone={(changed) => {
+                          setEditing(null);
+                          if (changed) {
+                            // A rotated credential invalidates the cached
+                            // health badge: it was computed for the old token.
+                            setHealth((h) => {
+                              const next = { ...h };
+                              delete next[c.id];
+                              return next;
+                            });
+                            onChanged();
+                          }
+                        }}
+                      />
+                    )}
                     {open === c.id && browsable && (
                       <RepoBrowser
                         token={token}
@@ -4173,6 +4394,115 @@ function ConnectionList({
         );
       })}
     </div>
+  );
+}
+
+/** Inline editor for a stored connection.
+ *
+ *  Exists because the alternative was Remove-and-add, which mints a NEW
+ *  connection id — and every workspace source references a connection by id, so
+ *  rotating an expired token that way silently orphans them. The backend keeps
+ *  the id and the credstore reference across a PATCH.
+ *
+ *  Leaving the token box empty means "keep the stored credential"; the backend
+ *  still verifies the rest of the change against it, so a URL typo cannot leave
+ *  a connection that has never been proven to work. Scope is absent on purpose:
+ *  it maps onto the secret's credstore sharing mode, and changing it is a
+ *  delete-and-recreate. */
+function EditConnection({
+  token,
+  connection,
+  workspaceId,
+  onNote,
+  onDone,
+}: {
+  token: string;
+  connection: Connection;
+  workspaceId: string;
+  onNote: (s: string) => void;
+  onDone: (changed: boolean) => void;
+}) {
+  const [label, setLabel] = useState(connection.label);
+  const [baseUrl, setBaseUrl] = useState(connection.base_url);
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const dirty =
+    label.trim() !== connection.label ||
+    baseUrl.trim() !== connection.base_url ||
+    secret.trim().length > 0;
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const t = await api.patchConnection(
+        token,
+        connection.id,
+        {
+          // Only send what actually changed: an unchanged field left out means
+          // the backend does not have to reason about "same value" writes.
+          ...(label.trim() !== connection.label ? { label: label.trim() } : {}),
+          ...(baseUrl.trim() !== connection.base_url ? { base_url: baseUrl.trim() } : {}),
+          ...(secret.trim() ? { token: secret.trim() } : {}),
+        },
+        workspaceId,
+      );
+      onNote(
+        `Connection updated \u2014 the credential belongs to ${t.account || "an unnamed account"}`,
+      );
+      onDone(true);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card" style={{ marginTop: 8 }} onSubmit={save}>
+      <div className="inline">
+        <input
+          style={{ flex: 1 }}
+          placeholder="Label"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+      </div>
+      <div className="inline" style={{ marginTop: 6 }}>
+        <input
+          style={{ flex: 1 }}
+          placeholder="Installation URL (empty = the provider default)"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+        />
+      </div>
+      <div className="inline" style={{ marginTop: 6 }}>
+        <input
+          style={{ flex: 1 }}
+          type="password"
+          autoComplete="new-password"
+          placeholder="New token (leave empty to keep the current one)"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+        />
+      </div>
+      <p className="hint" style={{ marginTop: 6 }}>
+        The change is verified against the provider before anything is stored, with or without a
+        new token. The connection id is preserved, so workspace sources keep working.
+      </p>
+      <div className="inline" style={{ marginTop: 6 }}>
+        <button className="primary" disabled={!dirty || busy}>
+          {busy ? "Verifying and saving..." : "Save"}
+        </button>
+        <button type="button" onClick={() => onDone(false)} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+    </form>
   );
 }
 
