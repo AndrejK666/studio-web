@@ -43,7 +43,17 @@ spec:
       initContainers:
         - name: embedding-model
           image: {{ .Values.backend.embedding.fetchImage | quote }}
-          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # curlimages/curl declares USER as the name `curl_user`, which makes
+          # kubelet reject it before startup when the pod inherits
+          # runAsNonRoot: true: kubelet cannot prove that a named image user is
+          # not root. This one-shot initializer writes only to the pod's
+          # ephemeral emptyDir, so run it explicitly as root while retaining
+          # the rest of the hardened container policy. The application
+          # containers remain non-root.
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            runAsNonRoot: false
+            runAsUser: 0
           command: ["/bin/sh", "-ec"]
           args:
             - |
