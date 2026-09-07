@@ -75,8 +75,8 @@ pub trait GraphStore: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// All stored nodes, optionally filtered to those whose type id contains
-    /// `type_filter` (e.g. `issue`, `pull_request`, `file`, `repo`).
+    /// Stored nodes for the listing: the four first-class artifacts by default,
+    /// or one type when `type_filter` names it (full GTS id, or the bare leaf).
     async fn list(
         &self,
         ctx: &SecurityContext,
@@ -148,8 +148,9 @@ impl GraphStore for InMemoryGraphStore {
                 .nodes
                 .lock()
                 .map_err(|_| anyhow::anyhow!("graph store lock poisoned"))?;
+            let types = super::gts::resolve_listable_types(type_filter);
             map.values()
-                .filter(|n| type_filter.is_none_or(|t| n.type_id.contains(t)))
+                .filter(|n| types.contains(&n.type_id))
                 .cloned()
                 .collect()
         };

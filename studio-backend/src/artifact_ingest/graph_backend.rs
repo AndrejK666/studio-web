@@ -317,9 +317,8 @@ impl GraphStore for GraphStorageBackend {
         // first ingest returns empty rather than tripping on an unknown type.
         self.register_types(ctx).await?;
 
-        let patterns: Vec<String> = gts::ALL_NODE_TYPES
+        let patterns: Vec<String> = gts::resolve_listable_types(type_filter)
             .into_iter()
-            .filter(|t| type_filter.is_none_or(|f| t.contains(f)))
             .map(gts::graph_type_id)
             .collect();
         if patterns.is_empty() {
