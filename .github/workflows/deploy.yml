@@ -284,8 +284,13 @@ jobs:
           )
 
           helm lint deploy/helm/studio-web "${common_args[@]}"
+          # Helm owns pre-install/pre-upgrade hooks. Applying a rendered hook
+          # Job here tries to mutate an existing Job pod template, which the
+          # Kubernetes API correctly rejects as immutable. Helm's
+          # before-hook-creation policy deletes and recreates it during the
+          # actual upgrade, so validate only the ordinary release resources.
           helm template studio deploy/helm/studio-web \
-            -n "$NAMESPACE" "${common_args[@]}" \
+            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
             | kubectl apply --dry-run=server -n "$NAMESPACE" -f - >/dev/null
 
       - name: Deploy with automatic rollback
