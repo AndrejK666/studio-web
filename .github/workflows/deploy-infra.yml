@@ -158,8 +158,8 @@ jobs:
           )
           helm lint deploy/helm/studio-web "${common_args[@]}"
           helm template studio deploy/helm/studio-web \
-            -n "$NAMESPACE" "${common_args[@]}" \
-            | kubectl apply --server-side --dry-run=server \
+            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
+            | kubectl apply --server-side --force-conflicts --dry-run=server \
                 --field-manager=studio-infra-validation \
                 -n "$NAMESPACE" -f - >/dev/null
 

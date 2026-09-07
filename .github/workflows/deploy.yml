@@ -292,7 +292,7 @@ jobs:
           # actual upgrade, so validate only the ordinary release resources.
           helm template studio deploy/helm/studio-web \
             -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
-            | kubectl apply --server-side --dry-run=server \
+            | kubectl apply --server-side --force-conflicts --dry-run=server \
                 --field-manager=studio-deploy-validation \
                 -n "$NAMESPACE" -f - >/dev/null
 
