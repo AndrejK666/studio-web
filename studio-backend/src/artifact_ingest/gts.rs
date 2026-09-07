@@ -736,12 +736,22 @@ mod listable_type_tests {
     #[test]
     fn default_lists_only_the_four_first_class_artifacts() {
         let t = resolve_listable_types(None);
-        assert_eq!(t.len(), 4, "default listing should expose exactly four types");
+        assert_eq!(
+            t.len(),
+            4,
+            "default listing should expose exactly four types"
+        );
         for want in [REPO_TYPE, FILE_TYPE, ISSUE_TYPE, PULL_REQUEST_TYPE] {
             assert!(t.contains(&want), "missing default type {want}");
         }
-        assert!(!t.contains(&USER_TYPE), "user is graph detail, not listed by default");
-        assert!(!t.contains(&COMMIT_TYPE), "commit is graph detail, not listed by default");
+        assert!(
+            !t.contains(&USER_TYPE),
+            "user is graph detail, not listed by default"
+        );
+        assert!(
+            !t.contains(&COMMIT_TYPE),
+            "commit is graph detail, not listed by default"
+        );
     }
 
     #[test]
@@ -752,7 +762,10 @@ mod listable_type_tests {
             resolve_listable_types(Some(PULL_REQUEST_TYPE)),
             vec![PULL_REQUEST_TYPE]
         );
-        assert_eq!(resolve_listable_types(Some("pull_request")), vec![PULL_REQUEST_TYPE]);
+        assert_eq!(
+            resolve_listable_types(Some("pull_request")),
+            vec![PULL_REQUEST_TYPE]
+        );
         assert!(
             resolve_listable_types(Some("does_not_exist")).is_empty(),
             "an unknown type lists nothing, not everything"
