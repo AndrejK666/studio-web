@@ -41,6 +41,40 @@ pub const ALL_NODE_TYPES: [&str; 8] = [
     COMMIT_TYPE,
 ];
 
+/// The node types the artifact listing returns by default — the four
+/// first-class artifacts. The rest (`user`, `spec_finding`, `comment`,
+/// `commit`) are graph detail: present in the graph, but only listed when a
+/// caller asks for one explicitly by its GTS type id.
+pub const LISTABLE_NODE_TYPES: [&str; 4] = [REPO_TYPE, FILE_TYPE, ISSUE_TYPE, PULL_REQUEST_TYPE];
+
+/// Resolve the listing `type` filter into the concrete node types to project.
+///
+/// * `None` -> [`LISTABLE_NODE_TYPES`] (the four first-class artifacts).
+/// * `Some(id)` -> that one type, matched by its full GTS id
+///   (`gts.cf.studio.artifact.<t>.v1~`); the bare leaf (`issue`, `file`, ...)
+///   is also accepted for older callers. An unknown value resolves to nothing,
+///   so a typo lists no rows rather than silently listing everything.
+pub fn resolve_listable_types(type_filter: Option<&str>) -> Vec<&'static str> {
+    match type_filter.map(str::trim).filter(|s| !s.is_empty()) {
+        None => LISTABLE_NODE_TYPES.to_vec(),
+        Some(f) => ALL_NODE_TYPES
+            .into_iter()
+            .filter(|t| *t == f || type_leaf(t) == f)
+            .collect(),
+    }
+}
+
+/// The leaf name of an artifact type id: `issue` from
+/// `gts.cf.studio.artifact.issue.v1~` (the token before the version).
+fn type_leaf(type_id: &str) -> &str {
+    let toks: Vec<&str> = type_id.trim_end_matches('~').split('.').collect();
+    if toks.len() >= 2 {
+        toks[toks.len() - 2]
+    } else {
+        type_id
+    }
+}
+
 // ── Relation (edge) types ── namespace `rel`. Endpoints are node instance ids.
 /// issue / pull_request → repo.
 pub const REL_ARTIFACT_OF: &str = "gts.cf.studio.rel.artifact_of.v1~";
@@ -692,5 +726,36 @@ mod tests {
 
         assert_ne!(first.instance_id, second.instance_id);
         assert_eq!(first.value["full_path"], second.value["full_path"]);
+    }
+}
+
+#[cfg(test)]
+mod listable_type_tests {
+    use super::*;
+
+    #[test]
+    fn default_lists_only_the_four_first_class_artifacts() {
+        let t = resolve_listable_types(None);
+        assert_eq!(t.len(), 4, "default listing should expose exactly four types");
+        for want in [REPO_TYPE, FILE_TYPE, ISSUE_TYPE, PULL_REQUEST_TYPE] {
+            assert!(t.contains(&want), "missing default type {want}");
+        }
+        assert!(!t.contains(&USER_TYPE), "user is graph detail, not listed by default");
+        assert!(!t.contains(&COMMIT_TYPE), "commit is graph detail, not listed by default");
+    }
+
+    #[test]
+    fn type_filter_matches_full_gts_id_and_bare_leaf() {
+        assert_eq!(resolve_listable_types(Some(ISSUE_TYPE)), vec![ISSUE_TYPE]);
+        assert_eq!(resolve_listable_types(Some("issue")), vec![ISSUE_TYPE]);
+        assert_eq!(
+            resolve_listable_types(Some(PULL_REQUEST_TYPE)),
+            vec![PULL_REQUEST_TYPE]
+        );
+        assert_eq!(resolve_listable_types(Some("pull_request")), vec![PULL_REQUEST_TYPE]);
+        assert!(
+            resolve_listable_types(Some("does_not_exist")).is_empty(),
+            "an unknown type lists nothing, not everything"
+        );
     }
 }

@@ -116,8 +116,10 @@ pub struct TaskStatusResponse {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct NodesQuery {
-    /// Type substring to filter by: `issue`, `pull_request` or `repo`.
-    /// Omitted = every ingested node.
+    /// Filter to one artifact type by its full GTS id
+    /// (`gts.cf.studio.artifact.issue.v1~`); the bare leaf (`issue`) also works.
+    /// Omitted = the four first-class artifacts (repo, file, issue,
+    /// pull_request).
     #[serde(default)]
     pub r#type: Option<String>,
     /// Tenant scope: keep only nodes whose `workspace_id` OR `project_id`
