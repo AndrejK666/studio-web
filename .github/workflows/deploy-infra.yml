@@ -111,6 +111,7 @@ jobs:
 
           for secret in \
             studio-postgres-app \
+            studio-postgres-bootstrap \
             studio-web-idp \
             studio-web-app \
             keycloak-postgres-app \
@@ -158,7 +159,9 @@ jobs:
           helm lint deploy/helm/studio-web "${common_args[@]}"
           helm template studio deploy/helm/studio-web \
             -n "$NAMESPACE" "${common_args[@]}" \
-            | kubectl apply --dry-run=server -n "$NAMESPACE" -f - >/dev/null
+            | kubectl apply --server-side --dry-run=server \
+                --field-manager=studio-infra-validation \
+                -n "$NAMESPACE" -f - >/dev/null
 
       - name: Reconcile graph PostgreSQL
         shell: bash
@@ -176,6 +179,22 @@ jobs:
             -n "$NAMESPACE" \
             --for=jsonpath='{.status.phase}'='Cluster in healthy state' \
             --timeout=15m
+
+          # The cluster becoming healthy precedes managed-role reconciliation.
+          # The following Helm hook authenticates as this role, so do not race
+          # it and surface a misleading PostgreSQL authentication failure.
+          for attempt in {1..60}; do
+            roles="$(kubectl get cluster/studio-postgres -n "$NAMESPACE" \
+              -o jsonpath='{.status.managedRolesStatus.byStatus.reconciled[*]}' || true)"
+            if [[ " $roles " == *" studio_bootstrap "* ]]; then
+              break
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              echo "CNPG did not reconcile managed role studio_bootstrap" >&2
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Deploy Keycloak with automatic rollback
         shell: bash

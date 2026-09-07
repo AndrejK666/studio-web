@@ -29,6 +29,16 @@ spec:
   enableSuperuserAccess: false
   managed:
     roles:
+      # Dedicated, least-privilege database provisioner for Studio's Helm
+      # bootstrap hook. The runtime `studio` role remains non-CREATEDB.
+      - name: studio_bootstrap
+        ensure: present
+        login: true
+        inherit: true
+        createdb: true
+        inRoles: ["studio"]
+        passwordSecret:
+          name: studio-postgres-bootstrap
       - name: keycloak
         ensure: present
         login: true

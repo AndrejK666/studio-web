@@ -258,6 +258,7 @@ jobs:
 
           for secret in \
             studio-postgres-app \
+            studio-postgres-bootstrap \
             studio-web-idp \
             studio-web-app \
             studio-web-file-storage-s3 \
@@ -291,7 +292,9 @@ jobs:
           # actual upgrade, so validate only the ordinary release resources.
           helm template studio deploy/helm/studio-web \
             -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
-            | kubectl apply --dry-run=server -n "$NAMESPACE" -f - >/dev/null
+            | kubectl apply --server-side --dry-run=server \
+                --field-manager=studio-deploy-validation \
+                -n "$NAMESPACE" -f - >/dev/null
 
       - name: Deploy with automatic rollback
         shell: bash

@@ -73,14 +73,16 @@ helm upgrade --install studio-web deploy/helm/studio-web \
   -f values-dmz.yaml
 ```
 
-Prerequisites: the three Secrets from `values-dmz.example.yaml`, an OIDC
-realm (issuer must serve real TLS), and PostgreSQL credentials with `CREATEDB`
-for the bootstrap Job. The Job runs before every install and upgrade: it
-discovers PostgreSQL databases from the effective `gears.*.database` config,
-creates only missing databases, then runs forward migrations. It never drops
-or alters existing databases or data. For least privilege, set
-`backend.bootstrap.existingSecret` to a dedicated provisioner secret; leaving
-it empty reuses `backend.database.existingSecret`.
+Prerequisites: the Secrets from `values-dmz.example.yaml`, an OIDC realm
+(issuer must serve real TLS), and a `studio-postgres-bootstrap` Secret. CNPG
+uses that Secret for its `studio_bootstrap` managed role; the role has only
+`LOGIN`, `CREATEDB`, and membership in `studio`, so it can create a missing
+database owned by the application role without giving `CREATEDB` to the
+runtime backend. The Secret must contain `host`, `port`, `username`,
+`password`, and `dbname` (normally `postgres`). The Job runs before every
+install and upgrade: it discovers PostgreSQL databases from the effective
+`gears.*.database` config, creates only missing databases, then runs forward
+migrations. It never drops or alters existing databases or data.
 
 ## GitHub deployment
 

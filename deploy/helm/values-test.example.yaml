@@ -16,6 +16,16 @@ backend:
       user: username
       password: password
       dbname: dbname
+  bootstrap:
+    # Dedicated CNPG-managed role with CREATEDB; never reuse this credential
+    # in the backend Deployment.
+    existingSecret: studio-postgres-bootstrap
+    keys:
+      host: host
+      port: port
+      user: username
+      password: password
+      dbname: dbname
   autoscaling:
     enabled: false
   sessions:
