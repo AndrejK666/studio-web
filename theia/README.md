@@ -204,8 +204,10 @@ does, no vendored code, upgrades from upstream.
 | service (payload mapping) | `studio/src/node/orca-service.ts` |
 | panel | `studio/src/browser/orca-widget.tsx`, `orca-contribution.ts` |
 
-The panel opens from **View → Agents (Orca)** (command `studio.orca.toggle`) and
-does four things: shows whether a runtime is reachable; creates a task
+The panel sits in the right area of the default layout, and toggles from
+**View → Agents (Orca)** (command `studio.orca.toggle`). A session that
+already has a saved layout picks it up after `View: Reset Workbench Layout`.
+It does four things: shows whether a runtime is reachable; creates a task
 (`worktree create --agent --prompt`), which gives the agent its own checkout so
 the one you are editing is untouched; starts an agent in the selected worktree
 (`terminal create`, then `terminal send` once `terminal wait --for tui-idle`
