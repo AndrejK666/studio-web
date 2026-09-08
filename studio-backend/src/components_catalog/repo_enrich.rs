@@ -175,9 +175,13 @@ impl RepoEnricher {
     ///   * a manifest declaring npm `workspaces` is likewise a container — it
     ///     is skipped and its children stay eligible;
     ///   * anything else is a component, and manifests nested inside it are
-    ///     skipped. That is what keeps a template's own scaffolding body
-    ///     (`template-mfe/…/package.json`) from being catalogued as a dozen
-    ///     phantom components.
+    ///     skipped.
+    ///
+    /// That last rule does not, on its own, exclude a template's generated
+    /// body: both root templates declare their `src-app/**` packages as npm
+    /// workspaces, which makes those bodies siblings of the container rather
+    /// than nested under a component. `src-app` is in [`SKIP_SEGMENTS`] for
+    /// exactly that reason — see the note there.
     async fn discover_frontx(
         &self,
         auth: &ConnectionAuth,
@@ -744,7 +748,15 @@ fn docstate(state: &str, link: Option<&str>) -> Value {
 /// Directory names that never hold a component of their own — build output,
 /// vendored dependencies, and the fixture trees that exist to be compiled
 /// against rather than shipped. A `package.json` under one of these is noise.
-const SKIP_SEGMENTS: [&str; 9] = [
+///
+/// `src-app` is the FrontX convention for the application skeleton a template
+/// *generates*. It earns its place here because the outermost-manifest rule
+/// alone does not exclude it: `template-mfe` and `template-shell` declare their
+/// `src-app/mfe_packages/*` and `src-app/verify_packages/*` as npm workspaces,
+/// which makes those bodies siblings of the container rather than nested under
+/// a component — so they were catalogued as components in their own right. A
+/// template's real packages live in its `packages/`, and those still are.
+const SKIP_SEGMENTS: [&str; 10] = [
     "node_modules",
     "dist",
     "build",
@@ -754,6 +766,7 @@ const SKIP_SEGMENTS: [&str; 9] = [
     "fixtures",
     "__fixtures__",
     "__mocks__",
+    "src-app",
 ];
 
 /// True when a repository path lies inside a directory we never catalogue.
@@ -1075,28 +1088,48 @@ struct CommitActor {
 mod tests {
     use super::*;
 
-    /// A slice of the real `constructorfabric/gears-frontx` tree on `develop`:
-    /// a workspace root, packages under `packages/`, and the two scaffolding
-    /// templates that sit at the repository root — the layout recorded in
-    /// `studio-frontend/.frontx/provenance.json`
-    /// (`github:constructorfabric/gears-frontx//template-shell@develop`).
+    /// Every `package.json` in `constructorfabric/gears-frontx` at `develop`,
+    /// as the git trees API returns it (verbatim, minus `node_modules`), plus a
+    /// couple of build-output and vendored paths to prove they are dropped.
+    ///
+    /// Worth spelling out, because the shape is not the obvious one: the two
+    /// scaffolding templates sit at the repository ROOT, `template-shell` keeps
+    /// six real `@gears-frontx/*` packages under its own `packages/`, and both
+    /// templates declare their `src-app/**` bodies as npm workspaces — which is
+    /// what made those bodies look like components.
     fn frontx_tree() -> Vec<&'static str> {
         vec![
             "package.json",
-            "pnpm-workspace.yaml",
+            "internal/depcruise-config/package.json",
+            "internal/eslint-config/package.json",
+            "internal/test-support/package.json",
+            "packages/api/package.json",
+            "packages/cli/package.json",
+            "packages/cyber-pilot-kit-frontx/package.json",
+            "packages/gts-plugin/package.json",
+            "packages/mfes/package.json",
+            "packages/telemetry/package.json",
             "packages/ui-kit/package.json",
             "packages/ui-kit/src/index.ts",
             "packages/ui-kit/src/button.test.tsx",
-            "packages/mfes/package.json",
-            "packages/cyber-pilot-kit-frontx/package.json",
+            "template-shell/package.json",
+            "template-shell/packages/auth/package.json",
+            "template-shell/packages/framework/package.json",
+            "template-shell/packages/i18n/package.json",
+            "template-shell/packages/react/package.json",
+            "template-shell/packages/state/package.json",
+            "template-shell/packages/studio/package.json",
+            "template-mfe/package.json",
+            // Generated-skeleton bodies and verification fixtures: what the
+            // templates PRODUCE, not components of the repository.
+            "template-mfe/src-app/mfe_packages/_blank-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/demo-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-a/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-b/package.json",
+            "template-design-guardrails/src-app/verify_packages/design-verify/package.json",
+            // Never components.
             "packages/ui-kit/node_modules/react/package.json",
             "packages/ui-kit/dist/package.json",
-            "template-shell/package.json",
-            "template-shell/guidelines/navigation-composition.md",
-            // The template's own scaffolding body: package.json files that
-            // describe what it GENERATES, not components of the repository.
-            "template-mfe/package.json",
-            "template-mfe/template/packages/__screenset__-mfe/package.json",
         ]
     }
 
@@ -1108,6 +1141,34 @@ mod tests {
         assert!(!got.iter().any(|p| p.contains("/dist/")));
         // Shallowest first, so the workspace root is seen before its packages.
         assert_eq!(got.first(), Some(&"package.json"));
+    }
+
+    /// The whole point of the `src-app` rule: a template's generated skeleton
+    /// is not a set of components, while the packages beside it are.
+    #[test]
+    fn generated_app_skeletons_are_not_components() {
+        let tree = frontx_tree();
+        let got = frontx_manifest_paths(&tree);
+        for phantom in [
+            "template-mfe/src-app/mfe_packages/_blank-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/demo-mfe/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-a/package.json",
+            "template-mfe/src-app/mfe_packages/widgets-fixture-b/package.json",
+            "template-design-guardrails/src-app/verify_packages/design-verify/package.json",
+        ] {
+            assert!(!got.contains(&phantom), "not skipped: {phantom}");
+        }
+        // The six real packages the shell template carries are kept.
+        for kept in [
+            "template-shell/packages/auth/package.json",
+            "template-shell/packages/framework/package.json",
+            "template-shell/packages/i18n/package.json",
+            "template-shell/packages/react/package.json",
+            "template-shell/packages/state/package.json",
+            "template-shell/packages/studio/package.json",
+        ] {
+            assert!(got.contains(&kept), "not kept: {kept}");
+        }
     }
 
     #[test]
