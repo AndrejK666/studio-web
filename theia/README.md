@@ -280,6 +280,48 @@ Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
 `orca-live.acceptance.test.ts` drives a real runtime when one is available and
 stands down otherwise.
 
+## Pushing from a session
+
+A person in a session terminal — and an agent in one of Orca's worktrees —
+can `git push`. That needed no new secret: the tokens were already in the
+container. The studio-session gear resolves repository tokens from credstore
+and passes them in `STUDIO_SOURCES`, the workspace root's in
+`STUDIO_ROOT_TOKEN`, and a personal one in `STUDIO_GIT_PAT` — all plain Pod
+environment variables, inherited by Theia, by every terminal it spawns and by
+the Orca runtime. What was missing was git configuration that used them, so a
+push failed with `could not read Username` (there is no prompt to fall back
+on: `GIT_TERMINAL_PROMPT=0`).
+
+`docker/git-credentials.mjs` is that configuration, installed by the image and
+registered by the entrypoint as a global credential helper together with
+`credential.useHttpPath` — without the latter git never sends the repository
+path and a per-source token could not be confined to its own repository.
+
+| request | answered with |
+| --- | --- |
+| a configured source, matched by host **and** path | that source's own token |
+| any other path on a host this workspace uses | `STUDIO_GIT_PAT` |
+| any other host, or a non-HTTP protocol | nothing — git fails, without a prompt |
+
+`store` and `erase` do nothing, so nothing is persisted and every git
+invocation re-reads the environment; a rotated token takes effect at once.
+
+**The exposure this accepts.** A personal token answers for any repository on
+a host the workspace uses, not only for the configured sources — an agent that
+can run git can therefore push anywhere that token reaches. Narrowing it to
+the configured sources would break the ordinary cases (a new remote, a
+dependency, a fork), and it would not contain much: the token is in the
+environment, so anything that can run git can also read it. The real controls
+are the token's own scope and lifetime — a fine-grained token limited to the
+repositories a session needs — and they live outside this container. What the
+helper does contain is the blast radius across *hosts*: an unrelated host,
+reached through a repository's config, a submodule or an agent, gets nothing.
+
+Commit authorship is still `STUDIO_GIT_AUTHOR_NAME` / `_EMAIL`, which the gear
+does not currently set — so commits are authored as `Constructor Studio`
+unless a session provides them. With personal tokens the push is attributed to
+the person; the commit is not. That is the next piece, and it belongs in the
+gear, not here.
 ## Session startup
 
 What a person waits through between opening a session and using the IDE, and

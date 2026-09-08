@@ -74,6 +74,17 @@ git config --global --add safe.directory '*'
 git config --global user.name  "${STUDIO_GIT_AUTHOR_NAME:-Constructor Studio}"
 git config --global user.email "${STUDIO_GIT_AUTHOR_EMAIL:-studio@constructor.tech}"
 
+# Session git credentials. The tokens are already in this container — the
+# gear resolves them from credstore into STUDIO_SOURCES / STUDIO_ROOT_TOKEN,
+# and a personal one into STUDIO_GIT_PAT. This is the configuration that lets
+# git use them, so a person in a terminal, or an agent in one of Orca's
+# worktrees, can push instead of failing with "could not read Username".
+# useHttpPath is what makes git send the repository path, without which a
+# per-source token could not be confined to its own repository. The helper
+# answers only for hosts this workspace uses — see docker/git-credentials.mjs.
+git config --global credential.useHttpPath true
+git config --global credential.helper '!node /usr/local/lib/studio-git-credentials.mjs'
+
 # The workspace root itself may be a repository (a CLI-created Studio
 # workspace: manifest, docs, .workspace-sources/). Adopt it into /workspace.
 #
