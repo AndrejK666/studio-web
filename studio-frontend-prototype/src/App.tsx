@@ -13,6 +13,7 @@ import { DocumentsTab, DocumentTypesTab } from "./documents";
 import { makeZip } from "./zip";
 import { DomainModelGraph } from "./domain-model-graph";
 import { GtsEntitiesTable } from "./gts-entities";
+import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -3615,17 +3616,7 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           governed by tenant scope + self-managed barriers only; the permissions below are the
           registered vocabulary the future PDP and Role Grants will enforce.
         </p>
-        {permissions.length === 0 ? (
-          <p className="empty">No permission instances found in the types-registry.</p>
-        ) : (
-          <ul className="perm-list">
-            {permissions.map((p) => (
-              <li key={p}>
-                <code>{p.replace("gts.cf.toolkit.authz.permission.v1~", "")}</code>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PermissionsTable data={entities} />
       </div>
 
       <div className="card">
@@ -3688,6 +3679,8 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
           <p className="hint">{c.sub}</p>
           {c.key === "entities" ? (
             <GtsEntitiesTable data={c.data} />
+          ) : c.key === "gears" ? (
+            <GearsTable data={c.data} />
           ) : (
             <pre style={{ overflow: "auto", fontSize: 12, maxHeight: 260 }}>
               {JSON.stringify(c.data, null, 2)}
