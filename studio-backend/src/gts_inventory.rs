@@ -498,9 +498,16 @@ mod tests {
     }
 
     /// Types that live in the platform catalog and nowhere else, with the
-    /// reason. Documents are stored in the gear's own PostgreSQL tables, not in
-    /// the graph, so they have no graph-storage counterpart by design.
-    const CATALOG_ONLY_PREFIXES: [&str; 1] = ["gts.cf.studio.doc."];
+    /// reason. Documents and the catalogues that describe them are stored in
+    /// the gear's own PostgreSQL tables, not in the graph, so they have no
+    /// graph-storage counterpart today.
+    ///
+    /// `process.` joined `doc.` with the journey-stage catalogue (ADR-0014
+    /// section 5). ADR-0014 section 6 does intend a per-tenant graph projection
+    /// for both, and the day it lands these prefixes shrink rather than grow --
+    /// which is exactly why this list is a decision written down and not a
+    /// filter that quietly widens.
+    const CATALOG_ONLY_PREFIXES: [&str; 2] = ["gts.cf.studio.doc.", "gts.cf.studio.process."];
 
     #[test]
     fn every_graph_type_is_also_in_the_platform_catalog() {

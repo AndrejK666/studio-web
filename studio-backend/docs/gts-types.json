@@ -5887,58 +5887,6 @@
       "on_refusal": "warn_and_continue",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.doc.adr.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: One decision, its context, and its consequences.",
-        "title": "Architecture Decision Record",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.doc.adr.v1~"
-    },
-    {
-      "gear": "studio-documents",
-      "on_refusal": "warn_and_continue",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.doc.app_spec.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: Requirements intake for a new app — answered as a questionnaire, then composed from gears.",
-        "title": "App Spec",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.doc.app_spec.v1~"
-    },
-    {
-      "gear": "studio-documents",
-      "on_refusal": "warn_and_continue",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.doc.decomposition.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: Breaking the design into features and work items.",
-        "title": "Decomposition",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.doc.decomposition.v1~"
-    },
-    {
-      "gear": "studio-documents",
-      "on_refusal": "warn_and_continue",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.doc.design.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: How the thing is built: components, interactions, trade-offs.",
-        "title": "Design Document",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.doc.design.v1~"
-    },
-    {
-      "gear": "studio-documents",
-      "on_refusal": "warn_and_continue",
-      "registry": "types-registry",
-      "schema": {
         "$id": "gts://gts.cf.studio.doc.document.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A document instance created from a document type.",
@@ -5965,39 +5913,26 @@
       "on_refusal": "warn_and_continue",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.doc.feature.v1~",
+        "$id": "gts://gts.cf.studio.process.capability.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: One shippable feature: behaviour, acceptance, and edges.",
-        "title": "Feature Spec",
+        "description": "Something a product may need, and the terms that find components providing it.",
+        "title": "Capability",
         "type": "object"
       },
-      "type_id": "gts.cf.studio.doc.feature.v1~"
+      "type_id": "gts.cf.studio.process.capability.v1~"
     },
     {
       "gear": "studio-documents",
       "on_refusal": "warn_and_continue",
       "registry": "types-registry",
       "schema": {
-        "$id": "gts://gts.cf.studio.doc.prd.v1~",
+        "$id": "gts://gts.cf.studio.process.stage.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: What we are building and why, and how we will know it works.",
-        "title": "Product Requirements (PRD)",
+        "description": "One stage of the journey a project passes through.",
+        "title": "Journey Stage",
         "type": "object"
       },
-      "type_id": "gts.cf.studio.doc.prd.v1~"
-    },
-    {
-      "gear": "studio-documents",
-      "on_refusal": "warn_and_continue",
-      "registry": "types-registry",
-      "schema": {
-        "$id": "gts://gts.cf.studio.doc.upstream_reqs.v1~",
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "description": "Built-in document type: Raw stakeholder needs and constraints feeding the PRD.",
-        "title": "Upstream Requirements",
-        "type": "object"
-      },
-      "type_id": "gts.cf.studio.doc.upstream_reqs.v1~"
+      "type_id": "gts.cf.studio.process.stage.v1~"
     },
     {
       "gear": "studio-domain-model",

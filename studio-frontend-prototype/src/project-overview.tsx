@@ -19,10 +19,11 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, JOURNEY_STAGES } from "./api";
+import { api } from "./api";
 import type {
   ArtifactNode,
   Doc,
+  JourneyStage,
   DocType,
   DocValidation,
   KitInstallation,
@@ -143,6 +144,10 @@ export function ProjectOverview({
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [types, setTypes] = useState<DocType[]>([]);
+  // The workspace's effective stage catalogue: names, order and which are
+  // required. It used to be a constant in api.ts; an organization can change
+  // it now, so the dashboard asks instead of assuming (ADR-0014 s7).
+  const [stageCatalogue, setStageCatalogue] = useState<JourneyStage[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [repoNodes, setRepoNodes] = useState<ArtifactNode[]>([]);
   const [counts, setCounts] = useState<{ issue: number; pull_request: number; file: number }>({
@@ -170,11 +175,31 @@ export function ProjectOverview({
     async (quiet = false) => {
       if (!quiet) setLoading(true);
       const misses: string[] = [];
-      const [s, cfg, typePage, docPage, repoPage, issue, prs, files, findingPage, kitPage, users, sessionPage] =
+      const [
+        s,
+        cfg,
+        typePage,
+        stagePage,
+        docPage,
+        repoPage,
+        issue,
+        prs,
+        files,
+        findingPage,
+        kitPage,
+        users,
+        sessionPage,
+      ] =
         await Promise.all([
           optional("workspace settings", api.workspaceSettings(token, project.id), null, misses),
           optional("project config", api.projectConfig(token, project.id), null, misses),
           optional("document types", api.docTypes(token, parentWorkspaceId), { items: [] as DocType[] }, misses),
+          optional(
+            "journey stages",
+            api.stages(token, parentWorkspaceId),
+            { items: [] as JourneyStage[] },
+            misses,
+          ),
           optional(
             "documents",
             api.projectDocuments(token, parentWorkspaceId, project.id),
@@ -204,6 +229,7 @@ export function ProjectOverview({
       setSettings(s);
       setConfig(cfg);
       setTypes(typePage.items ?? []);
+      setStageCatalogue(stagePage.items ?? []);
       setDocs(docPage.items ?? []);
       setRepoNodes(repoPage.nodes ?? []);
       setCounts({ issue, pull_request: prs, file: files });
@@ -290,8 +316,10 @@ export function ProjectOverview({
   }, [findings]);
   const highFindings = (bySeverity.get("high") ?? 0) + (bySeverity.get("critical") ?? 0);
 
+  // Catalogue order, filtered to what this project carries. Never re-sorted:
+  // the order is the catalogue's, and the catalogue is the workspace's.
   const stages = (config?.stages ?? []).length
-    ? JOURNEY_STAGES.filter((s) => config?.stages?.includes(s.key))
+    ? stageCatalogue.filter((s) => config?.stages?.includes(s.key))
     : [];
 
   const liveSession = sessions.find((s) => s.state === "running") ?? sessions[0];

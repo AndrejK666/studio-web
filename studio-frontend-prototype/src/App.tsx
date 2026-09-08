@@ -33,7 +33,6 @@ import {
   UNAUTHENTICATED_EVENT,
   shortTypeName,
   TENANT_TYPES,
-  JOURNEY_STAGES,
   normalizeStages,
   type Connection,
   type ConnectorProvider,
@@ -2407,6 +2406,10 @@ function WorkspaceProjects({
   // brief and the opt-in journey stages (Intent is always applied).
   const [brief, setBrief] = useState("");
   const [stageSel, setStageSel] = useState<Set<string>>(new Set());
+  // The workspace's effective stage catalogue: names, order, and which are
+  // required. It was a constant in api.ts until ADR-0014 s7 moved it to the
+  // server, because the journey is a thing an organization configures.
+  const [stageCatalogue, setStageCatalogue] = useState<import("./api").JourneyStage[]>([]);
   // Resumable provisioning: the live checklist and the context that accumulates
   // ids across steps, kept in a ref so Retry reuses the same run.
   const [prov, setProv] = useState<StepState[] | null>(null);
@@ -2442,6 +2445,17 @@ function WorkspaceProjects({
       .connections(token, workspace.id)
       .then((r) => setConns(r.items ?? []))
       .catch(() => {});
+  }, [creating, token, workspace.id]);
+
+  // ...and its journey-stage catalogue, for the same reason and at the same
+  // moment. An empty catalogue simply renders no chips: a project can still be
+  // created, and its stages can be set later.
+  useEffect(() => {
+    if (!creating) return;
+    api
+      .stages(token, workspace.id)
+      .then((r) => setStageCatalogue(r.items ?? []))
+      .catch(() => setStageCatalogue([]));
   }, [creating, token, workspace.id]);
 
   // Repo mode allowed per project kind: product always creates a new repo,
@@ -2570,7 +2584,7 @@ function WorkspaceProjects({
           ...cfg,
           mode,
           kind: newKind,
-          stages: normalizeStages([...stageSel]),
+          stages: normalizeStages([...stageSel], stageCatalogue),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
@@ -2832,7 +2846,7 @@ function WorkspaceProjects({
             <div>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {JOURNEY_STAGES.map((s) => {
+                {stageCatalogue.map((s) => {
                   const on = s.required || stageSel.has(s.key);
                   return (
                     <label
@@ -3047,10 +3061,6 @@ function WorkspaceProjects({
   );
 }
 
-/** Project attributes (mode / status / stages / brief) — the fields the retired
- *  studio-project gear used to own, now stored as `project.config` tenant
- *  metadata on the project tenant and edited here. Status is forward-only and
- *  the stage list is validated against the catalogue, both client-side now. */
 /** The sections of an open project — the type is defined next to the Overview
  *  that links to them; this is the shell sidebar's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
