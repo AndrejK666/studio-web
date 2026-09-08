@@ -48,7 +48,18 @@ RUN npm ci --ignore-scripts=false
 # drawio-editor has no `prepare` script (unlike studio), so `npm ci` doesn't
 # compile its lib/ — build it explicitly before bundling the browser app.
 RUN npm --prefix drawio-editor run build
-RUN npm run build:browser
+# The frontend is minified. Measured on this app (esbuild, same inputs):
+# lib/frontend/bundle.js 10 487 027 B unminified vs 5 426 206 B minified
+# (1 864 535 B vs 1 431 277 B gzipped), and development mode also emits a
+# 15 MB source map into the image. Every cold session pays the difference
+# in transfer and, more importantly, in parse time. Build with
+# --build-arg STUDIO_BUNDLE_MODE=development for a debuggable image.
+ARG STUDIO_BUNDLE_MODE=production
+RUN if [ "$STUDIO_BUNDLE_MODE" = development ]; then \
+      npm run build:browser:dev; \
+    else \
+      npm run build:browser; \
+    fi
 
 # Constructor Studio deliberately requires a newer Python patch release than
 # Debian Bookworm ships (3.11.2). Build its isolated environment with the
