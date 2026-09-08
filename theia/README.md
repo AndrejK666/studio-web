@@ -381,6 +381,30 @@ would otherwise overwrite each other's credentials. Both are locked by
 `docker/clone-sources.test.mjs`, which extracts the real code out of
 `entrypoint.sh` so it cannot drift from what ships.
 
+### The workspace can outlive the session
+
+`/workspace` is an ephemeral `emptyDir` by default, so a session starts from
+nothing: sources are cloned, and when the Pod goes — a relaunch, or the reaper
+at `max_session_secs` — agent worktrees, uncommitted edits and build caches go
+with it. Set `gears.studio-session.config.k8s_workspace_persistent: true` and
+the driver instead binds a per-workspace `ReadWriteOnce` claim named after the
+session Pod, which is itself per-workspace.
+
+Two consequences, one of them a startup win: the entrypoint already skips a
+source that is materialized and only adopts a root that has no `origin`, so a
+second launch clones nothing at all; and the four-hour reaper stops being
+destructive, because what it stops can come back.
+
+Three things to know before turning it on:
+
+* **Nothing reclaims a claim.** It survives the session on purpose, and no
+  code deletes it — deleting a workspace should, and does not yet. Storage
+  grows with the number of workspaces ever launched.
+* **A relaunch waits for the volume.** `ReadWriteOnce` means the replacement
+  Pod cannot mount until the previous one is really gone, so `launch` waits
+  for its deletion (bounded at 30 s) before creating the new Pod.
+* **The Docker driver is unaffected** — it already mounts a host directory,
+  and has always been persistent.
 ### Not done
 
 * **Image size.** `COPY --from=build /app /app` ships the whole build tree,
