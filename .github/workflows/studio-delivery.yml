@@ -20,7 +20,8 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # Used only by the tag-gated GitHub Release jobs in the reusable publish stage.
+  contents: write
   # The reusable publish stage verifies the successful test run for the same
   # commit before it can publish immutable images.
   actions: read
