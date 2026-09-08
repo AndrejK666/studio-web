@@ -124,6 +124,8 @@ export interface JourneyStage {
   position: number;
   /** Document-type keys this stage is not complete without. */
   requires: string[];
+  /** Detectors every required document must pass before the stage completes. */
+  gates: string[];
   /** "builtin" | "organization" | "workspace" — which level defined it. */
   owner: string;
   owner_tenant_id?: string | null;
@@ -879,6 +881,54 @@ export const api = {
   me: (token: string) => request<Me>("/account-management/v1/me", token),
 
   /* ── studio-documents gear (types + templates + validation) ── */
+
+  /** Define, replace or hide a journey stage in this workspace.
+   *
+   *  `hidden: true` is a tombstone: it removes the inherited entry from the
+   *  effective catalogue instead of replacing it. Reverting is `deleteStage`. */
+  upsertStage: (
+    token: string,
+    workspaceId: string,
+    body: {
+      key: string;
+      label: string;
+      required?: boolean;
+      position?: number;
+      requires?: string[];
+      gates?: string[];
+      hidden?: boolean;
+    },
+  ) =>
+    request<JourneyStage>(`/studio-documents/v1/workspaces/${workspaceId}/stages`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Drop this workspace's own entry for `key`, so what it inherits shows
+   *  through again. Idempotent. */
+  deleteStage: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  upsertCapability: (
+    token: string,
+    workspaceId: string,
+    body: { key: string; label: string; terms?: string[]; hidden?: boolean },
+  ) =>
+    request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCapability: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
 
   /** The effective capability vocabulary for a workspace (ADR-0014 s5). */
   capabilities: (token: string, workspaceId: string) =>
