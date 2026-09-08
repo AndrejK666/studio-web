@@ -593,6 +593,17 @@ gears:
       # process, so the Pod needs a seccomp profile that permits the Chromium
       # sandbox, or the runtime has to live outside the session Pod.
       orca_enabled: ${STUDIO_ORCA_ENABLED:-false}
+      # Keep /workspace on a per-workspace PersistentVolumeClaim instead of
+      # an emptyDir. Off by default: it turns session scratch space into
+      # cluster storage that outlives the session, and nothing reclaims a
+      # claim yet (see studio_session/k8s.rs, destroy). With it on, a second
+      # launch of the same workspace finds its clones already there, so the
+      # start is quicker and agent worktrees survive a relaunch and the
+      # reaper. ReadWriteOnce is enough — one live session per workspace.
+      k8s_workspace_persistent: ${STUDIO_WORKSPACE_PERSISTENT:-false}
+      k8s_workspace_volume_size: "${STUDIO_WORKSPACE_VOLUME_SIZE:-10Gi}"
+      # Leave empty for the cluster default StorageClass.
+      k8s_workspace_storage_class: "${STUDIO_WORKSPACE_STORAGE_CLASS:-}"
       # Namespace is auto-detected from the mounted ServiceAccount token;
       # k8s_namespace / k8s_image_pull_secret override only if ever needed.
       git_mode: "disabled"
