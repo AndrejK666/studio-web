@@ -13,6 +13,7 @@ on:
         default: validate
         options:
           - validate
+          - build
       source_ref:
         description: Commit SHA or ref to validate (leave empty for the selected branch)
         required: false
@@ -36,13 +37,29 @@ jobs:
   publish-preview:
     name: 2. Build & Publish (next stage)
     needs: test
+    if: inputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
       - run: echo "Preview succeeded. The next migration adds the guarded Build & Publish stage here."
 
+  publish:
+    name: 2. Build & Publish
+    needs: test
+    if: inputs.stage == 'build'
+    uses: ./.github/workflows/release.yml
+    with:
+      source_sha: ${{ inputs.source_ref || github.sha }}
+      # An explicit SHA/ref is intentionally not treated as main, so a manual
+      # historical rebuild cannot advance the mutable edge channel.
+      source_ref_name: ${{ inputs.source_ref || github.ref_name }}
+      source_ref_type: ${{ github.ref_type }}
+      publish_latest: false
+    secrets: inherit
+
   deploy-preview:
     name: 3. Deploy & Verify (next stage)
     needs: publish-preview
+    if: inputs.stage == 'validate'
     runs-on: ubuntu-latest
     steps:
       - run: echo "Preview succeeded. Deploy remains disabled until Build & Publish is proven in this graph."

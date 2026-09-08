@@ -1,4 +1,4 @@
-name: Build Images
+name: Publish Images
 
 # Four ways in:
 #   * a stable `v*` tag — build service images, publish `latest`, and create a release.
@@ -15,12 +15,27 @@ on:
   push:
     tags: ["v*", "infra-v*"]
   workflow_run:
-    workflows: ["Test"]
+    workflows: ["Test Changed Components"]
     types: [completed]
   workflow_dispatch:
     inputs:
       publish_latest:
         description: "Also move the `latest` tag to this build"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      source_ref_name:
+        required: true
+        type: string
+      source_ref_type:
+        required: true
+        type: string
+      publish_latest:
+        required: false
         type: boolean
         default: false
 
@@ -36,9 +51,9 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-  SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-  SOURCE_REF_NAME: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
-  SOURCE_REF_TYPE: ${{ github.event_name == 'workflow_run' && 'branch' || github.ref_type }}
+  SOURCE_SHA: ${{ github.event_name == 'workflow_call' && inputs.source_sha || (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha) }}
+  SOURCE_REF_NAME: ${{ github.event_name == 'workflow_call' && inputs.source_ref_name || (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name) }}
+  SOURCE_REF_TYPE: ${{ github.event_name == 'workflow_call' && inputs.source_ref_type || (github.event_name == 'workflow_run' && 'branch' || github.ref_type) }}
 
 jobs:
   require-ci:
@@ -99,9 +114,11 @@ jobs:
           deadline=$((SECONDS + 1200))
 
           while (( SECONDS < deadline )); do
+            # Use the file name rather than the display name so historical
+            # Test runs remain discoverable after a workflow rename.
             runs="$(gh run list \
               --repo "$GITHUB_REPOSITORY" \
-              --workflow Test \
+              --workflow ci.yml \
               --commit "$SOURCE_SHA" \
               --limit 10 \
               --json databaseId,status,conclusion,url)"
