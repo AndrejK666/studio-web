@@ -535,7 +535,16 @@ const NON_TEXT_TYPES: [&str; 14] = [
 /// Field names that read as identifiers whatever their declared type — keyword
 /// matter, so they are searched but not embedded.
 const IDENTIFIER_NAMES: [&str; 10] = [
-    "id", "key", "slug", "version", "external_id", "url", "state", "status", "provider", "kind",
+    "id",
+    "key",
+    "slug",
+    "version",
+    "external_id",
+    "url",
+    "state",
+    "status",
+    "provider",
+    "kind",
 ];
 
 #[derive(PartialEq, Eq)]
