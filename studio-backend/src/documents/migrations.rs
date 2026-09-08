@@ -23,6 +23,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0002::Migration),
             Box::new(m0003::Migration),
             Box::new(m0004::Migration),
+            Box::new(m0005::Migration),
         ]
     }
 }
@@ -277,6 +278,57 @@ CREATE TABLE IF NOT EXISTS studio_process_capabilities (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_process_capabilities;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A document records the capabilities it declares.
+///
+/// An INDEX over the document's own front matter, re-derived on every write --
+/// not a second place to store them (see `intake`). It exists so the composer
+/// can ask "which documents seed `billing`" without reading and parsing every
+/// document body.
+mod m0005 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0005_document_capabilities"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_documents
+    ADD COLUMN IF NOT EXISTS capabilities TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_documents DROP COLUMN IF EXISTS capabilities;",
+                )
                 .await?;
             Ok(())
         }

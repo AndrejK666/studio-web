@@ -14,6 +14,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::entity::{capability, doc_type, document, stage};
+use super::intake::{self, Answer};
 use super::model::{
     Capability, CatalogEntry, DocStatus, Document, DocumentType, Owner, Stage, TYPE_GTS_ID,
     TemplateSpec, builtin_capabilities, builtin_stages, builtin_types,
@@ -340,14 +341,39 @@ impl DocumentsService {
         type_key: &str,
         title: &str,
         content: Option<String>,
+        answers: Option<Vec<Answer>>,
         created_by: String,
     ) -> Result<Document> {
         let ty = self
             .get_type(ctx, workspace_id, type_key)
             .await?
             .context("unknown document type")?;
-        let body = content.unwrap_or_else(|| ty.template.body.clone());
+        // Three ways to get a body, in the order they take precedence:
+        // answers (composed here), explicit content, or the bare template.
+        // Sending both answers and content is a caller confusion, not a
+        // precedence question -- one of them would be silently discarded.
+        if answers.is_some() && content.is_some() {
+            bail!("send either `answers` or `content`, not both");
+        }
+        if let Some(answers) = answers.as_ref() {
+            if ty.template.questionnaire.is_empty() {
+                bail!("document type `{}` has no questionnaire to answer", ty.key);
+            }
+            let unknown: Vec<&str> = answers
+                .iter()
+                .map(|a| a.question_id.as_str())
+                .filter(|id| !ty.template.questionnaire.iter().any(|q| q.id == *id))
+                .collect();
+            if !unknown.is_empty() {
+                bail!("no such question in `{}`: {}", ty.key, unknown.join(", "));
+            }
+        }
+        let body = match answers {
+            Some(answers) => intake::generate(&ty, title, &answers),
+            None => content.unwrap_or_else(|| ty.template.body.clone()),
+        };
         let report = validate(&body, &ty.template);
+        let capabilities = serde_json::to_string(&intake::declared_capabilities(&body))?;
         let now = OffsetDateTime::now_utc();
         let model = document::Model {
             id: Uuid::new_v4(),
@@ -359,6 +385,7 @@ impl DocumentsService {
             status: DocStatus::Draft.rank() as i16,
             conforms: report.conforms,
             validation: serde_json::to_string(&report)?,
+            capabilities: capabilities.clone(),
             created_by,
             created_at: now,
             updated_at: now,
@@ -432,6 +459,9 @@ impl DocumentsService {
         };
         row.conforms = report.conforms;
         row.validation = serde_json::to_string(&report)?;
+        // Re-index rather than preserve: the front matter is the document's own
+        // statement of what it declares, and an edit is allowed to change it.
+        row.capabilities = serde_json::to_string(&intake::declared_capabilities(&row.content))?;
         row.updated_at = OffsetDateTime::now_utc();
         self.repo.upsert_doc(row.clone()).await?;
         doc_from_row(row)
@@ -565,7 +595,11 @@ fn type_from_row(row: doc_type::Model, workspace_id: Option<Uuid>) -> Result<Doc
 }
 
 fn doc_from_row(row: document::Model) -> Result<Document> {
+    // A row written before m0005 carries the column default; parsing it as an
+    // empty list is right, and the next write re-indexes it from the content.
+    let capabilities: Vec<String> = serde_json::from_str(&row.capabilities).unwrap_or_default();
     Ok(Document {
+        capabilities,
         id: row.id,
         tenant_id: row.tenant_id,
         project_id: row.project_id,

@@ -477,6 +477,10 @@ pub struct Document {
     pub status: DocStatus,
     /// Result of the last validation run (structural conformance).
     pub conforms: bool,
+    /// Capability keys this document declares, read from its front matter. The
+    /// questionnaire seeds them; a hand-edited document re-declares them.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     /// Subject id of the creator (as a string principal).
     pub created_by: String,
     /// RFC 3339 UTC timestamps.

@@ -149,6 +149,9 @@ pub mod document {
         pub conforms: bool,
         /// JSON `ValidationReport` from the last check.
         pub validation: String,
+        /// JSON array of capability keys, indexed from the document's own front
+        /// matter on every write.
+        pub capabilities: String,
         /// Creator subject id (string principal).
         pub created_by: String,
         pub created_at: OffsetDateTime,

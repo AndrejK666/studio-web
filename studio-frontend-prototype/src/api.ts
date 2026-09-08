@@ -805,6 +805,18 @@ export interface DocType {
   /** Intake questionnaire; empty for types without one. */
   questionnaire?: DocQuestion[];
 }
+/** One questionnaire answer on the wire. Exactly one value field is meaningful
+ *  per question kind. */
+export interface DocAnswer {
+  question_id: string;
+  /** `text`, `long_text` and `single`. */
+  text?: string;
+  /** `multi`. */
+  choices?: string[];
+  /** `bool`. */
+  flag?: boolean;
+}
+
 export interface Doc {
   id: string;
   tenant_id: string;
@@ -815,6 +827,9 @@ export interface Doc {
   content: string;
   status: "draft" | "review" | "approved";
   conforms: boolean;
+  /** Capability keys the document declares. The server indexes these from the
+   *  document's own front matter on every write — do not parse the body. */
+  capabilities: string[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -917,7 +932,7 @@ export const api = {
   createWorkspaceDocument: (
     token: string,
     workspaceId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(`/studio-documents/v1/workspaces/${workspaceId}/documents`, token, {
       method: "POST",
@@ -928,7 +943,7 @@ export const api = {
     token: string,
     workspaceId: string,
     projectId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(
       `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/documents`,

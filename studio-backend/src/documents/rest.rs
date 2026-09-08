@@ -15,6 +15,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::intake::Answer;
 use super::model::{
     Capability, DocStatus, Document, DocumentType, Owner, Question, QuestionKind, Rules, Section,
     Stage, TemplateSpec,
@@ -182,6 +183,9 @@ pub struct DocumentDto {
     /// "draft", "review" or "approved".
     pub status: String,
     pub conforms: bool,
+    /// Capability keys the document declares, from its front matter. The
+    /// composer reads these; a client must not parse the body itself.
+    pub capabilities: Vec<String>,
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
@@ -228,12 +232,31 @@ pub struct UpsertTypeDto {
     pub hidden: Option<bool>,
 }
 
+/// One questionnaire answer. Exactly one value field is meaningful per question
+/// kind; the rest are omitted.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AnswerDto {
+    pub question_id: String,
+    /// `text`, `long_text` and `single`.
+    pub text: Option<String>,
+    /// `multi`.
+    pub choices: Option<Vec<String>>,
+    /// `bool`.
+    pub flag: Option<bool>,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct CreateDocumentDto {
     pub type_key: String,
     pub title: String,
+    /// The document body, verbatim. Omit it to start from the type's template.
     pub content: Option<String>,
+    /// Answers to the type's questionnaire, composed into the body server-side.
+    /// Mutually exclusive with `content` — sending both is refused rather than
+    /// silently dropping one.
+    pub answers: Option<Vec<AnswerDto>>,
 }
 
 #[derive(Debug)]
@@ -316,6 +339,18 @@ fn question_from_dto(q: QuestionDto) -> Question {
         section: q.section,
         help: q.help,
     }
+}
+
+fn answers_from_dto(items: Vec<AnswerDto>) -> Vec<Answer> {
+    items
+        .into_iter()
+        .map(|a| Answer {
+            question_id: a.question_id,
+            text: a.text,
+            choices: a.choices,
+            flag: a.flag,
+        })
+        .collect()
 }
 
 impl From<Capability> for CapabilityDto {
@@ -456,6 +491,7 @@ fn document_dto(d: Document, inherited: bool) -> DocumentDto {
         content: d.content,
         status: status_str(d.status).to_string(),
         conforms: d.conforms,
+        capabilities: d.capabilities,
         created_by: d.created_by,
         created_at: d.created_at,
         updated_at: d.updated_at,
@@ -972,6 +1008,7 @@ async fn create_workspace_document(
             &body.type_key,
             &body.title,
             body.content,
+            body.answers.map(answers_from_dto),
             ctx.subject_id().to_string(),
         )
         .await
@@ -1001,6 +1038,7 @@ async fn create_project_document(
             &body.type_key,
             &body.title,
             body.content,
+            body.answers.map(answers_from_dto),
             ctx.subject_id().to_string(),
         )
         .await

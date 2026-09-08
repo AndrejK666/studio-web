@@ -318,12 +318,31 @@ Two consequences of stopping here, recorded so they are not rediscovered:
    catalogue is best-effort — a project is created with no stages rather than not
    created, because an empty stage list is recoverable and a missing project is
    not.
-2. Composing questionnaire answers into a document happens in the client today,
-   and capabilities round-trip through a front-matter string parsed by regex
-   (`parseCapabilities`, `studio-frontend-prototype/src/documents.tsx:665`). With
-   capabilities as catalogue entries this becomes a backend generate endpoint
-   returning a document plus structured capability references. This is now the
-   largest remaining piece of the questionnaire path.
+2. ~~Composing questionnaire answers into a document happens in the client, and
+   capabilities round-trip through a front-matter string parsed by regex.~~
+   Done: `POST .../documents` accepts `answers` and composes the body from the
+   type's questionnaire (`documents/intake.rs`), and a document carries its
+   declared capabilities as a field.
+
+   The capability column is an **index over the document's own front matter**,
+   re-derived on every write, not a second store. A generated document declares
+   its capabilities in text because the markdown ends up in a repository where a
+   person reads it; the column exists so the composer need not parse every body.
+   Re-indexing on write is what keeps them from drifting when a document is
+   edited by hand, which no answer store would survive.
+
+   Two things surfaced while doing it, both fixed here:
+
+   - `validate` counted a **present but empty optional section** against
+     conformance, contradicting its own module doc ("required sections present…
+     a genuinely filled document never trips a false positive") and the
+     `Section::required` doc comment ("an optional one only warns"). Since the
+     generator emits every declared section so the checklist has somewhere to
+     point, every questionnaire-generated document was born non-conforming. An
+     empty optional section is now reported through `SectionStatus.ok` and does
+     not fail the document; present, non-empty and too short still does.
+   - Sending both `answers` and `content` is refused rather than silently
+     dropping one, as is an answer to a question the type does not declare.
 3. Spec-quality verdicts have nowhere to live (`studio-spec-quality` is a
    stateless proxy), so "the documentation passed validation" cannot be expressed
    in data. A stage completion condition needs it, and so does the gate between
