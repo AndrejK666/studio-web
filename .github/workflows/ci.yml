@@ -25,7 +25,20 @@ on:
         value: ${{ jobs.changes.outputs.deployment }}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A feature branch supersedes its own older runs: only the newest push to it
+  # is worth a runner. main is the exception — a merge's run is the only
+  # verdict that commit will ever get, and the pull request's own run does not
+  # survive the merge either: three of them ended `cancelled` without running
+  # a single step. Keying main by ref then cancelled the merge runs too, so
+  # three commits landed unverified in one afternoon. Queueing would not have
+  # saved them, because a concurrency group holds a single pending run and
+  # the next merge cancels the one waiting. So main is keyed by commit instead,
+  # and merges never supersede each other.
+  #
+  # The event is in the key because this workflow is also called through
+  # `workflow_call` (studio-delivery.yml): on the same ref, a delivery run and
+  # a push run would otherwise share a group and cancel one another.
+  group: ci-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
