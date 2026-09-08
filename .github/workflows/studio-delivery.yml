@@ -24,6 +24,8 @@ permissions:
   # The reusable publish stage verifies the successful test run for the same
   # commit before it can publish immutable images.
   actions: read
+  # The reusable publish stage pushes immutable images to GHCR.
+  packages: write
 
 concurrency:
   group: studio-delivery-preview-${{ inputs.source_ref || github.ref }}
