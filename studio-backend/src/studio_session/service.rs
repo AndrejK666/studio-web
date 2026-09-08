@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use account_management_sdk::AccountManagementClient;
 use anyhow::{Context, anyhow};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use tokio::sync::RwLock;
@@ -171,6 +172,80 @@ impl SessionService {
             }
         }
         out
+    }
+
+    /// Commit authorship for a session, read from the caller's IdP record.
+    ///
+    /// Without it the entrypoint falls back to `Constructor Studio
+    /// <studio@constructor.tech>`, so every commit from every session is
+    /// authored by the product rather than by the person who made it — and a
+    /// repository that insists on a real author (a DCO check, say) rejects the
+    /// result. Pushes are already attributed, because the token is the
+    /// caller's; the commit was the half still missing.
+    ///
+    /// Best-effort, like [`Self::agent_env`]: a service account, a lookup that
+    /// fails, or a user with no email address leaves that fallback in place
+    /// rather than failing the launch — a session must still start, and the
+    /// person can always set both in its own git config.
+    async fn git_identity_env(&self, ctx: &SecurityContext) -> Vec<String> {
+        // A service account has no IdP user record to read.
+        if let Some(kind) = ctx.subject_type()
+            && kind != "user"
+        {
+            return Vec::new();
+        }
+        let client = match ctx.client_hub().get::<dyn AccountManagementClient>() {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::warn!(
+                    "studio-session: account-management unavailable ({e}) — \
+                     session commits stay unattributed"
+                );
+                return Vec::new();
+            }
+        };
+        let user = match client
+            .get_user(ctx, ctx.subject_tenant_id(), ctx.subject_id())
+            .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                tracing::warn!(
+                    "studio-session: cannot read the caller's user record ({e}) — \
+                     session commits stay unattributed"
+                );
+                return Vec::new();
+            }
+        };
+        let email = user
+            .email
+            .as_deref()
+            .map(str::trim)
+            .filter(|e| !e.is_empty());
+        let Some(email) = email else {
+            tracing::warn!(
+                "studio-session: the caller has no email address — \
+                 session commits stay unattributed"
+            );
+            return Vec::new();
+        };
+        let name = git_author_name(
+            user.display_name.as_deref(),
+            user.first_name.as_deref(),
+            user.last_name.as_deref(),
+            &user.username,
+        );
+        if name.is_empty() {
+            tracing::warn!(
+                "studio-session: the caller has no usable name — \
+                 session commits stay unattributed"
+            );
+            return Vec::new();
+        }
+        vec![
+            format!("STUDIO_GIT_AUTHOR_NAME={name}"),
+            format!("STUDIO_GIT_AUTHOR_EMAIL={email}"),
+        ]
     }
 
     /// The URL the portal opens for a session, from its driver address.
@@ -453,6 +528,7 @@ impl SessionService {
         // Provider keys for the native Theia agents (Codex, Claude Code).
         // Orca runs the same CLIs, so these keys serve both.
         env.extend(self.agent_env(ctx).await);
+        env.extend(self.git_identity_env(ctx).await);
         // Orca runtime for the IDE's Agents panel. Container-local: the
         // entrypoint starts `orca serve` beside Theia and the panel's backend
         // shells out to `orca` in the same container, so nothing is published
@@ -919,5 +995,70 @@ impl SessionService {
             }
         }
         reaped
+    }
+}
+
+/// The name a person recognizes as their own: the display name, then the two
+/// name parts, then the username. Never a blank string — git accepts one and
+/// the commit then reads as authored by nobody at all, which is worse than
+/// the `Constructor Studio` fallback because it looks deliberate.
+fn git_author_name(
+    display_name: Option<&str>,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+    username: &str,
+) -> String {
+    let present = |value: Option<&str>| value.map(str::trim).filter(|v| !v.is_empty());
+    if let Some(display) = present(display_name) {
+        return display.to_string();
+    }
+    match (present(first_name), present(last_name)) {
+        (Some(first), Some(last)) => format!("{first} {last}"),
+        (Some(one), None) | (None, Some(one)) => one.to_string(),
+        (None, None) => username.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_author_name;
+
+    #[test]
+    fn prefers_the_display_name() {
+        assert_eq!(
+            git_author_name(Some("Ada Lovelace"), Some("Augusta"), Some("King"), "ada"),
+            "Ada Lovelace"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_name_parts() {
+        assert_eq!(
+            git_author_name(None, Some("Ada"), Some("Lovelace"), "ada"),
+            "Ada Lovelace"
+        );
+        assert_eq!(git_author_name(None, Some("Ada"), None, "ada"), "Ada");
+        assert_eq!(
+            git_author_name(None, None, Some("Lovelace"), "ada"),
+            "Lovelace"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_username_last() {
+        assert_eq!(git_author_name(None, None, None, "ada"), "ada");
+    }
+
+    /// An IdP that stores an empty string is the common case this has to
+    /// survive: it is not `None`, and used as-is it authors the commit to an
+    /// empty name.
+    #[test]
+    fn treats_blank_fields_as_absent() {
+        assert_eq!(
+            git_author_name(Some("  "), Some(""), Some(" "), "ada"),
+            "ada"
+        );
+        assert_eq!(git_author_name(Some(" Ada "), None, None, "ada"), "Ada");
+        assert!(git_author_name(None, None, None, "   ").is_empty());
     }
 }

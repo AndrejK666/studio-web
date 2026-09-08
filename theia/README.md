@@ -317,11 +317,13 @@ repositories a session needs — and they live outside this container. What the
 helper does contain is the blast radius across *hosts*: an unrelated host,
 reached through a repository's config, a submodule or an agent, gets nothing.
 
-Commit authorship is still `STUDIO_GIT_AUTHOR_NAME` / `_EMAIL`, which the gear
-does not currently set — so commits are authored as `Constructor Studio`
-unless a session provides them. With personal tokens the push is attributed to
-the person; the commit is not. That is the next piece, and it belongs in the
-gear, not here.
+Commit authorship comes from `STUDIO_GIT_AUTHOR_NAME` / `_EMAIL`, which the
+gear now resolves from the caller's IdP record at launch, so a session's
+commits name the person who opened it. When that lookup cannot answer — a
+service account, an unreachable account-management, a user with no email
+address — the entrypoint's `Constructor Studio <studio@constructor.tech>`
+fallback stands and the person can set both in the session's own git config.
+
 ## Session startup
 
 What a person waits through between opening a session and using the IDE, and
