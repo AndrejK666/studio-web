@@ -89,25 +89,57 @@ export type ProjectStatus = "draft" | "active" | "archived";
  *  the UI now that the studio-project gear no longer guards them server-side. */
 export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
 
-/** The canonical journey-stage catalogue (was `GET /studio-project/v1/stages`).
- *  Intent is always applied; the rest are opt-in. A project's `stages` should be
- *  a subset of these keys, kept in this order. */
-export const JOURNEY_STAGES: { key: string; label: string; required: boolean }[] = [
-  { key: "intent", label: "Intent", required: true },
-  { key: "brd", label: "BRD", required: false },
-  { key: "prd", label: "PRD", required: false },
-  { key: "prd_spec", label: "PRD-Spec", required: false },
-  { key: "architecture", label: "Architecture", required: false },
-  { key: "ui_design", label: "UI Design", required: false },
-  { key: "user_stories", label: "User Stories", required: false },
-  { key: "testing", label: "Testing", required: false },
-];
+/** One journey stage, as the catalogue serves it.
+ *
+ *  This used to be a hardcoded array here, left behind when the studio-project
+ *  gear was retired and `GET /studio-project/v1/stages` went with it. It is the
+ *  path a product takes through the studio, so an organization has to be able
+ *  to change it — which a constant in a client cannot express. ADR-0014
+ *  section 7 moved the catalogue back to the server; `api.stages()` reads it.
+ *
+ *  What comes back is already the EFFECTIVE list for that workspace: the
+ *  platform catalogue, overlaid by the organization, overlaid by the workspace,
+ *  with hidden entries removed and the whole thing in catalogue order. A client
+ *  must not re-sort it or assume `intent` is present — a workspace may have
+ *  replaced it. */
+/** One capability a product may need, and the words that find components
+ *  providing it.
+ *
+ *  Was `CAP_KEYWORDS` in documents.tsx — a table in a UI file that decided
+ *  which components a workspace could be offered. It is catalogue data now,
+ *  overlaid the same three ways as everything else. */
+export interface Capability {
+  key: string;
+  label: string;
+  /** Empty means "match the key itself". */
+  terms: string[];
+  owner: string;
+  owner_tenant_id?: string | null;
+}
 
-/** Normalise a stage selection to the required set + chosen keys, in catalogue
- *  order — the same idempotent normalisation the old gear did server-side. */
-export function normalizeStages(selected: readonly string[]): string[] {
+export interface JourneyStage {
+  key: string;
+  label: string;
+  required: boolean;
+  position: number;
+  /** Document-type keys this stage is not complete without. */
+  requires: string[];
+  /** "builtin" | "organization" | "workspace" — which level defined it. */
+  owner: string;
+  owner_tenant_id?: string | null;
+}
+
+/** Normalise a stage selection against a catalogue: the required entries plus
+ *  what was chosen, in catalogue order.
+ *
+ *  Takes the catalogue rather than closing over one, because there is no longer
+ *  a single right answer — it depends on the workspace. */
+export function normalizeStages(
+  selected: readonly string[],
+  catalogue: readonly JourneyStage[],
+): string[] {
   const chosen = new Set(selected);
-  return JOURNEY_STAGES.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
+  return catalogue.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
 }
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
@@ -832,6 +864,20 @@ export const api = {
   me: (token: string) => request<Me>("/account-management/v1/me", token),
 
   /* ── studio-documents gear (types + templates + validation) ── */
+
+  /** The effective capability vocabulary for a workspace (ADR-0014 s5). */
+  capabilities: (token: string, workspaceId: string) =>
+    request<{ items: Capability[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities`,
+      token,
+    ),
+
+  /** The effective journey-stage catalogue for a workspace (ADR-0014 s7). */
+  stages: (token: string, workspaceId: string) =>
+    request<{ items: JourneyStage[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages`,
+      token,
+    ),
 
   docTypes: (token: string, workspaceId: string) =>
     request<{ items: DocType[] }>(

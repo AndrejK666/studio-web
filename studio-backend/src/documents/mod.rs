@@ -18,6 +18,8 @@ pub(crate) mod gts;
 mod migrations;
 mod model;
 mod repo;
+#[cfg(test)]
+mod repo_tests;
 mod rest;
 mod service;
 mod validate;

@@ -3047,10 +3047,6 @@ function WorkspaceProjects({
   );
 }
 
-/** Project attributes (mode / status / stages / brief) — the fields the retired
- *  studio-project gear used to own, now stored as `project.config` tenant
- *  metadata on the project tenant and edited here. Status is forward-only and
- *  the stage list is validated against the catalogue, both client-side now. */
 /** The sections of an open project — the type is defined next to the Overview
  *  that links to them; this is the shell sidebar's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */

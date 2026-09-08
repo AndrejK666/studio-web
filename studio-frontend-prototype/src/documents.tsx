@@ -224,9 +224,10 @@ function DocumentsView({
     setComposeBusy(true);
     setErr(null);
     try {
-      const [components, profs] = await Promise.all([
+      const [components, profs, vocab] = await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch(() => ({ nodes: [] as import("./api").CatalogNode[] })),
+        api.capabilities(token, workspaceId),
       ]);
       const profiles: Record<string, Record<string, unknown>> = {};
       for (const n of profs.nodes ?? []) {
@@ -234,7 +235,7 @@ function DocumentsView({
         if (typeof nm === "string") profiles[nm] = n.value as Record<string, unknown>;
       }
       const caps = parseCapabilities(selected.content);
-      setPlan(composePlan(caps, components.nodes ?? [], profiles));
+      setPlan(composePlan(caps, components.nodes ?? [], profiles, vocab.items ?? []));
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -643,20 +644,6 @@ const qTag: CSSProperties = { marginLeft: 8, fontSize: 10, opacity: 0.6, fontWei
 
 // ── Compose (v1): match the App Spec's capabilities to catalog components ─────
 
-/** Search terms per capability tag; a component matches when its catalog
- *  metadata contains any of them. Deliberately explicit and explainable — v2
- *  replaces this with agent-driven, embedding-based matching. */
-const CAP_KEYWORDS: Record<string, string[]> = {
-  tenancy: ["tenant", "tenancy", "account", "organization", "org", "resource group"],
-  auth: ["auth", "authn", "identity", "idp", "oidc", "keycloak", "login", "session", "credential"],
-  authz: ["authz", "authorization", "permission", "rbac", "policy", "access", "role"],
-  storage: ["storage", "graph", "postgres", "database", "file", "object", "search", "node"],
-  connectors: ["connector", "github", "gitlab", "bitbucket", "integration", "source"],
-  facade: ["connector", "proxy", "gateway", "adapter", "facade", "wrapper", "oagw", "egress"],
-  billing: ["billing", "payment", "invoice", "metering", "subscription", "usage"],
-  compliance: ["audit", "compliance", "gdpr", "secret", "credstore", "policy"],
-  deploy: ["deploy", "gitops", "helm", "k8s", "kubernetes", "bootstrap"],
-};
 
 type Candidate = { name: string; kind: string; score: number; why: string[] };
 type PlanRow = { capability: string; candidates: Candidate[]; gap: boolean };
@@ -702,14 +689,23 @@ function componentHaystack(g: CatalogNode, profile?: Record<string, unknown>): s
     .toLowerCase();
 }
 
+/** Resolve capabilities to candidate components.
+ *
+ *  `vocabulary` is the workspace's effective capability catalogue, which used to
+ *  be a `CAP_KEYWORDS` constant in this file. A workspace that invents a
+ *  capability can now give it search terms instead of getting zero candidates
+ *  and no explanation (ADR-0014 s5). A capability the catalogue does not know is
+ *  still matched against its own name, exactly as before. */
 function composePlan(
   caps: string[],
   gears: CatalogNode[],
   profiles: Record<string, Record<string, unknown>>,
+  vocabulary: readonly import("./api").Capability[],
 ): PlanRow[] {
+  const terms = new Map(vocabulary.map((c) => [c.key, c.terms]));
   const geared = gears.filter((g) => typeof g.value.name === "string");
   return caps.map((cap) => {
-    const kws = CAP_KEYWORDS[cap] ?? [cap];
+    const kws = terms.get(cap)?.length ? terms.get(cap)! : [cap];
     const candidates = geared
       .map((g) => {
         const hay = componentHaystack(g, profiles[g.value.name as string]);
