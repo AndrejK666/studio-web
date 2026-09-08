@@ -4,11 +4,14 @@
 //! extend a type with a new field, and read the ontology back so the frontend
 //! can be regenerated from the stored model.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
 use super::gts;
 use super::ontology::{FieldSpec, ModelEdgeKind, Ontology};
@@ -88,6 +91,13 @@ pub struct DomainModelService {
     /// whole model replaced by an uploaded one).
     ontology: Mutex<Ontology>,
     store: Arc<dyn DomainStore>,
+    /// Which ontology generation each tenant's types are registered for. The
+    /// type registry is tenant-scoped, so this is keyed by tenant rather than
+    /// being a single flag.
+    registered: Mutex<HashMap<Uuid, u64>>,
+    /// Bumped whenever the type *set* changes — that is, on an import. Adding a
+    /// field to a type does not change the set, so it does not bump.
+    generation: AtomicU64,
 }
 
 impl DomainModelService {
@@ -95,6 +105,8 @@ impl DomainModelService {
         Self {
             ontology: Mutex::new(Ontology::load()),
             store,
+            registered: Mutex::new(HashMap::new()),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -121,6 +133,9 @@ impl DomainModelService {
                 .map_err(|_| anyhow::anyhow!("ontology lock poisoned"))?;
             *o = ontology;
         }
+        // A new model is a new type set, so every tenant's registration is
+        // stale: bump the generation, which is what `ensure_types` keys on.
+        self.generation.fetch_add(1, Ordering::AcqRel);
         // Register the uploaded model's types with the graph + type-registry.
         self.ensure_types(ctx).await?;
         Ok(summary)
@@ -162,10 +177,32 @@ impl DomainModelService {
         })
     }
 
-    /// Register every domain node and edge type with the store. Idempotent, so
-    /// it runs before each create/list; the type *set* is fixed (adding a field
-    /// does not add a type), so this never needs to react to an ontology edit.
+    /// Register every domain node and edge type with the store, once per
+    /// (tenant, ontology generation).
+    ///
+    /// Registration is idempotent but far from free: it ships every node and
+    /// edge schema the model declares — for the core model, 145 of them — so
+    /// doing it ahead of each write made a single object creation cost ~470 ms
+    /// against ~35 ms for the equivalent ingest, and capped the endpoint at
+    /// ~15 objects/s no matter the concurrency. The type *set* only changes
+    /// when a model is imported, which bumps `generation`; adding a field to a
+    /// type leaves the set alone (the registered schema is open).
+    ///
+    /// Two writers racing a cold tenant may both register — the call is
+    /// idempotent and converges, which is the cheaper trade than holding a lock
+    /// across the await.
     async fn ensure_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        let tenant = ctx.subject_tenant_id();
+        let generation = self.generation.load(Ordering::Acquire);
+        {
+            let done = self
+                .registered
+                .lock()
+                .map_err(|_| anyhow::anyhow!("registration cache lock poisoned"))?;
+            if done.get(&tenant) == Some(&generation) {
+                return Ok(());
+            }
+        }
         let (node_types, edge_types) = {
             let o = self
                 .ontology
@@ -175,7 +212,12 @@ impl DomainModelService {
         };
         self.store
             .register_types(ctx, &node_types, &edge_types)
-            .await
+            .await?;
+        self.registered
+            .lock()
+            .map_err(|_| anyhow::anyhow!("registration cache lock poisoned"))?
+            .insert(tenant, generation);
+        Ok(())
     }
 
     /// Create (or upsert) an object of a domain type. `type_ref` may be an
