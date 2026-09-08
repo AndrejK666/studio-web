@@ -1,0 +1,48 @@
+name: Studio Delivery
+
+# The single user-facing pipeline. It is introduced in preview mode first:
+# Test runs in this graph while the established publish/deploy workflows stay
+# authoritative until a full delivery run has been exercised in dev.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage set to execute
+        required: true
+        type: choice
+        default: validate
+        options:
+          - validate
+      source_ref:
+        description: Commit SHA or ref to validate (leave empty for the selected branch)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-delivery-preview-${{ inputs.source_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 1. Test changed components
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ inputs.source_ref || github.sha }}
+    secrets: inherit
+
+  publish-preview:
+    name: 2. Build & Publish (next stage)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Preview succeeded. The next migration adds the guarded Build & Publish stage here."
+
+  deploy-preview:
+    name: 3. Deploy & Verify (next stage)
+    needs: publish-preview
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Preview succeeded. Deploy remains disabled until Build & Publish is proven in this graph."
