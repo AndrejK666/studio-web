@@ -343,10 +343,28 @@ Two consequences of stopping here, recorded so they are not rediscovered:
      not fail the document; present, non-empty and too short still does.
    - Sending both `answers` and `content` is refused rather than silently
      dropping one, as is an answer to a question the type does not declare.
-3. Spec-quality verdicts have nowhere to live (`studio-spec-quality` is a
-   stateless proxy), so "the documentation passed validation" cannot be expressed
-   in data. A stage completion condition needs it, and so does the gate between
-   requirements and architecture.
+3. ~~Spec-quality verdicts have nowhere to live, so "the documentation passed
+   validation" cannot be expressed in data.~~ Done. A verdict is recorded per
+   `(document, detector)` with the upstream task id that produced it
+   (`PUT .../documents/{id}/analyses/{detector}`), and a stage may name the
+   detectors its required documents must pass (`Stage::gates`).
+   `GET .../projects/{id}/stage-status` answers, per stage, which required types
+   are present, which conform, and which gating detectors have not passed. That
+   is the gate between "we wrote the documents" and "the documents are good
+   enough to build from".
+
+   The gear still does not run the analysis: `studio-spec-quality` is a
+   passthrough whose task lifecycle the caller drives, and this only remembers
+   what the analysis said. Two judgements are worth the ink:
+
+   - **Status is computed, never stored.** A stored completion flag goes stale
+     the moment a document is edited, and nothing would notice.
+   - **Only `passed` opens a gate.** Missing, pending, failed and any state this
+     build does not recognise all keep it shut. A gate that opens on a value we
+     cannot interpret is the one failure mode a gate must not have.
+
+   The verdict table cascades from the document (`ON DELETE CASCADE`), in the
+   schema rather than in the delete path, so the rule holds for every writer.
 4. Who in an organization may edit a catalogue every workspace under it inherits.
    The rule in code today is "whoever may read the organization tenant", set by
    the route rather than by a payload field (`upsert_type_at`). That is a
@@ -363,7 +381,10 @@ Two consequences of stopping here, recorded so they are not rediscovered:
    `builtin_stages` and `builtin_capabilities` are Rust. That is right while they
    are the platform's own, and it is exactly what §3 replaces — the built-ins
    become kits the platform publishes like anyone else.
-8. Tests for the catalogue routes go through the repo and the pure overlay; the
-   REST layer itself has no test, so a wrong path or a missing `authorize` would
-   surface at runtime. Worth a thin handler-level suite when a second gear starts
-   depending on these endpoints.
+8. Tests for the catalogue routes go through the repo and the pure decision
+   functions (`overlay`, `evaluate_stage`, `intake`); the REST layer itself has
+   no test, so a wrong path or a missing `authorize` would surface at runtime.
+   A handler-level suite needs a stub `AccountManagementClient` -- the whole
+   trait, for the one method `authorize` calls -- which is why it has not been
+   written. Worth it when a second gear starts depending on these endpoints, or
+   the first time a route bug reaches a deployment.

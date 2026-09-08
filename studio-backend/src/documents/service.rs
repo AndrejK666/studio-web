@@ -13,13 +13,16 @@ use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::entity::{capability, doc_type, document, stage};
+use super::entity::{analysis, capability, doc_type, document, stage};
 use super::intake::{self, Answer};
 use super::model::{
-    Capability, CatalogEntry, DocStatus, Document, DocumentType, Owner, Stage, TYPE_GTS_ID,
-    TemplateSpec, builtin_capabilities, builtin_stages, builtin_types,
+    Analysis, AnalysisState, Capability, CatalogEntry, DocStatus, Document, DocumentType, Owner,
+    Requirement, Stage, StageStatus, TYPE_GTS_ID, TemplateSpec, builtin_capabilities,
+    builtin_stages, builtin_types,
 };
-use super::repo::{DocScope, DocumentsRepo, capability_row_id, stage_row_id, type_row_id};
+use super::repo::{
+    DocScope, DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
+};
 use super::validate::{ValidationReport, validate};
 
 pub struct DocumentsService {
@@ -247,6 +250,7 @@ impl DocumentsService {
             required: st.required,
             ordinal: st.position,
             requires: serde_json::to_string(&st.requires)?,
+            gates: serde_json::to_string(&st.gates)?,
             hidden: st.hidden,
             created_at: now,
             updated_at: now,
@@ -322,6 +326,93 @@ impl DocumentsService {
     /// Drop this level's own capability entry for `key`.
     pub async fn delete_capability(&self, owner: Owner, key: &str) -> Result<bool> {
         self.repo.delete_capability(owner_tenant(owner)?, key).await
+    }
+
+    // -- analyses and the stage gate ------------------------------------------
+
+    /// Record one detector's verdict on a document.
+    ///
+    /// The gear does not run the analysis. `studio-spec-quality` is a
+    /// passthrough whose task lifecycle the caller drives; this is where the
+    /// answer lands afterwards, so that a stage can depend on it.
+    pub async fn record_analysis(
+        &self,
+        workspace_id: Uuid,
+        document_id: Uuid,
+        detector: &str,
+        state: AnalysisState,
+        task_id: Option<String>,
+        summary: String,
+    ) -> Result<Analysis> {
+        let detector = normalize_key(detector)?;
+        // Refuse a verdict about a document this workspace does not have: the
+        // row would be unreachable through every read path and would still
+        // count against a stage gate.
+        self.repo
+            .get_doc(workspace_id, document_id)
+            .await?
+            .context("no such document")?;
+
+        let now = OffsetDateTime::now_utc();
+        let model = analysis::Model {
+            id: analysis_row_id(document_id, &detector),
+            tenant_id: workspace_id,
+            document_id,
+            detector: detector.clone(),
+            state: state.as_str().to_string(),
+            task_id: task_id.clone(),
+            summary: summary.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        self.repo.upsert_analysis(model).await?;
+        Ok(Analysis {
+            document_id,
+            detector,
+            state,
+            task_id,
+            summary,
+            updated_at: now.format(&Rfc3339)?,
+        })
+    }
+
+    /// Every verdict recorded for a project's effective documents.
+    pub async fn list_analyses(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+    ) -> Result<Vec<Analysis>> {
+        let docs = self.list_documents(workspace_id, project_id).await?;
+        let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
+        self.repo
+            .list_analyses(workspace_id, &ids)
+            .await?
+            .into_iter()
+            .map(analysis_from_row)
+            .collect()
+    }
+
+    /// Where a project stands against the stages of its workspace.
+    ///
+    /// This is the gate the catalogue was for: a stage names the document types
+    /// it cannot do without and the detectors those documents must pass, and
+    /// this answers whether they do. It computes rather than stores -- a stored
+    /// "complete" flag goes stale the moment a document is edited.
+    pub async fn stage_status(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<StageStatus>> {
+        let stages = self.list_stages(ctx, workspace_id).await?;
+        let docs = self.list_documents(workspace_id, Some(project_id)).await?;
+        let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
+        let analyses = self.repo.list_analyses(workspace_id, &ids).await?;
+
+        Ok(stages
+            .into_iter()
+            .map(|stage| evaluate_stage(stage, &docs, &analyses))
+            .collect())
     }
 
     // ── documents ─────────────────────────────────────────────────────────────
@@ -534,8 +625,79 @@ fn stage_from_row(row: stage::Model, workspace_id: Option<Uuid>) -> Result<Stage
         required: row.required,
         position: row.ordinal,
         requires,
+        gates: serde_json::from_str(&row.gates).context("stage `gates` is malformed")?,
         owner: owner_of(row.tenant_id, workspace_id),
         hidden: row.hidden,
+    })
+}
+
+/// Whether one stage's conditions are met, given a project's documents and the
+/// verdicts recorded for them.
+///
+/// Pure, and split out for that reason: this is the rule the whole catalogue
+/// exists to serve, and it should be statable as examples rather than reachable
+/// only through a database and two tenants.
+///
+/// Two judgements are deliberate:
+///
+/// * A gate on a document that does NOT exist reports nothing outstanding.
+///   `present: false` already says what is wrong, and repeating it as four
+///   failing detectors would bury the one fact that matters.
+/// * Only `passed` opens a gate. Missing, pending, failed and anything this
+///   build does not recognise all keep it shut -- a gate that opens on a value
+///   we cannot interpret is worse than one that stays closed.
+fn evaluate_stage(stage: Stage, docs: &[Document], analyses: &[analysis::Model]) -> StageStatus {
+    let requirements: Vec<Requirement> = stage
+        .requires
+        .iter()
+        .map(|type_key| {
+            let doc = docs.iter().find(|d| &d.type_key == type_key);
+            let analyses_outstanding = match doc {
+                None => Vec::new(),
+                Some(doc) => stage
+                    .gates
+                    .iter()
+                    .filter(|detector| {
+                        !analyses.iter().any(|a| {
+                            a.document_id == doc.id
+                                && &a.detector == *detector
+                                && a.state == AnalysisState::Passed.as_str()
+                        })
+                    })
+                    .cloned()
+                    .collect(),
+            };
+            Requirement {
+                type_key: type_key.clone(),
+                present: doc.is_some(),
+                conforms: doc.is_some_and(|d| d.conforms),
+                analyses_outstanding,
+            }
+        })
+        .collect();
+
+    StageStatus {
+        complete: requirements
+            .iter()
+            .all(|r| r.present && r.conforms && r.analyses_outstanding.is_empty()),
+        key: stage.key,
+        label: stage.label,
+        required: stage.required,
+        requirements,
+    }
+}
+
+fn analysis_from_row(row: analysis::Model) -> Result<Analysis> {
+    Ok(Analysis {
+        document_id: row.document_id,
+        detector: row.detector,
+        // An unrecognised state means the row was written by something newer
+        // than this build. Reading it as pending is the safe choice: a gate
+        // stays shut rather than opening on a value we cannot interpret.
+        state: AnalysisState::parse(&row.state).unwrap_or(AnalysisState::Pending),
+        task_id: row.task_id,
+        summary: row.summary,
+        updated_at: row.updated_at.format(&Rfc3339)?,
     })
 }
 
@@ -812,6 +974,7 @@ mod tests {
             required: false,
             ordinal,
             requires: "[]".to_string(),
+            gates: "[]".to_string(),
             hidden,
             created_at: now,
             updated_at: now,
@@ -1005,5 +1168,137 @@ mod tests {
         let caps = resolve_caps(&[ORG, WS], &rows, Some(WS));
         assert!(!caps.iter().any(|c| c.key == "billing"));
         assert!(caps.iter().any(|c| c.key == "auth"));
+    }
+    // -- the stage gate ------------------------------------------------------
+
+    const DOC: Uuid = Uuid::from_u128(0x3333_3333_3333_4333_8333_3333_3333_3333);
+
+    fn stage_with(requires: &[&str], gates: &[&str]) -> Stage {
+        Stage {
+            key: "prd".to_string(),
+            label: "PRD".to_string(),
+            required: false,
+            position: 30,
+            requires: requires.iter().map(|k| (*k).to_string()).collect(),
+            gates: gates.iter().map(|k| (*k).to_string()).collect(),
+            owner: Owner::Builtin,
+            hidden: false,
+        }
+    }
+
+    fn doc(type_key: &str, conforms: bool) -> Document {
+        Document {
+            id: DOC,
+            tenant_id: WS,
+            project_id: None,
+            type_key: type_key.to_string(),
+            title: "A PRD".to_string(),
+            content: String::new(),
+            status: DocStatus::Draft,
+            conforms,
+            capabilities: Vec::new(),
+            created_by: "someone".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn verdict(detector: &str, state: &str) -> analysis::Model {
+        let now = OffsetDateTime::now_utc();
+        analysis::Model {
+            id: analysis_row_id(DOC, detector),
+            tenant_id: WS,
+            document_id: DOC,
+            detector: detector.to_string(),
+            state: state.to_string(),
+            task_id: None,
+            summary: String::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn a_stage_that_requires_nothing_is_complete() {
+        let status = evaluate_stage(stage_with(&[], &[]), &[], &[]);
+        assert!(status.complete);
+        assert!(status.requirements.is_empty());
+    }
+
+    #[test]
+    fn a_missing_document_is_reported_once_not_as_four_failing_detectors() {
+        // `present: false` is the fact that matters; listing every gate as
+        // outstanding on top of it would bury it.
+        let status = evaluate_stage(stage_with(&["prd"], &["bloat", "leak"]), &[], &[]);
+        assert!(!status.complete);
+        let req = &status.requirements[0];
+        assert!(!req.present);
+        assert!(req.analyses_outstanding.is_empty());
+    }
+
+    #[test]
+    fn a_document_that_does_not_conform_does_not_complete_its_stage() {
+        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", false)], &[]);
+        assert!(!status.complete);
+        assert!(status.requirements[0].present);
+        assert!(!status.requirements[0].conforms);
+    }
+
+    #[test]
+    fn structure_alone_completes_a_stage_that_gates_nothing() {
+        let status = evaluate_stage(stage_with(&["prd"], &[]), &[doc("prd", true)], &[]);
+        assert!(status.complete);
+    }
+
+    #[test]
+    fn a_gate_with_no_verdict_stays_shut() {
+        let status = evaluate_stage(stage_with(&["prd"], &["bloat"]), &[doc("prd", true)], &[]);
+        assert!(!status.complete);
+        assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
+    }
+
+    #[test]
+    fn a_failed_or_pending_verdict_keeps_the_gate_shut() {
+        for state in ["failed", "pending"] {
+            let status = evaluate_stage(
+                stage_with(&["prd"], &["bloat"]),
+                &[doc("prd", true)],
+                &[verdict("bloat", state)],
+            );
+            assert!(!status.complete, "{state} should not open the gate");
+        }
+    }
+
+    #[test]
+    fn a_state_this_build_does_not_recognise_keeps_the_gate_shut() {
+        // Written by something newer. Opening on a value we cannot interpret
+        // would be the one failure mode a gate must not have.
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[verdict("bloat", "inconclusive")],
+        );
+        assert!(!status.complete);
+    }
+
+    #[test]
+    fn a_passed_verdict_opens_the_gate() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[verdict("bloat", "passed")],
+        );
+        assert!(status.complete, "{:?}", status.requirements);
+    }
+
+    #[test]
+    fn a_verdict_for_another_detector_does_not_open_this_gate() {
+        let status = evaluate_stage(
+            stage_with(&["prd"], &["bloat"]),
+            &[doc("prd", true)],
+            &[verdict("leak", "passed")],
+        );
+        assert!(!status.complete);
+        assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
     }
 }

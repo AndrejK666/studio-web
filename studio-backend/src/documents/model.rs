@@ -59,6 +59,14 @@ pub struct Stage {
     /// key so a listing is never arbitrary.
     #[serde(default)]
     pub position: i32,
+    /// Detectors every required document must pass before the stage is complete.
+    ///
+    /// Empty means structure is enough. A stage that lists `bloat` will not be
+    /// complete until a bloat verdict exists and says `passed` -- which is the
+    /// gate between "we wrote the documents" and "the documents are good enough
+    /// to build from".
+    #[serde(default)]
+    pub gates: Vec<Detector>,
     /// Keys of the document types this stage is not complete without.
     ///
     /// The `rel.requires` edge of ADR-0014 section 5, carried as data until the
@@ -106,6 +114,7 @@ pub fn builtin_stages() -> Vec<Stage> {
         required,
         position: (i as i32 + 1) * 10,
         requires: Vec::new(),
+        gates: Vec::new(),
         owner: Owner::Builtin,
         hidden: false,
     })
@@ -395,6 +404,92 @@ pub struct TemplateSpec {
     /// produced by answering it rather than editing the skeleton by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questionnaire: Vec<Question>,
+}
+
+/// The four detectors `studio-spec-quality` exposes.
+///
+/// Kept as an open string rather than an enum: the upstream owns the list, and a
+/// gear that refuses to record a detector the service has just added would be
+/// worse than one that records a name it does not recognise.
+pub type Detector = String;
+
+/// Where a submitted analysis got to.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisState {
+    /// Submitted upstream, no verdict yet.
+    Pending,
+    Passed,
+    Failed,
+}
+
+impl AnalysisState {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "passed" => Some(Self::Passed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// One detector's verdict on one document.
+///
+/// `studio-spec-quality` is a stateless passthrough -- the caller submits, the
+/// caller polls, and nothing kept the answer. So "the documentation passed
+/// analysis" could not be said in data, and no stage could depend on it. This is
+/// the record that makes it sayable; the gear does not run the analysis, it
+/// remembers what the analysis said.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Analysis {
+    pub document_id: Uuid,
+    pub detector: Detector,
+    pub state: AnalysisState,
+    /// The upstream task this verdict came from, so a disputed result can be
+    /// traced back to the run that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// What the detector said, in one line, for a screen.
+    #[serde(default)]
+    pub summary: String,
+    pub updated_at: String,
+}
+
+/// Whether a stage's conditions are met, and which of them are not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageStatus {
+    pub key: String,
+    pub label: String,
+    pub required: bool,
+    /// Every required document type is present, conforming, and has no failing
+    /// or missing analysis.
+    pub complete: bool,
+    /// One entry per document type the stage requires.
+    pub requirements: Vec<Requirement>,
+}
+
+/// One document type a stage asks for, and how the project stands against it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Requirement {
+    pub type_key: String,
+    /// A document of this type exists in the project.
+    pub present: bool,
+    /// It passes its type's structural check.
+    pub conforms: bool,
+    /// Detectors that have not passed: missing, pending or failed. Empty means
+    /// every analysis that ran said yes -- and, when no analysis was ever asked
+    /// for, that nothing is outstanding, because a stage that required one would
+    /// have to say so.
+    pub analyses_outstanding: Vec<Detector>,
 }
 
 /// A document type registered in the platform (its `gts_type_id` is registered

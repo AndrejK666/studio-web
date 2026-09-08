@@ -79,6 +79,8 @@ pub mod stage {
         pub ordinal: i32,
         /// JSON array of document-type keys this stage requires.
         pub requires: String,
+        /// JSON array of detector names every required document must pass.
+        pub gates: String,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
         pub created_at: OffsetDateTime,
@@ -114,6 +116,40 @@ pub mod capability {
         pub terms: String,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
+        pub created_at: OffsetDateTime,
+        pub updated_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// One detector's verdict on one document. The gear records what the analysis
+/// said; `studio-spec-quality` runs it and keeps nothing.
+pub mod analysis {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_document_analyses")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(document_id, detector)`: one verdict per
+        /// detector per document, replaced when the analysis is re-run.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        /// Workspace tenant, as for the document itself.
+        pub tenant_id: Uuid,
+        pub document_id: Uuid,
+        pub detector: String,
+        /// `pending`, `passed` or `failed`.
+        pub state: String,
+        pub task_id: Option<String>,
+        pub summary: String,
         pub created_at: OffsetDateTime,
         pub updated_at: OffsetDateTime,
     }

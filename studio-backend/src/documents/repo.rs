@@ -12,7 +12,7 @@ use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, Secu
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
-use super::entity::{capability, doc_type, document, stage};
+use super::entity::{analysis, capability, doc_type, document, stage};
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
 /// key)` the primary key and gives `upsert_type` an idempotent conflict target.
@@ -23,6 +23,9 @@ const STAGE_NS: Uuid = Uuid::from_u128(0x2f8e_41c7_9a35_4d10_b6e2_5c74_8801_ff93
 
 /// And for capabilities.
 const CAPABILITY_NS: Uuid = Uuid::from_u128(0x8b41_7cd2_0e69_4a5f_9d38_1e07_c4b5_662a);
+
+/// And for a detector's verdict on a document.
+const ANALYSIS_NS: Uuid = Uuid::from_u128(0x5c93_a80f_6d17_4e22_ab44_7f95_2306_e1d8);
 
 /// Which documents a list call wants.
 pub enum DocScope {
@@ -57,6 +60,12 @@ pub fn capability_row_id(owner_tenant_id: Uuid, key: &str) -> Uuid {
         &CAPABILITY_NS,
         format!("{owner_tenant_id}|{key}").as_bytes(),
     )
+}
+
+/// Deterministic id for one detector's verdict on one document, so re-running
+/// an analysis replaces its answer instead of stacking another.
+pub fn analysis_row_id(document_id: Uuid, detector: &str) -> Uuid {
+    Uuid::new_v5(&ANALYSIS_NS, format!("{document_id}|{detector}").as_bytes())
 }
 
 pub struct DocumentsRepo {
@@ -180,6 +189,51 @@ impl DocumentsRepo {
         doc_type::Entity::insert(model.into_active_model())
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(owner_tenant_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    // -- analyses ------------------------------------------------------------
+
+    /// Every recorded verdict for the given documents.
+    ///
+    /// Takes a list because the caller that needs them -- the stage gate -- has
+    /// a project's whole document set in hand and would otherwise issue one
+    /// query per document.
+    pub async fn list_analyses(
+        &self,
+        workspace_id: Uuid,
+        document_ids: &[Uuid],
+    ) -> Result<Vec<analysis::Model>> {
+        if document_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.db.conn()?;
+        let rows = analysis::Entity::find()
+            .filter(analysis::Column::DocumentId.is_in(document_ids.to_vec()))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record (or replace) one detector's verdict.
+    pub async fn upsert_analysis(&self, model: analysis::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict = SecureOnConflict::<analysis::Entity>::columns([analysis::Column::Id])
+            .update_columns([
+                analysis::Column::State,
+                analysis::Column::TaskId,
+                analysis::Column::Summary,
+                analysis::Column::UpdatedAt,
+            ])?;
+        analysis::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
             .on_conflict(on_conflict)
             .exec(&conn)
             .await?;

@@ -24,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0003::Migration),
             Box::new(m0004::Migration),
             Box::new(m0005::Migration),
+            Box::new(m0006::Migration),
         ]
     }
 }
@@ -330,6 +331,77 @@ mod m0005 {
                     "ALTER TABLE studio_documents DROP COLUMN IF EXISTS capabilities;",
                 )
                 .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Somewhere for a spec-quality verdict to live, and a way for a stage to
+/// require one.
+///
+/// `studio-spec-quality` is a stateless passthrough: it submits to the upstream
+/// and forwards the poll, and nothing kept the answer. So "the documentation
+/// passed analysis" was not expressible in data and no stage could depend on it.
+///
+/// The foreign key is `ON DELETE CASCADE` on purpose. A verdict about a document
+/// that no longer exists is not data, it is litter, and putting the rule in the
+/// schema means it holds for every path that deletes a document rather than for
+/// the one that remembered to.
+mod m0006 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0006_document_analyses"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_document_analyses (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    document_id UUID NOT NULL
+        REFERENCES studio_documents (id) ON DELETE CASCADE,
+    detector TEXT NOT NULL CHECK (length(detector) BETWEEN 1 AND 80),
+    state TEXT NOT NULL,
+    task_id TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (document_id, detector)
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_document_analyses_tenant
+    ON studio_document_analyses (tenant_id, document_id);",
+                r"ALTER TABLE studio_process_stages
+    ADD COLUMN IF NOT EXISTS gates TEXT NOT NULL DEFAULT '[]';",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "DROP TABLE IF EXISTS studio_document_analyses;",
+                "ALTER TABLE studio_process_stages DROP COLUMN IF EXISTS gates;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
             Ok(())
         }
     }

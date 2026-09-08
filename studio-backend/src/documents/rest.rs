@@ -16,6 +16,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::intake::Answer;
+use super::model::{Analysis, AnalysisState, StageStatus};
 use super::model::{
     Capability, DocStatus, Document, DocumentType, Owner, Question, QuestionKind, Rules, Section,
     Stage, TemplateSpec,
@@ -131,6 +132,63 @@ pub struct UpsertCapabilityDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
+pub struct AnalysisDto {
+    pub document_id: Uuid,
+    /// `bloat`, `purpose`, `leak`, `traceability` -- whatever the spec-quality
+    /// service offers. Not an enum: the upstream owns that list.
+    pub detector: String,
+    /// `pending`, `passed` or `failed`.
+    pub state: String,
+    /// The upstream task this verdict came from.
+    pub task_id: Option<String>,
+    pub summary: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AnalysisListDto {
+    pub items: Vec<AnalysisDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RecordAnalysisDto {
+    /// `pending`, `passed` or `failed`.
+    pub state: String,
+    pub task_id: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RequirementDto {
+    pub type_key: String,
+    pub present: bool,
+    pub conforms: bool,
+    /// Detectors that have not passed for this document: missing, pending or
+    /// failed. Empty when the stage gates nothing, or when everything passed.
+    pub analyses_outstanding: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StageStatusDto {
+    pub key: String,
+    pub label: String,
+    pub required: bool,
+    pub complete: bool,
+    pub requirements: Vec<RequirementDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StageStatusListDto {
+    pub items: Vec<StageStatusDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
 pub struct StageDto {
     pub key: String,
     /// What a screen renders. Not derived from the key: `prd_spec` is
@@ -143,6 +201,8 @@ pub struct StageDto {
     pub position: i32,
     /// Document-type keys this stage is not complete without.
     pub requires: Vec<String>,
+    /// Detectors every required document must pass before the stage completes.
+    pub gates: Vec<String>,
     /// "builtin", "organization" or "workspace".
     pub owner: String,
     pub owner_tenant_id: Option<Uuid>,
@@ -164,6 +224,7 @@ pub struct UpsertStageDto {
     pub required: Option<bool>,
     pub position: Option<i32>,
     pub requires: Option<Vec<String>>,
+    pub gates: Option<Vec<String>>,
     /// Hide the key this entry overrides instead of replacing it.
     pub hidden: Option<bool>,
 }
@@ -371,6 +432,40 @@ impl From<Capability> for CapabilityDto {
     }
 }
 
+impl From<Analysis> for AnalysisDto {
+    fn from(a: Analysis) -> Self {
+        Self {
+            document_id: a.document_id,
+            detector: a.detector,
+            state: a.state.as_str().to_string(),
+            task_id: a.task_id,
+            summary: a.summary,
+            updated_at: a.updated_at,
+        }
+    }
+}
+
+impl From<StageStatus> for StageStatusDto {
+    fn from(st: StageStatus) -> Self {
+        Self {
+            key: st.key,
+            label: st.label,
+            required: st.required,
+            complete: st.complete,
+            requirements: st
+                .requirements
+                .into_iter()
+                .map(|r| RequirementDto {
+                    type_key: r.type_key,
+                    present: r.present,
+                    conforms: r.conforms,
+                    analyses_outstanding: r.analyses_outstanding,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl From<Stage> for StageDto {
     fn from(st: Stage) -> Self {
         let (owner, owner_tenant_id) = match st.owner {
@@ -384,6 +479,7 @@ impl From<Stage> for StageDto {
             required: st.required,
             position: st.position,
             requires: st.requires,
+            gates: st.gates,
             owner,
             owner_tenant_id,
             hidden: st.hidden,
@@ -711,11 +807,80 @@ async fn upsert_stage_at(
         required: body.required.unwrap_or(false),
         position: body.position.unwrap_or(0),
         requires: body.requires.unwrap_or_default(),
+        gates: body.gates.unwrap_or_default(),
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };
     let saved = service.upsert_stage(owner, st).await.map_err(invalid)?;
     Ok(Json(saved.into()))
+}
+
+/// Record one detector's verdict on a document.
+///
+/// The caller submits to `studio-spec-quality` and polls it -- that gear is a
+/// stateless passthrough and always was. This is where the answer is kept, so
+/// "the documentation passed analysis" becomes something a stage can depend on.
+async fn record_analysis(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, id, detector)): Path<(Uuid, Uuid, String)>,
+    Json(body): Json<RecordAnalysisDto>,
+) -> ApiResult<JsonBody<AnalysisDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    let state = AnalysisState::parse(&body.state)
+        .ok_or_else(|| invalid(anyhow::anyhow!("state must be pending, passed or failed")))?;
+    let saved = service
+        .record_analysis(
+            workspace_id,
+            id,
+            &detector,
+            state,
+            body.task_id,
+            body.summary.unwrap_or_default(),
+        )
+        .await
+        .map_err(invalid)?;
+    Ok(Json(saved.into()))
+}
+
+async fn list_project_analyses(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<JsonBody<AnalysisListDto>> {
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    let items = service
+        .list_analyses(workspace_id, Some(project_id))
+        .await
+        .map_err(internal)?;
+    Ok(Json(AnalysisListDto {
+        items: items.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// Where a project stands against its workspace's stages.
+async fn project_stage_status(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<JsonBody<StageStatusListDto>> {
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    let items = service
+        .stage_status(&ctx, workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    Ok(Json(StageStatusListDto {
+        items: items.into_iter().map(Into::into).collect(),
+    }))
 }
 
 /// The capability vocabulary for a workspace.
@@ -1193,6 +1358,70 @@ pub fn register_routes(
         .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    router = OperationBuilder::put(
+        "/studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}",
+    )
+    .operation_id("studio_documents.record_analysis")
+    .summary("Record one detector's verdict on a document")
+    .description(
+        "studio-spec-quality is a stateless passthrough: the caller submits the analysis \
+         and polls it, then records the outcome here. Keeping the verdict is what lets a \
+         stage depend on it.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("id", "Document id")
+    .path_param("detector", "Detector name, e.g. bloat")
+    .json_request::<RecordAnalysisDto>(openapi, "Verdict")
+    .handler(record_analysis)
+    .json_response_with_schema::<AnalysisDto>(openapi, StatusCode::OK, "Recorded verdict")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::get(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses",
+    )
+    .operation_id("studio_documents.list_project_analyses")
+    .summary("Every recorded verdict for a project's effective documents")
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .handler(list_project_analyses)
+    .json_response_with_schema::<AnalysisListDto>(openapi, StatusCode::OK, "Verdicts")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::get(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status",
+    )
+    .operation_id("studio_documents.project_stage_status")
+    .summary("Where a project stands against its workspace's stages")
+    .description(
+        "Per stage: the document types it requires, whether each is present and conforming, \
+         and which gating detectors have not passed. Computed, never stored -- a stored \
+         completion flag goes stale the moment a document is edited.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .handler(project_stage_status)
+    .json_response_with_schema::<StageStatusListDto>(openapi, StatusCode::OK, "Stage status")
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/stages")
         .operation_id("studio_documents.list_stages")

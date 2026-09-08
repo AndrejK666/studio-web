@@ -18,6 +18,17 @@
 //! Tests share one database and one migration run, and stay independent by
 //! using a fresh tenant id per test -- every query here is tenant-scoped, so
 //! two tests cannot see each other's rows.
+//!
+//! **The database outlives the test run, and so does its migration ledger.**
+//! Adding a migration is fine; EDITING one that has already run against this
+//! database does nothing, and the test then either fails against the old schema
+//! or, worse, passes against it. When a migration changes, drop what it created
+//! and delete its row from `toolkit_migrations___test__*` so it re-applies:
+//!
+//! ```text
+//! docker exec studio-graph-pg psql -U studio -d studio -c "DROP TABLE studio_document_analyses"
+//! docker exec studio-graph-pg psql -U studio -d studio -c "DELETE FROM toolkit_migrations___test__f3747cc1 WHERE version LIKE '%m0006%'"
+//! ```
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::sync::Arc;
@@ -29,9 +40,11 @@ use toolkit_db::sea_orm_migration::MigratorTrait;
 use toolkit_db::{ConnectOpts, DBProvider, connect_db};
 use uuid::Uuid;
 
-use crate::documents::entity::{capability, doc_type, stage};
+use crate::documents::entity::{analysis, capability, doc_type, document, stage};
 use crate::documents::migrations::Migrator;
-use crate::documents::repo::{DocumentsRepo, capability_row_id, stage_row_id, type_row_id};
+use crate::documents::repo::{
+    DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
+};
 
 /// Where the tests expect Postgres. The default is the compose service name, so
 /// a test container on the compose network needs no environment at all; a run
@@ -187,6 +200,7 @@ fn stage_row(tenant: Uuid, key: &str, label: &str, hidden: bool) -> stage::Model
         required: false,
         ordinal: 15,
         requires: "[]".to_string(),
+        gates: "[]".to_string(),
         hidden,
         created_at: now,
         updated_at: now,
@@ -355,4 +369,60 @@ async fn reverting_a_capability_leaves_the_level_below_alone() {
     let rows = repo.list_capabilities(&[org, ws]).await.expect("list");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].tenant_id, org);
+}
+
+#[tokio::test]
+async fn deleting_a_document_takes_its_verdicts_with_it() {
+    // The rule lives in the schema (ON DELETE CASCADE), not in the delete path,
+    // so it holds for every writer rather than for the one that remembered. A
+    // verdict about a document that no longer exists is litter, not data.
+    let repo = repo().await;
+    let ws = tenant();
+    let doc_id = Uuid::new_v4();
+    let now = OffsetDateTime::now_utc();
+
+    repo.upsert_doc(document::Model {
+        id: doc_id,
+        tenant_id: ws,
+        project_id: None,
+        type_key: "prd".to_string(),
+        title: "A PRD".to_string(),
+        content: String::new(),
+        status: 0,
+        conforms: false,
+        validation: "{}".to_string(),
+        capabilities: "[]".to_string(),
+        created_by: "someone".to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .expect("document");
+
+    repo.upsert_analysis(analysis::Model {
+        id: analysis_row_id(doc_id, "bloat"),
+        tenant_id: ws,
+        document_id: doc_id,
+        detector: "bloat".to_string(),
+        state: "passed".to_string(),
+        task_id: Some("task-1".to_string()),
+        summary: String::new(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .expect("verdict");
+
+    assert_eq!(
+        repo.list_analyses(ws, &[doc_id]).await.expect("list").len(),
+        1
+    );
+    assert!(repo.delete_doc(ws, doc_id).await.expect("delete"));
+    assert!(
+        repo.list_analyses(ws, &[doc_id])
+            .await
+            .expect("list")
+            .is_empty(),
+        "the verdict went with the document"
+    );
 }
