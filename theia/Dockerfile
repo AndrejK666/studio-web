@@ -188,6 +188,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 COPY --chown=node:node docker/materialize-workspace.mjs /usr/local/lib/studio-materialize-workspace.mjs
+COPY --chown=node:node docker/git-credentials.mjs /usr/local/lib/studio-git-credentials.mjs
 # Wrapper around the codex binary: @theia/ai-codex spawns codex without a
 # working directory, so it lands in /app/browser-app (not a git repo) and
 # refuses to run. The wrapper forces the session workspace as cwd and passes
