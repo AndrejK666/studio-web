@@ -14,8 +14,31 @@ on:
         options:
           - validate
           - build
+          - deploy-services
       source_ref:
-        description: Commit SHA or ref to validate (leave empty for the selected branch)
+        description: Commit SHA, branch, or release tag (leave empty for the selected branch)
+        required: false
+        type: string
+      environment:
+        description: Deployment target (required for deploy-services)
+        required: false
+        type: choice
+        default: dev
+        options:
+          - dev
+          - test
+      component:
+        description: Service component to deploy (deploy-services only)
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - backend
+          - frontend
+          - prototype
+      image_tag:
+        description: Immutable sha-<commit> snapshot or v* release tag (deploy-services only; must match source_ref)
         required: false
         type: string
 
@@ -35,6 +58,7 @@ concurrency:
 jobs:
   test:
     name: 1. Test changed components
+    if: inputs.stage == 'validate' || inputs.stage == 'build'
     uses: ./.github/workflows/ci.yml
     with:
       source_ref: ${{ inputs.source_ref || github.sha }}
@@ -69,3 +93,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Preview succeeded. Deploy remains disabled until Build & Publish is proven in this graph."
+
+  deploy-services:
+    name: 3. Deploy Services
+    if: inputs.stage == 'deploy-services'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      component: ${{ inputs.component }}
+      image_tag: ${{ inputs.image_tag }}
+      source_ref: ${{ inputs.source_ref || github.ref_name }}
+    secrets: inherit
