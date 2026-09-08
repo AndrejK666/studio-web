@@ -125,6 +125,28 @@ pub fn type_leaf(type_id: &str) -> &str {
 /// descriptions, so re-uploading an edited model (or swapping models that reuse
 /// a type id) re-registers idempotently instead of conflicting. The human names
 /// live in the ontology, not the graph type.
+/// [`derived_schema`] plus the search traits a *node* type carries: the payload
+/// paths the gear composes its lexical search text from, and the ones it
+/// embeds. Both come from the entity's own fields (see
+/// [`super::ontology::NodeType`]).
+///
+/// Without them the gear indexes only the node name, which left every domain
+/// object matchable by its title and nothing else: a lexical search for words
+/// that appear in a payload returned no hits at all, while the same query
+/// answered fine as a vector search.
+pub fn derived_node_schema(
+    type_id: &str,
+    full_text_paths: &[String],
+    vector_paths: &[String],
+) -> serde_json::Value {
+    let mut schema = derived_schema(type_id);
+    schema["x-gts-traits"] = serde_json::json!({
+        "full_text_search": full_text_paths,
+        "vector_search": vector_paths,
+    });
+    schema
+}
+
 pub fn derived_schema(type_id: &str) -> serde_json::Value {
     let family = if is_edge_type(type_id) {
         STATIC_EDGE_FAMILY

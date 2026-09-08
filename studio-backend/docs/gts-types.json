@@ -1017,7 +1017,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/mode",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action.v1~"
     },
@@ -1033,7 +1049,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action_run.v1~"
     },
@@ -1049,7 +1080,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.activity.v1~"
     },
@@ -1065,7 +1110,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/actor_kind",
+            "/payload/autonomy_level",
+            "/payload/description",
+            "/payload/name",
+            "/payload/reach",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.actor.v1~"
     },
@@ -1081,7 +1143,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent.v1~"
     },
@@ -1097,7 +1175,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.agent_role.v1~"
     },
@@ -1113,7 +1205,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ai_run.v1~"
     },
@@ -1129,7 +1235,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/decision",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.approval.v1~"
     },
@@ -1145,7 +1266,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.approval_request.v1~"
     },
@@ -1161,7 +1297,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/assignee_kind",
+            "/payload/description",
+            "/payload/job_role",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/job_role",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.assignment.v1~"
     },
@@ -1177,7 +1331,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.attachment.v1~"
     },
@@ -1193,7 +1362,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/event_kind",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.audit_entry.v1~"
     },
@@ -1209,7 +1393,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.automation_rule.v1~"
     },
@@ -1225,7 +1424,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.branch.v1~"
     },
@@ -1241,7 +1454,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/proposed_kind",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.candidate_object.v1~"
     },
@@ -1257,7 +1486,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/resolution_method",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.canonical_identity.v1~"
     },
@@ -1273,7 +1517,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/check_kind",
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.check.v1~"
     },
@@ -1289,7 +1549,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.checklist.v1~"
     },
@@ -1305,7 +1581,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/decision",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.code_review.v1~"
     },
@@ -1321,7 +1612,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/status",
+            "/payload/subject_kind",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.comment.v1~"
     },
@@ -1337,7 +1645,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/message",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/message",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.commit.v1~"
     },
@@ -1353,7 +1677,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/kind",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.conflict.v1~"
     },
@@ -1369,7 +1709,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/direction",
+            "/payload/kind",
+            "/payload/name",
+            "/payload/provider",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.connector.v1~"
     },
@@ -1385,7 +1743,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/category",
+            "/payload/description",
+            "/payload/name",
+            "/payload/provider",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.connector_type.v1~"
     },
@@ -1401,7 +1777,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.construction_lifecycle.v1~"
     },
@@ -1417,7 +1808,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/selection_strategy",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/selection_strategy",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.context_package.v1~"
     },
@@ -1433,7 +1840,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.control.v1~"
     },
@@ -1449,7 +1870,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.conversation.v1~"
     },
@@ -1465,7 +1901,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/action",
+            "/payload/description",
+            "/payload/name",
+            "/payload/period",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_budget.v1~"
     },
@@ -1481,7 +1933,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/metric_kind",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_metric.v1~"
     },
@@ -1497,7 +1966,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cost_retrospective.v1~"
     },
@@ -1513,7 +1996,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/label",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/label",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.cross_tree_reference.v1~"
     },
@@ -1529,7 +2028,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/sensitivity",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/visibility"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.data_policy.v1~"
     },
@@ -1545,7 +2060,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/metric_kind",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.delivery_metric.v1~"
     },
@@ -1561,7 +2093,26 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/criticality",
+            "/payload/dependency_kind",
+            "/payload/description",
+            "/payload/name",
+            "/payload/note",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/note",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.dependency.v1~"
     },
@@ -1577,7 +2128,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.discussion_thread.v1~"
     },
@@ -1593,7 +2159,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.doc_space.v1~"
     },
@@ -1609,7 +2190,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.document.v1~"
     },
@@ -1625,7 +2222,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.document_conversation.v1~"
     },
@@ -1641,7 +2253,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.domain_dictionary.v1~"
     },
@@ -1657,7 +2284,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/edge_type",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/edge_type",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.edge.v1~"
     },
@@ -1673,7 +2316,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/worktree_path"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/worktree_path"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.editing_worktree.v1~"
     },
@@ -1689,7 +2349,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.entity.v1~"
     },
@@ -1705,7 +2379,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/correlation_id",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/type"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/type"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.event.v1~"
     },
@@ -1721,7 +2412,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/result",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/type"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/type"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.evidence.v1~"
     },
@@ -1737,7 +2445,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_field",
+            "/payload/summary",
+            "/payload/target_attribute",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_field",
+            "/payload/summary",
+            "/payload/target_attribute",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.field_mapping.v1~"
     },
@@ -1753,7 +2479,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/finding_kind",
+            "/payload/name",
+            "/payload/provenance_kind",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.finding.v1~"
     },
@@ -1769,7 +2512,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.gears.v1~"
     },
@@ -1785,7 +2544,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/term",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/term",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.glossary_term.v1~"
     },
@@ -1801,7 +2577,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/severity",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_alert.v1~"
     },
@@ -1817,7 +2609,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.governance_evidence.v1~"
     },
@@ -1833,7 +2639,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.identity_mapping.v1~"
     },
@@ -1849,7 +2670,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/anchor_kind",
+            "/payload/anchor_path",
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/anchor_path",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.inline_conversation.v1~"
     },
@@ -1865,7 +2704,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/lifecycle_scope",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit.v1~"
     },
@@ -1881,7 +2737,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/kit_version",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/kit_version",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_activation.v1~"
     },
@@ -1897,7 +2769,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_catalog.v1~"
     },
@@ -1913,7 +2799,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.kit_role.v1~"
     },
@@ -1929,7 +2829,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/index_status",
+            "/payload/name",
+            "/payload/schema_version",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/schema_version",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.knowledge_graph.v1~"
     },
@@ -1945,7 +2862,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.lifecycle_phase.v1~"
     },
@@ -1961,7 +2892,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.lifecycle_stage.v1~"
     },
@@ -1977,7 +2922,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/link_type",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/link_type",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.link.v1~"
     },
@@ -1993,7 +2954,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.local_overlay.v1~"
     },
@@ -2009,7 +2984,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/access_level",
+            "/payload/acquisition_mode",
+            "/payload/description",
+            "/payload/name",
+            "/payload/scope",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.managed_object.v1~"
     },
@@ -2025,7 +3017,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/dialect",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_document.v1~"
     },
@@ -2041,7 +3049,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/anchor",
+            "/payload/description",
+            "/payload/heading",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/anchor",
+            "/payload/description",
+            "/payload/heading",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.markdown_section.v1~"
     },
@@ -2057,7 +3083,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/transport"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mcp_server.v1~"
     },
@@ -2073,7 +3115,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/acquisition",
+            "/payload/description",
+            "/payload/name",
+            "/payload/scope_kind",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.membership.v1~"
     },
@@ -2089,7 +3148,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.mention.v1~"
     },
@@ -2105,7 +3179,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/role",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.message.v1~"
     },
@@ -2121,7 +3210,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.metric.v1~"
     },
@@ -2137,7 +3242,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.milestone.v1~"
     },
@@ -2153,7 +3273,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/provider",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.model.v1~"
     },
@@ -2169,7 +3305,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/lock_state",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.model_routing_policy.v1~"
     },
@@ -2185,7 +3336,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.new_content_knowledge_element.v1~"
     },
@@ -2201,7 +3366,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/node_type",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/node_type",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.node.v1~"
     },
@@ -2217,7 +3398,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/channel",
+            "/payload/description",
+            "/payload/name",
+            "/payload/notification_type",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.notification.v1~"
     },
@@ -2233,7 +3431,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_type",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_type",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.object_mapping.v1~"
     },
@@ -2249,7 +3464,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/tier",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.object_type.v1~"
     },
@@ -2265,7 +3496,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/statement",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/statement",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.objective.v1~"
     },
@@ -2281,7 +3529,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit_kind"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.org_unit.v1~"
     },
@@ -2297,7 +3561,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.organization_entity.v1~"
     },
@@ -2313,7 +3591,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/ownership_kind",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ownership.v1~"
     },
@@ -2329,7 +3622,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/action",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.permission.v1~"
     },
@@ -2345,7 +3653,26 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/display_name",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/timezone",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/display_name",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/timezone",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.person.v1~"
     },
@@ -2361,7 +3688,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/headline",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/headline",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.person_profile.v1~"
     },
@@ -2377,7 +3720,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/acquisition",
+            "/payload/description",
+            "/payload/name",
+            "/payload/policy_kind",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.policy.v1~"
     },
@@ -2393,7 +3754,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/goal",
+            "/payload/key",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/goal",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project.v1~"
     },
@@ -2409,7 +3788,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project_profile.v1~"
     },
@@ -2425,7 +3818,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/projection_type",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/projection_type",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.projection.v1~"
     },
@@ -2441,7 +3850,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.prompt_template.v1~"
     },
@@ -2457,7 +3882,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_revision",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_revision",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.provenance.v1~"
     },
@@ -2473,7 +3914,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.pull_request.v1~"
     },
@@ -2489,7 +3946,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.quality_gate.v1~"
     },
@@ -2505,7 +3977,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/record_type",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/record_type",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.record.v1~"
     },
@@ -2521,7 +4009,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/attribute",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/attribute",
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.reference_catalog.v1~"
     },
@@ -2537,7 +4042,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/origin",
+            "/payload/scope",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation.v1~"
     },
@@ -2553,7 +4075,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/origin",
+            "/payload/predicate",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/predicate",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relation_type.v1~"
     },
@@ -2569,7 +4109,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_relationship",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/source_relationship",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.relationship_mapping.v1~"
     },
@@ -2585,7 +4141,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.rendered_view.v1~"
     },
@@ -2601,7 +4171,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/report_kind",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.report.v1~"
     },
@@ -2617,7 +4203,28 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/default_branch",
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/full_name",
+            "/payload/language",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/default_branch",
+            "/payload/description",
+            "/payload/full_name",
+            "/payload/language",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.repository.v1~"
     },
@@ -2633,7 +4240,28 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/encoding",
+            "/payload/extension",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/path",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/encoding",
+            "/payload/extension",
+            "/payload/name",
+            "/payload/path",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.repository_file.v1~"
     },
@@ -2649,7 +4277,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/review_type",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.review_request.v1~"
     },
@@ -2665,7 +4309,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/category",
+            "/payload/description",
+            "/payload/impact",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.risk.v1~"
     },
@@ -2681,7 +4342,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.role.v1~"
     },
@@ -2697,7 +4372,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/principal_kind",
+            "/payload/scope_type",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.role_assignment.v1~"
     },
@@ -2713,7 +4404,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/constraint_kind",
+            "/payload/description",
+            "/payload/name",
+            "/payload/severity",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.safety_constraint.v1~"
     },
@@ -2729,7 +4437,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_installation_id",
+            "/payload/name",
+            "/payload/provider",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.scm_app_installation.v1~"
     },
@@ -2745,7 +4470,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/category",
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.skill.v1~"
     },
@@ -2761,7 +4502,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_link.v1~"
     },
@@ -2777,7 +4532,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/record_type",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/record_type",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_record.v1~"
     },
@@ -2793,7 +4565,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/kind",
+            "/payload/name",
+            "/payload/provider",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.source_system.v1~"
     },
@@ -2809,7 +4597,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_run.v1~"
     },
@@ -2825,7 +4628,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/message",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/message",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.sync_state.v1~"
     },
@@ -2841,7 +4661,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.synchronization_checkpoint.v1~"
     },
@@ -2857,7 +4692,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.system_object.v1~"
     },
@@ -2873,7 +4722,25 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/acquisition",
+            "/payload/description",
+            "/payload/name",
+            "/payload/purpose",
+            "/payload/slug",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/purpose",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.team.v1~"
     },
@@ -2889,7 +4756,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/format",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.template.v1~"
     },
@@ -2905,7 +4789,26 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/match_mode",
+            "/payload/message",
+            "/payload/name",
+            "/payload/presence",
+            "/payload/severity",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/message",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.template_rule.v1~"
     },
@@ -2921,7 +4824,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/region",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/region",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tenant.v1~"
     },
@@ -2937,7 +4857,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.term_mapping.v1~"
     },
@@ -2953,7 +4888,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/label",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/target_kind",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/label",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.terminology_override.v1~"
     },
@@ -2969,7 +4921,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/text",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/text",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.text_chunk.v1~"
     },
@@ -2985,7 +4953,26 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/format",
+            "/payload/language",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/text",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/language",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/text",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.text_content.v1~"
     },
@@ -3001,7 +4988,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/side_effect",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tool.v1~"
     },
@@ -3017,7 +5020,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.tool_call.v1~"
     },
@@ -3033,7 +5051,27 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/correlation_id",
+            "/payload/description",
+            "/payload/from_state",
+            "/payload/name",
+            "/payload/operation",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/to_state"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/from_state",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/to_state"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.transition.v1~"
     },
@@ -3049,7 +5087,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.ui_extension.v1~"
     },
@@ -3065,7 +5119,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/event_kind",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/unit"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.usage_event.v1~"
     },
@@ -3081,7 +5152,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/visibility_default"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.user_projection.v1~"
     },
@@ -3097,7 +5183,22 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validation_status.v1~"
     },
@@ -3113,7 +5214,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/severity",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.validator.v1~"
     },
@@ -3129,7 +5246,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/owner_kind",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/view_kind"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.view.v1~"
     },
@@ -3145,7 +5278,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/external_id",
+            "/payload/name",
+            "/payload/state",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.work_item.v1~"
     },
@@ -3161,7 +5310,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/icon",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/icon",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.work_item_type.v1~"
     },
@@ -3177,7 +5342,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/kind",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.worker.v1~"
     },
@@ -3193,7 +5374,24 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/automation_mode",
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title",
+            "/payload/version"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow.v1~"
     },
@@ -3209,7 +5407,21 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_library.v1~"
     },
@@ -3225,7 +5437,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/correlation_id",
+            "/payload/description",
+            "/payload/name",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.workflow_run.v1~"
     },
@@ -3241,7 +5469,23 @@
             "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
           }
         ],
-        "type": "object"
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/operation",
+            "/payload/status",
+            "/payload/summary",
+            "/payload/title"
+          ],
+          "vector_search": [
+            "/payload/description",
+            "/payload/name",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.write_back_capability.v1~"
     },

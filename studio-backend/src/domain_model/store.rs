@@ -365,7 +365,11 @@ mod graph_backend {
             for nt in node_types {
                 batch.push(TypeRegistration {
                     type_id: gts::graph_type_id(&nt.type_id),
-                    schema: gts::derived_schema(&nt.type_id),
+                    schema: gts::derived_node_schema(
+                        &nt.type_id,
+                        &nt.full_text_paths,
+                        &nt.vector_paths,
+                    ),
                 });
             }
             for et in edge_types {

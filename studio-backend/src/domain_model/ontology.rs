@@ -11,6 +11,8 @@
 //! Because the graph type registered for each entity is open (see [`super::gts`]),
 //! adding a field is a pure ontology edit — no graph migration, no re-register.
 
+use std::collections::BTreeSet;
+
 use serde_json::{Value, json};
 
 use super::gts;
@@ -18,12 +20,17 @@ use super::gts;
 /// The embedded ontology: the full core domain model (all buckets).
 const ONTOLOGY_JSON: &str = include_str!("ontology.core.json");
 
-/// One node type to register, with a human title and description.
+/// One node type to register, with a human title and description plus the
+/// payload paths the graph should index for it (see [`search_paths`]).
 #[derive(Debug, Clone)]
 pub struct NodeType {
     pub type_id: String,
     pub title: String,
     pub description: String,
+    /// Payload paths composing the lexical search text.
+    pub full_text_paths: Vec<String>,
+    /// Payload paths that are embedded.
+    pub vector_paths: Vec<String>,
 }
 
 /// One edge type to register (a distinct relation kind across the ontology),
@@ -117,10 +124,13 @@ impl Ontology {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
+                let (full_text_paths, vector_paths) = search_paths(e);
                 Some(NodeType {
                     type_id: gts::node_type_id(&entity_id),
                     title,
                     description,
+                    full_text_paths,
+                    vector_paths,
                 })
             })
             .collect()
@@ -438,6 +448,123 @@ impl Ontology {
         }));
         Ok(entity.clone())
     }
+}
+
+/// Payload paths a domain type declares for lexical search and for embedding,
+/// derived from the entity's own fields — the model is the source here too, so
+/// each type indexes what it actually declares rather than a list fixed in
+/// code.
+///
+/// Returns `(full_text_paths, vector_paths)`, both sorted so a re-registration
+/// is byte-identical.
+///
+/// Three rules:
+///
+/// - **Relation properties are skipped.** They become edges, not payload.
+/// - **Only text is indexed.** Identifiers, timestamps, booleans, numbers,
+///   arrays and raw JSON carry nothing a search would rank.
+/// - **Vectors take prose only.** An enum (`active | suspended`) and a field
+///   named like an identifier (`external_id`, `slug`, `version`) are keyword
+///   matter; embedding them adds noise without adding meaning. They stay in the
+///   lexical set.
+///
+/// [`BASE_SEARCH_FIELDS`] is added to every type: the conventional human-facing
+/// fields an object carries whether or not its entity declares them. The gear
+/// skips a path a payload does not have, so naming them costs nothing and keeps
+/// the 43 entities whose declared fields are all identifiers and timestamps
+/// from registering with no vector path at all.
+fn search_paths(entity: &Value) -> (Vec<String>, Vec<String>) {
+    let mut full_text: BTreeSet<String> = BASE_SEARCH_FIELDS.iter().map(|f| path(f)).collect();
+    let mut vector: BTreeSet<String> = full_text.clone();
+    for p in entity
+        .get("properties")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        // Relation properties become edges; `_`-prefixed names are ours
+        // (`_scope`), not the model's.
+        if matches!(
+            p.get("extends").and_then(Value::as_str),
+            Some("edge") | Some("link")
+        ) {
+            continue;
+        }
+        let Some(name) = p.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('_') {
+            continue;
+        }
+        let declared = p.get("type").and_then(Value::as_str).unwrap_or("").trim();
+        let Some(kind) = text_kind(declared) else {
+            continue;
+        };
+        full_text.insert(path(name));
+        if kind == TextKind::Prose && !is_identifier_name(name) {
+            vector.insert(path(name));
+        }
+    }
+    (
+        full_text.into_iter().collect(),
+        vector.into_iter().collect(),
+    )
+}
+
+/// Indexed on every domain type, declared or not.
+const BASE_SEARCH_FIELDS: [&str; 4] = ["name", "title", "description", "summary"];
+
+/// Declared types that are not text: nothing a lexical or vector search ranks.
+const NON_TEXT_TYPES: [&str; 14] = [
+    "EntityId",
+    "TypeId",
+    "KitId",
+    "SourceId",
+    "URL",
+    "Email",
+    "ExternalIdentity",
+    "VersionRange",
+    "Priority",
+    "timestamp",
+    "boolean",
+    "JSON",
+    "number",
+    "int",
+];
+
+/// Field names that read as identifiers whatever their declared type — keyword
+/// matter, so they are searched but not embedded.
+const IDENTIFIER_NAMES: [&str; 10] = [
+    "id", "key", "slug", "version", "external_id", "url", "state", "status", "provider", "kind",
+];
+
+#[derive(PartialEq, Eq)]
+enum TextKind {
+    /// Free text: worth embedding.
+    Prose,
+    /// A closed value set (`draft | published`): worth matching, not embedding.
+    Enum,
+}
+
+fn path(field: &str) -> String {
+    format!("/payload/{field}")
+}
+
+fn text_kind(declared: &str) -> Option<TextKind> {
+    if declared.is_empty() || declared.ends_with("[]") {
+        return None;
+    }
+    if NON_TEXT_TYPES.iter().any(|t| declared.starts_with(t)) {
+        return None;
+    }
+    if declared.contains('|') {
+        return Some(TextKind::Enum);
+    }
+    declared.starts_with("string").then_some(TextKind::Prose)
+}
+
+fn is_identifier_name(name: &str) -> bool {
+    IDENTIFIER_NAMES.contains(&name) || name.ends_with("_id")
 }
 
 /// The relation-properties of an entity — those carrying an `extends`
