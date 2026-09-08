@@ -14,6 +14,11 @@ concurrency:
 
 jobs:
   changes:
+    # A push workflow is the canonical result for an internal branch: it
+    # validates the exact SHA later published as an immutable dev snapshot.
+    # Avoid consuming a second set of runners for the matching internal PR.
+    # Fork PRs have no push event in this repository, so they retain CI here.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
@@ -30,24 +35,56 @@ jobs:
           filters: |
             backend:
               - 'studio-backend/**'
+              - '!studio-backend/docker/graph-postgres/**'
               - 'rust-toolchain.toml'
-              - '.github/workflows/**'
+              # These workflows change how a service commit is tested or
+              # published, so prove the complete service path after editing
+              # them. Deployment-only workflow edits intentionally do not
+              # rebuild every application component.
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
             frontend:
               - 'studio-frontend/**'
-              - '.github/workflows/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
             prototype:
               - 'studio-frontend-prototype/**'
-              - '.github/workflows/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
             theia:
               - 'theia/**'
-              - '.github/workflows/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
             infra:
               - 'studio-backend/docker/graph-postgres/**'
               - 'keycloak/**'
-              - '.github/workflows/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - '.github/workflows/deploy-infra.yml'
             deployment:
               - 'deploy/**'
-              - '.github/workflows/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+              - '.github/workflows/deploy.yml'
+              - '.github/workflows/deploy-infra.yml'
+
+      # workflow_run does not retain a push event's `before` SHA. Preserve it
+      # with the exact tested head so Build Images can make the same
+      # component-level decision without polling or rebuilding everything.
+      - name: Preserve source range for image publication
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf 'before=%s\nhead=%s\n' "$BEFORE_SHA" "$HEAD_SHA" > source-range.env
+      - uses: actions/upload-artifact@v6
+        if: github.event_name == 'push'
+        with:
+          name: test-source-range
+          path: source-range.env
+          retention-days: 7
 
   backend:
     needs: changes
