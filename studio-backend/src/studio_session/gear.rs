@@ -23,7 +23,7 @@ use super::service::SessionService;
 /// Pods (theia-cloud model) behind the same REST contract.
 #[toolkit::gear(
     name = "studio-session",
-    deps = [credstore],
+    deps = [account_management, credstore],
     capabilities = [rest, stateful]
 )]
 pub struct StudioSessionGear {
@@ -92,6 +92,20 @@ impl Gear for StudioSessionGear {
             Err(e) => warn!(
                 "studio-session: credstore client unavailable ({e}); private repo tokens disabled"
             ),
+        }
+
+        // account-management client: reads the caller's IdP record so a
+        // session's commits carry the person's name rather than the
+        // product's (optional — a session without it starts and pushes just
+        // the same, its commits simply keep the fallback author).
+        match ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            Ok(client) => service.set_account_management(client).await,
+            Err(e) => {
+                warn!("studio-session: account-management unavailable ({e}); commits unattributed")
+            }
         }
 
         // Re-attach sessions that survived a backend restart.
