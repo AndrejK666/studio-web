@@ -124,6 +124,20 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
   promoted to configured shared environments.
 - **Deploy Infra** is manual and accepts only published `infra-v*` tags.
 
+The backend's gates can be run before a pull request, in the image CI uses:
+
+```bash
+scripts/backend-check.sh            # fmt, clippy, build, test
+scripts/backend-check.sh clippy     # one gate
+scripts/backend-check.sh test studio_session   # a gate plus cargo args
+```
+
+It needs only Docker: the gates want a linker plus `protobuf-compiler` and
+`cmake`, which on a Windows checkout would otherwise mean an administrator
+install of Visual Studio Build Tools. CI stays the authority — it also runs a
+gear-assembly smoke test — but a backend change once reached `main` without
+compiling because CI was the only check and had not finished.
+
 ```bash
 # service release
 git tag v0.1.0
