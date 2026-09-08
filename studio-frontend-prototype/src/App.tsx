@@ -429,8 +429,12 @@ const NAV_SECTIONS: {
       // project of the org inherits it. Labelled "Connections" to match the
       // sidebar in the product mockups.
       { id: "connectors", icon: "plug", label: "Connections" },
-      { id: "chats", icon: "chat", label: "Chats" },
-      { id: "files", icon: "file", label: "Files" },
+      // Chats and Files are hidden: neither is a surface of the organization.
+      // A chat is had inside a project and a file is an artifact of one, so an
+      // org-wide list of either is a flat, contextless feed sitting one click
+      // from the top of the product. The views and their routes are kept
+      // (`view === "chats"`, `view === "files"`), so putting an entry back here
+      // is the whole of un-hiding them.
     ],
   },
   // Spec Quality is no longer a top-level surface — it moved onto the project
@@ -4105,11 +4109,6 @@ function HomeView({
             <li>
               <button className="linklike" onClick={() => onNavigate("connectors")}>
                 Connect a repository →
-              </button>
-            </li>
-            <li>
-              <button className="linklike" onClick={() => onNavigate("chats")}>
-                Ask AI →
               </button>
             </li>
           </ul>
