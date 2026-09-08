@@ -113,28 +113,54 @@ fi
 # canonical .cf-workspace.toml lists them all for the Studio's Workspace
 # Sources. Tokens go through an inline credential helper (username "oauth2"
 # satisfies both GitHub and GitLab PATs) and never land in .git/config.
+clone_source() {
+    local name=$1 dir=$2 url=$3 branch=$4 token=$5
+    local dest="$WORKSPACE/$dir"
+    if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+        echo "[entrypoint] source '$name' already materialized — skipping"
+        return 0
+    fi
+    echo "[entrypoint] cloning $url into $dest"
+    local opts=()
+    if [ -n "$token" ]; then
+        opts+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
+    fi
+    # The token reaches the helper through this command's own environment
+    # rather than a shell-wide export: concurrent clones would otherwise
+    # overwrite each other's credentials. It still never lands in .git/config.
+    if ! STUDIO_GIT_TOKEN="$token" git "${opts[@]}" \
+            clone ${branch:+--branch "$branch"} "$url" "$dest"; then
+        echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
+    fi
+}
+
 if [ -n "${STUDIO_SOURCES:-}" ]; then
+    # Fields are separated by US (0x1f), not a tab: a tab is IFS whitespace,
+    # so `read` collapses runs of them and an absent `branch` would shift the
+    # token into its place — a source with a token and no branch then cloned
+    # with `--branch <token>`, which fails and prints the token into the log.
     node -e '
         const sources = JSON.parse(process.env.STUDIO_SOURCES);
         for (const s of sources) {
-            console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\t"));
+            console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\u001f"));
         }
-    ' | while IFS=$'\t' read -r name dir url branch token; do
-        dest="$WORKSPACE/$dir"
-        if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
-            echo "[entrypoint] source '$name' already materialized — skipping"
-            continue
-        fi
-        echo "[entrypoint] cloning $url into $dest"
-        CLONE_OPTS=()
-        if [ -n "$token" ]; then
-            export STUDIO_GIT_TOKEN="$token"
-            CLONE_OPTS+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
-        fi
-        git "${CLONE_OPTS[@]}" clone ${branch:+--branch "$branch"} "$url" "$dest" \
-            || echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
-        unset STUDIO_GIT_TOKEN
-    done
+    ' | {
+        # Clones run concurrently. Several sources are the normal case and
+        # each lands in its own directory, so this phase should cost the
+        # slowest repository rather than the sum of all of them — it is the
+        # phase the splash above exists to cover. STUDIO_CLONE_JOBS caps the
+        # concurrency; the constraint is network and volume throughput.
+        running=0
+        while IFS=$'\x1f' read -r name dir url branch token; do
+            clone_source "$name" "$dir" "$url" "$branch" "$token" &
+            running=$((running + 1))
+            if [ "$running" -ge "${STUDIO_CLONE_JOBS:-4}" ]; then
+                wait -n || true
+                running=$((running - 1))
+            fi
+        done
+        wait
+    }
 fi
 
 # Kubernetes sessions receive a fresh emptyDir at /workspace, not the

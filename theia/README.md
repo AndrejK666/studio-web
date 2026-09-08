@@ -278,6 +278,79 @@ Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
 `orca-live.acceptance.test.ts` drives a real runtime when one is available and
 stands down otherwise.
 
+## Session startup
+
+What a person waits through between opening a session and using the IDE, and
+what each phase costs. The two phases that dominated were accidental rather
+than chosen, and both are now addressed; the rest is recorded here so the next
+person does not have to re-measure it.
+
+| phase | cost | covered by |
+| --- | --- | --- |
+| image pull (cold node) | image size; ~270 MB of it is the optional Orca runtime | nothing yet — see below |
+| workspace clones | the slowest source, once concurrent (was: the sum of all of them) | clone-phase splash |
+| Theia backend boot | plugin deployment + backend bundle | gate's boot splash |
+| frontend load | 5.4 MB minified bundle, transferred and parsed per cold session | gate's boot splash |
+
+### The frontend is minified
+
+`browser-app`'s `bundle` script builds with `theia build --mode production`.
+In this app's esbuild configuration that flag is precisely `minify: true` and
+no source maps (`gen-esbuild.browser.mjs:30-32`) — there is no separate
+optimizer to configure. It used to build `--mode development`, which arrived
+with the initial import of the image rather than from a decision. Both modes
+built from the same inputs:
+
+| artifact | development | production |
+| --- | --- | --- |
+| `lib/frontend/bundle.js` | 10 487 027 B | 5 426 206 B (**-48%**) |
+| the same, gzipped | 1 864 535 B | 1 431 277 B (**-23%**) |
+| `lib/frontend` total | 53 MB | 15 MB |
+
+Transfer falls by a quarter. The larger win is parse and compile time, which
+tracks source bytes rather than compressed bytes, and it is paid on every cold
+session. Development mode also wrote a 15 MB source map into the image.
+
+For a debuggable image: `docker build --build-arg STUDIO_BUNDLE_MODE=development`,
+or `npm run build:browser:dev` locally.
+
+### Workspace clones run concurrently
+
+Sources are independent directories, so the phase costs the slowest repository
+instead of the sum. `STUDIO_CLONE_JOBS` caps the concurrency (default 4); the
+constraint is network and volume throughput, not CPU. Measured with four
+clones stubbed at two seconds each:
+
+| `STUDIO_CLONE_JOBS` | wall time |
+| --- | --- |
+| 1 (the old behaviour) | 8 s |
+| 2 | 5 s |
+| 4 (default) | 2 s |
+
+Two details that are easy to reintroduce. The per-source fields are separated
+by US (`0x1f`), **not** a tab: a tab is IFS whitespace, so `read` collapses
+runs of them, and a source carrying a token but no branch lost its empty
+`branch` field and cloned as `--branch <token>` — which fails and prints the
+token into the container log. And the token is passed in the git command's own
+environment rather than exported into the shell, because concurrent clones
+would otherwise overwrite each other's credentials. Both are locked by
+`docker/clone-sources.test.mjs`, which extracts the real code out of
+`entrypoint.sh` so it cannot drift from what ships.
+
+### Not done
+
+* **Image size.** `COPY --from=build /app /app` ships the whole build tree,
+  devDependencies and `@theia/cli` included. On a cold node the pull, not the
+  process, decides how long a session takes to appear. It is the largest
+  remaining lever and the riskiest one: Theia resolves a great deal at
+  runtime, so trimming needs a booted session to verify, not a smaller image.
+* **Shallower clones.** `--single-branch` and `--filter=blob:none` both cut
+  transfer, and both charge for it: the first leaves one branch in the SCM
+  views, the second makes history depend on the network for the life of the
+  session.
+* **The launch chain.** `bash -> npm -> node start-browser.js -> node
+  theia.js` costs roughly a second in process startup.
+
 ## Validation
 
 Run the gates separately:
