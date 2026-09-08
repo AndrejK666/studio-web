@@ -91,6 +91,11 @@ pub struct SessionService {
     sessions: RwLock<HashMap<Uuid, Session>>,
     /// Resolves repo access tokens (PATs) stored as credstore secrets.
     credstore: RwLock<Option<Arc<dyn CredStoreClientV1>>>,
+    /// Reads the caller's IdP record, for a session's commit authorship.
+    /// Wired the same way and just as optionally as `credstore`: a backend
+    /// without it still launches sessions, their commits just keep the
+    /// product's name.
+    account_management: RwLock<Option<Arc<dyn AccountManagementClient>>>,
     /// Wakes the background image keeper (see [`Self::image_keeper`]) for a
     /// refresh pull. Launch requests never pull inline: a registry pull of a
     /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
@@ -111,12 +116,17 @@ impl SessionService {
             driver,
             sessions: RwLock::new(HashMap::new()),
             credstore: RwLock::new(None),
+            account_management: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
         })
     }
 
     pub async fn set_credstore(&self, client: Arc<dyn CredStoreClientV1>) {
         *self.credstore.write().await = Some(client);
+    }
+
+    pub async fn set_account_management(&self, client: Arc<dyn AccountManagementClient>) {
+        *self.account_management.write().await = Some(client);
     }
 
     /// Resolve a UTF-8 secret from credstore (tenant-scoped by ctx). Used
@@ -194,14 +204,19 @@ impl SessionService {
         {
             return Vec::new();
         }
-        let client = match ctx.client_hub().get::<dyn AccountManagementClient>() {
-            Ok(client) => client,
-            Err(e) => {
-                tracing::warn!(
-                    "studio-session: account-management unavailable ({e}) — \
-                     session commits stay unattributed"
-                );
-                return Vec::new();
+        // Cloned out of the lock: the lookup below is a call into another
+        // gear and must not hold this one's read guard while it waits.
+        let client = {
+            let guard = self.account_management.read().await;
+            match guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => {
+                    tracing::warn!(
+                        "studio-session: account-management client unwired — \
+                         session commits stay unattributed"
+                    );
+                    return Vec::new();
+                }
             }
         };
         let user = match client
@@ -1008,7 +1023,11 @@ fn git_author_name(
     last_name: Option<&str>,
     username: &str,
 ) -> String {
-    let present = |value: Option<&str>| value.map(str::trim).filter(|v| !v.is_empty());
+    // A named function, not a closure: as a closure the nested `filter` makes
+    // the borrow checker tie the argument's lifetime to the closure itself.
+    fn present(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|v| !v.is_empty())
+    }
     if let Some(display) = present(display_name) {
         return display.to_string();
     }
