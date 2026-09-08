@@ -258,7 +258,31 @@ pub struct ObjectGraphNodeDto {
 pub struct ObjectsGraphResponse {
     pub nodes: Vec<ObjectGraphNodeDto>,
     pub edges: Vec<ModelGraphEdgeDto>,
+    /// Nodes returned (never above `limit`).
+    pub total: u32,
+    /// True when the bound cut the result: narrow with `type`/`scope`, or raise
+    /// `limit`, to see the rest.
+    pub truncated: bool,
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ObjectsGraphQuery {
+    /// Filter to one type (ontology id, node type id or leaf). Omitted = every
+    /// domain type.
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Filter to one workspace/project scope. Omitted = every scope.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Node ceiling. Default 500, capped at 5000; a rendered graph stops being
+    /// readable long before either.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Default and ceiling for the instance graph's node bound.
+const OBJECTS_GRAPH_LIMIT: usize = 500;
+const OBJECTS_GRAPH_MAX_LIMIT: usize = 5000;
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -485,13 +509,23 @@ async fn model_graph(
 async fn objects_graph(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
+    Query(q): Query<ObjectsGraphQuery>,
 ) -> ApiResult<JsonBody<ObjectsGraphResponse>> {
-    let (nodes, edges) = handle
+    let limit = q
+        .limit
+        .unwrap_or(OBJECTS_GRAPH_LIMIT)
+        .clamp(1, OBJECTS_GRAPH_MAX_LIMIT);
+    let type_ref = q.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let (nodes, edges, truncated) = handle
         .0
-        .objects_graph(&ctx)
+        .objects_graph(&ctx, limit, type_ref, scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let total = nodes.len() as u32;
     Ok(Json(ObjectsGraphResponse {
+        total,
+        truncated,
         nodes: nodes
             .into_iter()
             .map(|n| ObjectGraphNodeDto {
@@ -713,7 +747,7 @@ pub fn register_routes(
         .description(
             "Returns the objects created via POST /objects and the relations \
              between them (member/owns/references/composes/derives) — the \
-             instance layer, distinct from the type/model graph.",
+             instance layer, distinct from the type/model graph. Bounded by \n             `limit` (default 500, max 5000) and narrowable by \n             `type`/`scope`; only edges with both endpoints on the page \n             are returned, and `truncated` says whether the bound cut \n             the result.",
         )
         .tag("StudioDomainModel")
         .authenticated()

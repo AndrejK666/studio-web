@@ -327,11 +327,8 @@ impl DomainModelService {
             return Ok(Vec::new());
         }
         self.ensure_types(ctx).await?;
-        let mut nodes = self.store.list_objects(ctx, &type_ids).await?;
-        if let Some(scope) = scope.map(str::trim).filter(|s| !s.is_empty()) {
-            nodes.retain(|n| n.value.get("_scope").and_then(Value::as_str) == Some(scope));
-        }
-        Ok(nodes)
+        let scope = scope.map(str::trim).filter(|s| !s.is_empty());
+        self.store.list_objects(ctx, &type_ids, scope, None).await
     }
 
     /// Sync the model *as a graph*: materialize one object-type node per entity
@@ -422,7 +419,7 @@ impl DomainModelService {
         // keys the sync used, so they line up with the graph nodes.
         let nodes = self
             .store
-            .list_objects(ctx, &[gts::META_OBJECT_TYPE.to_string()])
+            .list_objects(ctx, &[gts::META_OBJECT_TYPE.to_string()], None, None)
             .await?;
         let graph = {
             let o = self
@@ -451,10 +448,19 @@ impl DomainModelService {
     /// them (`member`/`owns`/…), read out of Graph Storage — the instance layer,
     /// distinct from the type/model graph. Nodes carry their entity type and
     /// bucket for colouring.
+    ///
+    /// Bounded: a visualization wants a subgraph, and the instance layer has no
+    /// natural ceiling — it grew to 14 657 nodes on a load run, which the
+    /// unbounded version answered in 26 s with every payload inlined. `limit`
+    /// caps the nodes; `type_ref` and `scope` narrow which ones, with the same
+    /// meaning they have on `GET /objects`.
     pub async fn objects_graph(
         &self,
         ctx: &SecurityContext,
-    ) -> anyhow::Result<(Vec<ObjectGraphNode>, Vec<EdgeView>)> {
+        limit: usize,
+        type_ref: Option<&str>,
+        scope: Option<&str>,
+    ) -> anyhow::Result<(Vec<ObjectGraphNode>, Vec<EdgeView>, bool)> {
         self.ensure_types(ctx).await?;
         // type ids to project + a map back to (entity id, bucket) for labels.
         let (type_ids, meta) = {
@@ -462,7 +468,14 @@ impl DomainModelService {
                 .ontology
                 .lock()
                 .map_err(|_| anyhow::anyhow!("ontology lock poisoned"))?;
-            let type_ids: Vec<String> = o.node_types().into_iter().map(|n| n.type_id).collect();
+            let type_ids: Vec<String> = match type_ref.map(str::trim).filter(|s| !s.is_empty()) {
+                None => o.node_types().into_iter().map(|n| n.type_id).collect(),
+                // Unknown type -> no rows, rather than every row.
+                Some(r) => o
+                    .resolve_entity_id(r)
+                    .map(|id| vec![gts::node_type_id(&id)])
+                    .unwrap_or_default(),
+            };
             let mut meta: std::collections::HashMap<String, (String, String)> =
                 std::collections::HashMap::new();
             for e in o.entities() {
@@ -477,7 +490,14 @@ impl DomainModelService {
             }
             (type_ids, meta)
         };
-        let objs = self.store.list_objects(ctx, &type_ids).await?;
+        // One over the bound: if it comes back, there was more to show.
+        let scope = scope.map(str::trim).filter(|s| !s.is_empty());
+        let mut objs = self
+            .store
+            .list_objects(ctx, &type_ids, scope, Some(limit + 1))
+            .await?;
+        let truncated = objs.len() > limit;
+        objs.truncate(limit);
         let nodes = objs
             .iter()
             .map(|o| {
@@ -497,15 +517,23 @@ impl DomainModelService {
                 }
             })
             .collect();
-        let seeds: Vec<String> = objs.iter().map(|o| o.instance_id.clone()).collect();
+        let seeds: std::collections::HashSet<String> =
+            objs.iter().map(|o| o.instance_id.clone()).collect();
+        let seed_list: Vec<String> = objs.iter().map(|o| o.instance_id.clone()).collect();
         let edges = self
             .store
-            .read_edges(ctx, &seeds)
+            .read_edges(ctx, &seed_list)
             .await?
             .into_iter()
-            .filter(|e| e.type_id.contains(".domainrel."))
+            // Domain relations only, and only those whose both endpoints are on
+            // the page — a bounded read must not hand back dangling edges.
+            .filter(|e| {
+                e.type_id.contains(".domainrel.")
+                    && seeds.contains(&e.from)
+                    && seeds.contains(&e.to)
+            })
             .collect();
-        Ok((nodes, edges))
+        Ok((nodes, edges, truncated))
     }
 
     /// Extend a domain type with a new field. Returns the updated entity. The

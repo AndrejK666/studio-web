@@ -59,6 +59,15 @@ pub struct EdgeView {
     pub to: String,
 }
 
+/// True when an object belongs to `scope`. `None` matches everything; the
+/// scope is tagged on the payload as `_scope` when the object is created.
+fn in_scope(value: &serde_json::Value, scope: Option<&str>) -> bool {
+    match scope {
+        None => true,
+        Some(s) => value.get("_scope").and_then(serde_json::Value::as_str) == Some(s),
+    }
+}
+
 /// The domain-object store contract: register the types, create objects and
 /// relations against them, and read the objects back.
 #[async_trait]
@@ -91,11 +100,20 @@ pub trait DomainStore: Send + Sync {
         to: &str,
     ) -> anyhow::Result<()>;
 
-    /// The objects of the given (our) type ids.
+    /// The objects of the given (our) type ids, optionally narrowed to one
+    /// workspace/project `scope`. `limit` caps how many are returned; `None`
+    /// drains every page, which is only safe where the caller knows the set is
+    /// small (the model graph is one node per entity).
+    ///
+    /// The scope filter belongs here rather than at the caller: it has to be
+    /// applied while paging, or a bounded read would filter one page instead of
+    /// the set and answer nothing for a scope that starts further in.
     async fn list_objects(
         &self,
         ctx: &SecurityContext,
         type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
     ) -> anyhow::Result<Vec<ObjectNode>>;
 
     /// Upsert a batch of nodes (any registered type), returning the count. Used
@@ -113,8 +131,9 @@ pub trait DomainStore: Send + Sync {
         edges: &[EdgeUpsert],
     ) -> anyhow::Result<u64>;
 
-    /// Read the outgoing edges of the given node keys back out of the graph, as
-    /// endpoint-keyed [`EdgeView`]s. Used to read the model graph back.
+    /// Read the edges incident to the given node keys back out of the graph, as
+    /// endpoint-keyed [`EdgeView`]s. Used to read the model and object graphs
+    /// back. Deduplicated: an edge between two seeds is returned once.
     async fn read_edges(
         &self,
         ctx: &SecurityContext,
@@ -198,16 +217,22 @@ impl DomainStore for InMemoryDomainStore {
         &self,
         _ctx: &SecurityContext,
         type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
     ) -> anyhow::Result<Vec<ObjectNode>> {
         let map = self
             .nodes
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
-        Ok(map
+        let rows = map
             .values()
             .filter(|n| type_ids.iter().any(|t| t == &n.type_id))
-            .cloned()
-            .collect())
+            .filter(|n| in_scope(&n.value, scope))
+            .cloned();
+        Ok(match limit {
+            Some(n) => rows.take(n).collect(),
+            None => rows.collect(),
+        })
     }
 
     async fn upsert_nodes(
@@ -285,7 +310,7 @@ mod graph_backend {
 
     use graph_storage_sdk::GraphStorageClientV1;
     use graph_storage_sdk::models::{
-        AdjacencySide, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TypeRegistration,
+        EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TraverseRequest, TypeRegistration,
     };
     use toolkit_odata::ODataQuery;
 
@@ -295,10 +320,10 @@ mod graph_backend {
 
     /// Nodes/edges per ingest batch, well under the gear's ceiling.
     const LIST_PAGE: u32 = 200;
-    /// Outgoing edges read per node when reading the model graph back. The gear
-    /// caps this at 100; the fan-out of a domain object type (its relations +
-    /// one base) is well under that.
-    const ADJACENCY_LIMIT: u32 = 100;
+    /// Seeds per traversal when reading edges back. One request carries the
+    /// whole chunk, so this trades request size against round trips rather than
+    /// against work done per node.
+    const TRAVERSE_SEEDS: usize = 250;
 
     pub struct GraphStorageBackend {
         client: Arc<dyn GraphStorageClientV1>,
@@ -414,6 +439,8 @@ mod graph_backend {
             &self,
             ctx: &SecurityContext,
             type_ids: &[String],
+            scope: Option<&str>,
+            limit: Option<usize>,
         ) -> anyhow::Result<Vec<ObjectNode>> {
             if type_ids.is_empty() {
                 return Ok(Vec::new());
@@ -427,7 +454,21 @@ mod graph_backend {
                 .collect();
 
             let mut out: Vec<ObjectNode> = Vec::new();
-            let mut query = ODataQuery::default().with_limit(u64::from(LIST_PAGE));
+            // Ask for no more than what is still wanted, so a bounded read costs
+            // one page rather than draining the type.
+            let page_size = |taken: usize| -> u32 {
+                match limit {
+                    // With a scope filter a page yields fewer rows than it
+                    // costs, so narrowing the request would just add round
+                    // trips: ask for full pages and stop on the count instead.
+                    Some(_) if scope.is_some() => LIST_PAGE,
+                    Some(n) => u32::try_from(n.saturating_sub(taken))
+                        .unwrap_or(LIST_PAGE)
+                        .clamp(1, LIST_PAGE),
+                    None => LIST_PAGE,
+                }
+            };
+            let mut query = ODataQuery::default().with_limit(u64::from(page_size(0)));
             loop {
                 let page = self
                     .client
@@ -439,11 +480,18 @@ mod graph_backend {
                     else {
                         continue;
                     };
+                    let value = row.payload.unwrap_or_else(|| serde_json::json!({}));
+                    if !super::in_scope(&value, scope) {
+                        continue;
+                    }
                     out.push(ObjectNode {
                         type_id: our_type.clone(),
                         instance_id: row.node_key,
-                        value: row.payload.unwrap_or_else(|| serde_json::json!({})),
+                        value,
                     });
+                }
+                if limit.is_some_and(|n| out.len() >= n) {
+                    break;
                 }
                 let Some(next) = page.page_info.next_cursor else {
                     break;
@@ -452,8 +500,11 @@ mod graph_backend {
                     anyhow::anyhow!("graph-storage returned an undecodable cursor: {e}")
                 })?;
                 query = ODataQuery::default()
-                    .with_limit(u64::from(LIST_PAGE))
+                    .with_limit(u64::from(page_size(out.len())))
                     .with_cursor(cursor);
+            }
+            if let Some(n) = limit {
+                out.truncate(n);
             }
             Ok(out)
         }
@@ -510,34 +561,53 @@ mod graph_backend {
             Ok(res.counts.edges_inserted + res.counts.edges_updated)
         }
 
+        /// One depth-1 traversal per chunk of seeds, not one node read per seed.
+        ///
+        /// This used to be a `get_node` per seed, which made the read cost one
+        /// round trip per object: on 14 657 objects the instance-graph endpoint
+        /// spent 26 s, effectively all of it waiting. The gear takes the whole
+        /// seed set in a single `traverse` and answers 1 000 nodes with their
+        /// edges in ~117 ms, so the batch primitive is what this should have
+        /// used from the start.
         async fn read_edges(
             &self,
             ctx: &SecurityContext,
             seeds: &[String],
         ) -> anyhow::Result<Vec<EdgeView>> {
             let mut out: Vec<EdgeView> = Vec::new();
-            for seed in seeds {
-                let view = self
+            // An edge between two seeds is reachable from both, and two seeds
+            // can land in different chunks, so identical edges are collapsed.
+            let mut seen: std::collections::HashSet<(String, String, String)> =
+                std::collections::HashSet::new();
+            for chunk in seeds.chunks(TRAVERSE_SEEDS) {
+                let res = self
                     .client
-                    .get_node(ctx, seed, Some(ADJACENCY_LIMIT))
+                    .traverse(
+                        ctx,
+                        TraverseRequest {
+                            seeds: chunk.to_vec(),
+                            depth: 1,
+                            ..Default::default()
+                        },
+                    )
                     .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage node read: {e}"))?;
-                if view.adjacency_truncated {
+                    .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+                if let Some(reason) = res.truncated {
                     tracing::warn!(
-                        node = %seed,
-                        limit = ADJACENCY_LIMIT,
-                        "studio-domain-model: adjacency truncated; some model edges not shown"
+                        seeds = chunk.len(),
+                        ?reason,
+                        "studio-domain-model: traversal truncated; some edges not shown"
                     );
                 }
-                for entry in view.adjacency {
-                    if entry.side != AdjacencySide::Outgoing {
-                        continue;
+                for e in res.edges {
+                    let view = EdgeView {
+                        type_id: gts::our_type_from_graph(&e.edge_type_id),
+                        from: e.src,
+                        to: e.dst,
+                    };
+                    if seen.insert((view.type_id.clone(), view.from.clone(), view.to.clone())) {
+                        out.push(view);
                     }
-                    out.push(EdgeView {
-                        type_id: gts::our_type_from_graph(&entry.edge_type_id),
-                        from: seed.clone(),
-                        to: entry.neighbor_key,
-                    });
                 }
             }
             Ok(out)
