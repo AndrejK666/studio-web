@@ -13,13 +13,19 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
+// The precise module, not the `@theia/core/lib/browser` barrel: the barrel
+// pulls common-frontend-contribution, which calls document.queryCommandSupported
+// while loading and takes any jsdom-based test of this widget down with it.
+import { OpenerService, open } from '@theia/core/lib/browser/opener-service';
+import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import {
     ORCA_AGENTS,
     OrcaService,
     type OrcaRuntimeStatus,
     type OrcaTerminal,
-    type OrcaWorktree
+    type OrcaWorktree,
+    type OrcaWorktreeChange
 } from '../common/orca-protocol';
 
 export const ORCA_WIDGET_ID = 'studio.orca';
@@ -42,12 +48,17 @@ export class OrcaWidget extends ReactWidget {
     @inject(WorkspaceService)
     protected readonly workspaces!: WorkspaceService;
 
+    @inject(OpenerService)
+    protected readonly openers!: OpenerService;
+
     protected status: OrcaRuntimeStatus | undefined;
     protected worktrees: OrcaWorktree[] = [];
     protected current: OrcaWorktree | undefined;
     /** Worktree the panel is acting on; defaults to the one Theia is open on. */
     protected selected: string | undefined;
     protected terminals: OrcaTerminal[] = [];
+    /** What the agent changed in the selected worktree, uncommitted. */
+    protected changes: OrcaWorktreeChange[] = [];
     protected busy = '';
     protected error = '';
     /** The folder this IDE is open on, as Orca would address it. */
@@ -93,7 +104,7 @@ export class OrcaWidget extends ReactWidget {
             if (!this.selected) {
                 this.selected = this.current?.id ?? this.worktrees[0]?.id;
             }
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
@@ -120,13 +131,29 @@ export class OrcaWidget extends ReactWidget {
             await this.orca.registerWorkspace(root);
             this.worktrees = await this.orca.listWorktrees();
             this.selected = this.worktrees.find(w => w.path === root)?.id ?? this.worktrees[0]?.id;
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
-    protected async loadTerminals(): Promise<void> {
-        const selector = this.selectorFor(this.selected);
-        this.terminals = selector ? await this.orca.listTerminals(selector) : [];
+    /**
+     * Everything that belongs to the selected worktree.
+     *
+     * Terminals and changes are loaded together because they answer one
+     * question between them — what is the agent doing, and what has it done
+     * so far — and because every action that could alter one alters the
+     * other.
+     */
+    protected async loadSelection(): Promise<void> {
+        const worktree = this.selectedWorktree();
+        this.terminals = worktree ? await this.orca.listTerminals(`path:${worktree.path}`) : [];
+        this.changes = worktree ? await this.orca.changes(worktree.path) : [];
+    }
+
+    protected selectedWorktree(): OrcaWorktree | undefined {
+        return (
+            this.worktrees.find(w => w.id === this.selected)
+            ?? (this.current?.id === this.selected ? this.current : undefined)
+        );
     }
 
     /**
@@ -178,7 +205,7 @@ export class OrcaWidget extends ReactWidget {
             if (created) {
                 this.selected = created.id;
             }
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
@@ -194,7 +221,7 @@ export class OrcaWidget extends ReactWidget {
             if (terminal) {
                 this.messages.info(`${agent} is running in ${terminal.worktreePath || 'the worktree'}.`);
             }
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
@@ -206,7 +233,7 @@ export class OrcaWidget extends ReactWidget {
         void this.run('Sending', async () => {
             await this.orca.send(handle, text, true);
             this.followUp = '';
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
@@ -220,14 +247,14 @@ export class OrcaWidget extends ReactWidget {
                       ? 'The agent process exited.'
                       : 'Still working after the wait budget; it keeps running.'
             );
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
     protected interrupt(handle: string): void {
         void this.run('Interrupting', async () => {
             await this.orca.interrupt(handle);
-            await this.loadTerminals();
+            await this.loadSelection();
         });
     }
 
@@ -241,6 +268,7 @@ export class OrcaWidget extends ReactWidget {
                     <>
                         {this.renderNewTask()}
                         {this.renderWorktrees()}
+                        {this.renderChanges()}
                         {this.renderTerminals()}
                     </>
                 )}
@@ -358,7 +386,7 @@ export class OrcaWidget extends ReactWidget {
                                 className={worktree.id === this.selected ? 'selected' : undefined}
                                 onClick={() => {
                                     this.selected = worktree.id;
-                                    void this.run('Loading', () => this.loadTerminals());
+                                    void this.run('Loading', () => this.loadSelection());
                                 }}
                             >
                                 <span className="studio-orca-branch">{worktree.branch || worktree.displayName}</span>
@@ -374,6 +402,62 @@ export class OrcaWidget extends ReactWidget {
                 </ul>
             </div>
         );
+    }
+
+    /**
+     * What the agent changed, and a way into it.
+     *
+     * A worktree's own `status` says an agent finished; it does not say what
+     * it touched. Without this the only way to find out is to open a terminal
+     * and type `git status`, in a panel whose whole point is not having to.
+     */
+    protected renderChanges(): React.ReactNode {
+        const worktree = this.selectedWorktree();
+        if (!worktree) {
+            return undefined;
+        }
+        return (
+            <div className='studio-orca-section'>
+                <h3>
+                    Changes
+                    <span className='studio-orca-meta'>
+                        {' '}
+                        {worktree.branch || worktree.displayName}
+                    </span>
+                </h3>
+                {this.changes.length === 0 ? (
+                    // A clean worktree is a real answer, not an empty state:
+                    // it means the agent committed, or has not written yet.
+                    <p className='studio-orca-meta'>Nothing uncommitted.</p>
+                ) : (
+                    <ul className='studio-orca-list studio-orca-changes'>
+                        {this.changes.map(change => (
+                            <li
+                                key={change.absolutePath}
+                                title={change.absolutePath}
+                                onClick={() => this.openChange(change)}
+                            >
+                                <span className='studio-orca-change-code'>{change.code.trim() || '--'}</span>
+                                <span className='studio-orca-change-path'>{change.path}</span>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        );
+    }
+
+    /**
+     * Open one changed file in the editor.
+     *
+     * `URI.fromFilePath` rather than a `file://` template: a worktree path can
+     * be a Windows one on a developer machine, and that template turns the
+     * drive letter into a host.
+     */
+    protected openChange(change: OrcaWorktreeChange): void {
+        void this.run(`Opening ${change.path}`, async () => {
+            await open(this.openers, URI.fromFilePath(change.absolutePath));
+        });
     }
 
     protected renderTerminals(): React.ReactNode {
