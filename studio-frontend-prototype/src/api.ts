@@ -810,7 +810,7 @@ export interface DocType {
   name: string;
   description: string;
   gts_type_id: string;
-  owner: "builtin" | "workspace";
+  owner: "builtin" | "organization" | "workspace";
   owner_tenant_id?: string | null;
   body: string;
   sections: DocSection[];
@@ -958,6 +958,17 @@ export const api = {
   docTypes: (token: string, workspaceId: string) =>
     request<{ items: DocType[] }>(
       `/studio-documents/v1/workspaces/${workspaceId}/types`,
+      token,
+    ),
+
+  /** What an organization publishes to the workspaces under it.
+   *
+   *  Its own editing view, not what a workspace sees: a workspace may replace
+   *  or hide any of it. The Components page is organization-scoped, so this is
+   *  the level whose document types belong in its catalogue. */
+  orgDocTypes: (token: string, organizationId: string) =>
+    request<{ items: DocType[] }>(
+      `/studio-documents/v1/organizations/${organizationId}/types`,
       token,
     ),
 
