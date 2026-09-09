@@ -237,7 +237,27 @@ impl RunnableCapability for StudioSchedulerGear {
 /// the cadence or switched one off keeps that across restarts.
 async fn register_platform_schedules(service: &Arc<SchedulerService>) -> anyhow::Result<()> {
     let ctx = service_identity(service.owner())?;
-    for schedule in crate::tasks::platform_schedules() {
+    // Concatenated by hand rather than collected through a registry: this is
+    // a single-binary assembly, the list is short, and a `grep
+    // platform_schedules` finds every gear that contributes one.
+    let wanted = crate::tasks::platform_schedules()
+        .into_iter()
+        .chain(crate::studio_session::platform_schedules());
+    for schedule in wanted {
+        // A schedule for work nothing in this process can run would fire every
+        // cadence and dead-letter every time. The gears that own the work
+        // register their handlers before this phase, so the registry is the
+        // honest answer to "is this a deployment where that job exists?" —
+        // sessions, for instance, stand down where there is no container
+        // runtime to reach.
+        if !crate::tasks::registry::known_task_types().contains(&schedule.task_type) {
+            info!(
+                schedule = schedule.name,
+                task_type = schedule.task_type,
+                "studio-scheduler: nothing here can run this — not creating its schedule"
+            );
+            continue;
+        }
         match service
             .ensure(
                 &ctx,

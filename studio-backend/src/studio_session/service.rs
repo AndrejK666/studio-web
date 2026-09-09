@@ -10,7 +10,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::config::StudioSessionConfig;
-use super::driver::{LaunchSpec, LocalBind, SessionAddress, SessionDriver};
+use super::driver::{AdoptedSession, LaunchSpec, LocalBind, SessionAddress, SessionDriver};
 
 const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
@@ -58,6 +58,22 @@ pub struct RepoSpec {
 pub enum RepoKind {
     Git,
     Local,
+}
+
+/// What one reaping pass did. Reported as a `session.reap` run's summary, so
+/// "nothing expired" and "three stopped, one refused" are told apart in the
+/// history rather than only in a log line.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReapOutcome {
+    /// Sessions the runtime showed as past their maximum age.
+    #[serde(default)]
+    pub expired: usize,
+    #[serde(default)]
+    pub stopped: usize,
+    /// Ones the driver refused to stop. They stay, and the next pass tries
+    /// again.
+    #[serde(default)]
+    pub failed: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -988,28 +1004,64 @@ impl SessionService {
         Ok(count)
     }
 
-    /// Reaper pass: stop sessions past max_session_secs. Returns reaped count.
-    pub async fn reap_expired(&self) -> usize {
+    /// One reaping pass: stop every session past `max_session_secs`.
+    ///
+    /// The list comes from the **driver**, not from this process's session map.
+    /// That map only holds what this replica launched, plus what it adopted when
+    /// it booted — a session launched by another replica afterwards is not in
+    /// it. Asking the runtime instead makes one pass enough for everything the
+    /// driver can see, which is what lets a schedule fire this in one replica
+    /// (see [`super::reap_task`]) rather than every replica running its own
+    /// timer over its own partial view.
+    ///
+    /// # Errors
+    ///
+    /// Only when the runtime cannot be listed at all. A single session the
+    /// driver refuses to stop is counted in [`ReapOutcome::failed`] and left
+    /// for the next pass.
+    pub async fn reap_expired(&self) -> anyhow::Result<ReapOutcome> {
         if self.cfg.max_session_secs == 0 {
-            return 0;
+            return Ok(ReapOutcome::default());
         }
         let cutoff = now_secs().saturating_sub(self.cfg.max_session_secs);
-        let expired: Vec<Session> = self
-            .sessions
-            .read()
-            .await
-            .values()
-            .filter(|s| s.created_at_epoch_secs < cutoff && s.state != SessionState::Stopped)
-            .cloned()
+        let expired: Vec<AdoptedSession> = self
+            .driver
+            .list_adoptable()
+            .await?
+            .into_iter()
+            .filter(|s| s.created_at_epoch_secs < cutoff)
             .collect();
-        let mut reaped = 0;
-        for s in expired {
-            if self.driver.destroy(&s.handle).await.is_ok() {
-                self.sessions.write().await.remove(&s.id);
-                reaped += 1;
+
+        let mut outcome = ReapOutcome {
+            expired: expired.len(),
+            ..ReapOutcome::default()
+        };
+        for session in expired {
+            match self.driver.destroy(&session.handle).await {
+                Ok(()) => {
+                    outcome.stopped += 1;
+                    // Drop it from this replica's map as well, when it is there:
+                    // the handle is the driver's key, the map's is our own id.
+                    let mut sessions = self.sessions.write().await;
+                    if let Some(id) = sessions
+                        .values()
+                        .find(|s| s.handle == session.handle)
+                        .map(|s| s.id)
+                    {
+                        sessions.remove(&id);
+                    }
+                }
+                Err(e) => {
+                    outcome.failed += 1;
+                    tracing::warn!(
+                        handle = %session.handle,
+                        workspace_id = %session.workspace_id,
+                        "studio-session: could not stop an expired session: {e:#}"
+                    );
+                }
             }
         }
-        reaped
+        Ok(outcome)
     }
 }
 
