@@ -1796,6 +1796,7 @@ function FilterPanel({
                   <option value="plugin">plugin</option>
                   <option value="toolkit">toolkit</option>
                   <option value="frontx">frontx</option>
+                  <option value="kit">kit</option>
                 </select>
               </div>
               <div className="filter-group">
@@ -2397,15 +2398,11 @@ function WorkspaceProjects({
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<import("./api").ProjectKind>("new_gears");
-  const [conns, setConns] = useState<import("./api").Connection[]>([]);
-  const [connId, setConnId] = useState("");
-  const [repoMode, setRepoMode] = useState<"create" | "existing">("create");
-  const [repoName, setRepoName] = useState("");
-  const [owner, setOwner] = useState("");
-  const [isOrg, setIsOrg] = useState(false);
-  const [priv, setPriv] = useState(true);
-  const [remoteRepos, setRemoteRepos] = useState<import("./api").RemoteRepo[]>([]);
-  const [pickedRepo, setPickedRepo] = useState("");
+  // What the new project takes from the shared catalogue. A kit is a component
+  // like any other, and a project acquires one the same way it acquires
+  // anything else: by picking it from the list, not by naming a repository.
+  const [kitCatalog, setKitCatalog] = useState<import("./api").StudioKit[]>([]);
+  const [kitSel, setKitSel] = useState<Set<string>>(new Set());
   // Journey framing captured at creation (previously dead in the UI): a free-text
   // brief and the opt-in journey stages (Intent is always applied).
   const [brief, setBrief] = useState("");
@@ -2442,14 +2439,14 @@ function WorkspaceProjects({
     void reload();
   }, [reload]);
 
-  // Load the workspace's connections when the create card opens.
+  // Load the shared component catalogue when the create card opens.
   useEffect(() => {
     if (!creating) return;
     api
-      .connections(token, workspace.id)
-      .then((r) => setConns(r.items ?? []))
-      .catch(() => {});
-  }, [creating, token, workspace.id]);
+      .kits(token)
+      .then((r) => setKitCatalog(r.items ?? []))
+      .catch(() => setKitCatalog([]));
+  }, [creating, token]);
 
   // ...and its journey-stage catalogue, for the same reason and at the same
   // moment. An empty catalogue simply renders no chips: a project can still be
@@ -2462,36 +2459,19 @@ function WorkspaceProjects({
       .catch(() => setStageCatalogue([]));
   }, [creating, token, workspace.id]);
 
-  // Repo mode allowed per project kind: product always creates a new repo,
-  // an imported existing app always picks one, new-gears defaults to create.
-  useEffect(() => {
-    if (newKind === "product") setRepoMode("create");
-    else if (newKind === "existing") setRepoMode("existing");
-    else setRepoMode("create");
-  }, [newKind]);
-
-  // When picking an existing repo, list the chosen connection's repositories.
-  useEffect(() => {
-    if (!creating || repoMode !== "existing" || !connId) return;
-    api
-      .connectionRepositories(token, connId, workspace.id)
-      .then((r) => setRemoteRepos(r.items ?? []))
-      .catch(() => setRemoteRepos([]));
-  }, [creating, repoMode, connId, token, workspace.id]);
-
-  const repoDir = (fullPath: string) =>
-    (fullPath.split("/").pop() ?? fullPath).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
-
-  // Whether this project carries a repository at all (all current kinds do, but
-  // the plan is built to tolerate a future kind that does not).
-  const wantsRepo = true;
+  const toggleKit = (slug: string) =>
+    setKitSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
 
   /** Build the idempotent create plan for the current form inputs. Each step
    *  probes real backend state in `check` so a retry resumes cleanly instead of
    *  duplicating writes (ADR-0010: creation is several non-atomic requests). */
   const buildCreatePlan = (name: string): ProvisionStep<CreateCtx>[] => {
     const mode: ProjectMode = newKind === "existing" ? "modernize" : "greenfield";
-    const conn = conns.find((c) => c.id === connId);
     const steps: ProvisionStep<CreateCtx>[] = [];
 
     // 1) Project tenant — find-or-create. Reusing a same-named sibling heals a
@@ -2520,63 +2500,6 @@ function WorkspaceProjects({
       },
     });
 
-    // 2) Repository — create a new one, or attach an existing. Once resolved we
-    //    stamp `source_git_url` into the config so a later failure can skip the
-    //    (non-idempotent) repo creation on retry.
-    if (wantsRepo) {
-      steps.push({
-        key: "repo",
-        label: repoMode === "create" ? "Create repository" : "Attach repository",
-        check: async (ctx) => {
-          const cfg = await api.projectConfig(token, ctx.tenantId).catch(() => null);
-          if (cfg?.source_git_url) {
-            ctx.cloneUrl = cfg.source_git_url;
-            ctx.repoFull = cfg.source_git_url
-              .replace(/^https:\/\/github\.com\//, "")
-              .replace(/\.git$/, "");
-            ctx.branch = ctx.branch || "main";
-            return true;
-          }
-          return false;
-        },
-        run: async (ctx) => {
-          if (repoMode === "create") {
-            if (!repoName.trim()) throw new Error("enter a name for the new repository");
-            const r = await api.createProjectRepo(token, ctx.tenantId, {
-              tenant: workspace.id,
-              connection_id: connId || null,
-              owner: isOrg ? owner.trim() : undefined,
-              is_org: isOrg,
-              name: repoName.trim(),
-              private: priv,
-            });
-            ctx.repoFull = r.full_name;
-            ctx.branch = r.default_branch || "main";
-            ctx.cloneUrl = `https://github.com/${r.full_name}.git`;
-          } else {
-            const picked = remoteRepos.find((r) => r.full_path === pickedRepo);
-            if (!picked) throw new Error("pick a repository to attach");
-            ctx.repoFull = picked.full_path;
-            ctx.branch = picked.default_branch || "main";
-            ctx.cloneUrl = picked.clone_url;
-            await api.setProjectGearRepo(token, ctx.tenantId, {
-              tenant: workspace.id,
-              connection_id: connId || null,
-              repo: ctx.repoFull,
-              branch: ctx.branch,
-            });
-          }
-          // Record the resolved repo immediately (idempotent PUT), so retry's
-          // `check` above short-circuits instead of re-creating the repo.
-          const cfg = (await api.projectConfig(token, ctx.tenantId).catch(() => null)) ?? {};
-          await api.putProjectConfig(token, ctx.tenantId, {
-            ...cfg,
-            source_git_url: ctx.cloneUrl,
-          });
-        },
-      });
-    }
-
     // 3) Project config — mode/kind/stages/brief. Idempotent overwriting PUT,
     //    so it always runs (cheap) and re-running is safe.
     steps.push({
@@ -2596,30 +2519,35 @@ function WorkspaceProjects({
       },
     });
 
-    // 4) Register the source on the project (shown by Repositories/Sources),
-    //    deduped by clone URL so a retry does not append a second entry.
-    if (wantsRepo) {
+    // 3) Kits the project asked for, as DESIRED state.
+    //
+    //    Requesting is idempotent by slug, and materialization is somebody
+    //    else's job: the registry records `pending`, and a trusted `cfs` runner
+    //    writes the files into whatever repositories the project has when it
+    //    has them. That is why creation no longer needs a repository at all --
+    //    a project can want a kit before it has anywhere to put it.
+    if (kitSel.size > 0) {
       steps.push({
-        key: "sources",
-        label: "Register source",
+        key: "kits",
+        label: `Request ${kitSel.size} kit${kitSel.size === 1 ? "" : "s"}`,
         check: async (ctx) => {
-          const s = await api.workspaceSettings(token, ctx.tenantId).catch(() => null);
-          return (s?.repos ?? []).some((r) => r.url === ctx.cloneUrl);
+          const current = await api
+            .kitInstallations(token, ctx.tenantId)
+            .then((r) => r.items)
+            .catch(() => []);
+          return [...kitSel].every((slug) => current.some((i) => i.kit_slug === slug));
         },
         run: async (ctx) => {
-          const s = (await api.workspaceSettings(token, ctx.tenantId).catch(() => null)) ?? {};
-          const entry: RepoEntry = {
-            name: repoDir(ctx.repoFull),
-            source: "github",
-            url: ctx.cloneUrl,
-            target: repoDir(ctx.repoFull),
-            branch: ctx.branch,
-            token_ref: conn?.secret_ref,
-          };
-          await api.putWorkspaceSettings(token, ctx.tenantId, {
-            ...s,
-            repos: [...(s.repos ?? []), entry],
-          });
+          for (const slug of kitSel) {
+            const kit = kitCatalog.find((k) => k.slug === slug);
+            if (!kit) continue;
+            await api.requestKitInstallation(token, ctx.tenantId, {
+              kit_slug: kit.slug,
+              version: kit.default_version,
+              install_mode: "copy",
+              scope: "all-repositories",
+            });
+          }
         },
       });
     }
@@ -2657,10 +2585,9 @@ function WorkspaceProjects({
     setProv(null);
     setProvOk(false);
     setNewName("");
-    setRepoName("");
-    setPickedRepo("");
     setBrief("");
     setStageSel(new Set());
+    setKitSel(new Set());
     provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
   };
 
@@ -2778,54 +2705,59 @@ function WorkspaceProjects({
             </div>
 
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Repository</div>
-              <select value={connId} onChange={(e) => setConnId(e.target.value)} style={{ marginBottom: 8, width: "100%" }}>
-                <option value="">First GitHub connection</option>
-                {conns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} · {c.provider} · {c.account}
-                  </option>
-                ))}
-              </select>
-
-              {newKind === "new_gears" && (
-                <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 12 }}>
-                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="radio" name="repomode" checked={repoMode === "create"} onChange={() => setRepoMode("create")} />
-                    Create new
-                  </label>
-                  <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="radio" name="repomode" checked={repoMode === "existing"} onChange={() => setRepoMode("existing")} />
-                    Use existing gear store
-                  </label>
-                </div>
-              )}
-
-              {repoMode === "create" ? (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <input placeholder="new repo name" value={repoName} onChange={(e) => setRepoName(e.target.value)} />
-                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="checkbox" checked={isOrg} onChange={(e) => setIsOrg(e.target.checked)} />
-                    under org
-                  </label>
-                  {isOrg && (
-                    <input placeholder="org login" value={owner} onChange={(e) => setOwner(e.target.value)} style={{ width: 140 }} />
-                  )}
-                  <label style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input type="checkbox" checked={priv} onChange={(e) => setPriv(e.target.checked)} />
-                    private
-                  </label>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                Components
+              </div>
+              <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                What this project takes from the shared catalogue. Requested now, written
+                into the project&apos;s repositories when it has them — so a project can
+                want a kit before it has anywhere to put it.
+              </p>
+              {kitCatalog.length === 0 ? (
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  The catalogue is empty, or could not be read. A project can be created
+                  without components and take them later from its Kits tab.
                 </div>
               ) : (
-                <select value={pickedRepo} onChange={(e) => setPickedRepo(e.target.value)} style={{ width: "100%" }} disabled={!connId}>
-                  <option value="">{connId ? "— select a repository —" : "pick a connection first"}</option>
-                  {remoteRepos.map((r) => (
-                    <option key={r.id} value={r.full_path}>
-                      {r.full_path}
-                      {r.visibility ? ` · ${r.visibility}` : ""}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {kitCatalog.map((k) => {
+                    const on = kitSel.has(k.slug);
+                    return (
+                      <label
+                        key={k.slug}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "flex-start",
+                          padding: "6px 10px",
+                          border: "1px solid var(--border,#e2e4e9)",
+                          borderRadius: 8,
+                          background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                          cursor: prov !== null ? "default" : "pointer",
+                          opacity: prov !== null && !on ? 0.5 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={prov !== null}
+                          onChange={() => toggleKit(k.slug)}
+                          style={{ marginTop: 2 }}
+                        />
+                        <span>
+                          <span style={{ fontSize: 12, fontWeight: 600 }}>{k.name}</span>
+                          <span style={{ fontSize: 11, opacity: 0.6 }}>
+                            {" "}
+                            · {k.publisher} · {k.default_version}
+                          </span>
+                          <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>
+                            {k.description}
+                          </div>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               )}
             </div>
 

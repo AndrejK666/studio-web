@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { CatalogNode, Connection } from "./api";
+import type { CatalogNode, Connection, StudioKit } from "./api";
 import { errText } from "./format";
 import schemaJson from "./components-catalog.schema.json";
 
@@ -364,6 +364,34 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
   );
 }
 
+/** A kit as a catalogue node.
+ *
+ *  A kit IS a component: a named, versioned, published thing a project takes
+ *  from the shared list. It sat in a list of its own only because it reaches
+ *  the portal through a different gear, and that made the catalogue look like
+ *  it did not contain half of what a project can install.
+ *
+ *  The mapping fills what the catalogue renders and stays silent where a kit
+ *  has nothing to give: no download counts, no crate versions. Inventing zeroes
+ *  would sort kits against gears on a number that means nothing.
+ */
+function kitAsNode(kit: StudioKit): CatalogNode {
+  return {
+    type_id: "gts.cf.studio.catalog.kit.v1~",
+    instance_id: `kit:${kit.slug}`,
+    value: {
+      name: kit.slug,
+      kind: "kit",
+      description: kit.description,
+      max_version: kit.default_version,
+      newest_version: kit.default_version,
+      repository: kit.repository_url || null,
+      keywords: [kit.publisher, kit.visibility].filter(Boolean),
+      categories: ["kit"],
+    },
+  };
+}
+
 export function ComponentsCatalog({
   token,
   tenantId,
@@ -426,14 +454,17 @@ export function ComponentsCatalog({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const [{ nodes }, profileResponse] = await Promise.all([
+      const [{ nodes }, profileResponse, kitResponse] = await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch((error): { nodes: CatalogNode[] } => {
           if (error instanceof ApiError && error.status === 404) return { nodes: [] };
           throw error;
         }),
+        // Its own gear, so its own failure: a kit registry that is down leaves
+        // the gears listed rather than blanking the whole catalogue.
+        api.kits(token).catch((): { items: StudioKit[] } => ({ items: [] })),
       ]);
-      setGears(nodes ?? []);
+      setGears([...(nodes ?? []), ...(kitResponse.items ?? []).map(kitAsNode)]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
