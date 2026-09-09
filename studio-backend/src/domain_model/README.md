@@ -76,6 +76,60 @@ so the endpoints that show or change the model (`GET /types`, `GET /relations`,
 reload when it has moved. The object endpoints answer from cache: they run per
 request and being a version behind is not visible in them.
 
+### A type is mostly its bases
+
+The model puts most of a type's fields on the types it extends. `team` declares
+6 and *has* 24 — one from `system-object`, two from `node`, fifteen from
+`managed-object`. Reading an entity straight out of `GET /types` therefore shows
+a fraction of the type, and every consumer had to walk `extends` itself.
+
+`GET /types/{id}` answers with the type as it actually is: every field, own and
+inherited, each marked with the entity that `declared_by` it, base-first and
+with the nearest declaration winning where a type overrides one. Relations
+declared on a base come with it (`typed_by` is on `managed-object`, so a
+`project` has it).
+
+### An object is checked against its type
+
+The registered graph type is open, so nothing downstream enforces the model's
+`required`, its declared types or its enums — the model *described* objects
+without saying anything about them. `POST /objects` now checks the payload
+against the effective type and reports what it finds:
+
+| `validate` | |
+|---|---|
+| `off` | do not check |
+| `warn` (default) | check, report, write anyway |
+| `strict` | check, and refuse the write if anything is violated |
+
+```jsonc
+// POST /objects  {"type":"project","key":"apollo","value":{"name":"Apollo","status":"started","portfolio":"platform"}}
+{ "validate": "warn",
+  "violations": [ { "kind": "enum", "field": "status",
+                    "detail": "expected one of planned | active | paused | archived" },
+                  { "kind": "missing", "field": "node_type",
+                    "detail": "required by node (string)" } ],
+  "undeclared": ["portfolio"] }
+```
+
+Three things are deliberate:
+
+- **`warn` is the default.** The model has 560 required fields, and a bare
+  `project` violates 13 of them — it asks for `node_type`, `properties`, `scope`
+  and more that no caller supplies today. Refusing by default would reject
+  nearly every object; reporting says exactly how far the modelled domain is
+  from what is stored, which is the more useful answer. `tenant_id`, `id` and
+  the timestamps are exempt: the graph supplies those on the node row, not in
+  the payload.
+- **An undeclared field is never a violation.** The payload is open by design.
+  It is reported instead, because "this object carries a field the model has not
+  caught up with" is the question that decides whether to extend the type — and
+  after `POST /types/{id}/fields` the same write reports nothing.
+- **A type expression is checked only where it is unambiguous.** `string`,
+  `timestamp`, the numeric and boolean names, the `Id`/`Ref` suffix convention,
+  `T[]`, `T?` and `a | b | c` are checked. The model's ~100 one-off domain names
+  (`Money`, `RetryPolicy`, `WorkflowGraph`) are carried, not guessed at.
+
 ## Mapping to GTS
 
 | Domain concept | GTS |
@@ -139,7 +193,8 @@ the fixed traits from the start.
 | `GET  /model/versions` | — | the model's change history, newest first |
 | `POST /model/revert` | — | restore the model to an earlier version |
 | `GET  /model/graph` | — | read that model graph back out of Graph Storage (nodes + edges) |
-| `POST /objects` | 1 | create/upsert an object of a domain type (`if_absent` refuses to replace) |
+| `GET  /types/{id}` | — | one type with everything it inherits, and its relations |
+| `POST /objects` | 1 | create/upsert an object (`validate` checks it, `if_absent` refuses to replace) |
 | `GET  /objects?type=` | — | read objects back |
 | `POST /relations` | — | relate two objects (member/owns/references/composes) |
 | `POST /types/{id}/fields` | 2 | extend a type with a new field |
@@ -214,7 +269,9 @@ in-memory store, so the create/read loop still runs.
 
 - `ontology.core.json` — the bootstrap seed: the regeneration-complete core model
 - `ontology.rs` — loads the model; derives node/edge types; **extends** a type;
-  reassembles one from what the graph stores (`from_parts`)
+  resolves what a type inherits (`effective_properties`); reassembles a model
+  from what the graph stores (`from_parts`)
+- `validate.rs` — checks an object against the type the model says it is
 - `gts.rs` — GTS id derivation (node/edge ids, family derivation, instance ids)
   including the meta layer: `model`, `model_version`, `object_type` and the
   `revises` / `inherits` / `declares` edges

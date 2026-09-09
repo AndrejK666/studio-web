@@ -15,7 +15,9 @@
 //! each relation kind as an edge type derived from `static_edge` — carrying
 //! which declared relation it is, checked against the model's own source and
 //! target before it is written;
-//! objects are typed nodes keyed on a deterministic instance id. Prefers the
+//! objects are typed nodes keyed on a deterministic instance id, checked on the
+//! way in against the type the model says they are — bases included, since that
+//! is where most of a type's fields live. Prefers the
 //! real graph-storage gear; falls back to an in-memory store so the create/read
 //! loop still runs when the `graph` feature is off.
 //!
@@ -30,6 +32,7 @@ pub(crate) mod ontology;
 mod rest;
 mod service;
 mod store;
+pub(crate) mod validate;
 
 use std::sync::Arc;
 
