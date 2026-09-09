@@ -168,6 +168,25 @@ pub struct CatalogTypeListResponse {
     pub types: Vec<CatalogTypeDto>,
 }
 
+/// How many nodes of one type the graph holds.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TypeCountDto {
+    pub leaf_id: String,
+    /// Exact, unless `capped` — then it is a floor, not a total.
+    pub count: u64,
+    /// Whether the count stopped at the cap rather than at the end of the
+    /// type. A page that shows a capped number as if it were a total is
+    /// telling its reader something untrue about their own graph.
+    pub capped: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TypeCountListResponse {
+    pub counts: Vec<TypeCountDto>,
+}
+
 /// Whether a type is one of this organization's components.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -501,6 +520,33 @@ async fn list_types(
     }))
 }
 
+/// The instance count per type.
+///
+/// Its own endpoint because it costs one projection per type where the type
+/// list costs two reads in total. The Objects page draws its table from
+/// `/types` and fills these in after, so a graph with hundreds of types still
+/// renders at once.
+async fn count_types(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<TypeCountListResponse>> {
+    let counts = catalog
+        .service
+        .count_types(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(TypeCountListResponse {
+        counts: counts
+            .into_iter()
+            .map(|c| TypeCountDto {
+                leaf_id: c.leaf_id,
+                count: c.count as u64,
+                capped: c.capped,
+            })
+            .collect(),
+    }))
+}
+
 async fn set_type_component(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -829,6 +875,22 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Node types with their component mark and schema owner",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/types/counts")
+        .operation_id("studio_components_catalog.count_types")
+        .summary("How many nodes of each type the graph holds")
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(count_types)
+        .json_response_with_schema::<TypeCountListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Instance counts, exact up to a cap",
         )
         .error_401(openapi)
         .error_500(openapi)

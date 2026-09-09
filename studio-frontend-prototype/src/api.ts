@@ -313,6 +313,17 @@ export interface ArtifactNodePage {
  *  payload shape differs by type; read it loosely. */
 /** One registered type, as the registry returns it. Only the fields a screen
  *  needs; the registry carries the whole schema document too. */
+/** How many nodes of one type the graph holds.
+ *
+ *  Counted rather than asked for: graph-storage's contract has no count, so
+ *  the server pages a projection and stops at a cap. `capped` says the number
+ *  is a floor — a page that shows one as a total lies about the graph. */
+export interface TypeCount {
+  leaf_id: string;
+  count: number;
+  capped: boolean;
+}
+
 /** One GTS type the graph holds, and what this organization says about it.
  *
  *  The graph stores far more types than a catalogue of building blocks should
@@ -1568,6 +1579,14 @@ export const api = {
    *  treats as components. The Objects page is a view of exactly this. */
   catalogTypes: (token: string) =>
     request<{ types: CatalogType[] }>("/studio-components-catalog/v1/types", token),
+
+  /** How many nodes of each type the graph holds.
+   *
+   *  Its own read: a count is one projection per type, and the type list is
+   *  hundreds of types. The Objects page draws its table first and fills these
+   *  in, rather than waiting on arithmetic to show a row. */
+  typeCounts: (token: string) =>
+    request<{ counts: TypeCount[] }>("/studio-components-catalog/v1/types/counts", token),
 
   /** Mark a type as one of this organization's components, or unmark it. */
   setTypeComponent: (token: string, typeId: string, component: boolean) =>

@@ -70,6 +70,19 @@ pub(crate) trait CatalogSink: Send + Sync {
         graph_types: &[String],
         limit: usize,
     ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)>;
+    /// How many nodes of one type the graph holds, counted up to `cap`.
+    ///
+    /// Counted, not asked for: graph-storage's contract has no count, and its
+    /// `node` table is its own business, not ours to query. So this pages a
+    /// projection and stops at `cap`, returning `(count, hit_the_cap)` — an
+    /// exact number for the types a person is deciding about, and an honest
+    /// floor for the ones with more nodes than a page could ever show.
+    async fn count_of_type(
+        &self,
+        ctx: &SecurityContext,
+        graph_type: &str,
+        cap: usize,
+    ) -> anyhow::Result<(usize, bool)>;
 }
 
 /// A node of any type, typed only by its id — what a catalogue that no longer
@@ -194,6 +207,23 @@ impl CatalogSink for MemorySink {
         let truncated = out.len() > limit;
         out.truncate(limit);
         Ok((out, truncated))
+    }
+
+    async fn count_of_type(
+        &self,
+        _ctx: &SecurityContext,
+        graph_type: &str,
+        cap: usize,
+    ) -> anyhow::Result<(usize, bool)> {
+        let map = self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        let total = map
+            .values()
+            .filter(|n| gts::graph_type_id(n.type_id) == graph_type)
+            .count();
+        Ok((total.min(cap), total > cap))
     }
 }
 
@@ -470,8 +500,58 @@ impl CatalogSink for GraphSink {
         }
         Ok((out, false))
     }
+
+    async fn count_of_type(
+        &self,
+        ctx: &SecurityContext,
+        graph_type: &str,
+        cap: usize,
+    ) -> anyhow::Result<(usize, bool)> {
+        use toolkit_odata::{CursorV1, ODataQuery};
+        const PAGE: u64 = 200;
+        let patterns = [graph_type.to_string()];
+        let mut total = 0usize;
+        let mut query = ODataQuery::default().with_limit(PAGE);
+        loop {
+            let page = self
+                .client
+                .project_nodes(ctx, &patterns, query.clone())
+                .await
+                .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
+            total += page.items.len();
+            if total >= cap {
+                return Ok((cap, true));
+            }
+            let Some(next) = page.page_info.next_cursor else {
+                break;
+            };
+            let cursor = CursorV1::decode(&next)
+                .map_err(|e| anyhow!("graph-storage returned an undecodable cursor: {e}"))?;
+            query = ODataQuery::default().with_limit(PAGE).with_cursor(cursor);
+        }
+        Ok((total, false))
+    }
 }
 // ── Service ─────────────────────────────────────────────────────────────────
+/// How far a per-type count will page before it reports a floor instead of a
+/// total.
+///
+/// Deliberately the same number as the list cap below. Counting past the point
+/// where the page could show them buys a bigger number and nothing else, and
+/// `2000+` is the more useful thing to read anyway: it says "more than this
+/// page can hold", which is the decision the reader is actually making.
+const TYPE_COUNT_CAP: usize = 2000;
+
+/// How many nodes of one type the graph holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeCount {
+    pub leaf_id: String,
+    /// Exact, unless `capped` — then it is a floor.
+    pub count: usize,
+    /// Whether the count stopped at the cap rather than at the end.
+    pub capped: bool,
+}
+
 /// How many component nodes one read of the Components page will return.
 ///
 /// A tenant can mark any type, and some types have six figures of instances.
@@ -939,6 +1019,42 @@ impl CatalogService {
             field_schema::builtin_schemas(),
             parsed,
         ))
+    }
+
+    /// How many nodes of each type the graph holds.
+    ///
+    /// Its own read, deliberately. A count is one projection per type and the
+    /// list is hundreds of types, where [`Self::list_types`] is two reads; the
+    /// Objects page shows its table first and fills the numbers in, rather
+    /// than making every caller of the type list pay for arithmetic it did not
+    /// ask for.
+    ///
+    /// Abstract types are skipped rather than counted: a family is derived
+    /// from and never instantiated, so its count is zero by construction and
+    /// asking the graph would be a query to learn nothing.
+    pub async fn count_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<TypeCount>> {
+        let types = self.sink.node_types(ctx).await?;
+        let mut out = Vec::with_capacity(types.len());
+        for t in types {
+            if t.is_abstract {
+                out.push(TypeCount {
+                    leaf_id: t.leaf_id,
+                    count: 0,
+                    capped: false,
+                });
+                continue;
+            }
+            let (count, capped) = self
+                .sink
+                .count_of_type(ctx, &t.type_id, TYPE_COUNT_CAP)
+                .await?;
+            out.push(TypeCount {
+                leaf_id: t.leaf_id,
+                count,
+                capped,
+            });
+        }
+        Ok(out)
     }
 
     /// The nodes the Components page lists: every node of every type this
@@ -1854,5 +1970,162 @@ mod component_list_tests {
             .expect("list components");
         assert!(nodes.is_empty(), "{nodes:?}");
         assert!(!truncated);
+    }
+}
+
+#[cfg(test)]
+mod type_count_tests {
+    //! What the Objects page puts in its "Objects" column.
+
+    use super::*;
+    use crate::components_catalog::gts::{FRONTX_TYPE, GEAR_TYPE};
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca9))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(0x7e4a49))
+            .build()
+            .expect("security context")
+    }
+
+    async fn seeded(gears: usize) -> CatalogService {
+        let service = CatalogService::new(
+            Arc::new(MemorySink::default()),
+            "constructorfabric".to_string(),
+            None,
+        );
+        let mut nodes: Vec<GtsNode> = (0..gears)
+            .map(|i| gts::gear_node(&format!("gear-{i}"), json!({ "name": format!("gear-{i}") })))
+            .collect();
+        nodes.push(gts::frontx_node(
+            "@cf/shell",
+            json!({ "name": "@cf/shell" }),
+        ));
+        service
+            .sink
+            .upsert(&ctx(), &nodes, &[])
+            .await
+            .expect("seed");
+        service
+    }
+
+    #[tokio::test]
+    async fn a_type_is_counted_per_type_and_not_in_total() {
+        let counts = seeded(3)
+            .await
+            .count_types(&ctx())
+            .await
+            .expect("count types");
+        let by_type: std::collections::HashMap<&str, &TypeCount> =
+            counts.iter().map(|c| (c.leaf_id.as_str(), c)).collect();
+        assert_eq!(by_type[GEAR_TYPE].count, 3);
+        assert_eq!(by_type[FRONTX_TYPE].count, 1);
+        assert!(counts.iter().all(|c| !c.capped));
+    }
+
+    /// The number a reader sees must be a total or say that it is not. A
+    /// capped count reported as a total is the page lying about their graph.
+    #[tokio::test]
+    async fn a_count_past_the_cap_reports_a_floor_and_says_so() {
+        let service = CatalogService::new(
+            Arc::new(MemorySink::default()),
+            "constructorfabric".to_string(),
+            None,
+        );
+        let ctx = ctx();
+        let graph_type = gts::graph_type_id(GEAR_TYPE);
+        let nodes: Vec<GtsNode> = (0..5)
+            .map(|i| gts::gear_node(&format!("gear-{i}"), json!({ "name": format!("gear-{i}") })))
+            .collect();
+        service.sink.upsert(&ctx, &nodes, &[]).await.expect("seed");
+
+        let (count, capped) = service
+            .sink
+            .count_of_type(&ctx, &graph_type, 2)
+            .await
+            .expect("count");
+        assert_eq!(count, 2);
+        assert!(
+            capped,
+            "five nodes counted under a cap of two read as exact"
+        );
+
+        let (count, capped) = service
+            .sink
+            .count_of_type(&ctx, &graph_type, 50)
+            .await
+            .expect("count");
+        assert_eq!(count, 5);
+        assert!(!capped);
+    }
+
+    /// A store that reports one abstract type and refuses to be asked how many
+    /// instances it has — because a family is derived from and never
+    /// instantiated, so that query can only ever return zero.
+    struct FamilyOnlySink;
+
+    const FAMILY: &str = "gts.cf.core.graph.owned_node.v1~";
+
+    #[async_trait]
+    impl CatalogSink for FamilyOnlySink {
+        async fn register_types(&self, _ctx: &SecurityContext) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn upsert(
+            &self,
+            _ctx: &SecurityContext,
+            _nodes: &[GtsNode],
+            _edges: &[GtsEdge],
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list(
+            &self,
+            _ctx: &SecurityContext,
+            _type_filter: Option<&str>,
+        ) -> anyhow::Result<Vec<GtsNode>> {
+            Ok(Vec::new())
+        }
+        async fn delete(&self, _ctx: &SecurityContext, _instance_id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn node_types(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
+            Ok(vec![GraphNodeType {
+                type_id: FAMILY.to_string(),
+                leaf_id: FAMILY.to_string(),
+                is_abstract: true,
+            }])
+        }
+        async fn list_of_types(
+            &self,
+            _ctx: &SecurityContext,
+            _graph_types: &[String],
+            _limit: usize,
+        ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
+            Ok((Vec::new(), false))
+        }
+        async fn count_of_type(
+            &self,
+            _ctx: &SecurityContext,
+            graph_type: &str,
+            _cap: usize,
+        ) -> anyhow::Result<(usize, bool)> {
+            panic!("the graph was asked to count instances of the abstract {graph_type}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_abstract_type_is_reported_as_empty_without_asking_the_graph() {
+        let service = CatalogService::new(
+            Arc::new(FamilyOnlySink),
+            "constructorfabric".to_string(),
+            None,
+        );
+        let counts = service.count_types(&ctx()).await.expect("count types");
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].leaf_id, FAMILY);
+        assert_eq!(counts[0].count, 0);
+        assert!(!counts[0].capped);
     }
 }
