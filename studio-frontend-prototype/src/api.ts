@@ -313,6 +313,27 @@ export interface ArtifactNodePage {
  *  payload shape differs by type; read it loosely. */
 /** One registered type, as the registry returns it. Only the fields a screen
  *  needs; the registry carries the whole schema document too. */
+/** One GTS type the graph holds, and what this organization says about it.
+ *
+ *  The graph stores far more types than a catalogue of building blocks should
+ *  list — files, chunks, commits, domain entities. Which of them are
+ *  components is a judgement about the organization's model, not a fact about
+ *  storage, so it is a mark somebody sets rather than a constant in a gear. */
+export interface CatalogType {
+  /** The id graph-storage stores it under, ancestry and all. Empty when
+   *  nothing has written a node of this type into this tenant's graph yet. */
+  type_id: string;
+  /** The leaf of that id: how the type is named everywhere else, and the key a
+   *  mark and a field schema are written against. */
+  leaf_id: string;
+  /** A family or base — derived from, never instantiated, so never a
+   *  component. Reported rather than hidden so the page can say why. */
+  is_abstract: boolean;
+  component: boolean;
+  /** Who authored the field schema it renders against. */
+  schema: "builtin" | "tenant" | "none";
+}
+
 /** The presentation of one component type: which fields a component page shows
  *  for it, grouped, and where each one is read from.
  *
@@ -351,6 +372,9 @@ export interface FieldSchema {
   sourceClasses: Record<string, { label: string; hint: string }>;
   /** `builtin` — what the deployment ships — or `tenant`, a stored override. */
   owner: "builtin" | "tenant";
+  /** Whether this organization treats the type as a component, and therefore
+   *  whether the Components page lists its nodes. Set on the Objects page. */
+  component: boolean;
 }
 
 export interface GtsEntity {
@@ -1540,6 +1564,19 @@ export const api = {
       { method: "DELETE" },
     ),
 
+  /** Every node type the graph holds, and which of them this organization
+   *  treats as components. The Objects page is a view of exactly this. */
+  catalogTypes: (token: string) =>
+    request<{ types: CatalogType[] }>("/studio-components-catalog/v1/types", token),
+
+  /** Mark a type as one of this organization's components, or unmark it. */
+  setTypeComponent: (token: string, typeId: string, component: boolean) =>
+    request<CatalogType>(
+      `/studio-components-catalog/v1/types/${encodeURIComponent(typeId)}/component`,
+      token,
+      { method: "PUT", body: JSON.stringify({ component }) },
+    ),
+
   // ── Domain model (studio-domain-model gear) ──
   /** Upload a domain-model document to make it the active ontology. */
   importDomainModel: (token: string, ontology: unknown) =>
@@ -1731,7 +1768,10 @@ export const api = {
     }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
-    request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/components", token),
+    request<{ nodes: CatalogNode[]; truncated?: boolean }>(
+      "/studio-components-catalog/v1/components",
+      token,
+    ),
   /** Read Studio-managed delivery metadata for catalogued Gears. */
   listComponentProfiles: (token: string) =>
     request<{ nodes: CatalogNode[] }>("/studio-components-catalog/v1/profiles", token),

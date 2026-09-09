@@ -533,6 +533,13 @@ export function ComponentsCatalog({
   // page is made of. Served rather than compiled in, so a workspace can change
   // a page without a release.
   const [schemas, setSchemas] = useState<Schemas>({});
+  // Whether a cap cut the server's list short. An organization can mark a type
+  // with six figures of instances, and showing part of one silently would be
+  // worse than saying so.
+  const [truncated, setTruncated] = useState(false);
+  // The types this organization treats as components, or `null` while that is
+  // unknown -- an unknown filter shows everything rather than nothing.
+  const [componentTypes, setComponentTypes] = useState<Set<string> | null>(null);
 
   const setSrc = (patch: Partial<Sources>) =>
     setSources((cur) => {
@@ -580,13 +587,26 @@ export function ComponentsCatalog({
     api
       .fieldSchemas(token)
       .then(({ schemas: served }) => {
-        if (live) setSchemas(indexSchemas(served ?? []));
+        if (!live) return;
+        setSchemas(indexSchemas(served ?? []));
+        // The same read answers both questions: what each type looks like, and
+        // which types this organization calls components. One round trip, and
+        // no way for the two answers to disagree.
+        setComponentTypes(
+          new Set((served ?? []).filter((s) => s.component).map((s) => s.describes)),
+        );
       })
       .catch(() => {
         // No schemas means no field cards, which is a visibly empty page
         // rather than a wrong one. The name, description and category on each
         // card come from the node itself and survive this.
-        if (live) setSchemas({});
+        //
+        // The marks go to `null` rather than to an empty set: not knowing
+        // which types are components must not read as "none of them are".
+        if (live) {
+          setSchemas({});
+          setComponentTypes(null);
+        }
       });
     return () => {
       live = false;
@@ -612,7 +632,7 @@ export function ComponentsCatalog({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const [{ nodes }, profileResponse, kitResponse, docTypeResponse] =
+      const [componentResponse, profileResponse, kitResponse, docTypeResponse] =
         await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch((error): { nodes: CatalogNode[] } => {
@@ -634,16 +654,22 @@ export function ComponentsCatalog({
       // wins: it carries the repository, the ref and the manifest path that a
       // hardcoded catalogue entry cannot. The built-ins stay so that a
       // deployment which has never run a kit sync still shows them.
+      const nodes = componentResponse.nodes ?? [];
+      setTruncated(Boolean(componentResponse.truncated));
       const synced = new Set(
-        (nodes ?? [])
+        nodes
           .filter((n) => n.type_id === KIT_TYPE)
           .map((n) => String(n.value.name ?? "")),
       );
       const builtIns = (kitResponse.items ?? [])
         .filter((k) => !synced.has(k.slug))
         .map(kitAsNode);
+      // The server sends nodes of the types this organization marked. The two
+      // sets below are synthesised here from other gears' data, so they are
+      // filtered against the same marks rather than appearing whatever the
+      // organization decided.
       setGears([
-        ...(nodes ?? []),
+        ...nodes,
         ...builtIns,
         ...(docTypeResponse.items ?? []).map(docTypeAsNode),
       ]);
@@ -708,6 +734,12 @@ export function ComponentsCatalog({
     const needle = query.trim().toLowerCase();
     const cat = categoryFilter.trim().toLowerCase();
     const rows = (gears ?? [])
+      // A type this organization does not treat as a component does not
+      // belong on this page, whichever gear put the node there. Only the
+      // synthesised nodes reach this test in practice -- the server has
+      // already applied the marks to what it sent -- but applying it in one
+      // place is what keeps the two agreeing.
+      .filter((g) => componentTypes === null || componentTypes.has(g.type_id))
       .filter((g) => !typeFilter || g.type_id === typeFilter)
       .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
       .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
@@ -726,7 +758,7 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, typeFilter, kindFilter, hideSdk, sortMode, categoryFilter, profiles]);
+  }, [gears, query, typeFilter, kindFilter, hideSdk, sortMode, categoryFilter, profiles, componentTypes]);
 
   // Report the distinct categories present, so the filter rail can offer them.
   useEffect(() => {
@@ -821,6 +853,12 @@ export function ComponentsCatalog({
             traffic lights and sources; an empty cell is a finding, not an omission.
           </p>
 
+          {truncated && (
+            <p className="gcat-hint">
+              Showing the first {gears?.length ?? 0} components. A marked type has more nodes than
+              this page will render — narrow it on Objects, or filter above.
+            </p>
+          )}
           {sync && <p className="gcat-hint">Sync: {sync}</p>}
           {err && <p className="gcat-err">{err}</p>}
 

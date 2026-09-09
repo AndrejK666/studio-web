@@ -117,6 +117,26 @@ pub fn graph_type_id(our_type: &str) -> String {
     format!("{family}{leaf}")
 }
 
+/// The leaf of a graph-storage type id: the last `~`-segment, back in `gts.`
+/// form.
+///
+/// A derived id carries its ancestry —
+/// `gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.gear.v1~`
+/// — and the leaf is the type itself, `gts.cf.studio.catalog.gear.v1~`. That
+/// is the id everything outside graph-storage names a type by, and the id the
+/// studio's per-type records are keyed on, so a type listed from the graph and
+/// a schema written for it meet on the same string. Unlike
+/// [`our_type_from_graph`], this works for any type, including the ones other
+/// gears (or another deployment) registered.
+pub fn leaf_type_id(graph_type: &str) -> String {
+    let body = graph_type.strip_prefix("gts.").unwrap_or(graph_type);
+    let leaf = body
+        .split('~')
+        .rfind(|segment| !segment.is_empty())
+        .unwrap_or(body);
+    format!("gts.{leaf}~")
+}
+
 /// Reverse of [`graph_type_id`]: map a graph-storage type id back to our
 /// `&'static` constant so a node read back keeps its typed identity.
 pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
@@ -377,6 +397,24 @@ mod tests {
                 "{id}: expected vendor.package.namespace.type.vN, got {tokens:?}"
             );
         }
+    }
+
+    /// The id every other surface names a type by, taken off the end of the
+    /// ancestry graph-storage stores it under.
+    #[test]
+    fn a_derived_type_id_reduces_to_its_leaf() {
+        assert_eq!(leaf_type_id(&graph_type_id(GEAR_TYPE)), GEAR_TYPE);
+        assert_eq!(leaf_type_id(&graph_type_id(KIT_TYPE)), KIT_TYPE);
+        // An id that is already a leaf is its own leaf.
+        assert_eq!(leaf_type_id(GEAR_TYPE), GEAR_TYPE);
+        // And a type this gear never registered reduces the same way, which is
+        // the point: the Objects page lists other gears' types too.
+        assert_eq!(
+            leaf_type_id(
+                "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.file.v1~"
+            ),
+            "gts.cf.studio.artifact.file.v1~"
+        );
     }
 
     #[test]
