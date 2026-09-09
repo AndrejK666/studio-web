@@ -6,6 +6,7 @@ import { ProjectsPortfolio } from "./projects";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
 import { BackgroundWork } from "./tasks";
+import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
@@ -4260,6 +4261,14 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
     blurb:
       "Credentials the IDE agents authenticate with — Anthropic for Claude Code, OpenAI for Codex.",
   },
+  {
+    key: "notification",
+    title: "Notifications",
+    blurb:
+      "Where Studio tells people what happened: Slack, Zulip or Discord. A bot token reaches " +
+      "every channel it was invited to; an incoming webhook posts to the one channel its URL " +
+      "was created for.",
+  },
 ];
 
 /** Where a connection is attached, and how widely its token is readable.
@@ -5149,6 +5158,21 @@ function ConnectorsView({
           onNote={setNote}
         />
       )}
+
+      {/* What the notification connectors are FOR, next to the connectors
+          themselves: a message, the two ways to send it, and the examples of
+          what Studio has reason to send. Not filtered by the search box — this
+          is a form, not a list. */}
+      {!disabled && (
+        <Notifications
+          token={token}
+          tenantId={ws.id}
+          projectId={ws.id}
+          projectName={ws.name}
+          connections={connections ?? []}
+          providers={providers ?? []}
+        />
+      )}
     </>
   );
 }
@@ -5277,7 +5301,10 @@ function AddConnector({
         <li>
           <div className="grow">
             <div className="name">{picked.display_name}</div>
-            <div className="sub">source code</div>
+            <div className="sub">
+              {CATEGORIES.find((c) => c.key === picked.category)?.title.toLowerCase() ??
+                picked.category}
+            </div>
           </div>
         </li>
       </ul>
@@ -5303,16 +5330,30 @@ function AddConnector({
         onChange={(e) => setLabel(e.target.value)}
       />
 
-      <label>Instance URL</label>
-      <input
-        placeholder={
-          picked.category === "ai"
-            ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
-            : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
-        }
-        value={baseUrl}
-        onChange={(e) => setBaseUrl(e.target.value)}
-      />
+      {/* An incoming webhook carries its own host, path and channel in the URL
+          that IS its credential, so asking for an instance URL as well invites
+          a contradiction the driver would then have to refuse. */}
+      {picked.fixed_target ? (
+        <p className="hint">
+          The webhook URL below is the whole address: host, channel and secret. Nothing else to
+          configure.
+        </p>
+      ) : (
+        <>
+          <label>Instance URL</label>
+          <input
+            placeholder={
+              picked.category === "ai"
+                ? `Leave empty for ${picked.default_base_url} — or any compatible endpoint`
+                : picked.category === "notification"
+                  ? `Leave empty for ${picked.default_base_url} — or your own installation`
+                  : `Leave empty for ${picked.default_base_url} — or your self-hosted installation`
+            }
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+        </>
+      )}
 
       <label>{picked.credential_label}</label>
       <div className="row">

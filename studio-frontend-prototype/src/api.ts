@@ -231,6 +231,32 @@ export interface ConnectorProvider {
   credential_label: string;
   /** Placeholder hinting at the credential shape, e.g. "sk-ant-…". */
   credential_hint: string;
+  /** `notification` providers only: true when the credential itself fixes the
+   *  channel — an incoming webhook — so there is no channel to pick and no
+   *  `target` to send. */
+  fixed_target?: boolean;
+}
+
+/** One channel a notification connection can post to.
+ *  `GET /studio-connector/v1/connections/{id}/targets`. */
+export interface NotifyTarget {
+  /** Provider-native id — what `target` expects; its shape differs per platform. */
+  id: string;
+  name: string;
+  /** The server or workspace the channel belongs to (a Discord guild). */
+  container?: string | null;
+  private: boolean;
+  /** True for Zulip: a message to this channel must carry a `topic`. */
+  topic_required: boolean;
+}
+
+/** Where a message landed, as the platform reported it. */
+export interface SentMessage {
+  connection_id: string;
+  provider: string;
+  /** Not necessarily what was asked for: a webhook resolves its own channel. */
+  target: string;
+  message_id?: string | null;
 }
 
 export interface Connection {
@@ -1368,6 +1394,62 @@ export const api = {
       token,
       { method: "DELETE" },
     ),
+
+  /* ── studio-connector: the notification half ── */
+
+  /** Channels this connection can post to. Refused (400) for a webhook
+   *  connection, whose channel is fixed in the URL it was created from. */
+  notifyTargets: (token: string, id: string, tenant: string, search?: string) => {
+    const q = new URLSearchParams({ tenant });
+    if (search?.trim()) q.set("search", search.trim());
+    return request<{ items: NotifyTarget[] }>(
+      `/studio-connector/v1/connections/${encodeURIComponent(id)}/targets?${q.toString()}`,
+      token,
+    );
+  },
+
+  /** Post now and wait for the platform's answer. Delivered once, not retried —
+   *  this is the "send a test message" path; use `queueNotification` for
+   *  anything that must not be lost. */
+  sendConnectorMessage: (
+    token: string,
+    id: string,
+    tenant: string,
+    body: { target?: string; title?: string; text: string; link?: string; topic?: string },
+  ) =>
+    request<SentMessage>(
+      `/studio-connector/v1/connections/${encodeURIComponent(id)}/messages?tenant=${encodeURIComponent(tenant)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  /* ── studio-notify: the durable queue ── */
+
+  /** Queue a notification and get the run that will deliver it. 202 — durably
+   *  queued; whether Slack takes it is not yet known.
+   *
+   *  Two kinds of destination, exactly one per message: `connection_id` posts to
+   *  a chat channel, `workspace_id` shows it in the Theia IDE of whoever has
+   *  that workspace open. */
+  queueNotification: (
+    token: string,
+    body: {
+      connection_id?: string;
+      target?: string;
+      workspace_id?: string;
+      level?: "info" | "warn" | "error";
+      title?: string;
+      text: string;
+      link?: string;
+      topic?: string;
+      idempotency_key?: string;
+      tenant_id?: string;
+    },
+  ) =>
+    request<{ run_id: string; poll: string }>("/studio-notify/v1/messages", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   connectionRepositories: (token: string, id: string, tenant: string, search?: string) => {
     const q = new URLSearchParams({ tenant });

@@ -49,6 +49,58 @@ describe("background work client", () => {
     );
   });
 
+  it("asks a connection for its channels in the tenant being viewed", async () => {
+    // Connections are inherited, so the tenant is not implied by the caller:
+    // the page passes the project it is showing.
+    const fetchMock = jsonMock({ items: [] });
+    await api.notifyTargets("token", "c-1", "t-9");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-connector/v1/connections/c-1/targets?tenant=t-9",
+      expect.anything(),
+    );
+  });
+
+  it("posts a chat message through the connection, not through the queue", async () => {
+    const fetchMock = jsonMock({ connection_id: "c-1", provider: "slack", target: "C0" });
+    await api.sendConnectorMessage("token", "c-1", "t-9", { target: "C0", text: "hi" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-connector/v1/connections/c-1/messages?tenant=t-9",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ target: "C0", text: "hi" }),
+      }),
+    );
+  });
+
+  it("queues a chat notification as a run", async () => {
+    const fetchMock = jsonMock({ run_id: "r-1", poll: "/studio-tasks/v1/runs/r-1" });
+    await api.queueNotification("token", {
+      connection_id: "c-1",
+      target: "C0",
+      text: "3 tests red",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-notify/v1/messages",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ connection_id: "c-1", target: "C0", text: "3 tests red" });
+  });
+
+  it("queues an IDE notification against a workspace, with no connection", async () => {
+    // The two destinations are exclusive server-side: naming both is a 400, so
+    // the client must not smuggle a connection into an editor message.
+    const fetchMock = jsonMock({ run_id: "r-2", poll: "/studio-tasks/v1/runs/r-2" });
+    await api.queueNotification("token", {
+      workspace_id: "w-1",
+      level: "warn",
+      text: "the import failed",
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ workspace_id: "w-1", level: "warn", text: "the import failed" });
+    expect(body.connection_id).toBeUndefined();
+  });
+
   it("encodes a run id in the path rather than interpolating it raw", async () => {
     const fetchMock = jsonMock({ id: "r-1" });
     await api.cancelTaskRun("token", "r/1");
