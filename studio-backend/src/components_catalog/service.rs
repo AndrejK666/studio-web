@@ -390,6 +390,10 @@ impl CatalogService {
         // Components that carry a model of their own, keyed by slug. Declared
         // beside the gears because they are upserted in the same breath.
         let mut kit_values: BTreeMap<String, Value> = BTreeMap::new();
+        // Micro-frontends keep the gear payload shape and the editable profile
+        // that renders their component page -- only their node type differs, so
+        // the catalogue can be asked for them by type rather than by label.
+        let mut frontx_values: BTreeMap<String, Value> = BTreeMap::new();
         let mut version_nodes: Vec<GtsNode> = Vec::new();
         let mut version_edges: Vec<GtsEdge> = Vec::new();
         let mut profile_nodes: Vec<GtsNode> = Vec::new();
@@ -473,6 +477,8 @@ impl CatalogService {
                                 .kind
                                 .clone()
                                 .unwrap_or_else(|| classify_kind(&rg.crate_name).to_string());
+                            // Captured before `kind` is moved into the payload.
+                            let is_frontx = kind == "frontx";
                             let entry = gear_values.entry(rg.crate_name.clone()).or_insert_with(
                                 || json!({ "name": rg.crate_name, "title": rg.crate_name }),
                             );
@@ -486,6 +492,12 @@ impl CatalogService {
                                 {
                                     obj.insert("description".to_string(), Value::String(d.clone()));
                                 }
+                            }
+                            // A micro-frontend is its own type. The payload and
+                            // the profile are unchanged; it simply stops being
+                            // filed as a gear that says it is not one.
+                            if is_frontx && let Some(value) = gear_values.remove(&rg.crate_name) {
+                                frontx_values.insert(rg.crate_name.clone(), value);
                             }
                             let mut prof =
                                 existing.get(&rg.crate_name).cloned().unwrap_or_default();
@@ -533,6 +545,12 @@ impl CatalogService {
                 .into_iter()
                 .map(|(slug, value)| gts::kit_node(slug.as_str(), value)),
         );
+        let frontx_total = frontx_values.len();
+        all_nodes.extend(
+            frontx_values
+                .into_iter()
+                .map(|(name, value)| gts::frontx_node(name.as_str(), value)),
+        );
         all_nodes.extend(version_nodes);
         all_nodes.extend(profile_nodes);
         let stored = all_nodes.len();
@@ -541,6 +559,7 @@ impl CatalogService {
         tracing::info!(
             gears = gears_total,
             kits = kits_total,
+            micro_frontends = frontx_total,
             versions = versions_total,
             stored,
             "components-catalog: sync stored"

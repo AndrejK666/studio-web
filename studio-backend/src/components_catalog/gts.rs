@@ -37,13 +37,23 @@ pub const PROJECT_GEAR_REPO_TYPE: &str = "gts.cf.studio.catalog.project_gear_rep
 /// `document_type`). A gear and a kit are different kinds.
 pub const KIT_TYPE: &str = "gts.cf.studio.catalog.kit.v1~";
 
+/// A FrontX micro-frontend: a package in the FrontX monorepo.
+///
+/// Its own type for the same reason a kit has one. A gear is a crate with a
+/// version ladder on crates.io; a micro-frontend is an npm package in a
+/// monorepo, with none of that and a shell contract instead. They were one node
+/// type separated by a `kind` string, which made the difference a label rather
+/// than a shape and left every reader to guess which fields applied.
+pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 5] = [
+pub const ALL_NODE_TYPES: [&str; 6] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
     PROJECT_GEAR_REPO_TYPE,
     KIT_TYPE,
+    FRONTX_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -103,7 +113,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 5] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 6] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -128,6 +138,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 5] = [
         KIT_TYPE,
         "Kit",
         "A set of files a project installs into its repositories, discovered from a source repository.",
+    ),
+    (
+        FRONTX_TYPE,
+        "Micro-frontend",
+        "A FrontX package: a micro-frontend or a scaffolding template from the FrontX monorepo.",
     ),
 ];
 
@@ -252,6 +267,20 @@ pub fn kit_node(slug: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: KIT_TYPE,
         instance_id: kit_instance_id(slug),
+        value,
+    }
+}
+
+/// Instance id of a micro-frontend, keyed on its package name.
+pub fn frontx_instance_id(name: &str) -> String {
+    anon_id(&["frontx", name])
+}
+
+/// A micro-frontend node. `value` is the payload built from its package.
+pub fn frontx_node(name: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: FRONTX_TYPE,
+        instance_id: frontx_instance_id(name),
         value,
     }
 }

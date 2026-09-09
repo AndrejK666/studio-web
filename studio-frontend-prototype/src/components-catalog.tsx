@@ -436,6 +436,11 @@ export function ComponentsCatalog({
   const [sources, setSources] = useState<Sources>(() => loadSources());
   const [showSources, setShowSources] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
+  // Which component type the cards below are. Empty means every type.
+  const [typeFilter, setTypeFilter] = useState("");
+  // `gts_id -> title`, read from the types-registry. A type with no title falls
+  // back to its own identifier rather than to a guess.
+  const [typeTitles, setTypeTitles] = useState<Record<string, string>>({});
 
   const setSrc = (patch: Partial<Sources>) =>
     setSources((cur) => {
@@ -450,6 +455,30 @@ export function ComponentsCatalog({
       saveSources(next);
       return next;
     });
+
+  // The registry names the types; the catalogue says which of them have
+  // components. Neither alone makes the selector below.
+  useEffect(() => {
+    let live = true;
+    api
+      .gtsTypeTitles(token)
+      .then(({ entities }) => {
+        if (!live) return;
+        const next: Record<string, string> = {};
+        for (const e of entities ?? []) {
+          const title = e.content?.title?.trim();
+          if (title) next[e.gts_id] = title;
+        }
+        setTypeTitles(next);
+      })
+      .catch(() => {
+        // A registry that will not answer costs the labels, not the selector.
+        if (live) setTypeTitles({});
+      });
+    return () => {
+      live = false;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -541,6 +570,7 @@ export function ComponentsCatalog({
     const needle = query.trim().toLowerCase();
     const cat = categoryFilter.trim().toLowerCase();
     const rows = (gears ?? [])
+      .filter((g) => !typeFilter || g.type_id === typeFilter)
       .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
       .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
       .filter((g) => !cat || componentCategory(g, profiles[nameOf(g)]).toLowerCase().includes(cat))
@@ -558,7 +588,7 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, kindFilter, hideSdk, sortMode, categoryFilter, profiles]);
+  }, [gears, query, typeFilter, kindFilter, hideSdk, sortMode, categoryFilter, profiles]);
 
   // Report the distinct categories present, so the filter rail can offer them.
   useEffect(() => {
@@ -638,11 +668,18 @@ export function ComponentsCatalog({
             />
           )}
 
+          <TypePicker
+            gears={gears}
+            titles={typeTitles}
+            value={typeFilter}
+            onChange={setTypeFilter}
+          />
+
           <p className="gcat-sub">
             A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
-            repository, and micro-frontends from FrontX — read through a connector, with crates.io
-            adding published versions. Each component opens a page of grouped fields, traffic lights and
-            sources; an empty cell is a finding, not an omission.
+            repository, micro-frontends from FrontX, and kits — read through a connector, with
+            crates.io adding published versions. Each component opens a page of grouped fields,
+            traffic lights and sources; an empty cell is a finding, not an omission.
           </p>
 
           {sync && <p className="gcat-hint">Sync: {sync}</p>}
@@ -765,6 +802,65 @@ function RepoSourceEditor({
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
         </p>
       </div>
+    </div>
+  );
+}
+
+/** The component types the catalogue actually holds, as a row of chips.
+ *
+ *  A component type is a GTS type, not a label: `catalog.gear.v1~`,
+ *  `catalog.kit.v1~`, `catalog.frontx.v1~`. Each is a different shape with
+ *  different fields, and mixing them in one list means every card is read
+ *  against a schema that may not be its own.
+ *
+ *  The row is built from the nodes present rather than from a list in this
+ *  file, so a type the catalogue starts carrying appears here without an edit,
+ *  and one it stops carrying stops taking up room. Names come from the
+ *  types-registry, which ADR-0013 makes the catalogue of meaning for exactly
+ *  this purpose; an unnamed type falls back to its own identifier rather than
+ *  to a prettified guess.
+ */
+function TypePicker({
+  gears,
+  titles,
+  value,
+  onChange,
+}: {
+  gears: CatalogNode[] | null;
+  titles: Record<string, string>;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of gears ?? []) m.set(g.type_id, (m.get(g.type_id) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => (titles[a[0]] ?? a[0]).localeCompare(titles[b[0]] ?? b[0]));
+  }, [gears, titles]);
+
+  // One type is no choice, and none is nothing to choose from.
+  if (counts.length < 2) return null;
+
+  const total = counts.reduce((n, [, c]) => n + c, 0);
+  return (
+    <div className="gcat-types">
+      <span className="gcat-types-label">Type</span>
+      <button
+        className={`gcat-type${value === "" ? " on" : ""}`}
+        onClick={() => onChange("")}
+        title="Every component type"
+      >
+        All <span className="gcat-type-n">{total}</span>
+      </button>
+      {counts.map(([id, n]) => (
+        <button
+          key={id}
+          className={`gcat-type${value === id ? " on" : ""}`}
+          onClick={() => onChange(value === id ? "" : id)}
+          title={id}
+        >
+          {titles[id] ?? id} <span className="gcat-type-n">{n}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -1994,6 +2090,12 @@ const GCAT_CSS = `
 .gcat .gtxt { font-size:11.5px; color:var(--studio-muted); line-height:1.35; max-width:280px; }
 .gcat .gtxt b { color:var(--studio-text); font-family:var(--studio-mono); }
 
+.gcat .gcat-types { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+.gcat .gcat-types-label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--studio-muted); margin-right:2px; }
+.gcat .gcat-type { font-size:12px; padding:3px 10px; border:1px solid var(--border,#e2e4e9); border-radius:999px; background:transparent; cursor:pointer; color:inherit; }
+.gcat .gcat-type:hover { border-color:var(--accent,#4f46e5); }
+.gcat .gcat-type.on { border-color:var(--accent,#4f46e5); background:var(--accent-soft,#eef2ff); font-weight:600; }
+.gcat .gcat-type-n { opacity:.55; font-variant-numeric:tabular-nums; margin-left:2px; }
 .gcat .gcat-sub { font-size:14px; line-height:1.5; color:var(--studio-muted); max-width:82ch; margin:0 0 14px; }
 .gcat .gcat-hint { font-size:11.5px; color:var(--studio-muted); margin:6px 0; }
 .gcat .gcat-err { color:var(--studio-danger); font-size:12px; margin:6px 0; }
