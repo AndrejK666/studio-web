@@ -100,9 +100,9 @@ The CI/CD promotion rules are in [`deploy/PIPELINES.md`](deploy/PIPELINES.md).
 
 Routine deployment flow:
 
-1. Push or merge code to `main`. The Build Images workflow publishes an
-   immutable `sha-<commit>` snapshot, rebuilding only components whose build
-   context changed.
+1. Push or merge code to `main`. **Test Changed Components** runs first. Its
+   successful result automatically starts **Publish Images**, which publishes
+   an immutable `sha-<commit>` snapshot and rebuilds only affected components.
 2. In GitHub Actions, run **Deploy Services** from `main`.
 3. For dev select a `sha-<commit>` image tag and the required service
    component. For test select a published `v*` release tag.
@@ -115,9 +115,11 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 
 ## CI/CD
 
-- **Test** runs on pushes and pull requests, filtered by changed component.
-- **Build Images** runs for `main`, version tags (`v*`), infrastructure tags
-  (`infra-v*`), and manual requests. Main snapshots rebuild only changed images
+- **Test Changed Components** runs for branch pushes and fork pull requests,
+  filtered by changed component. Internal PRs reuse their branch-push result.
+- **Publish Images** starts only after a successful internal Test for branch
+  snapshots. Version tags (`v*`), infrastructure tags (`infra-v*`), and manual
+  requests use the explicit release path. Snapshots rebuild only changed images
   and copy unchanged images into the same immutable SHA snapshot.
 - **Deploy Services** is manual and deploys `backend`, `frontend`,
   `prototype`, or `all`. SHA snapshots are dev-only; release tags may be
