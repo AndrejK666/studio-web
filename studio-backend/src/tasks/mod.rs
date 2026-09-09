@@ -75,6 +75,11 @@ const PARTITIONS: u32 = 8;
 /// Payload type on the queue.
 const PAYLOAD_TYPE: &str = "cf.studio.tasks.run.v1";
 
+/// The attempt cap a handler gets unless it overrides
+/// [`registry::TaskHandler::max_attempts`]. Re-exported so a handler that
+/// deliberately asks for more can say so against the default.
+pub use dispatch::MAX_ATTEMPTS as DEFAULT_MAX_ATTEMPTS;
+
 /// ClientHub key under which the queue is published for other gears.
 ///
 /// Not a plugin — nothing selects between implementations — so, like

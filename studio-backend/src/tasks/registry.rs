@@ -127,6 +127,18 @@ pub trait TaskHandler: Send + Sync + 'static {
     /// long as it needs, and it must be safe to run twice. A handler that
     /// cannot be made idempotent has to make its own writes conditional.
     async fn run(&self, ctx: &TaskContext) -> TaskOutcome;
+
+    /// How many attempts this kind of work gets before it is dead-lettered.
+    ///
+    /// The default suits work that is expensive and rarely transient — a
+    /// repository import that has failed five times is not usually about to
+    /// succeed. Work whose failures are mostly rate limits wants more: a chat
+    /// platform's 429 clears on its own, and giving up on a notification after
+    /// five backoffs would drop a message the platform was only asking us to
+    /// slow down about.
+    fn max_attempts(&self) -> i16 {
+        super::DEFAULT_MAX_ATTEMPTS
+    }
 }
 
 /// The process-wide task-type → handler map.

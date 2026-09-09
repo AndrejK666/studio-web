@@ -65,8 +65,9 @@ The registry is a process-global rather than a ClientHub client, deliberately:
 a handler's owner has no reason to depend on `studio-tasks`, so publishing it
 on the hub would be a race with gear init order.
 
-`TaskOutcome::Retry` gets exponential backoff up to five attempts, then the
-dead-letter table. `Failed` goes there immediately. Handlers run **leased**, so
+`TaskOutcome::Retry` gets exponential backoff up to five attempts — or however
+many the handler's `max_attempts` asks for — then the dead-letter table.
+`Failed` goes there immediately. Handlers run **leased**, so
 they may take as long as they need and must be idempotent — an expired lease is
 redelivered.
 
@@ -140,7 +141,13 @@ payload.
   need the ticker to enumerate tenants from account-management; the table is
   already keyed `(tenant_id, name)`, so that is an additive change.
 
-## The one task type that ships
+## The task types that ship
+
+`notify.deliver` posts a queued notification — the payload is the message and
+the run is its history. See [queued-notifications.md](./queued-notifications.md).
+It sets its own attempt cap (8 rather than 5), which is what
+`TaskHandler::max_attempts` is for: a chat platform's failures skew transient,
+and inheriting the default would drop messages on a rate limit.
 
 `tasks.retention_sweep` prunes finished runs (default 30 days) and cleans up
 `resolved`/`discarded` dead letters. A `tasks-retention-sweep` schedule at
@@ -173,12 +180,13 @@ working. PostgreSQL only — `config/dev.yaml` deliberately configures neither.
 
 ## Still to do
 
-- **Four migrations onto this substrate**, none of which needs a new decision:
-  `studio-notify`'s own outbox becomes the `notify.deliver` task type, and the
-  three in-memory registries (`connectors::graph_sync_tasks`,
+- **Three migrations onto this substrate**, none of which needs a new
+  decision. `studio-notify` is done — its own outbox is gone and delivery is
+  the `notify.deliver` task type, with the run as the record (see
+  [queued-notifications.md](./queued-notifications.md)). Remaining: the three
+  in-memory registries (`connectors::graph_sync_tasks`,
   `artifact_ingest::tasks`, `components_catalog::tasks`) become handlers. Each
-  touches a working gear's REST DTOs and wants its own verification pass, which
-  is why they are not bundled in with the substrate.
+  touches a working gear's REST DTOs and wants its own verification pass.
 - **Replacing the hand-rolled loops.** `studio-session`'s reaper is a schedule
   waiting to happen (and today it fires in every replica).
 - **Per-tenant schedules**, and a sweep that reaches other tenants' runs — both

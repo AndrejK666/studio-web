@@ -147,7 +147,6 @@ struct Catalogue {
 /// What [`ConnectorService::delivery_preflight`] found out about a connection.
 #[derive(Debug, Clone)]
 pub struct DeliveryPreflight {
-    pub provider: String,
     pub label: String,
     /// `personal` | `workspace` | `organization`.
     pub scope: String,
@@ -670,7 +669,6 @@ impl ConnectorService {
             ));
         }
         Ok(DeliveryPreflight {
-            provider: c.provider.clone(),
             label: c.label.clone(),
             scope: c.scope.clone(),
             fixed_target: driver.fixed_target(),

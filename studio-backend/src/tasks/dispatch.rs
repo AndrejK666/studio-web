@@ -45,11 +45,12 @@ use super::{PAYLOAD_TYPE, RunState, entity, registry};
 /// and in every scoped read the handlers make.
 pub const SERVICE_SUBJECT_ID: Uuid = Uuid::from_u128(0x2c81_5ea7_39d4_4b1f_9a06_7d3e_51c8_2fb0);
 
-/// How many times a run is attempted before it is dead-lettered.
+/// How many times a run is attempted before it is dead-lettered, unless its
+/// handler says otherwise ([`TaskHandler::max_attempts`]).
 ///
-/// Lower than a notification's, deliberately: a task is usually expensive (a
-/// repository import is tens of seconds), and something that has failed five
-/// times for a transient-looking reason is not usually transient.
+/// Five, because a task is usually expensive — a repository import is tens of
+/// seconds — and something that has failed five times for a transient-looking
+/// reason is not usually transient.
 pub const MAX_ATTEMPTS: i16 = 5;
 
 /// How often a running task's cancel flag is re-read.
@@ -386,7 +387,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 MessageResult::Reject(reason)
             }
             TaskOutcome::Retry(reason) => {
-                if attempt >= MAX_ATTEMPTS {
+                if attempt >= handler.max_attempts() {
                     warn!(
                         run_id = %run_id,
                         task_type = %row.task_type,

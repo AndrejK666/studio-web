@@ -1,32 +1,86 @@
 # Queued notifications — studio-notify
 
-The connectors described in [notification-connectors.md](./notification-connectors.md)
+The connectors in [notification-connectors.md](./notification-connectors.md)
 can post a message while a request waits for it. This gear is the other half:
-it takes a notification, writes it down, and answers — delivery happens
-afterwards, from a queue, with retries, and whatever cannot be delivered ends
-up in a dead-letter table rather than nowhere.
-
-Use it for anything that must not be lost. Keep using
+it validates a notification and queues it, and delivery happens afterwards
+with retries. Use it for anything that must not be lost; keep using
 `POST /studio-connector/v1/connections/{id}/messages` for "send a test message
 and tell me what Slack said".
+
+## One route, and the run is the record
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "http://localhost:8090/cf/studio-notify/v1/messages" -d "{
+    \"connection_id\": \"$CONN\",
+    \"tenant_id\": \"$ORG\",
+    \"target\": \"C01ABCDEF\",
+    \"title\": \"Spec quality gate failed\",
+    \"text\": \"2 of 7 checks are red on *PRD-14*.\",
+    \"link\": \"http://localhost:8080/projects/14/artifacts\",
+    \"idempotency_key\": \"prd-14-gate-2026-09-09\"
+  }"
+# → 202 {"run_id": "…", "poll": "/studio-tasks/v1/runs/…"}
+```
+
+Everything after that is `studio-tasks`
+([background-work.md](./background-work.md)):
+
+```bash
+# what happened to it
+GET  /studio-tasks/v1/runs/{run_id}
+
+# what needs attention
+GET  /studio-tasks/v1/runs?task_type=notify.deliver&state=failed
+
+# put a failed one back on the queue, after rotating a token or inviting the bot
+POST /studio-tasks/v1/runs/{run_id}/retry
+```
+
+This gear owns **no database**. The message is the payload of a
+`notify.deliver` run and that run is the whole history: its state, its
+attempts, its `summary` (`delivered to C01ABCDEF (1757…)`) or its `last_error`
+in the platform's own words.
+
+That is not tidiness for its own sake. It used to keep a
+`studio_notify_deliveries` table beside its own outbox, which was safe because
+both were in one database and one transaction. Moving the queue into
+`studio-tasks` and keeping the table would have meant writing the record in one
+database and the queue entry in another — and a crash between those two writes
+is exactly the lost notification the queue exists to prevent. One system of
+record, one commit.
 
 ## What guarantees what
 
 | Property | How |
 | --- | --- |
-| Not lost once accepted | The delivery row and the queue entry are written in **one transaction**. Either both commit or the request fails and nothing was accepted. |
-| Survives a restart | The queue is rows in PostgreSQL, not memory. A crash mid-delivery leaves the message queued; the next process picks it up when the lease expires. |
-| Retried | Exponential backoff, up to 8 attempts, on anything that might behave differently in a minute (rate limits, 5xx, timeouts, and anything unrecognised). |
-| Not retried pointlessly | A credential that was revoked, a channel the bot is not in, a connection that has been deleted — refused once and dead-lettered, with the platform's own words on the row. |
-| Repeat-safe accept | Pass `idempotency_key`; a second request with the same key in the same tenant returns the first delivery instead of queuing another. |
-| **Possibly delivered twice** | The processor is leased (at-least-once). A lease that expires after Slack accepted the message but before the ack committed hands it to another worker. The recorded state narrows this to the width of one ack, but none of the three platforms offers an idempotency key on a post, so a duplicate in that window is possible. **Losing a message is not.** |
+| Not lost once accepted | The run row and its queue entry are written in **one transaction** in `studio_tasks`. Either both commit or the request fails and nothing was accepted. |
+| Survives a restart | The queue is rows in PostgreSQL, not memory. A crash mid-delivery leaves the run queued; the next process picks it up when the lease expires. |
+| Retried | Exponential backoff, up to **8 attempts** — more than the task default, because a chat platform's refusals skew transient and giving up after five backoffs would drop a message the platform was only asking us to slow down about. |
+| Not retried pointlessly | A revoked credential, a channel the bot is not in, a connection since deleted — refused once and dead-lettered, with the reason on the run. |
+| Repeat-safe accept | `idempotency_key` makes a *caller's* own retry return the first run instead of queuing a second. |
+| **Possibly delivered twice** | The processor is leased (at-least-once). A lease expiring after Slack accepted the message but before the ack committed hands it to another worker, and none of the three platforms offers an idempotency key on a post. **Losing a message is not possible; duplicating one in that window is.** |
+
+## What the accept path refuses, and why there
+
+Three things are checked with the *caller's* own context, while there is still
+a request to answer with a 400 rather than a dead letter nobody is watching:
+
+- **A connection that cannot deliver** — wrong id, unreadable credential, or a
+  source-host connection that has no channels.
+- **A `personal`-scoped connection.** credstore keeps that credential readable
+  only by its owner, and a queued delivery runs as a service identity that is
+  not its owner. Refused by name, pointing at the synchronous route.
+- **A target where there is no choice, or none where there is.** An incoming
+  webhook's channel is fixed in its URL; a bot token reaches many and must be
+  told which.
 
 ## Why PostgreSQL and not Redis
 
 Because the enqueue has to be part of the transaction that caused it. Every
 cause Studio has lives in PostgreSQL, and putting the queue in a different
-system turns one commit into two writes that can disagree — which is the exact
-failure a durable queue is meant to prevent.
+system turns one commit into two writes that can disagree — the exact failure a
+durable queue is meant to prevent.
 
 Throughput is not the deciding factor either way. The ceiling here is the
 platforms': Slack accepts roughly one `chat.postMessage` per second per
@@ -60,130 +114,39 @@ for *delivery*, for three reasons its own design states:
   in-memory one.
 
 So a delivery worker would have to bring its own retry, its own dead letters
-and its own durable progress — i.e. everything this gear does — and the broker
-would add a hop. Where it will fit is *audit*: publishing
+and its own durable progress — i.e. everything `studio-tasks` does — and the
+broker would add a hop. Where it will fit is *audit*: publishing
 `notification.delivered` / `notification.failed` as events for anything that
 wants to watch. That is additive and not built.
 
-## The queue is not ours either
+## Ordering
 
-`toolkit-db` ships the transactional outbox: incoming → sequencer → outgoing →
-processor, leased and transactional handler modes, exponential backoff on
-`Retry`, a dead-letter table on `Reject`, `FOR UPDATE SKIP LOCKED` for
-partition locking. This gear supplies a handler, a table prefix and a partition
-count, and implements no queue of its own. We are its first adopter in this
-assembly.
+Notifications are partitioned by connection, so one connection's messages stay
+in order relative to each other — a "build finished" cannot overtake its "build
+started". The cost is head-of-line: an undeliverable message delays the ones
+behind it on its partition until it gives up, which is what the attempt cap
+bounds.
 
-Two tables, two jobs, one database:
-
-```text
-studio_notify_deliveries      -- the history: what was asked, what happened
-studio_notify_outbox_*        -- the queue (toolkit-db's own tables)
-```
-
-The queue is append-only, acks by advancing a cursor and vacuums what it has
-processed, so it cannot answer "what happened to the message I sent an hour
-ago". The history can, and is tenant-scoped, so a person sees only their own.
-The queue payload is a tenant id and a delivery id — never a copy of the
-message, which would go stale against the row.
-
-## Ordering, and what it costs
-
-Deliveries are partitioned by connection (FNV-1a over the connection id, four
-partitions), so one connection's messages stay in order relative to each other
-— a "build finished" cannot overtake its "build started". The cost is
-head-of-line: an undeliverable message delays the ones behind it on its
-partition until it gives up, which is what bounds the 8-attempt cap.
-
-## Who delivers
-
-A queued delivery is performed minutes later by a process with no request, so
-it cannot act as the person who asked — and does not try. Nothing persists the
-caller's bearer token. The worker acts as `studio-notify` itself, scoped to the
-tenant on the delivery row.
-
-The authorization that matters happens at accept time against the caller's own
-context: the connection is resolved and its credential read, so an unusable
-connection is a 400 while there is still a request to answer.
-
-One consequence is worth knowing: a **`personal`-scoped connection cannot be
-queued**. credstore keeps a personal credential readable only by its owner, and
-the worker is not its owner. The accept path refuses it by name and points at
-the synchronous route, rather than letting it become a dead letter that says
-"not readable".
-
-## Using it
-
-```bash
-TOKEN=...   # a Studio access token
-CONN=...    # a workspace- or organization-scoped notification connection
-ORG=...     # the tenant that owns it
-
-# Queue one. Answers 202 with the delivery id.
-curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  "http://localhost:8090/cf/studio-notify/v1/messages" \
-  -d "{
-        \"connection_id\": \"$CONN\",
-        \"tenant_id\": \"$ORG\",
-        \"target\": \"C01ABCDEF\",
-        \"title\": \"Spec quality gate failed\",
-        \"text\": \"2 of 7 checks are red on *PRD-14*.\",
-        \"link\": \"http://localhost:8080/projects/14/artifacts\",
-        \"idempotency_key\": \"prd-14-gate-2026-09-09\"
-      }"
-
-# What happened to it
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8090/cf/studio-notify/v1/messages/$ID?tenant=$ORG"
-
-# What needs attention
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8090/cf/studio-notify/v1/messages?tenant=$ORG&state=failed"
-
-# Put a failed one back on the queue — after rotating the token, or after
-# inviting the bot to the channel
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8090/cf/studio-notify/v1/messages/$ID/retry?tenant=$ORG"
-```
-
-`state` is `queued` (accepted, or waiting for the next attempt), `sent`, or
-`failed` (given up on). `attempts` and `last_error` say how it is going.
-`retry` refuses a delivery that was already sent — retrying it would post it
-twice — and one that is still queued, which has not given up yet.
-
-## Deploying it
-
-The gear needs its own database, declared in the profile:
+## Deploying
 
 ```yaml
   studio-notify:
-    database:
-      server: "pg_main"
-      dbname: "studio_notify"
     config: {}
 ```
 
-`backend-bootstrap` creates the database from that block on every start, and
-the gear's migrations create both table families. Remove the block and the gear
-stands down with a warning: the notify API answers 503 and nothing is queued,
-while the synchronous connector route keeps working.
+No `database:` block — this gear has no storage. It does need `studio-tasks`
+configured: without it the accept route answers 400 saying the queue is
+unavailable, and nothing is queued.
 
-PostgreSQL only. `config/dev.yaml` deliberately has no block — the outbox's
-PostgreSQL path relies on `FOR UPDATE SKIP LOCKED`, which SQLite cannot offer.
-Use `config/postgres.yaml` to exercise queued notifications locally.
+## Still to do
 
-## What is still not here
-
-- **No event routing.** Nothing subscribes to anything: a notification is
-  queued because a caller asked for one. Rules of the shape "when a
-  spec-quality gate fails, post to #eng" are a separate concern, and this
-  gear's accept route is the contract they would use.
-- **No scheduling.** A delivery goes out as soon as the queue reaches it.
-  There is no "send at 09:00" and no digest.
-- **No retention sweep for deliveries.** Nothing prunes
-  `studio_notify_deliveries` yet. `studio-tasks` now has a nightly
-  `tasks.retention_sweep` for its own runs and dead letters (see
-  [background-work.md](./background-work.md)); this table needs the same, which
-  arrives with the migration of this gear's queue onto that substrate.
+- **Real delivery is still unverified.** Everything up to the platform call is
+  exercised on a live stack; the call itself needs a genuine Slack, Zulip or
+  Discord credential, and the URL guard (correctly) refuses a local stub.
+- **A digest, and event routing.** Nothing subscribes to anything: a
+  notification is queued because a caller asked. A schedule can already fire
+  `notify.deliver` with a fixed payload — that is how "post this every morning"
+  works today — but "when a spec-quality gate fails, post to #eng" needs a rule
+  engine that does not exist.
 - **No direct messages to a person.** That needs a mapping from a Studio
   subject to a platform account, which is `studio-identity`'s job (ADR-0012).
