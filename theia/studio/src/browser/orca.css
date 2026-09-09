@@ -111,3 +111,29 @@
     margin: 0;
     word-break: break-word;
 }
+
+/* Changed files: one row per file, code then path, laid out horizontally
+   rather than stacked like the worktree rows above. */
+.studio-orca-changes > li {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+}
+.studio-orca-changes > li:hover {
+    border-color: var(--theia-focusBorder);
+}
+.studio-orca-change-code {
+    flex: 0 0 auto;
+    font-family: var(--theia-code-font-family);
+    color: var(--theia-descriptionForeground);
+}
+.studio-orca-change-path {
+    /* Long paths truncate at the front: the file name is the part that
+       identifies the row, and it is at the end. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+}

@@ -29,6 +29,21 @@ on:
         type: string
         required: true
         default: main
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      component:
+        required: true
+        type: string
+      image_tag:
+        required: false
+        type: string
+        default: ""
+      source_ref:
+        required: true
+        type: string
 
 permissions:
   contents: read

@@ -4,6 +4,7 @@
 
 import {
     OrcaServiceImpl,
+    parseStatusRecords,
     shortBranch,
     terminalTail,
     toTerminal,
@@ -314,5 +315,45 @@ describe('OrcaServiceImpl', () => {
         });
         const worktrees = await service(json).listWorktrees();
         expect(worktrees.map(w => w.id)).toEqual(['a']);
+    });
+});
+
+// `git status --porcelain=v1 -z`. The records below are the real shapes: NUL
+// separated, unquoted, and a rename carrying its source in a second record.
+describe('worktree change parsing', () => {
+
+    it('reads the code and the path of each entry', () => {
+        expect(parseStatusRecords([' M src/app.ts', 'A  src/new.ts', '?? notes.md'])).toEqual([
+            { code: ' M', path: 'src/app.ts' },
+            { code: 'A ', path: 'src/new.ts' },
+            { code: '??', path: 'notes.md' }
+        ]);
+    });
+
+    // The one that bites: without consuming the source record, the old path
+    // would be reported as a change of its own, wearing the NEXT entry's code.
+    it('takes a rename as one change, at its new path', () => {
+        expect(parseStatusRecords(['R  src/new.ts', 'src/old.ts', ' M other.ts'])).toEqual([
+            { code: 'R ', path: 'src/new.ts' },
+            { code: ' M', path: 'other.ts' }
+        ]);
+    });
+
+    it('does the same for a copy', () => {
+        expect(parseStatusRecords(['C  copy.ts', 'origin.ts'])).toEqual([
+            { code: 'C ', path: 'copy.ts' }
+        ]);
+    });
+
+    // -z does not quote, so these arrive verbatim and must survive.
+    it('keeps paths that would have been quoted without -z', () => {
+        expect(parseStatusRecords(['?? a file with spaces.md', '?? "quoted".ts'])).toEqual([
+            { code: '??', path: 'a file with spaces.md' },
+            { code: '??', path: '"quoted".ts' }
+        ]);
+    });
+
+    it('ignores records too short to carry a path', () => {
+        expect(parseStatusRecords(['', ' M', ' M ', ' M x'])).toEqual([{ code: ' M', path: 'x' }]);
     });
 });

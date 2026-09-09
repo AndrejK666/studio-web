@@ -10,6 +10,7 @@ import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
+import { ProcessCatalogTab } from "./process-catalog";
 import { runRepoSync, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
@@ -2360,6 +2361,9 @@ function ProjectsView({
       />
       <div style={{ marginTop: 20 }}>
         <DocumentTypesTab token={token} workspaceId={root.id} />
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <ProcessCatalogTab token={token} workspaceId={root.id} />
       </div>
     </>
   );
