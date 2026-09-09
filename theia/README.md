@@ -469,6 +469,14 @@ npm run validate:electron-build
 The browser E2E creates a temporary repository and local bare remote. It does
 not use external credentials or contact an external Git remote.
 
+On a Windows checkout `npm test` leaves 14 suites failing, and that is the
+platform rather than the checkout: the workspace mutation path fsyncs a
+*directory* to make a rename durable, which Windows answers with `EPERM`
+(`fs.open(dir).sync()` → `EPERM` there, fine on Linux), and a few temp-repo
+teardowns hit `EBUSY`. Everything else runs — the suites that used to die on a
+missing CFS-generated schema or on jsdom's absent `document.queryCommandSupported`
+are handled in `configs/`.
+
 A manual real-remote smoke test is optional and is not part of automation.
 Before running it, explicitly provide:
 
