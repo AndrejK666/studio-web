@@ -5,6 +5,7 @@ import { errText, matches } from "./format";
 import { ProjectsPortfolio } from "./projects";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
+import { BackgroundWork } from "./tasks";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
@@ -307,6 +308,7 @@ type View =
   | "files"
   | "connectors"
   | "gears"
+  | "tasks"
   | "system"
   | "profile";
 
@@ -436,6 +438,9 @@ const NAV_SECTIONS: {
       // Our published gears (crates.io → graph), and the system observability
       // surface.
       { id: "gears", icon: "package", label: "Components" },
+      // What the deployment is doing in the background, and what fires on its
+      // own: studio-tasks runs plus studio-scheduler schedules.
+      { id: "tasks", icon: "scan", label: "Background work" },
       { id: "system", icon: "cog", label: "System" },
     ],
   },
@@ -1638,6 +1643,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onCategories={setComponentCategories}
           />
         )}
+        {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && <SystemView token={token} filters={filters} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
