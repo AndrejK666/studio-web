@@ -367,6 +367,14 @@ gears:
         - key: "openai-key"
           value: "sk-REPLACE_ME"
 
+  # No studio-notify section in this profile on purpose. Its migrations target
+  # PostgreSQL only — the delivery queue is toolkit-db's outbox, whose
+  # PostgreSQL path uses `FOR UPDATE SKIP LOCKED` for partition locking, and
+  # SQLite has no row-level locking to offer it. Without a `database:` block the
+  # gear stands down with a warning and its API answers 503, which is the
+  # correct behaviour here rather than a second dialect to keep honest. Use
+  # config/postgres.yaml to exercise queued notifications locally.
+
   mini-chat:
     database:
       server: "sqlite_main"

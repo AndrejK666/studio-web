@@ -31,8 +31,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{
-    ConnectionAuth, ConnectorDriver, DriverIdentity, NotifyMessage, NotifyTarget, RemoteRepo,
-    SentMessage,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
+    NotifyTarget, RemoteRepo, SentMessage,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 
@@ -142,6 +142,17 @@ pub struct NewConnection<'a> {
 struct Catalogue {
     #[serde(default)]
     items: Vec<Connection>,
+}
+
+/// What [`ConnectorService::delivery_preflight`] found out about a connection.
+#[derive(Debug, Clone)]
+pub struct DeliveryPreflight {
+    pub provider: String,
+    pub label: String,
+    /// `personal` | `workspace` | `organization`.
+    pub scope: String,
+    /// Whether the credential already fixes the channel (an incoming webhook).
+    pub fixed_target: bool,
 }
 
 /// A provider the assembly can actually serve, i.e. one whose plugin gear is
@@ -632,6 +643,38 @@ impl ConnectorService {
         let driver = self.driver(&c.provider)?;
         let auth = self.auth(ctx, &c).await?;
         driver.list_repositories(&auth, search, limit).await
+    }
+
+    /// What the caller must know about a connection before queuing a delivery
+    /// against it: whether it can deliver at all, whether a target is needed,
+    /// and whose credential it is.
+    ///
+    /// Resolved with the *caller's* context on purpose. A queued delivery is
+    /// later performed by a background worker under the gear's own identity, so
+    /// the moment to find out that a connection is unusable is while there is
+    /// still a request to answer with a 400 — not three retries later in a dead
+    /// letter, where nobody is looking.
+    pub async fn delivery_preflight(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<DeliveryPreflight> {
+        let c = self.find(ctx, tenant, id).await?;
+        let driver = self.driver(&c.provider)?;
+        if driver.category() != ConnectorCategory::Notification {
+            return Err(anyhow!(
+                "connection '{}' is a {} connection — it delivers no messages",
+                c.label,
+                driver.display_name()
+            ));
+        }
+        Ok(DeliveryPreflight {
+            provider: c.provider.clone(),
+            label: c.label.clone(),
+            scope: c.scope.clone(),
+            fixed_target: driver.fixed_target(),
+        })
     }
 
     /// Channels a notification connection can post to.

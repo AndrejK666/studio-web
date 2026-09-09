@@ -21,6 +21,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 // official plugin went green — see docs/keycloak-idp-migration.md.
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
+mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod registered_gears;
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service

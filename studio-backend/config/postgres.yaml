@@ -352,6 +352,21 @@ gears:
         - key: "openai-key"
           value: "sk-REPLACE_ME"
 
+  # ── studio-notify (durable notification delivery) ──
+  # Its own database, because the queue and the delivery history have to be
+  # written in ONE transaction: the `studio_notify_outbox_*` family is
+  # toolkit-db's transactional outbox, and `studio_notify_deliveries` is the
+  # record an operator reads. Both are created by this gear's migrations, and
+  # `backend-bootstrap` creates the database itself from this block on every
+  # start. Remove the block and the gear stands down: the notify API answers
+  # 503 and nothing is queued (the synchronous studio-connector route is
+  # unaffected).
+  studio-notify:
+    database:
+      server: "pg_main"
+      dbname: "studio_notify"
+    config: {}
+
   mini-chat:
     database:
       server: "pg_main"

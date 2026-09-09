@@ -85,6 +85,69 @@ const KNOWN_DRIVERS: [&str; 11] = [
     gts::DISCORD_WEBHOOK_INSTANCE_ID,
 ];
 
+/// ClientHub key under which the notification sender is published for other
+/// gears in this assembly.
+///
+/// Not a plugin: nothing selects between implementations, so — like
+/// `user_profile::IDENTITY_INSTANCE_ID` — this id is the hub's scope key and
+/// nothing more. It is not published to the types-registry.
+pub const NOTIFY_SENDER_INSTANCE_ID: &str = "cf.studio._.notification_sender.v1~";
+
+/// Message delivery, for gears that queue notifications rather than send them
+/// inline (`studio-notify`).
+///
+/// Deliberately two methods and no catalogue. A consumer may ask whether a
+/// connection can deliver, and ask it to deliver — it may not enumerate
+/// connections, read credentials, or reach a driver. Everything this trait
+/// exposes is something the connector gear would do for an HTTP caller anyway.
+#[async_trait]
+pub trait NotificationSender: Send + Sync + 'static {
+    /// Whether this connection can deliver, and what a delivery to it needs.
+    async fn preflight(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+    ) -> anyhow::Result<service::DeliveryPreflight>;
+
+    /// Deliver one message. `ctx` is whatever identity the caller is acting
+    /// under — a request's own context inline, or the queue worker's service
+    /// identity for a queued delivery.
+    async fn deliver(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+        target: Option<&str>,
+        message: &driver::NotifyMessage,
+    ) -> anyhow::Result<driver::SentMessage>;
+}
+
+#[async_trait]
+impl NotificationSender for ConnectorService {
+    async fn preflight(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+    ) -> anyhow::Result<service::DeliveryPreflight> {
+        self.delivery_preflight(ctx, tenant, connection).await
+    }
+
+    async fn deliver(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+        connection: uuid::Uuid,
+        target: Option<&str>,
+        message: &driver::NotifyMessage,
+    ) -> anyhow::Result<driver::SentMessage> {
+        self.send_message(ctx, tenant, connection, target, message)
+            .await
+            .map(|(_, sent)| sent)
+    }
+}
+
 /// Source-host driver plugin ids (github/gitlab/bitbucket), for gears that
 /// resolve a driver from ClientHub without duplicating the id strings — e.g.
 /// `artifact_ingest`. AI providers are excluded: they have no repositories,
@@ -149,6 +212,17 @@ impl Gear for StudioConnectorGear {
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
+
+        // Published in `init` so a consumer resolving it in its own `init` or
+        // later cannot lose a race with us. `studio-notify` resolves it lazily
+        // per delivery instead, which makes the two gears independent of
+        // initialization order altogether — but publishing early costs nothing
+        // and keeps the option open.
+        let sender: Arc<dyn NotificationSender> = service.clone();
+        ctx.client_hub().register_scoped::<dyn NotificationSender>(
+            ClientScope::gts_id(NOTIFY_SENDER_INSTANCE_ID),
+            sender,
+        );
 
         self.service
             .set(service)
