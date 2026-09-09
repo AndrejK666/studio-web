@@ -17,6 +17,20 @@
 //! closed envelope trips the GTS inclusion check. A field schema is not the
 //! type's meaning and cannot become its `properties`.
 //!
+//! # What the node holds
+//!
+//! Two things about a type, not one: the field schema above, and whether this
+//! organization treats the type as a **component** at all. They share a node
+//! because they share an identity — "what the studio says about this GTS type"
+//! — and splitting them would mean two overlays and two reverts for one
+//! answer.
+//!
+//! The GTS id stayed `catalog.field_schema.v1~` even though the node outgrew
+//! the name. A registered type id is immutable (ADR-0013); minting
+//! `type_profile.v1~` would leave `field_schema.v1~` in the deployment-wide
+//! catalogue forever as a type nothing writes. A slightly narrow name costs
+//! less than a dead one, and the next version bump can carry the rename.
+//!
 //! It lives in **graph-storage**, one node per described type, exactly the
 //! shape [`super::gts::GEAR_PROFILE_TYPE`] already uses for editable
 //! per-component metadata — one level up, describing a type instead of an
@@ -122,6 +136,16 @@ pub struct TypeFieldSchema {
     /// to keep a kit schema it cannot delete.
     #[serde(default)]
     pub hidden: bool,
+    /// Whether this organization treats the type as a **component**: something
+    /// the Components page lists and a project can take.
+    ///
+    /// The graph holds far more types than that — files, chunks, commits,
+    /// domain entities — and which of them are building blocks is a judgement
+    /// about the organization's model, not a fact about storage. So it is a
+    /// mark an organization sets, with the built-ins below as the opening
+    /// position rather than the answer.
+    #[serde(default)]
+    pub component: bool,
 }
 
 fn builtin_owner() -> String {
@@ -144,6 +168,10 @@ fn gear_schema() -> TypeFieldSchema {
     let mut schema: TypeFieldSchema = serde_json::from_str(GEAR_SCHEMA_JSON)
         .expect("the committed gear field schema parses (see field_schemas/gear.json)");
     schema.describes = GEAR_TYPE.to_string();
+    // The deployment ships a page for it, so it is a component out of the box
+    // -- the same statement `schema_from` makes for the derived schemas, which
+    // this one does not go through because it is parsed rather than built.
+    schema.component = true;
     schema
 }
 
@@ -192,6 +220,9 @@ fn schema_from(describes: &str, gear: &TypeFieldSchema, groups: Vec<Group>) -> T
         source_classes: gear.source_classes.clone(),
         owner: builtin_owner(),
         hidden: false,
+        // A type this deployment shipped a component page for is a component
+        // out of the box. An organization can still unmark it.
+        component: true,
     }
 }
 
@@ -283,11 +314,19 @@ pub fn builtin_schemas() -> Vec<TypeFieldSchema> {
     vec![gear, frontx, kit, document]
 }
 
-/// The built-ins with this tenant's own schemas laid over them.
+/// The built-ins with this tenant's own records laid over them.
 ///
-/// A tenant node replaces the built-in for the type it describes, wholesale: a
-/// schema is a layout, and merging two layouts field by field produces a third
-/// that neither side chose. `hidden` removes an inherited built-in instead.
+/// A tenant node that carries groups **replaces** the built-in layout
+/// wholesale: a schema is a layout, and merging two layouts field by field
+/// produces a third that neither side chose. `hidden` removes an inherited
+/// built-in instead.
+///
+/// A tenant node with **no groups** is a different statement. It is what
+/// marking a type as a component writes — an opinion about what the type is,
+/// with none about how it looks — so it keeps the inherited layout and only
+/// its mark is taken. Without this rule, ticking a box on the Objects page
+/// would silently blank the gear schema, which is the kind of quiet damage a
+/// wholesale replace is otherwise right to do loudly.
 pub fn overlay(
     builtins: Vec<TypeFieldSchema>,
     stored: Vec<TypeFieldSchema>,
@@ -297,10 +336,81 @@ pub fn overlay(
         .map(|s| (s.describes.clone(), s))
         .collect();
     for mut s in stored {
-        s.owner = "tenant".to_string();
-        by_type.insert(s.describes.clone(), s);
+        match by_type.get(&s.describes) {
+            Some(builtin) if s.groups.is_empty() => {
+                let mut merged = builtin.clone();
+                merged.component = s.component;
+                merged.hidden = s.hidden;
+                by_type.insert(s.describes.clone(), merged);
+            }
+            _ => {
+                // `owner` answers "who authored this layout", so a record with
+                // no layout does not claim one. Marking a type the deployment
+                // never described must not make the tenant the author of a
+                // page that does not exist.
+                s.owner = if s.groups.is_empty() {
+                    builtin_owner()
+                } else {
+                    "tenant".to_string()
+                };
+                by_type.insert(s.describes.clone(), s);
+            }
+        }
     }
     by_type.into_values().filter(|s| !s.hidden).collect()
+}
+
+impl TypeFieldSchema {
+    /// Whether storing this record would change anything for the tenant,
+    /// given what it would otherwise inherit.
+    ///
+    /// The comparison matters, and a plain "is it empty?" would get it wrong
+    /// in both directions. Unmarking a built-in component stores
+    /// `component: false`, which looks empty and is not — dropping it would
+    /// hand the type straight back. Marking a type with no built-in stores
+    /// `component: true`, which is the whole record. So the question is never
+    /// "is this record blank" but "does it differ from the inheritance".
+    pub fn adds_anything(&self, inherited_component: bool) -> bool {
+        !self.groups.is_empty() || self.hidden || self.component != inherited_component
+    }
+
+    /// This record with only the mark kept — what reverting a layout leaves.
+    pub fn without_layout(&self) -> Self {
+        Self {
+            describes: self.describes.clone(),
+            groups: Vec::new(),
+            composition: Vec::new(),
+            status_legend: BTreeMap::new(),
+            doc_state_legend: BTreeMap::new(),
+            source_classes: BTreeMap::new(),
+            owner: builtin_owner(),
+            hidden: self.hidden,
+            component: self.component,
+        }
+    }
+
+    /// An empty record for one type — the starting point for a first mark.
+    pub fn empty_for(describes: &str) -> Self {
+        Self {
+            describes: describes.to_string(),
+            groups: Vec::new(),
+            composition: Vec::new(),
+            status_legend: BTreeMap::new(),
+            doc_state_legend: BTreeMap::new(),
+            source_classes: BTreeMap::new(),
+            owner: builtin_owner(),
+            hidden: false,
+            component: false,
+        }
+    }
+}
+
+/// Whether the deployment ships this type as a component. What a stored
+/// record is compared against before it is kept or pruned.
+pub fn builtin_component(describes: &str) -> bool {
+    builtin_schemas()
+        .into_iter()
+        .any(|s| s.describes == describes && s.component)
 }
 
 /// The stored payload for one schema. `name` is what graph-storage titles the
@@ -391,20 +501,90 @@ mod tests {
 
     fn stub(describes: &str, group_title: &str, hidden: bool) -> TypeFieldSchema {
         TypeFieldSchema {
-            describes: describes.to_string(),
             groups: vec![group(
                 "only",
                 group_title,
                 "S",
                 vec![own("k", "K", "text", "somewhere")],
             )],
-            composition: Vec::new(),
-            status_legend: BTreeMap::new(),
-            doc_state_legend: BTreeMap::new(),
-            source_classes: BTreeMap::new(),
-            owner: builtin_owner(),
             hidden,
+            component: true,
+            ..TypeFieldSchema::empty_for(describes)
         }
+    }
+
+    /// What marking a type on the Objects page writes: an opinion about what
+    /// the type is, and none about how it looks.
+    fn mark(describes: &str, component: bool) -> TypeFieldSchema {
+        TypeFieldSchema {
+            component,
+            ..TypeFieldSchema::empty_for(describes)
+        }
+    }
+
+    #[test]
+    fn every_builtin_schema_is_a_builtin_component() {
+        assert!(builtin_schemas().iter().all(|s| s.component));
+    }
+
+    /// The rule that makes the Objects page safe: a mark carries no layout, so
+    /// it must not take one away.
+    #[test]
+    fn marking_a_type_keeps_the_layout_it_inherited() {
+        let out = overlay(builtin_schemas(), vec![mark(GEAR_TYPE, false)]);
+        let gear = out
+            .iter()
+            .find(|s| s.describes == GEAR_TYPE)
+            .expect("gear survives");
+        assert_eq!(gear.fields().count(), 62, "the mark blanked the layout");
+        assert!(!gear.component, "the mark was not taken");
+        assert_eq!(gear.owner, "builtin", "nobody authored a layout here");
+    }
+
+    /// A type with no built-in becomes a component with no layout of its own,
+    /// which is exactly what the client's fallback is for.
+    #[test]
+    fn marking_a_type_with_no_builtin_leaves_it_without_a_layout() {
+        let novel = "gts.cf.acme.catalog.dataset.v1~";
+        let out = overlay(builtin_schemas(), vec![mark(novel, true)]);
+        let dataset = out
+            .iter()
+            .find(|s| s.describes == novel)
+            .expect("the marked type is listed");
+        assert!(dataset.component);
+        assert_eq!(dataset.groups.len(), 0);
+    }
+
+    /// A stored record is worth keeping exactly when it differs from what the
+    /// tenant would inherit — not when it is non-empty.
+    #[test]
+    fn a_record_is_kept_only_when_it_differs_from_the_inheritance() {
+        // Nothing said, nothing inherited.
+        assert!(!TypeFieldSchema::empty_for(GEAR_TYPE).adds_anything(false));
+        // Unmarking a built-in component is a real statement, and the record
+        // that carries it looks blank.
+        assert!(mark(GEAR_TYPE, false).adds_anything(true));
+        // Marking a type nothing shipped is the whole record.
+        assert!(mark(GEAR_TYPE, true).adds_anything(false));
+        // Agreeing with the inheritance is not a statement.
+        assert!(!mark(GEAR_TYPE, true).adds_anything(true));
+        // A layout always is.
+        assert!(stub(GEAR_TYPE, "Ours", false).adds_anything(true));
+        assert!(
+            !stub(GEAR_TYPE, "Ours", false)
+                .without_layout()
+                .adds_anything(true),
+            "reverting a layout that agreed with the inheritance leaves nothing"
+        );
+        assert!(
+            TypeFieldSchema {
+                component: false,
+                ..stub(GEAR_TYPE, "Ours", false)
+            }
+            .without_layout()
+            .adds_anything(true),
+            "reverting a layout must not throw away the mark"
+        );
     }
 
     #[test]

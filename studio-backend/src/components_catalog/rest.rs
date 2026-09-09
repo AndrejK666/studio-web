@@ -110,6 +110,11 @@ pub struct CatalogNodeDto {
 #[toolkit_macros::api_dto(response)]
 pub struct CatalogNodeListResponse {
     pub nodes: Vec<CatalogNodeDto>,
+    /// Whether a cap cut the list short. An organization can mark a type with
+    /// six figures of instances as a component, and a page showing some of one
+    /// without saying so is worse than a page that admits it.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 /// Open, Studio-owned metadata for a gear. The payload is intentionally
@@ -135,6 +140,39 @@ pub struct FieldSchemaListResponse {
     /// `builtin` or `tenant`, so a screen can offer to revert what it shows.
     #[schema(value_type = Vec<Object>)]
     pub schemas: Vec<Value>,
+}
+
+/// One GTS type the graph holds, and what this organization says about it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CatalogTypeDto {
+    /// The id graph-storage stores it under, ancestry and all. Empty when
+    /// nothing has written a node of this type into this tenant's graph yet.
+    pub type_id: String,
+    /// The leaf of that id: how the type is named everywhere else, and the key
+    /// a mark and a field schema are written against.
+    pub leaf_id: String,
+    /// A family or base. Derived from, never instantiated, so never a
+    /// component — reported rather than filtered so a page can say why.
+    pub is_abstract: bool,
+    /// Whether this organization treats the type as a component.
+    pub component: bool,
+    /// Who authored the field schema it renders against: `builtin`, `tenant`
+    /// or `none`.
+    pub schema: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CatalogTypeListResponse {
+    pub types: Vec<CatalogTypeDto>,
+}
+
+/// Whether a type is one of this organization's components.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SetTypeComponentRequest {
+    pub component: bool,
 }
 
 /// This tenant's own schema for one component type, replacing what it inherits.
@@ -375,17 +413,31 @@ fn to_dtos(nodes: Vec<super::gts::GtsNode>) -> Vec<CatalogNodeDto> {
         .collect()
 }
 
+/// The components, which is now a question rather than a constant.
+///
+/// This used to read "nodes of `catalog.gear.v1~`", which put "what counts as
+/// a component" in this file. It is a judgement about an organization's model,
+/// so it belongs to the organization: the list is every node of every type it
+/// marked on the Objects page.
 async fn list_gears(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
-    let nodes = catalog
+    let (nodes, truncated) = catalog
         .service
-        .list_nodes(&ctx, Some(super::gts::GEAR_TYPE))
+        .list_component_nodes(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(CatalogNodeListResponse {
-        nodes: to_dtos(nodes),
+        nodes: nodes
+            .into_iter()
+            .map(|n| CatalogNodeDto {
+                type_id: n.type_id,
+                instance_id: n.instance_id,
+                value: n.value,
+            })
+            .collect(),
+        truncated,
     }))
 }
 
@@ -400,6 +452,7 @@ async fn list_profiles(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
+        truncated: false,
     }))
 }
 
@@ -423,6 +476,55 @@ async fn save_profile(
         .next()
         .expect("one profile node converts to one DTO");
     Ok(Json(dto))
+}
+
+async fn list_types(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<CatalogTypeListResponse>> {
+    let types = catalog
+        .service
+        .list_types(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(CatalogTypeListResponse {
+        types: types
+            .into_iter()
+            .map(|t| CatalogTypeDto {
+                type_id: t.type_id,
+                leaf_id: t.leaf_id,
+                is_abstract: t.is_abstract,
+                component: t.component,
+                schema: t.schema,
+            })
+            .collect(),
+    }))
+}
+
+async fn set_type_component(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(type_id): Path<String>,
+    Json(body): Json<SetTypeComponentRequest>,
+) -> ApiResult<JsonBody<CatalogTypeDto>> {
+    let record = catalog
+        .service
+        .set_type_component(&ctx, &type_id, body.component)
+        .await
+        .map_err(|e| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(CatalogTypeDto {
+        // The caller named a leaf; reporting a graph id here would be
+        // inventing one for a type the graph may not hold a node of.
+        type_id: String::new(),
+        leaf_id: record.describes,
+        is_abstract: false,
+        component: record.component,
+        schema: record.owner,
+    }))
 }
 
 async fn list_field_schemas(
@@ -495,6 +597,7 @@ async fn get_project_repo(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(node.into_iter().collect()),
+        truncated: false,
     }))
 }
 
@@ -613,6 +716,7 @@ async fn list_versions(
     }
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
+        truncated: false,
     }))
 }
 
@@ -661,12 +765,12 @@ pub fn register_routes(
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/components")
         .operation_id("studio_components_catalog.list_gears")
-        .summary("List the ingested gear crates")
+        .summary("List every node of every type this organization marks as a component")
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
         .handler(list_gears)
-        .json_response_with_schema::<CatalogNodeListResponse>(openapi, StatusCode::OK, "Gears")
+        .json_response_with_schema::<CatalogNodeListResponse>(openapi, StatusCode::OK, "Components")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -709,6 +813,41 @@ pub fn register_routes(
         .handler(save_profile)
         .json_request::<SaveGearProfileRequest>(openapi, "Gear profile")
         .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved Gear profile")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/types")
+        .operation_id("studio_components_catalog.list_types")
+        .summary("Every node type the graph holds, and which are components here")
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_types)
+        .json_response_with_schema::<CatalogTypeListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Node types with their component mark and schema owner",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/types/{type_id}/component")
+        .operation_id("studio_components_catalog.set_type_component")
+        .summary("Mark a type as one of this organization's components, or unmark it")
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("type_id", "GTS type id (the leaf form)")
+        .handler(set_type_component)
+        .json_request::<SetTypeComponentRequest>(openapi, "The mark")
+        .json_response_with_schema::<CatalogTypeDto>(
+            openapi,
+            StatusCode::OK,
+            "The type as it now reads",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

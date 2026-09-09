@@ -50,6 +50,49 @@ pub(crate) trait CatalogSink: Send + Sync {
     /// node that carries it, so a catalogue that can only upsert is a
     /// catalogue whose overrides are one-way.
     async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()>;
+    /// Every node type the graph holds for this tenant — not only the ones
+    /// this gear registered. Which of them are components is a judgement an
+    /// organization makes, and it cannot make it over a list it cannot see.
+    async fn node_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>>;
+    /// Nodes of arbitrary types, named by their graph-storage ids.
+    ///
+    /// The typed [`Self::list`] can only return the types this build knows,
+    /// because a [`GtsNode`] carries a `&'static str`. Once an organization
+    /// decides what a component is, that is no longer enough: the Components
+    /// page has to list nodes of a type this build has never compiled in.
+    ///
+    /// Stops at `limit` and says so. A tenant can mark any type, including one
+    /// with a hundred thousand instances, and a page that tried to render all
+    /// of them would be a denial of service the organization aimed at itself.
+    async fn list_of_types(
+        &self,
+        ctx: &SecurityContext,
+        graph_types: &[String],
+        limit: usize,
+    ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)>;
+}
+
+/// A node of any type, typed only by its id — what a catalogue that no longer
+/// decides which types are components has to be able to return.
+#[derive(Clone, Debug)]
+pub struct CatalogNodeView {
+    /// The leaf GTS id of the node's type.
+    pub type_id: String,
+    pub instance_id: String,
+    pub value: Value,
+}
+
+/// One node type as graph-storage holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphNodeType {
+    /// The id graph-storage stores it under, ancestry and all.
+    pub type_id: String,
+    /// The leaf of that id — how every other surface names the type, and the
+    /// key the studio's per-type records use.
+    pub leaf_id: String,
+    /// The families and bases, which exist to be derived from and cannot hold
+    /// an instance. Never a component; listed so the page can say why.
+    pub is_abstract: bool,
 }
 
 /// In-memory store, keyed by instance id so a re-sync upserts. Resets on
@@ -104,6 +147,53 @@ impl CatalogSink for MemorySink {
             .map_err(|_| anyhow!("catalog store lock poisoned"))?;
         map.remove(instance_id);
         Ok(())
+    }
+
+    /// The types this store has actually seen. It has no ontology of its own,
+    /// so "registered" and "has a node" are the same question here — which is
+    /// the honest answer for a fallback store, not a smaller one.
+    async fn node_types(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
+        let map = self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        let mut seen: BTreeMap<String, GraphNodeType> = BTreeMap::new();
+        for node in map.values() {
+            let type_id = gts::graph_type_id(node.type_id);
+            seen.entry(type_id.clone()).or_insert(GraphNodeType {
+                leaf_id: gts::leaf_type_id(&type_id),
+                type_id,
+                is_abstract: false,
+            });
+        }
+        Ok(seen.into_values().collect())
+    }
+
+    async fn list_of_types(
+        &self,
+        _ctx: &SecurityContext,
+        graph_types: &[String],
+        limit: usize,
+    ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
+        let map = self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        let wanted: std::collections::HashSet<&str> =
+            graph_types.iter().map(String::as_str).collect();
+        let mut out: Vec<CatalogNodeView> = map
+            .values()
+            .filter(|n| wanted.contains(gts::graph_type_id(n.type_id).as_str()))
+            .map(|n| CatalogNodeView {
+                type_id: n.type_id.to_string(),
+                instance_id: n.instance_id.clone(),
+                value: n.value.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
+        let truncated = out.len() > limit;
+        out.truncate(limit);
+        Ok((out, truncated))
     }
 }
 
@@ -303,8 +393,121 @@ impl CatalogSink for GraphSink {
             Err(e) => Err(anyhow!("graph-storage delete: {e}")),
         }
     }
+
+    async fn node_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
+        use graph_storage_sdk::models::{TypeKind, TypeQuery};
+        // The ontology is hundreds of rows, not millions; a page this size
+        // reads it in one or two calls without asking the gear for more than
+        // its projection cap allows.
+        const PAGE: u32 = 200;
+        let mut out: Vec<GraphNodeType> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self
+                .client
+                .list_types(
+                    ctx,
+                    TypeQuery {
+                        kind: Some(TypeKind::Node),
+                        pattern: None,
+                        top: Some(PAGE),
+                        cursor: cursor.take(),
+                    },
+                )
+                .await
+                .map_err(|e| anyhow!("graph-storage list types: {e}"))?;
+            for record in page.items {
+                out.push(GraphNodeType {
+                    leaf_id: gts::leaf_type_id(&record.type_id),
+                    type_id: record.type_id,
+                    is_abstract: record.is_abstract,
+                });
+            }
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
+    async fn list_of_types(
+        &self,
+        ctx: &SecurityContext,
+        graph_types: &[String],
+        limit: usize,
+    ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
+        use toolkit_odata::{CursorV1, ODataQuery};
+        const PAGE: u64 = 200;
+        if graph_types.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        let mut out: Vec<CatalogNodeView> = Vec::new();
+        let mut query = ODataQuery::default().with_limit(PAGE);
+        loop {
+            let page = self
+                .client
+                .project_nodes(ctx, graph_types, query.clone())
+                .await
+                .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
+            for row in page.items {
+                out.push(CatalogNodeView {
+                    type_id: gts::leaf_type_id(&row.type_id),
+                    instance_id: row.node_key,
+                    value: row.payload.unwrap_or_else(|| json!({})),
+                });
+            }
+            if out.len() > limit {
+                out.truncate(limit);
+                return Ok((out, true));
+            }
+            let Some(next) = page.page_info.next_cursor else {
+                break;
+            };
+            let cursor = CursorV1::decode(&next)
+                .map_err(|e| anyhow!("graph-storage returned an undecodable cursor: {e}"))?;
+            query = ODataQuery::default().with_limit(PAGE).with_cursor(cursor);
+        }
+        Ok((out, false))
+    }
 }
 // ── Service ─────────────────────────────────────────────────────────────────
+/// How many component nodes one read of the Components page will return.
+///
+/// A tenant can mark any type, and some types have six figures of instances.
+/// The cap is what stops a tick box from turning into an outage; the flag it
+/// travels with is what stops the truncation from being a lie.
+const COMPONENT_LIST_CAP: usize = 2000;
+
+/// Who authored the layout a type renders against, as the Objects page reports
+/// it. A record with no groups describes nothing, whatever its `owner` says, so
+/// it reads `none` rather than crediting a page that does not exist.
+fn schema_owner(record: &TypeFieldSchema) -> &str {
+    if record.groups.is_empty() {
+        "none"
+    } else {
+        record.owner.as_str()
+    }
+}
+
+/// One type as the Objects page sees it: what the graph holds, and what this
+/// organization says about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CatalogTypeView {
+    /// The id graph-storage stores it under; empty when nothing has written a
+    /// node of this type into this tenant's graph yet.
+    pub type_id: String,
+    /// The leaf id -- how the type is named everywhere else, and what a mark
+    /// and a field schema are keyed on.
+    pub leaf_id: String,
+    /// A family or base: derived from, never instantiated, never a component.
+    pub is_abstract: bool,
+    /// Whether this organization treats the type as a component.
+    pub component: bool,
+    /// Who authored the field schema it renders against: `builtin`, `tenant`
+    /// or `none`.
+    pub schema: String,
+}
 
 /// A GTS type id as the grammar allows it: `gts.` then `~`-terminated
 /// segments of five dot-separated tokens. Deliberately shape-only — the id
@@ -738,6 +941,174 @@ impl CatalogService {
         ))
     }
 
+    /// The nodes the Components page lists: every node of every type this
+    /// organization marked as a component.
+    ///
+    /// This is where the mark stops being a label and starts deciding
+    /// something. The list used to be "nodes of `catalog.gear.v1~`", which
+    /// made "what is a component" a constant in this file; it is now a
+    /// question the organization answers on the Objects page.
+    ///
+    /// Returns whether the cap cut the list short, because a page that
+    /// silently shows some of a marked type is worse than one that says it is
+    /// showing part of it.
+    pub async fn list_component_nodes(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
+        let marked: Vec<String> = self
+            .list_field_schemas(ctx)
+            .await?
+            .into_iter()
+            .filter(|s| s.component)
+            .map(|s| gts::graph_type_id(&s.describes))
+            .collect();
+        if marked.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        self.sink
+            .list_of_types(ctx, &marked, COMPONENT_LIST_CAP)
+            .await
+    }
+
+    /// Every node type the graph holds, with what the studio says about each.
+    ///
+    /// The union of two lists, because neither alone is the answer: the graph
+    /// knows which types exist, and the studio's records know which of them an
+    /// organization treats as components. A type can appear in one and not the
+    /// other -- a marked type whose gear has not written a node yet, an
+    /// artifact type nobody has an opinion about -- and both belong on a page
+    /// whose job is to let someone form that opinion.
+    ///
+    /// Abstract types (the families and bases) are listed and flagged rather
+    /// than filtered out, so the page can say why one cannot be marked instead
+    /// of leaving a reader to wonder where it went.
+    pub async fn list_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<CatalogTypeView>> {
+        let schemas = self.list_field_schemas(ctx).await?;
+        let by_leaf: HashMap<&str, &TypeFieldSchema> =
+            schemas.iter().map(|s| (s.describes.as_str(), s)).collect();
+
+        let mut views: BTreeMap<String, CatalogTypeView> = BTreeMap::new();
+        // Best-effort, like the schema read: a graph that will not list its
+        // ontology still leaves the marked types visible, which is a degraded
+        // page rather than none.
+        let graph_types = match self.sink.node_types(ctx).await {
+            Ok(types) => types,
+            Err(e) => {
+                tracing::warn!(
+                    error = %format!("{e:#}"),
+                    "components-catalog: the graph would not list its node types"
+                );
+                Vec::new()
+            }
+        };
+        for t in graph_types {
+            let record = by_leaf.get(t.leaf_id.as_str());
+            views.insert(
+                t.leaf_id.clone(),
+                CatalogTypeView {
+                    type_id: t.type_id,
+                    leaf_id: t.leaf_id,
+                    is_abstract: t.is_abstract,
+                    component: record.is_some_and(|r| r.component),
+                    schema: record.map_or("none", |r| schema_owner(r)).to_owned(),
+                },
+            );
+        }
+        for schema in &schemas {
+            views
+                .entry(schema.describes.clone())
+                .or_insert_with(|| CatalogTypeView {
+                    // Nothing has written a node of this type into this
+                    // tenant's graph, so there is no stored id to report.
+                    type_id: String::new(),
+                    leaf_id: schema.describes.clone(),
+                    is_abstract: false,
+                    component: schema.component,
+                    schema: schema_owner(schema).to_owned(),
+                });
+        }
+        Ok(views.into_values().collect())
+    }
+
+    /// Mark a type as a component, or take the mark off.
+    ///
+    /// The Components page then lists it -- which is the whole mechanism: what
+    /// counts as a component stops being what this build happened to sync and
+    /// becomes what the organization says its building blocks are.
+    ///
+    /// Writes only a mark, never a layout, and a record that ends up agreeing
+    /// with what the tenant would inherit is deleted rather than stored: an
+    /// override that overrides nothing is a trap for whoever reads it next.
+    pub async fn set_type_component(
+        &self,
+        ctx: &SecurityContext,
+        describes: &str,
+        component: bool,
+    ) -> anyhow::Result<TypeFieldSchema> {
+        let describes = describes.trim();
+        if !is_gts_type_id(describes) {
+            anyhow::bail!("`{describes}` is not a GTS type id");
+        }
+        let mut record = self
+            .stored_field_schema(ctx, describes)
+            .await?
+            .unwrap_or_else(|| TypeFieldSchema::empty_for(describes));
+        record.component = component;
+        self.put_or_prune(ctx, record).await
+    }
+
+    /// This tenant's own record for one type, before any built-in is laid
+    /// under it. The overlaid read cannot answer this: it cannot tell a
+    /// built-in from a tenant record that happens to agree with it.
+    async fn stored_field_schema(
+        &self,
+        ctx: &SecurityContext,
+        describes: &str,
+    ) -> anyhow::Result<Option<TypeFieldSchema>> {
+        let want = gts::field_schema_instance_id(describes);
+        let nodes = self.sink.list(ctx, Some("field_schema")).await?;
+        Ok(nodes
+            .into_iter()
+            .find(|n| n.instance_id == want)
+            .and_then(|n| serde_json::from_value::<TypeFieldSchema>(n.value).ok()))
+    }
+
+    /// Store a record, or delete it when it no longer differs from what the
+    /// tenant inherits. Returns what a reader would now see for that type.
+    async fn put_or_prune(
+        &self,
+        ctx: &SecurityContext,
+        mut record: TypeFieldSchema,
+    ) -> anyhow::Result<TypeFieldSchema> {
+        let inherited = field_schema::builtin_component(&record.describes);
+        if !record.adds_anything(inherited) {
+            self.sink
+                .delete(ctx, &gts::field_schema_instance_id(&record.describes))
+                .await?;
+            return Ok(field_schema::builtin_schemas()
+                .into_iter()
+                .find(|s| s.describes == record.describes)
+                .unwrap_or_else(|| TypeFieldSchema {
+                    component: inherited,
+                    ..TypeFieldSchema::empty_for(&record.describes)
+                }));
+        }
+        record.owner = if record.groups.is_empty() {
+            // A mark carries no layout, so it does not make this tenant the
+            // author of one -- the overlay says the same thing on the read side.
+            "builtin".to_owned()
+        } else {
+            "tenant".to_owned()
+        };
+        let node = gts::field_schema_node(&record.describes, field_schema::to_payload(&record)?);
+        self.sink.register_types(ctx).await?;
+        self.sink
+            .upsert(ctx, std::slice::from_ref(&node), &[])
+            .await?;
+        Ok(record)
+    }
+
     /// Store this tenant's own schema for one component type, replacing
     /// whatever it inherited. `describes` is a GTS type id and is the identity:
     /// saving twice for the same type replaces rather than accumulates.
@@ -762,13 +1133,15 @@ impl CatalogService {
         // The path says which type this is for; a body that disagrees with it
         // would give one node two identities.
         schema.describes = describes.to_owned();
-        schema.owner = "tenant".to_owned();
-        let node = gts::field_schema_node(describes, field_schema::to_payload(&schema)?);
-        self.sink.register_types(ctx).await?;
-        self.sink
-            .upsert(ctx, std::slice::from_ref(&node), &[])
-            .await?;
-        Ok(schema)
+        // A layout and a mark are two statements about one type, and this
+        // endpoint carries only the first. Whatever the organization already
+        // decided about whether the type is a component survives writing a new
+        // page for it.
+        schema.component = match self.stored_field_schema(ctx, describes).await? {
+            Some(stored) => stored.component,
+            None => field_schema::builtin_component(describes),
+        };
+        self.put_or_prune(ctx, schema).await
     }
 
     /// Drop this tenant's own schema for a type, falling back to the built-in.
@@ -785,9 +1158,21 @@ impl CatalogService {
         if !is_gts_type_id(describes) {
             anyhow::bail!("`describes` must be a GTS type id, got `{describes}`");
         }
-        self.sink
-            .delete(ctx, &gts::field_schema_instance_id(describes))
-            .await
+        // Reverting a layout is not withdrawing an opinion about what the type
+        // IS. If the organization marked it a component, it stays one -- and if
+        // that mark is all that is left and it agrees with the built-in, the
+        // record goes.
+        match self.stored_field_schema(ctx, describes).await? {
+            Some(stored) => {
+                self.put_or_prune(ctx, stored.without_layout()).await?;
+            }
+            None => {
+                self.sink
+                    .delete(ctx, &gts::field_schema_instance_id(describes))
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     /// The gear repository connected to a project (where its gears live and where
@@ -1195,11 +1580,279 @@ mod field_schema_tests {
         assert!(schemas.iter().any(|s| s.describes == novel));
     }
 
+    // ── which types are components ────────────────────────────────────────
+
+    /// The four the deployment ships a page for, and nothing else. A graph
+    /// full of files and commits does not become a catalogue of components
+    /// because it is a graph.
+    #[tokio::test]
+    async fn the_builtin_components_are_the_types_with_a_builtin_page() {
+        let marked: Vec<String> = service()
+            .list_types(&ctx())
+            .await
+            .expect("list types")
+            .into_iter()
+            .filter(|t| t.component)
+            .map(|t| t.leaf_id)
+            .collect();
+        assert_eq!(marked.len(), 4, "{marked:?}");
+        assert!(marked.iter().any(|m| m == GEAR_TYPE));
+        assert!(marked.iter().any(|m| m == FRONTX_TYPE));
+    }
+
+    #[tokio::test]
+    async fn marking_a_type_makes_it_a_component_and_unmarking_takes_it_back() {
+        let service = service();
+        let ctx = ctx();
+        let novel = "gts.cf.acme.catalog.dataset.v1~";
+
+        let marked = service
+            .set_type_component(&ctx, novel, true)
+            .await
+            .expect("mark");
+        assert!(marked.component);
+
+        let listed = service.list_types(&ctx).await.expect("list");
+        let dataset = listed
+            .iter()
+            .find(|t| t.leaf_id == novel)
+            .expect("the marked type is listed");
+        assert!(dataset.component);
+        assert_eq!(dataset.schema, "none", "a mark is not a layout");
+
+        service
+            .set_type_component(&ctx, novel, false)
+            .await
+            .expect("unmark");
+        let listed = service.list_types(&ctx).await.expect("list");
+        assert!(
+            !listed.iter().any(|t| t.leaf_id == novel && t.component),
+            "the type is still a component after unmarking"
+        );
+    }
+
+    /// The failure this rule exists to prevent: ticking a box on the Objects
+    /// page must not blank a page that took sixty-two fields to describe.
+    #[tokio::test]
+    async fn unmarking_a_builtin_component_leaves_its_layout_alone() {
+        let service = service();
+        let ctx = ctx();
+        service
+            .set_type_component(&ctx, GEAR_TYPE, false)
+            .await
+            .expect("unmark");
+
+        let schemas = service.list_field_schemas(&ctx).await.expect("schemas");
+        let gear = schemas
+            .iter()
+            .find(|s| s.describes == GEAR_TYPE)
+            .expect("gear schema survives");
+        assert_eq!(gear.fields().count(), 62);
+        assert!(!gear.component);
+        assert_eq!(gear.owner, "builtin");
+    }
+
+    /// Two statements about one type, written by two endpoints, neither
+    /// erasing the other.
+    #[tokio::test]
+    async fn a_layout_and_a_mark_do_not_overwrite_each_other() {
+        let service = service();
+        let ctx = ctx();
+        let novel = "gts.cf.acme.catalog.dataset.v1~";
+
+        service
+            .set_type_component(&ctx, novel, true)
+            .await
+            .expect("mark");
+        service
+            .save_field_schema(&ctx, novel, one_group())
+            .await
+            .expect("layout");
+
+        let schemas = service.list_field_schemas(&ctx).await.expect("schemas");
+        let dataset = schemas
+            .iter()
+            .find(|s| s.describes == novel)
+            .expect("record");
+        assert!(dataset.component, "writing a layout dropped the mark");
+        assert_eq!(dataset.groups[0].title, "Ours");
+        assert_eq!(dataset.owner, "tenant");
+
+        // And reverting the layout leaves the mark standing.
+        service
+            .delete_field_schema(&ctx, novel)
+            .await
+            .expect("revert the layout");
+        let schemas = service.list_field_schemas(&ctx).await.expect("schemas");
+        let dataset = schemas
+            .iter()
+            .find(|s| s.describes == novel)
+            .expect("the mark outlives the layout");
+        assert!(dataset.component);
+        assert!(dataset.groups.is_empty());
+    }
+
+    /// A record that agrees with what the tenant would inherit is deleted, not
+    /// stored: an override that overrides nothing is a trap for the next
+    /// reader, and it would also outlive a change to the built-in it copies.
+    #[tokio::test]
+    async fn a_record_that_agrees_with_the_inheritance_is_not_kept() {
+        let service = service();
+        let ctx = ctx();
+        service
+            .set_type_component(&ctx, GEAR_TYPE, true)
+            .await
+            .expect("mark a type that is already a component");
+        assert!(
+            service
+                .stored_field_schema(&ctx, GEAR_TYPE)
+                .await
+                .expect("read back")
+                .is_none(),
+            "a redundant record was stored"
+        );
+    }
+
+    /// A type the graph holds but nobody has an opinion about still belongs on
+    /// the page — that is where the opinion gets formed.
+    #[tokio::test]
+    async fn a_type_with_no_record_is_listed_as_neither_component_nor_described() {
+        let service = service();
+        let ctx = ctx();
+        // A node of a type the catalogue syncs, so the store has seen it.
+        service
+            .save_profile(&ctx, "cf-gears-toolkit", json!({ "title": "Toolkit" }))
+            .await
+            .expect("a profile node");
+
+        let listed = service.list_types(&ctx).await.expect("list");
+        let profile = listed
+            .iter()
+            .find(|t| t.leaf_id == crate::components_catalog::gts::GEAR_PROFILE_TYPE)
+            .expect("the profile type is listed");
+        assert!(!profile.component);
+        assert_eq!(profile.schema, "none");
+    }
+
     #[test]
     fn a_derived_graph_type_id_is_still_a_type_id() {
         assert!(is_gts_type_id(&gts::graph_type_id(GEAR_TYPE)));
         assert!(is_gts_type_id(GEAR_TYPE));
         assert!(!is_gts_type_id("gts.cf.studio.catalog.gear.v1"));
         assert!(!is_gts_type_id("gts.cf.studio.gear.v1~"));
+    }
+}
+
+#[cfg(test)]
+mod component_list_tests {
+    //! What the Components page lists, now that an organization decides it.
+
+    use super::*;
+    use crate::components_catalog::gts::{FRONTX_TYPE, GEAR_TYPE};
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca8))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(0x7e4a48))
+            .build()
+            .expect("security context")
+    }
+
+    async fn with_two_kinds_of_node() -> CatalogService {
+        let service = CatalogService::new(
+            Arc::new(MemorySink::default()),
+            "constructorfabric".to_string(),
+            None,
+        );
+        let ctx = ctx();
+        // One gear, one micro-frontend, one profile: three types, of which two
+        // ship as components and one does not.
+        let nodes = vec![
+            gts::gear_node("cf-gears-toolkit", json!({ "name": "cf-gears-toolkit" })),
+            gts::frontx_node("@cf/shell", json!({ "name": "@cf/shell" })),
+            gts::gear_profile_node(
+                "cf-gears-toolkit",
+                json!({ "gear_name": "cf-gears-toolkit" }),
+            ),
+        ];
+        service.sink.upsert(&ctx, &nodes, &[]).await.expect("seed");
+        service
+    }
+
+    #[tokio::test]
+    async fn the_list_is_the_marked_types_and_not_the_gear_type() {
+        let service = with_two_kinds_of_node().await;
+        let (nodes, truncated) = service
+            .list_component_nodes(&ctx())
+            .await
+            .expect("list components");
+        assert!(!truncated);
+        let types: Vec<&str> = nodes.iter().map(|n| n.type_id.as_str()).collect();
+        assert!(types.contains(&GEAR_TYPE), "{types:?}");
+        assert!(
+            types.contains(&FRONTX_TYPE),
+            "a micro-frontend is a component and was not listed: {types:?}"
+        );
+        assert!(
+            !types.iter().any(|t| t.contains("gear_profile")),
+            "a profile is not a component: {types:?}"
+        );
+    }
+
+    /// The mark decides the list. That is the whole feature, stated once.
+    #[tokio::test]
+    async fn unmarking_a_type_takes_its_nodes_off_the_page() {
+        let service = with_two_kinds_of_node().await;
+        let ctx = ctx();
+        service
+            .set_type_component(&ctx, FRONTX_TYPE, false)
+            .await
+            .expect("unmark");
+        let (nodes, _) = service
+            .list_component_nodes(&ctx)
+            .await
+            .expect("list components");
+        assert!(!nodes.iter().any(|n| n.type_id == FRONTX_TYPE));
+        assert!(nodes.iter().any(|n| n.type_id == GEAR_TYPE));
+    }
+
+    /// And marking one puts nodes of a type nothing shipped a page for on it.
+    #[tokio::test]
+    async fn marking_a_type_puts_its_nodes_on_the_page() {
+        let service = with_two_kinds_of_node().await;
+        let ctx = ctx();
+        let profile_type = crate::components_catalog::gts::GEAR_PROFILE_TYPE;
+        service
+            .set_type_component(&ctx, profile_type, true)
+            .await
+            .expect("mark");
+        let (nodes, _) = service
+            .list_component_nodes(&ctx)
+            .await
+            .expect("list components");
+        assert!(
+            nodes.iter().any(|n| n.type_id == profile_type),
+            "the newly marked type contributed nothing"
+        );
+    }
+
+    /// A tenant that marks nothing gets an empty page rather than a wrong one.
+    #[tokio::test]
+    async fn a_tenant_that_marks_nothing_lists_nothing() {
+        let service = with_two_kinds_of_node().await;
+        let ctx = ctx();
+        for schema in field_schema::builtin_schemas() {
+            service
+                .set_type_component(&ctx, &schema.describes, false)
+                .await
+                .expect("unmark");
+        }
+        let (nodes, truncated) = service
+            .list_component_nodes(&ctx)
+            .await
+            .expect("list components");
+        assert!(nodes.is_empty(), "{nodes:?}");
+        assert!(!truncated);
     }
 }

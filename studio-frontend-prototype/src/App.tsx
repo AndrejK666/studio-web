@@ -9,6 +9,7 @@ import { BackgroundWork } from "./tasks";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
+import { ObjectTypes } from "./object-types";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab } from "./documents";
 import { ProcessCatalogTab } from "./process-catalog";
@@ -314,6 +315,7 @@ type View =
   | "files"
   | "connectors"
   | "gears"
+  | "objects"
   | "tasks"
   | "system"
   | "profile";
@@ -448,6 +450,10 @@ const NAV_SECTIONS: {
       // Our published gears (crates.io → graph), and the system observability
       // surface.
       { id: "gears", icon: "package", label: "Components" },
+      // The type catalogue the line above is a view of. Which types are
+      // components is a judgement this organization makes here, not a constant
+      // in a gear — so the two surfaces sit next to each other.
+      { id: "objects", icon: "grid", label: "Objects" },
       // What the deployment is doing in the background, and what fires on its
       // own: studio-tasks runs plus studio-scheduler schedules.
       { id: "tasks", icon: "scan", label: "Background work" },
@@ -1653,6 +1659,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onCategories={setComponentCategories}
           />
         )}
+        {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && <SystemView token={token} filters={filters} />}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
