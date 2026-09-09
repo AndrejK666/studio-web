@@ -32,6 +32,13 @@ pub struct ObjectNode {
 /// sync (object-type nodes) where keys are computed by the caller.
 #[derive(Debug, Clone)]
 pub struct NodeUpsert {
+    /// Compare-and-set on the node's stored version. `Some(0)` means **the
+    /// node must not exist**: a live node's version is 1 or more, so the store
+    /// refuses the write when one is already there. That is the only mutual
+    /// exclusion available here — graph-storage takes an expected version on
+    /// write but reports none on read, so a read-then-write CAS cannot be
+    /// formed. A refusal surfaces as [`VERSION_TAKEN`].
+    pub expected_version: Option<i64>,
     pub type_id: String,
     pub node_key: String,
     pub name: Option<String>,
@@ -59,6 +66,16 @@ pub struct EdgeView {
     pub to: String,
 }
 
+/// The marker an upsert refused by its compare-and-set carries, so a caller
+/// can tell "another writer got there first" from a real failure without
+/// matching on the storage gear's own wording.
+pub const VERSION_TAKEN: &str = "domain-model: node version already taken";
+
+/// True for the refusal above.
+pub fn is_version_taken(e: &anyhow::Error) -> bool {
+    e.to_string().contains(VERSION_TAKEN)
+}
+
 /// True when an object belongs to `scope`. `None` matches everything; the
 /// scope is tagged on the payload as `_scope` when the object is created.
 fn in_scope(value: &serde_json::Value, scope: Option<&str>) -> bool {
@@ -72,33 +89,51 @@ fn in_scope(value: &serde_json::Value, scope: Option<&str>) -> bool {
 /// relations against them, and read the objects back.
 #[async_trait]
 pub trait DomainStore: Send + Sync {
+    /// Register only the meta layer (the model + object_type nodes and the
+    /// inherits/declares edges). Split out of [`Self::register_types`] because
+    /// the model is *read back* from those types before there is an ontology to
+    /// register the domain types from — the bootstrap has to start somewhere.
+    async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()>;
+
     /// Register the domain node and edge types. Idempotent — a byte-identical
     /// re-registration converges — so it is safe to call before every write.
+    ///
+    /// Returns the type ids whose *stored* schema differs from the one this
+    /// model would register. Graph-storage treats a registered type's schema as
+    /// immutable, so those keep what they were first registered with; the
+    /// difference is reported rather than being either silently swallowed or
+    /// fatal. See [`crate::domain_model::service::DomainModelService`] on why a
+    /// model edit can produce one.
     async fn register_types(
         &self,
         ctx: &SecurityContext,
         node_types: &[NodeType],
         edge_types: &[EdgeType],
-    ) -> anyhow::Result<()>;
-
-    /// Create (or upsert) one object of `type_id` at `instance_id`.
-    async fn create_object(
-        &self,
-        ctx: &SecurityContext,
-        type_id: &str,
-        instance_id: &str,
-        name: Option<String>,
-        payload: Value,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<Vec<String>>;
 
     /// Create (or upsert) one relation between two existing objects.
+    ///
+    /// `discriminator` names *which* declared relation this is, so two
+    /// relations of the same verb between the same pair stay distinct edges
+    /// rather than collapsing into one.
     async fn create_relation(
         &self,
         ctx: &SecurityContext,
         edge_type_id: &str,
         from: &str,
         to: &str,
+        discriminator: Option<&str>,
+        payload: Option<Value>,
     ) -> anyhow::Result<()>;
+
+    /// One object by its instance id, whatever its type. `None` when the graph
+    /// has no such node. Used to type-check a relation's endpoints against the
+    /// model before writing it.
+    async fn get_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>>;
 
     /// The objects of the given (our) type ids, optionally narrowed to one
     /// workspace/project `scope`. `limit` caps how many are returned; `None`
@@ -158,41 +193,22 @@ pub struct InMemoryDomainStore {
 
 #[async_trait]
 impl DomainStore for InMemoryDomainStore {
+    async fn register_meta_types(&self, _ctx: &SecurityContext) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn register_types(
         &self,
         _ctx: &SecurityContext,
         node_types: &[NodeType],
         edge_types: &[EdgeType],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<String>> {
         tracing::info!(
             nodes = node_types.len(),
             edges = edge_types.len(),
             "studio-domain-model: in-memory type registration (no-op)"
         );
-        Ok(())
-    }
-
-    async fn create_object(
-        &self,
-        _ctx: &SecurityContext,
-        type_id: &str,
-        instance_id: &str,
-        _name: Option<String>,
-        payload: Value,
-    ) -> anyhow::Result<()> {
-        let mut map = self
-            .nodes
-            .lock()
-            .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
-        map.insert(
-            instance_id.to_string(),
-            ObjectNode {
-                type_id: type_id.to_string(),
-                instance_id: instance_id.to_string(),
-                value: payload,
-            },
-        );
-        Ok(())
+        Ok(Vec::new())
     }
 
     async fn create_relation(
@@ -201,16 +217,35 @@ impl DomainStore for InMemoryDomainStore {
         edge_type_id: &str,
         from: &str,
         to: &str,
+        discriminator: Option<&str>,
+        _payload: Option<Value>,
     ) -> anyhow::Result<()> {
         let mut map = self
             .edges
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         map.insert(
-            super::gts::edge_key(edge_type_id, from, to),
+            format!(
+                "{}|{}",
+                super::gts::edge_key(edge_type_id, from, to),
+                discriminator.unwrap_or("")
+            ),
             (edge_type_id.to_string(), from.to_string(), to.to_string()),
         );
         Ok(())
+    }
+
+    async fn get_object(
+        &self,
+        _ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>> {
+        Ok(self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?
+            .get(instance_id)
+            .cloned())
     }
 
     async fn list_objects(
@@ -245,6 +280,9 @@ impl DomainStore for InMemoryDomainStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
         for n in nodes {
+            if n.expected_version == Some(0) && map.contains_key(&n.node_key) {
+                return Err(anyhow::anyhow!("{VERSION_TAKEN}: {}", n.node_key));
+            }
             map.insert(
                 n.node_key.clone(),
                 ObjectNode {
@@ -335,6 +373,15 @@ mod graph_backend {
         }
     }
 
+    /// True for graph-storage's refusal to re-register a type id under a
+    /// different schema — the one refusal that is a *state* of the deployment
+    /// rather than a fault: the registered schema is immutable, so the type
+    /// keeps the one it has until a migration replaces it.
+    fn is_schema_conflict(e: &impl std::fmt::Display) -> bool {
+        e.to_string()
+            .contains("already registered with a different schema")
+    }
+
     fn ingest_one(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>) -> IngestRequest {
         IngestRequest {
             nodes,
@@ -355,21 +402,29 @@ mod graph_backend {
 
     #[async_trait]
     impl DomainStore for GraphStorageBackend {
+        async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+            let batch: Vec<TypeRegistration> = gts::meta_type_registrations()
+                .into_iter()
+                .map(|(type_id, schema)| TypeRegistration { type_id, schema })
+                .collect();
+            self.client
+                .register_types(ctx, batch)
+                .await
+                .map_err(|e| anyhow::anyhow!("register domain meta types: {e}"))?;
+            Ok(())
+        }
+
         async fn register_types(
             &self,
             ctx: &SecurityContext,
             node_types: &[NodeType],
             edge_types: &[EdgeType],
-        ) -> anyhow::Result<()> {
+        ) -> anyhow::Result<Vec<String>> {
             let mut batch: Vec<TypeRegistration> = Vec::new();
             for nt in node_types {
                 batch.push(TypeRegistration {
                     type_id: gts::graph_type_id(&nt.type_id),
-                    schema: gts::derived_node_schema(
-                        &nt.type_id,
-                        &nt.full_text_paths,
-                        &nt.vector_paths,
-                    ),
+                    schema: gts::derived_node_schema(&nt.type_id),
                 });
             }
             for et in edge_types {
@@ -389,33 +444,33 @@ mod graph_backend {
             for (type_id, schema) in gts::meta_type_registrations() {
                 batch.push(TypeRegistration { type_id, schema });
             }
-            self.client
-                .register_types(ctx, batch)
-                .await
-                .map_err(|e| anyhow::anyhow!("register domain types: {e}"))?;
-            Ok(())
-        }
-
-        async fn create_object(
-            &self,
-            ctx: &SecurityContext,
-            type_id: &str,
-            instance_id: &str,
-            name: Option<String>,
-            payload: Value,
-        ) -> anyhow::Result<()> {
-            let node = NodeSpec {
-                node_key: instance_id.to_string(),
-                type_id: gts::graph_type_id(type_id),
-                name: name.filter(|s| !s.is_empty()),
-                payload: Some(payload),
-                expected_version: None,
-            };
-            self.client
-                .ingest(ctx, ingest_one(vec![node], Vec::new()))
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage domain object ingest: {e}"))?;
-            Ok(())
+            // One batch is the fast path and the normal one. It aborts whole,
+            // though, and one immutable-schema refusal in it would otherwise
+            // take down every write for the whole model — so a failed batch
+            // falls back to registering type by type, which isolates the
+            // refusals to the types that actually drifted.
+            match self.client.register_types(ctx, batch.clone()).await {
+                Ok(_) => Ok(Vec::new()),
+                Err(batch_err) => {
+                    let mut pinned: Vec<String> = Vec::new();
+                    for one in batch {
+                        let type_id = one.type_id.clone();
+                        if let Err(e) = self.client.register_types(ctx, vec![one]).await {
+                            if is_schema_conflict(&e) {
+                                pinned.push(type_id);
+                            } else {
+                                return Err(anyhow::anyhow!("register domain types: {e}"));
+                            }
+                        }
+                    }
+                    if pinned.is_empty() {
+                        // The batch failed for a reason no single registration
+                        // reproduces; report the original rather than "fine".
+                        return Err(anyhow::anyhow!("register domain types: {batch_err}"));
+                    }
+                    Ok(pinned)
+                }
+            }
         }
 
         async fn create_relation(
@@ -424,19 +479,43 @@ mod graph_backend {
             edge_type_id: &str,
             from: &str,
             to: &str,
+            discriminator: Option<&str>,
+            payload: Option<Value>,
         ) -> anyhow::Result<()> {
             let edge = EdgeSpec {
                 type_id: gts::graph_type_id(edge_type_id),
                 src_node_key: from.to_string(),
                 dst_node_key: to.to_string(),
-                discriminator: None,
-                payload: None,
+                discriminator: discriminator.map(str::to_string),
+                payload,
             };
             self.client
                 .ingest(ctx, ingest_one(Vec::new(), vec![edge]))
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage domain relation ingest: {e}"))?;
             Ok(())
+        }
+
+        async fn get_object(
+            &self,
+            ctx: &SecurityContext,
+            instance_id: &str,
+        ) -> anyhow::Result<Option<ObjectNode>> {
+            // The caller wants the node's type and payload, not its edges;
+            // one is the smallest adjacency the gear accepts (0 is refused).
+            match self
+                .client
+                .get_node(ctx, &instance_id.to_string(), Some(1))
+                .await
+            {
+                Ok(view) => Ok(Some(ObjectNode {
+                    type_id: gts::our_type_from_graph(&view.type_id),
+                    instance_id: view.node_key,
+                    value: view.payload.unwrap_or_else(|| serde_json::json!({})),
+                })),
+                Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(None),
+                Err(e) => Err(anyhow::anyhow!("graph-storage node read: {e}")),
+            }
         }
 
         async fn list_objects(
@@ -528,14 +607,23 @@ mod graph_backend {
                     type_id: gts::graph_type_id(&n.type_id),
                     name: n.name.clone().filter(|s| !s.is_empty()),
                     payload: Some(n.payload.clone()),
-                    expected_version: None,
+                    expected_version: n.expected_version,
                 })
                 .collect();
             let res = self
                 .client
                 .ingest(ctx, ingest_one(specs, Vec::new()))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage node batch ingest: {e}"))?;
+                .map_err(|e| {
+                    // A compare-and-set refusal is a race, not a fault: the
+                    // caller retries against the new state. Everything else is
+                    // reported as itself.
+                    if e.to_string().contains("expected version") {
+                        anyhow::anyhow!("{}: {e}", super::VERSION_TAKEN)
+                    } else {
+                        anyhow::anyhow!("graph-storage node batch ingest: {e}")
+                    }
+                })?;
             Ok(res.counts.nodes_inserted + res.counts.nodes_updated)
         }
 

@@ -146,11 +146,7 @@ pub fn schemas() -> Vec<Value> {
             GRAPH_STORAGE,
             gear,
             BOOT_FAILS,
-            crate::domain_model::gts::derived_node_schema(
-                &nt.type_id,
-                &nt.full_text_paths,
-                &nt.vector_paths,
-            ),
+            crate::domain_model::gts::derived_node_schema(&nt.type_id),
         ));
     }
     for et in ontology.edge_types() {
