@@ -161,20 +161,28 @@ COPY --from=cfs --chown=node:node /home/node/.cf-studio/cache/ /home/node/.cf-st
 # Measured cost of the two CLIs: 558 MB (claude-code 207 MB, opencode-ai
 # 353 MB). Their vendored binaries are already single-platform, so
 # trim-vendor-binaries.sh has nothing to take off them.
-RUN npm install -g \
+#
+# The vendor trim runs in THIS instruction, chained to the install, and that is
+# not a style choice. A layer records what its own command left behind: deleting
+# a file in a later RUN adds a whiteout and the bytes still ship. Measured with
+# random, incompressible data — create 180 MB, delete 120 MB of it:
+#
+#     delete in a later RUN   217 037 180 B
+#     delete in the same RUN    91 168 946 B
+#
+# The /app trim (build stage, above) is fine where it is for the same reason
+# read the other way round: `COPY --from=build` copies the tree as it stands at
+# the end, so a separate RUN there costs nothing.
+ARG TARGETARCH
+RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
+    npm install -g \
       @openai/codex@0.49.0 \
       @anthropic-ai/claude-agent-sdk@0.3.223 \
       @anthropic-ai/claude-code@2.1.266 \
       opencode-ai@1.18.30 \
-    && npm cache clean --force
-
-# Same six-platform vendor tree, again: 252 MB installed, 50 MB usable.
-# @anthropic-ai's own 278 MB binary is NOT touched — npm already resolved that
-# one to a single platform (claude-agent-sdk-linux-x64), so there is nothing
-# there to drop.
-ARG TARGETARCH
-RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
-    sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules
+    && npm cache clean --force \
+    && sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules \
+    && codex --version && claude --version && opencode --version
 
 # ── Orca runtime (the IDE's Agents panel drives it) ───────────────────────
 # Shipped by default. It used to be opt-in, and the result was a session whose

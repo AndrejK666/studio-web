@@ -457,11 +457,26 @@ Three things to know before turning it on:
   What is done: `@openai/codex` and `@openai/codex-sdk` each vendor six
   prebuilt binaries — musl, Windows and macOS, x86_64 and aarch64 — and an
   image runs one. `docker/trim-vendor-binaries.sh` keeps the one matching
-  `TARGETARCH` and drops the rest, in both stages: **206 MB** freed under
-  `/usr/local/lib/node_modules` and **179 MB** under `/app/node_modules`,
-  measured, with `codex --version` still answering afterwards. The
-  `@anthropic-ai` binary next to it is *not* touched: npm already resolved
-  that one to a single platform, so there is nothing there to drop.
+  `TARGETARCH` and drops the rest in both stages: 206 MB under
+  `/usr/local/lib/node_modules` and 179 MB under `/app/node_modules`, with
+  `codex --version` still answering afterwards. The `@anthropic-ai` binary
+  next to it is *not* touched: npm already resolved that one to a single
+  platform, so there is nothing there to drop.
+
+  Both numbers are bytes freed inside a container, and only one of them was
+  ever bytes off the image. A layer records what its own command left behind,
+  so a deletion in a later `RUN` adds a whiteout and the bytes still ship —
+  measured with random, incompressible data (create 180 MB, delete 120 MB):
+  217 037 180 B when the deletion is a separate `RUN`, 91 168 946 B when it
+  shares one. The `/app` trim was always fine, because `COPY --from=build`
+  takes the tree as it stands at the end; the global one was not, and now runs
+  chained to the `npm install -g` that creates the tree.
+
+  Do not trust this repository's image sizes to a machine, either: on the one
+  where this was measured `docker images` and `docker image inspect` disagreed
+  by a factor of four on the same tags, which is why the evidence above is a
+  controlled before/after on unique data rather than a reading of the session
+  image.
 
   What is left, and it is the larger half: `/app` still carries every
   workspace's devDependencies. `@nx` (26 MB) and `typescript` (23 MB) are
