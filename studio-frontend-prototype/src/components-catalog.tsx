@@ -50,7 +50,136 @@ interface Schema {
 }
 
 const SCHEMA = schemaJson as unknown as Schema;
+/** The component types this page knows by name.
+ *
+ *  A component type is a GTS type, and these are the ones the presentation
+ *  below differs for. Everything else the catalogue carries renders with the
+ *  gear schema, which is the honest default rather than a guess.
+ */
+const FRONTX_TYPE = "gts.cf.studio.catalog.frontx.v1~";
+/** The kit node type, as the backend registers it. Named here so the
+ *  synthesised built-ins and the synced nodes cannot drift apart into two
+ *  types that render as two rows in the type picker. */
+const KIT_TYPE = "gts.cf.studio.catalog.kit.v1~";
+/** The document-type node type, as studio-documents registers it.
+ *
+ *  Note the namespace: `doc`, not `catalog`. A document type is a component --
+ *  a named thing an organization publishes and a project takes -- but a
+ *  different gear owns it, and it keeps that gear's identity here. The
+ *  catalogue lists it; it does not annex it. */
+const DOCUMENT_TYPE = "gts.cf.studio.doc.document_type.v1~";
+
 const ALL_FIELDS: Field[] = SCHEMA.groups.flatMap((g) => g.fields);
+
+/** Every field the gear schema declares, by key, so a type's schema can reuse a
+ *  label and a source rather than restate them. */
+const GEAR_FIELDS: Record<string, Field> = Object.fromEntries(
+  ALL_FIELDS.map((f) => [f.key, f]),
+);
+
+/** Fields picked out of the gear schema by key. A key it does not know is
+ *  dropped rather than rendered blank -- a schema that names a field nothing
+ *  fills is the bug this whole mechanism exists to fix. */
+function pick(keys: string[]): Field[] {
+  return keys.map((k) => GEAR_FIELDS[k]).filter((f): f is Field => Boolean(f));
+}
+
+/** A field this type has and the gear schema does not. */
+function own(key: string, label: string, kind: Kind, ref: string): Field {
+  return { key, label, kind, lamp: false, source: { class: "repo", ref } };
+}
+
+/** The parts of the presentation that are the same whatever the type: the
+ *  legends and the source-class glossary a reader needs to interpret any cell. */
+function schemaFrom(groups: Group[], composition: CompositionPart[] = []): Schema {
+  return {
+    groups,
+    composition,
+    statusLegend: SCHEMA.statusLegend,
+    docStateLegend: SCHEMA.docStateLegend,
+    sourceClasses: SCHEMA.sourceClasses,
+  };
+}
+
+/** A micro-frontend fills eleven keys. The gear schema declares sixty-two, so
+ *  rendering one against the other is a page of "no data" with the handful of
+ *  real values lost in it -- crates, migrations, supported databases and
+ *  published versions are not things a package in an npm monorepo has. */
+const FRONTX_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: pick(["description", "category", "path", "version"]),
+  },
+  {
+    id: "contracts",
+    title: "Contracts and dependencies",
+    icon: "C",
+    fields: [...pick(["deps", "openapi"]), own("deps_names", "Dependencies", "text", "package.json")],
+  },
+  { id: "qa", title: "Quality assurance", icon: "Q", fields: pick(["unitmods"]) },
+  { id: "ops", title: "Operations", icon: "O", fields: pick(["guideline"]) },
+  { id: "security", title: "Security and compliance", icon: "K", fields: pick(["licence"]) },
+  { id: "delivery", title: "Delivery health", icon: "D", fields: pick(["lastchange"]) },
+]);
+
+/** A kit is a repository, a ref and a manifest -- and it keeps them on the node
+ *  itself rather than in an editable profile, because for a kit the manifest is
+ *  what a profile is for a gear. */
+const KIT_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: [
+      ...pick(["description"]),
+      own("publisher", "Publisher", "text", ".cf-studio-kit.toml"),
+    ],
+  },
+  {
+    id: "source",
+    title: "Source",
+    icon: "C",
+    fields: [
+      own("repository", "Repository", "text", "catalogue source"),
+      own("git_ref", "Git ref", "label", "catalogue source"),
+      own("manifest_path", "Manifest", "text", "repository tree"),
+    ],
+  },
+]);
+
+/** A document type is a template, a checklist and a questionnaire. It has no
+ *  repository and no version, and saying so by omission is the point. */
+const DOCUMENT_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: [
+      ...pick(["description"]),
+      own("owner", "Defined at", "label", "studio-documents"),
+      own("sections", "Sections", "metric", "type template"),
+    ],
+  },
+]);
+
+/** The presentation for one component type.
+ *
+ *  Keyed by GTS type, because that is what a component type IS -- see the type
+ *  picker above. An unknown type falls back to the gear schema, which is the
+ *  only honest default: it is the one that describes a crate, and a type we do
+ *  not know is more likely to be a new crate-shaped thing than a new shape.
+ *
+ *  These live in the client for now. They are presentation, but they are also
+ *  data about a type, and the right home is beside the type itself -- see the
+ *  note in the pull request. */
+function schemaFor(typeId: string): Schema {
+  if (typeId === FRONTX_TYPE) return FRONTX_SCHEMA;
+  if (typeId === KIT_TYPE) return KIT_SCHEMA;
+  if (typeId === DOCUMENT_TYPE) return DOCUMENT_SCHEMA;
+  return SCHEMA;
+}
 
 /** One field's answer for one gear: full text, brief, number, lamp, link, when. */
 interface FieldVal {
@@ -380,18 +509,9 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
   );
 }
 
-/** The kit node type, as the backend registers it. Named here so the
- *  synthesised built-ins and the synced nodes cannot drift apart into two
- *  types that render as two rows in the type picker. */
-const KIT_TYPE = "gts.cf.studio.catalog.kit.v1~";
 
-/** The document-type node type, as studio-documents registers it.
- *
- *  Note the namespace: `doc`, not `catalog`. A document type is a component --
- *  a named thing an organization publishes and a project takes -- but a
- *  different gear owns it, and it keeps that gear's identity here. The
- *  catalogue lists it; it does not annex it. */
-const DOCUMENT_TYPE = "gts.cf.studio.doc.document_type.v1~";
+
+
 
 /** A document type as a catalogue node.
  *
@@ -1073,6 +1193,11 @@ function GearDetail({
   onSaved: (profile: Record<string, unknown>) => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
+  // The presentation follows the component's TYPE. Rendering a micro-frontend
+  // against the gear schema is a page of "no data" with its handful of real
+  // values lost in it, which is what this page used to do.
+  const schema = schemaFor(gear.type_id);
+  const schemaFields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const [view, setView] = useState<View>("filled");
   const [versions, setVersions] = useState<CatalogNode[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -1085,9 +1210,11 @@ function GearDetail({
     }
     return base;
   }, [gear.value, profile, versions]);
-  const filled = ALL_FIELDS.filter((f) => values[f.key]).length;
-  const pct = Math.round((filled / ALL_FIELDS.length) * 100);
-  const derivable = ALL_FIELDS.filter((f) => f.source.class === "repo" || f.source.class === "api").length;
+  const filled = schemaFields.filter((f) => values[f.key]).length;
+  const pct = schemaFields.length ? Math.round((filled / schemaFields.length) * 100) : 0;
+  const derivable = schemaFields.filter(
+    (f) => f.source.class === "repo" || f.source.class === "api",
+  ).length;
 
   useEffect(() => {
     let live = true;
@@ -1141,11 +1268,11 @@ function GearDetail({
 
       {gear.value.description && <p className="gcat-sub">{String(gear.value.description)}</p>}
 
-      {view === "filled" && <HealthStrip values={values} />}
-      {view === "filled" && <Kpis values={values} />}
+      {view === "filled" && <HealthStrip values={values} schema={schema} />}
+      {view === "filled" && <Kpis values={values} schema={schema} />}
 
       <div className="grid">
-        {SCHEMA.groups.map((group) => (
+        {schema.groups.map((group) => (
           <Panel key={group.id} group={group} values={values} view={view} />
         ))}
       </div>
@@ -1301,13 +1428,13 @@ function ValueCell({
 
 // ── health strip ─────────────────────────────────────────────────────────────
 
-function HealthStrip({ values }: { values: Values }) {
+function HealthStrip({ values, schema }: { values: Values; schema: Schema }) {
   const goTo = (id: string) => {
     document.getElementById(`panel-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
   return (
     <div className="health">
-      {SCHEMA.groups.map((group) => {
+      {schema.groups.map((group) => {
         const h = groupHealth(group, values);
         const order: Lamp[] = ["bad", "watch", "good", "grey"];
         const pips = h.n
@@ -1332,8 +1459,8 @@ function HealthStrip({ values }: { values: Values }) {
 
 // ── KPIs: composition bar + facts ────────────────────────────────────────────
 
-function Kpis({ values }: { values: Values }) {
-  const parts = SCHEMA.composition.map((c) => ({ ...c, n: values[c.key]?.n ?? 0 }));
+function Kpis({ values, schema }: { values: Values; schema: Schema }) {
+  const parts = schema.composition.map((c) => ({ ...c, n: values[c.key]?.n ?? 0 }));
   const total = parts.reduce((a, p) => a + p.n, 0);
   const ratio = values.ratio?.b ?? values.ratio?.v ?? "—";
   const adr = values.adr?.n;
