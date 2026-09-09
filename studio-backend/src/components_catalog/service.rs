@@ -18,6 +18,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::cratesio::{CrateDetail, CratesIoClient};
+use super::field_schema::{self, TypeFieldSchema};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
 use crate::connectors::service::ConnectorService;
@@ -45,6 +46,10 @@ pub(crate) trait CatalogSink: Send + Sync {
         ctx: &SecurityContext,
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>>;
+    /// Remove one node by instance id. Reverting an override is deleting the
+    /// node that carries it, so a catalogue that can only upsert is a
+    /// catalogue whose overrides are one-way.
+    async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()>;
 }
 
 /// In-memory store, keyed by instance id so a re-sync upserts. Resets on
@@ -90,6 +95,15 @@ impl CatalogSink for MemorySink {
             .filter(|n| type_filter.is_none_or(|t| n.type_id.contains(t)))
             .cloned()
             .collect())
+    }
+
+    async fn delete(&self, _ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
+        let mut map = self
+            .nodes
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        map.remove(instance_id);
+        Ok(())
     }
 }
 
@@ -278,8 +292,46 @@ impl CatalogSink for GraphSink {
         }
         Ok(out)
     }
+
+    /// A soft delete in graph-storage, and idempotent here: deleting a node
+    /// that is already gone is what "revert to the built-in" means when it was
+    /// never overridden, and a caller should not have to know which.
+    async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
+        match self.client.delete_node(ctx, &instance_id.to_string()).await {
+            Ok(_) => Ok(()),
+            Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(()),
+            Err(e) => Err(anyhow!("graph-storage delete: {e}")),
+        }
+    }
 }
 // ── Service ─────────────────────────────────────────────────────────────────
+
+/// A GTS type id as the grammar allows it: `gts.` then `~`-terminated
+/// segments of five dot-separated tokens. Deliberately shape-only — the id
+/// need not be a type this build knows, or the catalogue could never be given
+/// a schema for a component kind it has not shipped support for.
+fn is_gts_type_id(id: &str) -> bool {
+    if !id.starts_with("gts.") || !id.ends_with('~') || id.len() > 512 {
+        return false;
+    }
+    let segments: Vec<&str> = id
+        .strip_prefix("gts.")
+        .unwrap_or_default()
+        .trim_end_matches('~')
+        .split('~')
+        .collect();
+    !segments.is_empty()
+        && segments.iter().all(|segment| {
+            let tokens: Vec<&str> = segment.split('.').collect();
+            tokens.len() == 5
+                && tokens[4].starts_with('v')
+                && tokens.iter().all(|t| {
+                    !t.is_empty()
+                        && t.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                })
+        })
+}
 
 /// A repository source the caller selected on the Gears page.
 ///
@@ -639,6 +691,105 @@ impl CatalogService {
         Ok(node)
     }
 
+    /// The field schemas this tenant renders component pages against: the
+    /// built-ins with the tenant's own laid over them.
+    ///
+    /// Best-effort on the read: a graph that will not answer costs the
+    /// overrides, not the page. Falling back to the built-ins is the same
+    /// behaviour a caller got before schemas were stored at all, so a degraded
+    /// graph makes the Components page older, not broken.
+    pub async fn list_field_schemas(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Vec<TypeFieldSchema>> {
+        let stored = match self.sink.list(ctx, Some("field_schema")).await {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                tracing::warn!(
+                    error = %format!("{e:#}"),
+                    "components-catalog: field schemas unreadable — serving the built-ins"
+                );
+                Vec::new()
+            }
+        };
+        let parsed: Vec<TypeFieldSchema> = stored
+            .into_iter()
+            .filter_map(
+                |n| match serde_json::from_value::<TypeFieldSchema>(n.value) {
+                    Ok(schema) if !schema.describes.trim().is_empty() => Some(schema),
+                    // A stored schema that no longer parses is a schema this build
+                    // cannot render. Skipping it falls back to the built-in, which
+                    // is a page; refusing the whole list would be no page at all.
+                    Ok(_) => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            node = %n.instance_id,
+                            error = %e,
+                            "components-catalog: skipping an unparseable field schema"
+                        );
+                        None
+                    }
+                },
+            )
+            .collect();
+        Ok(field_schema::overlay(
+            field_schema::builtin_schemas(),
+            parsed,
+        ))
+    }
+
+    /// Store this tenant's own schema for one component type, replacing
+    /// whatever it inherited. `describes` is a GTS type id and is the identity:
+    /// saving twice for the same type replaces rather than accumulates.
+    ///
+    /// The type need not be one this build knows. That is the point of storing
+    /// schemas rather than shipping them: a deployment that catalogues a
+    /// component kind we have never heard of can give it a page.
+    pub async fn save_field_schema(
+        &self,
+        ctx: &SecurityContext,
+        describes: &str,
+        schema: Value,
+    ) -> anyhow::Result<TypeFieldSchema> {
+        let describes = describes.trim();
+        if !is_gts_type_id(describes) {
+            anyhow::bail!(
+                "`describes` must be a GTS type id such as gts.cf.studio.catalog.gear.v1~, got `{describes}`"
+            );
+        }
+        let mut schema: TypeFieldSchema = serde_json::from_value(schema)
+            .map_err(|e| anyhow!("a field schema must be {{groups, composition, …}}: {e}"))?;
+        // The path says which type this is for; a body that disagrees with it
+        // would give one node two identities.
+        schema.describes = describes.to_owned();
+        schema.owner = "tenant".to_owned();
+        let node = gts::field_schema_node(describes, field_schema::to_payload(&schema)?);
+        self.sink.register_types(ctx).await?;
+        self.sink
+            .upsert(ctx, std::slice::from_ref(&node), &[])
+            .await?;
+        Ok(schema)
+    }
+
+    /// Drop this tenant's own schema for a type, falling back to the built-in.
+    ///
+    /// Idempotent: reverting a type that was never overridden succeeds, because
+    /// the caller is asking for a state ("this tenant has no schema of its
+    /// own"), not for an event.
+    pub async fn delete_field_schema(
+        &self,
+        ctx: &SecurityContext,
+        describes: &str,
+    ) -> anyhow::Result<()> {
+        let describes = describes.trim();
+        if !is_gts_type_id(describes) {
+            anyhow::bail!("`describes` must be a GTS type id, got `{describes}`");
+        }
+        self.sink
+            .delete(ctx, &gts::field_schema_instance_id(describes))
+            .await
+    }
+
     /// The gear repository connected to a project (where its gears live and where
     /// scaffolded gears are written), or `None` when none is connected yet.
     pub async fn get_project_repo(
@@ -895,5 +1046,160 @@ fn classify_kind(name: &str) -> &'static str {
         "plugin"
     } else {
         "gear"
+    }
+}
+
+#[cfg(test)]
+mod field_schema_tests {
+    //! The service half of field schemas, over the in-memory sink: what the
+    //! REST layer would do, minus the transport. The overlay itself is tested
+    //! in [`super::field_schema`]; these pin the round trip.
+
+    use super::*;
+    use crate::components_catalog::gts::{FRONTX_TYPE, GEAR_TYPE};
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca7))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(0x7e4a47))
+            .build()
+            .expect("security context")
+    }
+
+    fn service() -> CatalogService {
+        CatalogService::new(
+            Arc::new(MemorySink::default()),
+            "constructorfabric".to_string(),
+            None,
+        )
+    }
+
+    fn one_group() -> Value {
+        json!({
+            "groups": [{
+                "id": "summary",
+                "title": "Ours",
+                "icon": "S",
+                "fields": [{
+                    "key": "shell",
+                    "label": "Shell contract",
+                    "kind": "text",
+                    "lamp": false,
+                    "source": { "class": "repo", "ref": "frontx.json" }
+                }]
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn a_tenant_that_saved_nothing_gets_the_builtins() {
+        let schemas = service()
+            .list_field_schemas(&ctx())
+            .await
+            .expect("list schemas");
+        assert_eq!(schemas.len(), field_schema::builtin_schemas().len());
+        assert!(schemas.iter().all(|s| s.owner == "builtin"));
+    }
+
+    #[tokio::test]
+    async fn a_saved_schema_replaces_the_builtin_and_a_revert_brings_it_back() {
+        let service = service();
+        let ctx = ctx();
+
+        service
+            .save_field_schema(&ctx, FRONTX_TYPE, one_group())
+            .await
+            .expect("save");
+
+        let after_save = service.list_field_schemas(&ctx).await.expect("list");
+        let frontx = after_save
+            .iter()
+            .find(|s| s.describes == FRONTX_TYPE)
+            .expect("frontx schema");
+        assert_eq!(frontx.owner, "tenant");
+        assert_eq!(frontx.groups[0].title, "Ours");
+        // and nothing else moved
+        assert_eq!(
+            after_save
+                .iter()
+                .find(|s| s.describes == GEAR_TYPE)
+                .expect("gear schema")
+                .owner,
+            "builtin"
+        );
+
+        service
+            .delete_field_schema(&ctx, FRONTX_TYPE)
+            .await
+            .expect("revert");
+
+        let after_revert = service.list_field_schemas(&ctx).await.expect("list");
+        let frontx = after_revert
+            .iter()
+            .find(|s| s.describes == FRONTX_TYPE)
+            .expect("frontx schema is back");
+        assert_eq!(frontx.owner, "builtin");
+        assert_eq!(frontx.fields().count(), 11);
+    }
+
+    /// Reverting is a state, not an event: a caller asking for "no schema of
+    /// my own" should not have to know whether it had one.
+    #[tokio::test]
+    async fn reverting_a_type_that_was_never_overridden_succeeds() {
+        service()
+            .delete_field_schema(&ctx(), GEAR_TYPE)
+            .await
+            .expect("revert with nothing stored");
+    }
+
+    /// The identity comes from the path. A body that names a different type
+    /// would otherwise give one stored node two identities.
+    #[tokio::test]
+    async fn the_body_cannot_rename_the_type_the_schema_describes() {
+        let mut body = one_group();
+        body["describes"] = Value::String(GEAR_TYPE.to_string());
+        let saved = service()
+            .save_field_schema(&ctx(), FRONTX_TYPE, body)
+            .await
+            .expect("save");
+        assert_eq!(saved.describes, FRONTX_TYPE);
+    }
+
+    #[tokio::test]
+    async fn a_type_id_that_is_not_one_is_refused() {
+        for bad in ["", "frontx", "gts.frontx.v1~", "cf.studio.catalog.gear.v1~"] {
+            assert!(
+                service()
+                    .save_field_schema(&ctx(), bad, one_group())
+                    .await
+                    .is_err(),
+                "`{bad}` was accepted as a GTS type id"
+            );
+        }
+    }
+
+    /// A deployment that catalogues a component kind this build has never
+    /// heard of can still give it a page. That is the point of storing the
+    /// schemas rather than shipping them.
+    #[tokio::test]
+    async fn a_schema_can_be_stored_for_a_type_this_build_does_not_know() {
+        let service = service();
+        let ctx = ctx();
+        let novel = "gts.cf.acme.catalog.dataset.v1~";
+        service
+            .save_field_schema(&ctx, novel, one_group())
+            .await
+            .expect("save");
+        let schemas = service.list_field_schemas(&ctx).await.expect("list");
+        assert!(schemas.iter().any(|s| s.describes == novel));
+    }
+
+    #[test]
+    fn a_derived_graph_type_id_is_still_a_type_id() {
+        assert!(is_gts_type_id(&gts::graph_type_id(GEAR_TYPE)));
+        assert!(is_gts_type_id(GEAR_TYPE));
+        assert!(!is_gts_type_id("gts.cf.studio.catalog.gear.v1"));
+        assert!(!is_gts_type_id("gts.cf.studio.gear.v1~"));
     }
 }
