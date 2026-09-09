@@ -341,7 +341,7 @@ person does not have to re-measure it.
 
 | phase | cost | covered by |
 | --- | --- | --- |
-| image pull (cold node) | image size; ~270 MB of it is the optional Orca runtime | nothing yet — see below |
+| image pull (cold node) | 3.7 GB, or 4.9 GB with the optional Orca runtime | partly — see below |
 | workspace clones | the slowest source, once concurrent (was: the sum of all of them) | clone-phase splash |
 | Theia backend boot | plugin deployment + backend bundle | gate's boot splash |
 | frontend load | 5.4 MB minified bundle, transferred and parsed per cold session | gate's boot splash |
@@ -417,11 +417,27 @@ Three things to know before turning it on:
   and has always been persistent.
 ### Not done
 
-* **Image size.** `COPY --from=build /app /app` ships the whole build tree,
-  devDependencies and `@theia/cli` included. On a cold node the pull, not the
-  process, decides how long a session takes to appear. It is the largest
-  remaining lever and the riskiest one: Theia resolves a great deal at
-  runtime, so trimming needs a booted session to verify, not a smaller image.
+* **Image size**, partly. On a cold node the pull, not the process, decides
+  how long a session takes to appear, and the image measures 3.7 GB (4.9 GB
+  with Orca). Its two heaviest layers are `COPY --from=build /app /app` at
+  1.84 GB and the global agent CLIs at 608 MB.
+
+  What is done: `@openai/codex` and `@openai/codex-sdk` each vendor six
+  prebuilt binaries — musl, Windows and macOS, x86_64 and aarch64 — and an
+  image runs one. `docker/trim-vendor-binaries.sh` keeps the one matching
+  `TARGETARCH` and drops the rest, in both stages: **206 MB** freed under
+  `/usr/local/lib/node_modules` and **179 MB** under `/app/node_modules`,
+  measured, with `codex --version` still answering afterwards. The
+  `@anthropic-ai` binary next to it is *not* touched: npm already resolved
+  that one to a single platform, so there is nothing there to drop.
+
+  What is left, and it is the larger half: `/app` still carries every
+  workspace's devDependencies. `@nx` (26 MB) and `typescript` (23 MB) are
+  build-time only, and `electron-app`'s dependencies are installed by the
+  workspace-wide `npm ci` although a browser session never runs Electron. A
+  plain `npm prune --omit=dev` is not the answer — the launcher resolves
+  `@theia/cli/bin/theia.js` at runtime — so this needs a booted session to
+  verify rather than a smaller number.
 * **Shallower clones.** `--single-branch` and `--filter=blob:none` both cut
   transfer, and both charge for it: the first leaves one branch in the SCM
   views, the second makes history depend on the network for the life of the
