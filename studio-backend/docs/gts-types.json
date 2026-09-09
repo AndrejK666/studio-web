@@ -701,6 +701,42 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.kit.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "A set of files a project installs into its repositories, discovered from a source repository.",
+        "title": "Kit",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/kind",
+            "/payload/keywords",
+            "/payload/categories",
+            "/payload/crate",
+            "/payload/num",
+            "/payload/license"
+          ],
+          "vector_search": [
+            "/payload/name",
+            "/payload/description",
+            "/payload/keywords",
+            "/payload/categories"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.kit.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.catalog.project_gear_repo.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -5764,6 +5800,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.catalog.has_version.v1~"
+    },
+    {
+      "gear": "studio-components-catalog",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.catalog.kit.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A set of files a project installs into its repositories, discovered from a source repository.",
+        "title": "Kit",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.catalog.kit.v1~"
     },
     {
       "gear": "studio-components-catalog",

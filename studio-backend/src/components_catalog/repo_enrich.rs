@@ -49,23 +49,41 @@ pub struct RepoGear {
     pub kind: Option<String>,
     /// Category / domain, surfaced on the component node for filtering.
     pub category: Option<String>,
+    /// The node payload, when this kind of component has a model of its own.
+    ///
+    /// A gear's payload is assembled by the service from crates.io and the
+    /// repository together, so gears leave this `None`. A kit has neither a
+    /// crate nor versions: its model is a repository, a ref and a manifest
+    /// path, and it carries that itself rather than being flattened into a
+    /// shape built for something else.
+    pub payload: Option<Value>,
 }
 
-/// What a repository source contributes: platform gears, or FrontX micro-frontends.
+/// What a repository source contributes: platform gears, FrontX
+/// micro-frontends, or kits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepoMode {
     Gears,
     Frontx,
+    Kits,
 }
 
 impl RepoMode {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "frontx" | "micro-frontend" | "microfrontend" | "mf" => RepoMode::Frontx,
+            "kit" | "kits" => RepoMode::Kits,
             _ => RepoMode::Gears,
         }
     }
 }
+
+/// The file that marks a kit, and the field the registry keys one on.
+///
+/// The same name the kit registry records as `manifest_path`, so a kit found by
+/// scanning a repository and a kit installed into a project are the same thing
+/// under the same slug rather than two records that happen to look alike.
+const KIT_MANIFEST: &str = ".cf-studio-kit.toml";
 
 /// Reads gear metadata from a repository, using a Studio GitHub connection for
 /// auth. Constructed per sync from the source the caller chose on the Gears page.
@@ -128,7 +146,78 @@ impl RepoEnricher {
         match self.mode {
             RepoMode::Gears => self.discover_gears(&auth, &paths).await,
             RepoMode::Frontx => self.discover_frontx(&auth, &paths).await,
+            RepoMode::Kits => self.discover_kits(&auth, &paths).await,
         }
+    }
+
+    /// Kits: one component per `.cf-studio-kit.toml`.
+    ///
+    /// A repository may hold one kit at its root or several in subdirectories,
+    /// and both shapes appear in the wild, so the scan takes every manifest
+    /// rather than assuming either. Unlike the FrontX scan there is no
+    /// container case to skip: a kit manifest is never a workspace file that
+    /// merely lists its members.
+    ///
+    /// The slug comes from the manifest when it names one and from the
+    /// directory otherwise, because that is what a person reading the
+    /// repository would call it. A manifest that cannot be read is skipped with
+    /// a warning rather than failing the sync — one bad kit must not cost the
+    /// catalogue the others.
+    async fn discover_kits(&self, auth: &ConnectionAuth, paths: &[&str]) -> Result<Vec<RepoGear>> {
+        let manifests: Vec<&str> = paths
+            .iter()
+            .copied()
+            .filter(|p| *p == KIT_MANIFEST || p.ends_with(&format!("/{KIT_MANIFEST}")))
+            .collect();
+
+        let mut out: Vec<RepoGear> = Vec::new();
+        for path in manifests {
+            let Some(body) = self.read_file(auth, path).await else {
+                warn!(
+                    repo = %self.repo, path,
+                    "studio-gears-catalog: kit manifest unreadable, skipped"
+                );
+                continue;
+            };
+            let dir = parent_dir(path);
+            let fallback = if dir.is_empty() {
+                self.repo.rsplit('/').next().unwrap_or(&self.repo)
+            } else {
+                dir.rsplit('/').next().unwrap_or(dir.as_str())
+            };
+            let slug = toml_string(&body, "slug").unwrap_or_else(|| fallback.to_string());
+            let name = toml_string(&body, "name").unwrap_or_else(|| slug.clone());
+            let description = toml_string(&body, "description");
+            let publisher = toml_string(&body, "publisher");
+
+            let payload = json!({
+                "title": name,
+                "name": slug,
+                "slug": slug,
+                "kind": "kit",
+                "description": description,
+                "publisher": publisher,
+                "source": "github",
+                "repository": format!("https://github.com/{}", self.repo),
+                "git_ref": self.git_ref,
+                "manifest_path": path,
+            });
+            out.push(RepoGear {
+                crate_name: slug,
+                description,
+                fields: Value::Null,
+                uml: Vec::new(),
+                kind: Some("kit".to_string()),
+                category: Some("kit".to_string()),
+                payload: Some(payload),
+            });
+        }
+
+        info!(
+            components = out.len(), repo = %self.repo, git_ref = %self.git_ref,
+            "studio-gears-catalog: kits discovered"
+        );
+        Ok(out)
     }
 
     /// Gears: one component per `gear.toml` directory.
@@ -155,6 +244,7 @@ impl RepoEnricher {
                 uml,
                 kind: None,
                 category,
+                payload: None,
             });
         }
         info!(gears = out.len(), "studio-gears-catalog: gears discovered");
@@ -325,6 +415,7 @@ impl RepoEnricher {
             uml: Vec::new(),
             kind: Some("frontx".to_string()),
             category,
+            payload: None,
         }
     }
 
@@ -1084,6 +1175,35 @@ struct CommitActor {
     date: Option<String>,
 }
 
+/// One top-level `key = "value"` out of a TOML document.
+///
+/// Deliberately not a TOML parse: the manifest's full schema belongs to the kit
+/// registry, and the catalogue needs four strings out of it. A dependency, and a
+/// second definition of the manifest's shape to go with it, would each be larger
+/// than this and would go stale the moment the registry's schema moved.
+fn toml_string(body: &str, key: &str) -> Option<String> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            // A table header: everything past it is nested, and only the
+            // top-level keys are the kit's own.
+            break;
+        }
+        let Some((found, value)) = line.split_once('=') else {
+            continue;
+        };
+        if found.trim() != key {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(value.to_string());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1217,5 +1337,43 @@ mod tests {
         // A package whose NAME contains a skipped word is still a package.
         assert!(!skip_path("packages/dist-utils/package.json"));
         assert!(!skip_path("packages/ui-kit/package.json"));
+    }
+
+    #[test]
+    fn a_repository_source_says_what_it_contributes() {
+        assert_eq!(RepoMode::parse("kits"), RepoMode::Kits);
+        assert_eq!(RepoMode::parse("kit"), RepoMode::Kits);
+        assert_eq!(RepoMode::parse("frontx"), RepoMode::Frontx);
+        // Anything unrecognised is a gear repository, which is also what a
+        // caller that sends no mode at all means.
+        assert_eq!(RepoMode::parse(""), RepoMode::Gears);
+        assert_eq!(RepoMode::parse("something-else"), RepoMode::Gears);
+    }
+
+    #[test]
+    fn a_manifest_field_is_read_off_the_top_level() {
+        let body = "slug = \"sdlc\"\nname = \"Software Delivery Lifecycle\"\n";
+        assert_eq!(toml_string(body, "slug").as_deref(), Some("sdlc"));
+        assert_eq!(
+            toml_string(body, "name").as_deref(),
+            Some("Software Delivery Lifecycle")
+        );
+        assert_eq!(toml_string(body, "publisher"), None);
+    }
+
+    #[test]
+    fn a_field_inside_a_table_is_not_a_top_level_field() {
+        // `[install] slug = ...` is a different key. Reading it as the kit's
+        // own slug would name the kit after one of its sections.
+        let body = "name = \"Kit\"\n\n[install]\nslug = \"not-the-kit\"\n";
+        assert_eq!(toml_string(body, "name").as_deref(), Some("Kit"));
+        assert_eq!(toml_string(body, "slug"), None);
+    }
+
+    #[test]
+    fn an_empty_value_reads_as_absent() {
+        // `publisher = ""` is a field somebody left blank, not a publisher
+        // whose name happens to be the empty string.
+        assert_eq!(toml_string("publisher = \"\"\n", "publisher"), None);
     }
 }

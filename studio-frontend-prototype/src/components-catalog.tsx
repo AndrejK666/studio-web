@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { CatalogNode, Connection } from "./api";
+import type { CatalogNode, Connection, StudioKit } from "./api";
 import { errText } from "./format";
 import schemaJson from "./components-catalog.schema.json";
 
@@ -248,14 +248,20 @@ interface RepoSel {
   gitRef: string;
 }
 
-/** Where the Components page pulls from: the platform Gears repository and/or
- *  the FrontX micro-frontends repository (each via a connector), and/or
- *  crates.io. At least one should be enabled. */
+/** Where the Components page pulls from: the platform Gears repository, the
+ *  FrontX micro-frontends repository, a kit repository (each via a connector),
+ *  and/or crates.io. At least one should be enabled.
+ *
+ *  A kit repository is a source like any other because a kit is a component
+ *  like any other. The registry's built-in list is a hardcoded function with a
+ *  single entry; a repository source is how a catalogue gets a second one
+ *  without shipping a release. */
 interface Sources {
   cratesIo: boolean;
   keyword: string;
   gears: RepoSel;
   frontx: RepoSel;
+  kits: RepoSel;
 }
 
 /** The branches worth one click. `HEAD` is the repository's default branch —
@@ -283,6 +289,15 @@ const DEFAULT_SOURCES: Sources = {
     connectionId: "",
     repo: "constructorfabric/gears-frontx",
     gitRef: "develop",
+  },
+  // The one kit the registry ships, as the default target: a repository whose
+  // root holds a `.cf-studio-kit.toml`. Pointed at a monorepo the scan finds
+  // every manifest in it, so this is a starting point and not a limit.
+  kits: {
+    enabled: false,
+    connectionId: "",
+    repo: "constructorfabric/studio-kit-sdlc",
+    gitRef: "HEAD",
   },
 };
 
@@ -324,6 +339,7 @@ function syncBody(
   const pairs: [string, RepoSel][] = [
     ["gears", s.gears],
     ["frontx", s.frontx],
+    ["kits", s.kits],
   ];
   for (const [mode, sel] of pairs) {
     if (!sel.enabled) continue;
@@ -364,6 +380,34 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
   );
 }
 
+/** A kit as a catalogue node.
+ *
+ *  A kit IS a component: a named, versioned, published thing a project takes
+ *  from the shared list. It sat in a list of its own only because it reaches
+ *  the portal through a different gear, and that made the catalogue look like
+ *  it did not contain half of what a project can install.
+ *
+ *  The mapping fills what the catalogue renders and stays silent where a kit
+ *  has nothing to give: no download counts, no crate versions. Inventing zeroes
+ *  would sort kits against gears on a number that means nothing.
+ */
+function kitAsNode(kit: StudioKit): CatalogNode {
+  return {
+    type_id: "gts.cf.studio.catalog.kit.v1~",
+    instance_id: `kit:${kit.slug}`,
+    value: {
+      name: kit.slug,
+      kind: "kit",
+      description: kit.description,
+      max_version: kit.default_version,
+      newest_version: kit.default_version,
+      repository: kit.repository_url || null,
+      keywords: [kit.publisher, kit.visibility].filter(Boolean),
+      categories: ["kit"],
+    },
+  };
+}
+
 export function ComponentsCatalog({
   token,
   tenantId,
@@ -400,7 +444,7 @@ export function ComponentsCatalog({
       return next;
     });
 
-  const setRepo = (which: "gears" | "frontx", patch: Partial<RepoSel>) =>
+  const setRepo = (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) =>
     setSources((cur) => {
       const next = { ...cur, [which]: { ...cur[which], ...patch } };
       saveSources(next);
@@ -426,14 +470,17 @@ export function ComponentsCatalog({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const [{ nodes }, profileResponse] = await Promise.all([
+      const [{ nodes }, profileResponse, kitResponse] = await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch((error): { nodes: CatalogNode[] } => {
           if (error instanceof ApiError && error.status === 404) return { nodes: [] };
           throw error;
         }),
+        // Its own gear, so its own failure: a kit registry that is down leaves
+        // the gears listed rather than blanking the whole catalogue.
+        api.kits(token).catch((): { items: StudioKit[] } => ({ items: [] })),
       ]);
-      setGears(nodes ?? []);
+      setGears([...(nodes ?? []), ...(kitResponse.items ?? []).map(kitAsNode)]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
@@ -731,7 +778,7 @@ function SourcesPanel({
 }: {
   sources: Sources;
   setSrc: (patch: Partial<Sources>) => void;
-  setRepo: (which: "gears" | "frontx", patch: Partial<RepoSel>) => void;
+  setRepo: (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) => void;
   connections: Connection[];
   tenantId: string | undefined;
 }) {
@@ -750,6 +797,14 @@ function SourcesPanel({
         note="Every package in the FrontX monorepo — packages/* plus the root-level scaffolding templates (template-shell, template-mfe). FrontX develops on `develop`."
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
+        connections={connections}
+        tenantId={tenantId}
+      />
+      <RepoSourceEditor
+        title="Kits"
+        note="Every `.cf-studio-kit.toml` in the repository — one at the root, or several in subdirectories. A kit is installed into a project's repositories rather than depended on, so it carries a repository and a ref instead of a version ladder."
+        sel={sources.kits}
+        onChange={(p) => setRepo("kits", p)}
         connections={connections}
         tenantId={tenantId}
       />
