@@ -268,20 +268,31 @@ ephemeral container whose agent keys come from credstore per session.
 Build and enable:
 
 ```bash
-docker build -t cf-studio-theia:orca   --build-arg STUDIO_ORCA_DEB_URL=https://github.com/stablyai/orca/releases/download/v1.4.197/orca-ide_1.4.197_amd64.deb   --build-arg STUDIO_ORCA_DEB_SHA256=600a476981b839ba84da438d9b9a040b6877cfc65d015a23900c75d1410f7c19 .
+# an image without the runtime, for a deployment that would rather not pay for it
+docker build --build-arg STUDIO_ORCA_VERSION= -t cf-studio-theia:no-orca .
 ```
 
-Verified on that image: three `docker restart` cycles each reached
+Verified on an image carrying it: three `docker restart` cycles each reached
 `state: ready` in 2 s, and the panel's own backend then registered the
 workspace, created a process in the worktree, sent it a command and read the
 answer back out of `terminal read`'s `result.terminal.tail`.
 
-Then `gears.studio-session.config.orca_enabled: true` (k8s.yaml reads
-`${STUDIO_ORCA_ENABLED:-false}`), which makes studio-session pass
-`STUDIO_ORCA_ENABLED=1` and `STUDIO_ORCA_PORT` into the Pod. The agent keys are
-the ones `agent_secrets` already provisions from credstore
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) — Orca runs the same CLIs. The image
-costs ~270 MB more, which is why it is opt-in.
+The runtime ships **by default** — pinned by version and per-architecture
+digest in the Dockerfile, amd64 and arm64 both published upstream. It was
+opt-in, and the result was a session whose Agents panel could only report the
+runtime missing: neither the release workflow nor the deployment ever passed
+the build arg, so no published image ever had it. `orca_enabled` follows, and
+defaults to true in k8s.yaml (`${STUDIO_ORCA_ENABLED:-true}`) — with it false
+the entrypoint never starts `orca serve`, and the panel reports an unreachable
+runtime beside a binary that is right there.
+
+The agent keys are the ones `agent_secrets` already provisions from credstore
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) — Orca runs the same CLIs.
+
+What it costs, measured rather than estimated: **1.25 GB** of image (4.9 GB
+against 3.7 GB) and an Electron process per session. `STUDIO_ORCA_VERSION=`
+at build time, or `STUDIO_ORCA_ENABLED=false` at deploy time, opts out of
+either half.
 
 Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
 `orca-service.test.ts` is offline (fixtures are trimmed real payloads);

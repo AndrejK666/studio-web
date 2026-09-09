@@ -587,12 +587,14 @@ gears:
       image: "${STUDIO_SESSION_IMAGE}"
       gateway_url: "${STUDIO_SESSION_GATEWAY_URL}"
       theia_control_enabled: true
-      # Orca runtime for the IDE's Agents panel, off unless the deployment
-      # ships a session image that carries it (theia/Dockerfile
-      # STUDIO_ORCA_DEB_URL). See theia/README.md — the runtime is an Electron
-      # process, so the Pod needs a seccomp profile that permits the Chromium
-      # sandbox, or the runtime has to live outside the session Pod.
-      orca_enabled: ${STUDIO_ORCA_ENABLED:-false}
+      # Orca runtime for the IDE's Agents panel. On by default now that the
+      # session image carries it: with this false the entrypoint never starts
+      # `orca serve`, and the panel reports an unreachable runtime beside a
+      # binary that is right there. The runtime is an Electron process, which
+      # is why the entrypoint runs it with the Chromium sandbox off and under
+      # xvfb — see theia/README.md. Set STUDIO_ORCA_ENABLED=false for a
+      # deployment that would rather not spend the memory.
+      orca_enabled: ${STUDIO_ORCA_ENABLED:-true}
       # Keep /workspace on a per-workspace PersistentVolumeClaim instead of
       # an emptyDir. Off by default: it turns session scratch space into
       # cluster storage that outlives the session, and nothing reclaims a
