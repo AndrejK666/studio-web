@@ -19,7 +19,8 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
 use super::ontology::FieldSpec;
-use super::service::DomainModelService;
+use super::service::{DomainModelService, WriteOptions};
+use super::validate::ValidateMode;
 
 /// Errors attributable to a domain-model resource (e.g. an unknown type).
 #[resource_error(gts_id!("cf.studio._.domain_model.v1~"))]
@@ -61,6 +62,13 @@ pub struct CreateObjectRequest {
     /// different objects; omitted = unscoped (tenant-wide).
     #[serde(default)]
     pub scope: Option<String>,
+    /// How hard to check the payload against the type: `off`, `warn` (the
+    /// default) or `strict`. The report comes back either way; `strict` also
+    /// refuses the write. `warn` is the default because the model declares
+    /// fields the graph supplies rather than the caller, and 560 required
+    /// fields across the model would otherwise refuse nearly every object.
+    #[serde(default)]
+    pub validate: Option<String>,
     /// Refuse the write if the object already exists, instead of replacing it.
     /// The only conditional write the graph can express: it takes an expected
     /// version on write but reports none on read, so an `if_version` for a
@@ -79,8 +87,56 @@ pub struct CreateObjectRequest {
 pub struct CreateObjectResponse {
     /// Whether the write was conditional on the object not already existing.
     pub if_absent: bool,
+    /// The mode the payload was checked in.
+    pub validate: String,
+    /// Where the payload disagrees with the type — empty when it fits. Reported
+    /// in `warn` too, where the write went ahead anyway.
+    pub violations: Vec<ViolationDto>,
+    /// Fields the payload carries that the type does not declare. Legal — the
+    /// payload is open — and worth seeing: it is the model falling behind what
+    /// is actually stored.
+    pub undeclared: Vec<String>,
     pub type_id: String,
     pub instance_id: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ViolationDto {
+    /// The field, empty when the payload itself is at fault.
+    pub field: String,
+    /// `missing` | `type` | `enum`.
+    pub kind: String,
+    pub detail: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct EffectivePropertyDto {
+    pub name: String,
+    /// The declared type expression, verbatim.
+    #[serde(rename = "type")]
+    pub type_expr: String,
+    pub required: bool,
+    pub description: String,
+    /// The entity that declares it — the type itself, or the base it comes
+    /// from.
+    pub declared_by: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct EffectiveTypeResponse {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub bucket: String,
+    /// The type and every base it extends, nearest first.
+    pub ancestors: Vec<String>,
+    /// Every field the type has, own and inherited, base-first.
+    pub properties: Vec<EffectivePropertyDto>,
+    /// Relations declared on the type or on any of its bases.
+    pub relations: Vec<DeclaredRelationDto>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -398,19 +454,74 @@ async fn list_types(
     Ok(Json(TypesResponse { ontology }))
 }
 
+async fn get_type(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<EffectiveTypeResponse>> {
+    let t = handle
+        .0
+        .effective_type(&ctx, id.trim())
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(EffectiveTypeResponse {
+        id: t.entity_id,
+        name: t.name,
+        description: t.description,
+        bucket: t.bucket,
+        ancestors: t.ancestors,
+        properties: t
+            .properties
+            .into_iter()
+            .map(|p| EffectivePropertyDto {
+                name: p.name,
+                type_expr: p.type_expr,
+                required: p.required,
+                description: p.description,
+                declared_by: p.declared_by,
+            })
+            .collect(),
+        relations: t
+            .relations
+            .into_iter()
+            .map(|d| DeclaredRelationDto {
+                source: d.source,
+                name: d.name,
+                verb: d.verb,
+                target: d.target,
+                target_entity: d.target_entity,
+                cardinality: d.cardinality,
+                label: d.label,
+            })
+            .collect(),
+    }))
+}
+
 async fn create_object(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateObjectRequest>,
 ) -> ApiResult<JsonBody<CreateObjectResponse>> {
+    let validate = ValidateMode::parse(req.validate.as_deref().unwrap_or("")).map_err(|e| {
+        StudioDomainModelError::invalid_argument()
+            .with_constraint(e)
+            .create()
+    })?;
     let created = handle
         .0
         .create_object(
             &ctx,
             req.type_ref.trim(),
             req.key.trim(),
-            req.scope.as_deref(),
-            req.if_absent,
+            WriteOptions {
+                scope: req.scope.as_deref(),
+                if_absent: req.if_absent,
+                validate,
+            },
             req.value,
         )
         .await
@@ -423,6 +534,18 @@ async fn create_object(
         type_id: created.type_id,
         instance_id: created.instance_id,
         if_absent: req.if_absent,
+        validate: validate.as_str().to_string(),
+        violations: created
+            .report
+            .violations
+            .into_iter()
+            .map(|v| ViolationDto {
+                field: v.field,
+                kind: v.kind.to_string(),
+                detail: v.detail,
+            })
+            .collect(),
+        undeclared: created.report.undeclared,
     }))
 }
 
@@ -726,6 +849,31 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(list_types)
         .json_response_with_schema::<TypesResponse>(openapi, StatusCode::OK, "The ontology")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-domain-model/v1/types/{id}")
+        .operation_id("studio_domain_model.get_type")
+        .summary("One domain type, with everything it inherits")
+        .description(
+            "The type as it actually is: every field it has — its own and the \
+             ones its bases declare, each marked with where it comes from — and \
+             every relation it or its bases take part in. `GET /types` returns \
+             the model verbatim, where most of a type's fields live on its \
+             bases and the consumer has to walk `extends` itself.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Domain type id (ontology id or node type id)")
+        .handler(get_type)
+        .json_response_with_schema::<EffectiveTypeResponse>(
+            openapi,
+            StatusCode::OK,
+            "The effective type",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

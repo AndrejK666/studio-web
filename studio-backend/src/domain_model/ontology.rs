@@ -29,6 +29,19 @@ pub struct NodeType {
     pub description: String,
 }
 
+/// One payload field a type has — its own, or inherited from a base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveProperty {
+    pub name: String,
+    /// The declared type expression, verbatim (`string`, `timestamp?`,
+    /// `draft | active | retired`, `EntityId[]`).
+    pub type_expr: String,
+    pub required: bool,
+    pub description: String,
+    /// The entity that declares it: the type itself, or the base it comes from.
+    pub declared_by: String,
+}
+
 /// One edge type to register (a distinct relation kind across the ontology),
 /// with its endpoint typing: the node types that may sit at each end, gathered
 /// across every relation-property that uses this kind. Empty = unconstrained.
@@ -357,6 +370,65 @@ impl Ontology {
             edges,
             skipped,
         }
+    }
+
+    /// Every payload field the type actually has — its own and everything it
+    /// inherits — with the nearest declaration winning.
+    ///
+    /// The model puts most of a type's fields on its bases: `team` declares a
+    /// handful and *has* 24, because `organization-entity`, `managed-object`,
+    /// `node`, `entity` and `system-object` each add some. Reading an entity
+    /// straight out of the document therefore shows a fraction of the type, and
+    /// every consumer that wanted the whole thing had to walk `extends` itself.
+    ///
+    /// Ordered base-first, so a field arrives where it was introduced and an
+    /// override (the model marks those) replaces it in place. Relation
+    /// properties are excluded: they become edges, not payload.
+    pub fn effective_properties(&self, entity_id: &str) -> Vec<EffectiveProperty> {
+        let mut out: Vec<EffectiveProperty> = Vec::new();
+        // `ancestors` is nearest-first; the root has to be applied first for the
+        // nearest declaration to win.
+        for ancestor in self.ancestors(entity_id).into_iter().rev() {
+            let Some(entity) = self.entity(&ancestor) else {
+                continue;
+            };
+            for p in entity
+                .get("properties")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+            {
+                if matches!(
+                    p.get("extends").and_then(Value::as_str),
+                    Some("edge") | Some("link")
+                ) {
+                    continue;
+                }
+                let Some(name) = p.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let property = EffectiveProperty {
+                    name: name.to_string(),
+                    type_expr: p
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    required: p.get("required").and_then(Value::as_bool).unwrap_or(false),
+                    description: p
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    declared_by: ancestor.clone(),
+                };
+                match out.iter_mut().find(|e| e.name == property.name) {
+                    Some(existing) => *existing = property,
+                    None => out.push(property),
+                }
+            }
+        }
+        out
     }
 
     /// An entity and every base it extends, nearest first. A relation declared

@@ -16,8 +16,23 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::gts;
-use super::ontology::{DeclaredRelation, FieldSpec, ModelEdgeKind, Ontology};
+use super::ontology::{DeclaredRelation, EffectiveProperty, FieldSpec, ModelEdgeKind, Ontology};
 use super::store::{DomainStore, EdgeUpsert, EdgeView, NodeUpsert, ObjectNode};
+use super::validate::{Report, ValidateMode};
+
+/// Everything about one object write except the object: where it is scoped,
+/// whether it may replace what is there, and how hard it is checked.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteOptions<'a> {
+    /// Workspace/project scope. The same key in two scopes is two objects;
+    /// `None` is tenant-wide.
+    pub scope: Option<&'a str>,
+    /// Refuse the write when the object already exists, instead of replacing
+    /// it.
+    pub if_absent: bool,
+    /// How hard the payload is checked against the type.
+    pub validate: ValidateMode,
+}
 
 /// The outcome of relating two objects.
 #[derive(Debug, Clone)]
@@ -38,6 +53,24 @@ pub struct CreatedRelation {
 pub struct CreatedObject {
     pub type_id: String,
     pub instance_id: String,
+    /// What checking the payload against the type found. Always reported, even
+    /// in `warn`, where the write went ahead anyway.
+    pub report: Report,
+}
+
+/// A type as it actually is: its own fields plus everything it inherits, and
+/// the relations it may take part in.
+#[derive(Debug, Clone)]
+pub struct EffectiveType {
+    pub entity_id: String,
+    pub name: String,
+    pub description: String,
+    pub bucket: String,
+    /// The entity and every base it extends, nearest first.
+    pub ancestors: Vec<String>,
+    pub properties: Vec<EffectiveProperty>,
+    /// Relations declared on this type or on any of its bases.
+    pub relations: Vec<DeclaredRelation>,
 }
 
 /// One relation as registered — its verb, edge type id and endpoint typing.
@@ -718,6 +751,9 @@ impl DomainModelService {
     /// (`gts.cf.studio.domain.role_assignment.v1~`) or its leaf. `key` is a
     /// caller-chosen stable key; the same `(type, key)` upserts.
     ///
+    /// `validate` decides how hard the payload is checked against the type —
+    /// see [`ValidateMode`]. The report comes back either way.
+    ///
     /// `if_absent` refuses the write when the object already exists, instead of
     /// replacing it. It is the only conditional write graph-storage can express
     /// — `expected_version: Some(0)` means "no stored version", and a live
@@ -731,15 +767,36 @@ impl DomainModelService {
         ctx: &SecurityContext,
         type_ref: &str,
         key: &str,
-        scope: Option<&str>,
-        if_absent: bool,
+        options: WriteOptions<'_>,
         mut payload: Value,
     ) -> anyhow::Result<CreatedObject> {
-        let entity_id = self
-            .model(ctx)
-            .await?
+        let WriteOptions {
+            scope,
+            if_absent,
+            validate,
+        } = options;
+        let ontology = self.model(ctx).await?;
+        let entity_id = ontology
             .resolve_entity_id(type_ref)
             .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
+
+        // Against the whole type, bases included — most of what a type requires
+        // is declared on one of them.
+        let report = match validate {
+            ValidateMode::Off => Report::default(),
+            _ => super::validate::check(&ontology.effective_properties(&entity_id), &payload),
+        };
+        if validate == ValidateMode::Strict && !report.is_clean() {
+            return Err(anyhow::anyhow!(
+                "{entity_id} does not satisfy its type: {}",
+                report
+                    .violations
+                    .iter()
+                    .map(|v| format!("{} — {}", v.field, v.detail))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
         let type_id = gts::node_type_id(&entity_id);
         // Types are tenant/platform-shared; an object is scoped by an optional
         // workspace/project key, so the same `key` in two scopes is two objects
@@ -784,6 +841,49 @@ impl DomainModelService {
         Ok(CreatedObject {
             type_id,
             instance_id,
+            report,
+        })
+    }
+
+    /// One type as it actually is: every field it has, own and inherited, and
+    /// every relation it or its bases declare. What `GET /types` cannot show
+    /// without the consumer walking `extends` itself.
+    pub async fn effective_type(
+        &self,
+        ctx: &SecurityContext,
+        type_ref: &str,
+    ) -> anyhow::Result<EffectiveType> {
+        let ontology = self.model_current(ctx).await?;
+        let entity_id = ontology
+            .resolve_entity_id(type_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
+        let entity = ontology.entity(&entity_id).expect("resolved").clone();
+        let ancestors = ontology.ancestors(&entity_id);
+        let relations = ontology
+            .declared_relations()
+            .into_iter()
+            .filter(|d| ancestors.contains(&d.source))
+            .collect();
+        Ok(EffectiveType {
+            name: entity
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(&entity_id)
+                .to_string(),
+            description: entity
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            bucket: entity
+                .get("bucket")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            properties: ontology.effective_properties(&entity_id),
+            relations,
+            ancestors,
+            entity_id,
         })
     }
 
@@ -1797,7 +1897,16 @@ mod tests {
         key: &str,
     ) -> String {
         service
-            .create_object(ctx, ty, key, None, false, json!({ "name": key }))
+            .create_object(
+                ctx,
+                ty,
+                key,
+                WriteOptions {
+                    validate: ValidateMode::Off,
+                    ..Default::default()
+                },
+                json!({ "name": key }),
+            )
             .await
             .unwrap()
             .instance_id
@@ -1816,8 +1925,10 @@ mod tests {
                         &ctx,
                         "team",
                         "core",
-                        None,
-                        if_absent,
+                        WriteOptions {
+                            if_absent,
+                            ..Default::default()
+                        },
                         json!({ "name": name }),
                     )
                     .await
@@ -1831,6 +1942,166 @@ mod tests {
         assert!(e.to_string().contains("object already exists"), "{e}");
         // Without it, the historical upsert still stands.
         create(false, "Renamed").await.expect("upsert");
+    }
+
+    #[tokio::test]
+    async fn a_type_has_the_fields_its_bases_declare() {
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let ctx = ctx_for(1);
+        let team = service.effective_type(&ctx, "team").await.unwrap();
+
+        // The model puts most of a type on its bases, so the effective type is
+        // several times what the entity itself declares.
+        assert_eq!(
+            team.ancestors,
+            [
+                "team",
+                "organization-entity",
+                "managed-object",
+                "node",
+                "entity",
+                "system-object"
+            ]
+        );
+        let own = Ontology::load().entity("team").unwrap()["properties"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert!(
+            team.properties.len() > own,
+            "{} effective vs {own} declared",
+            team.properties.len()
+        );
+
+        // Each field says where it comes from, and the root's arrives first.
+        let tenant_id = team
+            .properties
+            .iter()
+            .find(|p| p.name == "tenant_id")
+            .expect("inherited from the root");
+        assert_eq!(tenant_id.declared_by, "system-object");
+        assert_eq!(team.properties[0].name, "tenant_id");
+
+        // Relations declared on a base belong to the type too.
+        assert!(
+            team.relations
+                .iter()
+                .any(|r| r.name == "typed_by" && r.source == "managed-object")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_nearest_declaration_of_a_field_wins() {
+        let o = Ontology::load();
+        // `project` re-declares `id`, which the model marks as an override.
+        let props = o.effective_properties("project");
+        let id = props.iter().find(|p| p.name == "id").expect("id");
+        assert_eq!(id.declared_by, "project");
+        // And it appears once, in the position the base introduced it.
+        assert_eq!(props.iter().filter(|p| p.name == "id").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_write_is_checked_against_the_type_and_says_what_it_found() {
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let ctx = ctx_for(1);
+        let created = service
+            .create_object(
+                &ctx,
+                "project",
+                "apollo",
+                WriteOptions::default(),
+                json!({ "name": "Apollo", "status": "started", "portfolio": "platform" }),
+            )
+            .await
+            .expect("warn writes anyway");
+
+        // `status` is an enum on project, and `started` is not one of its values.
+        let status = created
+            .report
+            .violations
+            .iter()
+            .find(|v| v.field == "status")
+            .expect("enum violation");
+        assert_eq!(status.kind, "enum");
+        // Required fields the caller did not send are reported, and named with
+        // the base that asks for them.
+        assert!(
+            created
+                .report
+                .violations
+                .iter()
+                .any(|v| v.kind == "missing" && v.field == "key")
+        );
+        // A field the model does not declare is reported, never a violation.
+        assert_eq!(created.report.undeclared, ["portfolio"]);
+    }
+
+    #[tokio::test]
+    async fn strict_refuses_what_warn_only_reports() {
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let ctx = ctx_for(1);
+        let bad = json!({ "name": "Apollo", "status": "started" });
+        let e = service
+            .create_object(
+                &ctx,
+                "project",
+                "apollo",
+                WriteOptions {
+                    validate: ValidateMode::Strict,
+                    ..Default::default()
+                },
+                bad,
+            )
+            .await
+            .expect_err("strict refuses");
+        assert!(e.to_string().contains("does not satisfy its type"), "{e}");
+
+        // Off writes without looking, and reports nothing.
+        let created = service
+            .create_object(
+                &ctx,
+                "project",
+                "apollo",
+                WriteOptions {
+                    validate: ValidateMode::Off,
+                    ..Default::default()
+                },
+                json!({ "status": "started" }),
+            )
+            .await
+            .unwrap();
+        assert!(created.report.violations.is_empty());
+        assert!(created.report.undeclared.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_field_added_to_the_model_stops_being_undeclared() {
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let ctx = ctx_for(1);
+        let payload = json!({ "name": "Core Team", "cost_center": "CC-42" });
+        let before = service
+            .create_object(
+                &ctx,
+                "team",
+                "core",
+                WriteOptions::default(),
+                payload.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(before.report.undeclared, ["cost_center"]);
+
+        service
+            .add_field(&ctx, "team", field("cost_center"))
+            .await
+            .unwrap();
+
+        let after = service
+            .create_object(&ctx, "team", "core", WriteOptions::default(), payload)
+            .await
+            .unwrap();
+        assert!(after.report.undeclared.is_empty());
     }
 
     #[tokio::test]
