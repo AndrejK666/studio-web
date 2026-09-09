@@ -342,6 +342,14 @@ function asNumber(value: unknown): number | undefined {
 }
 
 function message(error: unknown): string {
+    // stderr rides along on OrcaCliError and used to stop there, so the panel
+    // showed a failure with no reason attached to it.
+    if (error instanceof OrcaCliError) {
+        const detail = error.stderr.trim().split(/\r?\n/)[0] ?? '';
+        return detail && !error.message.includes(detail)
+            ? `${error.message} — ${detail}`
+            : error.message;
+    }
     if (error instanceof Error) {
         return error.message;
     }
