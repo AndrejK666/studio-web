@@ -913,12 +913,28 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+
+  build-complete:
+    name: 2. Build & Publish / complete
+    # The publish jobs are intentionally skipped for a manual deployment: it
+    # consumes an already immutable image. Treat skipped as a completed stage
+    # so the graph stays linear without rebuilding the artifact.
+    needs: [build-require-ci, build-service-images, build-infra-images]
+    if: >-
+      always() &&
+      (needs.build-require-ci.result == 'success' || needs.build-require-ci.result == 'skipped') &&
+      (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
+      (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Build & Publish stage completed successfully."
+
   deploy-services:
     name: 3. Deploy Services
     # Keep deployment as a visible continuation of the delivery graph. For a
     # manual deploy the test jobs are intentionally skipped, so test-complete
     # is a fast gate rather than a rebuild or a second test run.
-    needs: test-complete
+    needs: build-complete
     if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-services'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
@@ -1237,7 +1253,7 @@ jobs:
     name: 3. Deploy Infrastructure
     # See deploy-services: a deployment consumes an existing immutable image,
     # but still follows the common stage gate in the visual graph.
-    needs: test-complete
+    needs: build-complete
     if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
