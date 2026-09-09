@@ -228,3 +228,101 @@ re-syncing a static edge cannot condition the write on what it read either.
 **Impact:** every producer that edits stored nodes rather than only appending
 them has to choose between last-writer-wins and an unbounded side-table of
 claim nodes.
+
+---
+
+## 6. graph-storage: the type/schema-revision separation the types-registry has is flattened, and a published schema can never be changed
+
+*(Found 2026-09-09, following on from §5. Against
+`cf-gears-graph-storage-v0.1.1`, rev `719ab47`.)*
+
+**Title:** `graph-storage: a registered type's schema has no update path — follow the types-registry's current-revision pointer instead of refusing`
+
+**Body:**
+
+The platform types-registry separates a type from its schema, and a schema from
+its revisions — four tables:
+
+| table | holds |
+|---|---|
+| `types_registry__entity` | the type: identity, family, ownership, `resource_version` for optimistic writes |
+| `types_registry__type_schema` | *current* state — a `revision_no` pointer plus the resolved artifacts (`resolved_schema`, `effective_traits`, `resolution_fingerprint`) |
+| `types_registry__type_schema_revision` | the immutable per-revision snapshot: authored `raw_schema`, `content_hash`, admission-engine provenance, `compat_forced` |
+| `types_registry__version_family` | the family key, binding ownership and serializing first admission |
+
+So upstream a type has a *history* of schema revisions with a current pointer,
+cross-minor compatibility checking (ADR-0003) and a deliberate `force` waiver
+(ADR-0004); resolved artifacts may even be recomputed without an authored
+revision when floating dependencies move.
+
+graph-storage keeps none of that. `gts_type` is one row per `(tenant, type)`
+with the schema as a column on it — `gts_type_id`, `kind`, `type_schema`,
+`effective_traits` — and registration is insert-or-converge-or-conflict
+(`infra/store/types.rs:191`):
+
+```rust
+if model.type_schema != descriptor.schema {
+    return Err(GraphStoreError::Conflict {
+        reason: format!("type `{}` is already registered with a different schema", …),
+    });
+}
+```
+
+`TypeRecord`, the whole read surface for a type, carries `schema`,
+`effective_traits` and `created_at` — no revision, not even an `updated_at`. So
+**a schema, once published, can never change**: not by re-registration, which
+refuses, and not from the registry, because nothing reads it back.
+
+That last point is the load-bearing one. `gts_type`'s own module doc says:
+
+> Per-tenant projection of the platform types-registry … The registry stays
+> authoritative — this is a cache with a foreign identity, never a second source
+> of truth.
+
+But graph-storage does not depend on `types-registry` at all — not in
+`Cargo.toml`, not one reference in `src/`. DESIGN states the boundary
+deliberately: the Ontology Registry *"does not publish the gear's own base types
+to the platform types-registry (the gear lifecycle does, once, at startup)"*.
+Publication is one-way and one-time. The row is therefore not a projection of
+anything; it is populated solely by what a producer posted, and is authoritative
+in practice while documented as a cache.
+
+`dev/DEVIATIONS.md` already records the consequence for the gear's own bases
+(*"a base schema edited in the repository reaches a database that has already
+published it never"*, verified on the stand as `409 CAS_CONFLICT`). The same
+wall stands in front of every producer.
+
+**What it costs a producer.** In `studio-backend`'s domain-model gear a node
+type's schema declared the payload paths it is searched and embedded on, and
+those were derived from the modelled entity's fields. Adding a field to a type
+therefore changed its schema, made it unregistrable — and because registration
+is batch-atomic, one refused type aborted the batch and took down *every* write
+in the model. We worked around it twice over: registration now falls back to
+per-type calls so one refusal cannot abort the rest, and nothing model-derived
+is left in a schema at all (the search paths are now the same fixed set for
+every type). The second is right on its own merits — a schema should not be a
+function of mutable data — but it also means the indexing a type gets can no
+longer follow what the type actually holds, which is a capability given up to
+work around this.
+
+**Proposal**, smallest first:
+
+1. Make the refusal survivable: report the conflict per item instead of aborting
+   the batch, so one drifted type does not stop the others. (Every producer
+   otherwise has to fall back to registering one type at a time, as we now do.)
+2. Carry the revision on `TypeRecord` — whatever `type_schema` currently holds
+   is *some* revision, and a reader has no way to name it.
+3. Re-project: read the registry's `type_schema.revision_no` and refresh
+   `gts_type` when it moves, which is what "projection … the registry stays
+   authoritative" already promises. Compatibility, forcing and history stay
+   upstream where they are implemented; this gear follows the pointer.
+
+Until at least (3), the sentence in `gts_type.rs` about the registry staying
+authoritative is not true of the code, and it is worth correcting either the
+comment or the behaviour.
+
+**Repro:** register any node type; re-register the same `type_id` with one
+character changed in a `description` — `409 CAS_CONFLICT`. Put it in a batch
+with unrelated types and the whole batch fails. Edit the corresponding schema in
+the types-registry and re-read it through `get_type` — graph-storage still
+serves the original.
