@@ -15,12 +15,13 @@ on:
           - validate
           - build
           - deploy-services
+          - deploy-infra
       source_ref:
         description: Commit SHA, branch, or release tag (leave empty for the selected branch)
         required: false
         type: string
       environment:
-        description: Deployment target (required for deploy-services)
+        description: Deployment target (required for deploy-services or deploy-infra)
         required: false
         type: choice
         default: dev
@@ -41,6 +42,10 @@ on:
         description: Immutable sha-<commit> snapshot or v* release tag (deploy-services only; must match source_ref)
         required: false
         type: string
+      infra_tag:
+        description: Published infrastructure release tag infra-vX.Y.Z (deploy-infra only)
+        required: false
+        type: string
 
 permissions:
   # Used only by the tag-gated GitHub Release jobs in the reusable publish stage.
@@ -52,8 +57,10 @@ permissions:
   packages: write
 
 concurrency:
-  group: studio-delivery-preview-${{ inputs.source_ref || github.ref }}
-  cancel-in-progress: true
+  # Deployments serialize independently per target environment. A dev deploy
+  # must never cancel an explicit test deploy (or the other way around).
+  group: studio-delivery-${{ inputs.stage }}-${{ (inputs.stage == 'deploy-services' || inputs.stage == 'deploy-infra') && inputs.environment || inputs.source_ref || github.ref }}
+  cancel-in-progress: ${{ inputs.stage != 'deploy-services' && inputs.stage != 'deploy-infra' }}
 
 jobs:
   test:
@@ -103,4 +110,13 @@ jobs:
       component: ${{ inputs.component }}
       image_tag: ${{ inputs.image_tag }}
       source_ref: ${{ inputs.source_ref || github.ref_name }}
+    secrets: inherit
+
+  deploy-infra:
+    name: 3. Deploy Infrastructure
+    if: inputs.stage == 'deploy-infra'
+    uses: ./.github/workflows/deploy-infra.yml
+    with:
+      environment: ${{ inputs.environment }}
+      infra_tag: ${{ inputs.infra_tag }}
     secrets: inherit
