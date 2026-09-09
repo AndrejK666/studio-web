@@ -537,7 +537,7 @@ export function ComponentsCatalog({
     } catch (e) {
       setErr(errText(e));
     }
-  }, [token]);
+  }, [token, tenantId]);
 
   useEffect(() => {
     void reload();
