@@ -124,6 +124,20 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Build
         run: cargo build --locked
+      # Every gate above runs on default features. The compose stack builds two
+      # other sets -- `--features theia-bridge` for `backend` and
+      # `--no-default-features` for `backend-bootstrap` -- and neither was
+      # compiled anywhere, so a change could be green here and still fail
+      # `docker compose up`. `check` rather than `build`: this is about the code
+      # compiling under each set, and a third and fourth link would cost minutes
+      # to prove nothing more. Deliberately without `-D warnings`, unlike the
+      # lint above: `--no-default-features` leaves about sixteen dead-code
+      # warnings for items only the default features use, and those are the
+      # expected shape of a reduced build rather than defects to fix.
+      - name: Compile the feature sets the compose stack builds
+        run: |
+          cargo check --locked --features theia-bridge
+          cargo check --locked --no-default-features
       - name: Test
         run: cargo test --locked
       - name: "Smoke: assembly resolves 13 gears"

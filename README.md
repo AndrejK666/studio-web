@@ -127,7 +127,7 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 The backend's gates can be run before a pull request, in the image CI uses:
 
 ```bash
-scripts/backend-check.sh            # fmt, clippy, build, test
+scripts/backend-check.sh            # fmt, clippy, build, features, test
 scripts/backend-check.sh clippy     # one gate
 scripts/backend-check.sh test studio_session   # a gate plus cargo args
 ```

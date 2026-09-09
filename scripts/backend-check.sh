@@ -12,7 +12,7 @@
 # failures before a pull request does — a backend change once reached main
 # without compiling because the only check was CI, and CI had not finished.
 #
-#   scripts/backend-check.sh            # fmt, clippy, build, test
+#   scripts/backend-check.sh            # fmt, clippy, build, features, test
 #   scripts/backend-check.sh clippy     # one gate
 #   scripts/backend-check.sh test studio_session   # a gate plus cargo args
 #
@@ -42,10 +42,15 @@ case "$gate" in
     fmt)    cmd='cargo fmt --check' ;;
     clippy) cmd='cargo clippy --locked --all-targets -- -D warnings' ;;
     build)  cmd='cargo build --locked' ;;
+    # The compose stack builds the backend twice more, with feature sets no
+    # other gate compiles: `theia-bridge` for the server, `--no-default-features`
+    # for the bootstrap seeder. A change can pass every gate above and still
+    # fail `docker compose up`.
+    features) cmd='cargo check --locked --features theia-bridge && cargo check --locked --no-default-features' ;;
     test)   cmd='cargo test --locked' ;;
-    all)    cmd='cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo build --locked && cargo test --locked' ;;
+    all)    cmd='cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo build --locked && cargo check --locked --features theia-bridge && cargo check --locked --no-default-features && cargo test --locked' ;;
     *)
-        echo "usage: $(basename "$0") [fmt|clippy|build|test|all] [extra cargo args]" >&2
+        echo "usage: $(basename "$0") [fmt|clippy|build|features|test|all] [extra cargo args]" >&2
         exit 2
         ;;
 esac
