@@ -207,13 +207,14 @@ touched, for the same cross-tenant-write reason as above.
 `studio-scheduler` block and nothing fires on its own while the queue keeps
 working.
 
-Dropping the **`studio-tasks`** block costs more than it used to. Its own API
-answers 503, and so do the three routes whose work is now a run:
+Dropping the **`studio-tasks`** block takes background work with it: its own
+API answers 503, and so do the three routes whose work is now a run —
 `POST /studio-connector/v1/connections/{id}/graph/sync`,
 `POST /studio-artifact-ingest/v1/sync` and
 `POST /studio-components-catalog/v1/sync`. Each says why in the response
-detail. PostgreSQL only, so `config/dev.yaml` — the SQLite profile — is exactly
-that deployment: use `config/postgres.yaml` to exercise any of them locally.
+detail. So the block belongs in every profile that is meant to run this work,
+which is every PostgreSQL profile: `config/postgres.yaml`, `docker.yaml`,
+`oidc.yaml` and `k8s.yaml` all carry it.
 
 ## Still to do
 
