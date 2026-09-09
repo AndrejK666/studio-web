@@ -136,3 +136,92 @@ describe('OrcaWidget changes', () => {
         expect(widget.node.querySelectorAll('.studio-orca-changes > li')).toHaveLength(0);
     });
 });
+
+// The advice shown when the runtime is not reachable. Two different causes
+// used to get one message: a session image built without the runtime was told
+// to start `orca serve`, which is not there to start — the thing a stand
+// actually showed.
+describe('OrcaWidget advice when the runtime is unreachable', () => {
+    const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    let previousReactActEnvironment: boolean | undefined;
+
+    beforeAll(() => {
+        previousReactActEnvironment = reactActEnvironment.IS_REACT_ACT_ENVIRONMENT;
+        reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterAll(() => {
+        reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = previousReactActEnvironment;
+    });
+
+    const render = async (status: Record<string, unknown>): Promise<string> => {
+        const orca = {
+            status: async () => status,
+            currentWorktree: async () => undefined,
+            listWorktrees: async () => [],
+            listTerminals: async () => [],
+            changes: async () => [],
+            registerWorkspace: async () => undefined,
+            createTask: async () => undefined,
+            startAgent: async () => undefined,
+            send: async () => undefined,
+            interrupt: async () => undefined,
+            waitForIdle: async () => 'idle' as const,
+            read: async () => ''
+        };
+        const container = new Container();
+        container.load(new ContainerModule(bind => {
+            bind(OrcaService).toConstantValue(orca as never);
+            bind(MessageService).toConstantValue({ error: jest.fn(), info: jest.fn() } as never);
+            bind(WorkspaceService).toConstantValue({ roots: Promise.resolve([]) } as never);
+            bind(OpenerService).toConstantValue({ getOpener: async () => ({ open: async () => undefined }) } as never);
+            bind(OrcaWidget).toSelf();
+        }));
+        let widget!: OrcaWidget;
+        React.act(() => {
+            widget = container.resolve<OrcaWidget>(OrcaWidget);
+            MessageLoop.flush();
+        });
+        await React.act(async () => {
+            await (widget as unknown as { refresh(): Promise<void> }).refresh();
+            MessageLoop.flush();
+        });
+        const text = widget.node.textContent ?? '';
+        React.act(() => {
+            widget.dispose();
+            MessageLoop.flush();
+        });
+        return text;
+    };
+
+    it('points at the image when there is no binary to start', async () => {
+        const text = await render({
+            reachable: false,
+            state: 'unreachable',
+            desktopRunning: false,
+            cliMissing: true,
+            error: 'the orca CLI is not installed. A session image carries it only when built…'
+        });
+
+        expect(text).toContain('built without the Orca runtime');
+        expect(text).toContain('STUDIO_ORCA_DEB_URL');
+        // Telling someone to start a runtime that is not in the image is the
+        // bug this replaced.
+        expect(text).not.toContain('orca serve');
+    });
+
+    it('points at the runtime when a binary is there but nothing answers', async () => {
+        const text = await render({
+            reachable: false,
+            state: 'unreachable',
+            desktopRunning: false,
+            cliMissing: false,
+            error: 'connection refused'
+        });
+
+        expect(text).toContain('orca serve');
+        expect(text).not.toContain('STUDIO_ORCA_DEB_URL');
+        // The reason still travels with the advice either way.
+        expect(text).toContain('connection refused');
+    });
+});
