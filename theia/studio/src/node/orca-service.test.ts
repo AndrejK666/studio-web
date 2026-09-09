@@ -2,6 +2,7 @@
 // defensively. The fixtures are trimmed copies of real output from a live
 // runtime (Orca 1.4.197, `--json`), not invented shapes.
 
+import * as path from 'path';
 import {
     OrcaServiceImpl,
     parseStatusRecords,
@@ -11,7 +12,7 @@ import {
     toWaitOutcome,
     toWorktree
 } from './orca-service';
-import { OrcaCliError, OrcaCliMissingError, invocationError } from './orca-cli';
+import { OrcaCliError, OrcaCliMissingError, availableAgents, commandCwd, invocationError } from './orca-cli';
 import { parseEnvelope, describeError, candidateBinaries } from './orca-cli';
 
 describe('orca payload mapping', () => {
@@ -229,12 +230,14 @@ describe('OrcaServiceImpl', () => {
             app: { running: true, pid: 15948, desktopWindowStatus: 'available' },
             runtime: { state: 'ready', reachable: true, appVersion: '1.4.197' }
         });
-        expect(await service(json).status()).toEqual({
+        // objectContaining, because `agents` reports what this machine has on
+        // PATH and this test is about reading Orca's payload.
+        expect(await service(json).status()).toEqual(expect.objectContaining({
             reachable: true,
             state: 'ready',
             appVersion: '1.4.197',
             desktopRunning: true
-        });
+        }));
     });
 
     it('does not call a headless runtime a desktop one', async () => {
@@ -415,5 +418,68 @@ describe('a missing orca binary', () => {
 
         expect(status.reachable).toBe(false);
         expect(status.cliMissing).toBe(false);
+    });
+});
+
+// Orca commands used to run from the Theia backend's own directory,
+// /app/browser-app, which is not a checkout Orca manages — so anything
+// needing a repository selector failed with "Missing repo selector", the
+// panel's Create-worktree button included.
+describe('where orca commands run', () => {
+    const exists = (...present: string[]) => (path: string) => present.includes(path);
+
+    it('runs in the session workspace', () => {
+        expect(commandCwd({ STUDIO_WORKSPACE_ROOT: '/workspace' }, exists('/workspace'))).toBe('/workspace');
+    });
+
+    it('falls back to the repository root, then to /workspace', () => {
+        expect(commandCwd({ STUDIO_REPOSITORY_ROOT: '/srv/repo' }, exists('/srv/repo'))).toBe('/srv/repo');
+        expect(commandCwd({}, exists('/workspace'))).toBe('/workspace');
+    });
+
+    // A path that is only in the environment is not a place to run: a
+    // developer machine has these variables pointing at a checkout that a
+    // container does not have, and vice versa.
+    it('skips a candidate that is not there', () => {
+        expect(commandCwd({ STUDIO_WORKSPACE_ROOT: '/gone' }, exists('/workspace'))).toBe('/workspace');
+    });
+
+    // Undefined, not '/': execFile then keeps the inherited directory, which
+    // is what it did before this existed.
+    it('answers undefined when no candidate exists', () => {
+        expect(commandCwd({ STUDIO_WORKSPACE_ROOT: '/gone' }, exists())).toBeUndefined();
+    });
+});
+
+// The panel offered three agents and a session image carried one of them, so
+// two of the three answered `command not found` inside a TUI. What it offers
+// now is what PATH actually resolves.
+describe('which agents a container can start', () => {
+    const agents = ['claude', 'codex', 'opencode'];
+    // Normalised through path.join: the resolver builds candidates with it,
+    // so on a Windows checkout it looks for C:	ools\claude.CMD, not the
+    // forward-slash spelling written here.
+    const exists = (...present: string[]) => {
+        const set = present.map(entry => path.join(entry));
+        return (candidate: string) => set.includes(candidate);
+    };
+
+    it('reports only the ones on PATH', () => {
+        expect(availableAgents(agents, { PATH: ['/usr/local/bin', '/usr/bin'].join(path.delimiter) },
+            exists('/usr/local/bin/codex', '/usr/bin/claude'))).toEqual(['claude', 'codex']);
+    });
+
+    it('reports none when PATH has none of them', () => {
+        expect(availableAgents(agents, { PATH: '/usr/bin' }, exists('/usr/bin/git'))).toEqual([]);
+    });
+
+    it('reports none when there is no PATH at all', () => {
+        expect(availableAgents(agents, {}, exists('/usr/bin/claude'))).toEqual([]);
+    });
+
+    // So a developer machine answers as truthfully as a container does.
+    it('honours PATHEXT, for a Windows checkout', () => {
+        expect(availableAgents(agents, { PATH: 'C:/tools', PATHEXT: ['.COM', '.EXE', '.CMD'].join(path.delimiter) },
+            exists('C:/tools/claude.CMD'))).toEqual(['claude']);
     });
 });

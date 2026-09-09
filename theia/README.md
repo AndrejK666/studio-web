@@ -286,8 +286,29 @@ defaults to true in k8s.yaml (`${STUDIO_ORCA_ENABLED:-true}`) — with it false
 the entrypoint never starts `orca serve`, and the panel reports an unreachable
 runtime beside a binary that is right there.
 
-The agent keys are the ones `agent_secrets` already provisions from credstore
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) — Orca runs the same CLIs.
+### How this relates to Theia's own AI agents
+
+They share credentials and nothing else, and that is worth stating because the
+packages look interchangeable and are not.
+
+Theia's providers run in-process: `@theia/ai-codex` imports `@openai/codex-sdk`
+and `@theia/ai-claude-code` resolves `@anthropic-ai/claude-agent-sdk` — an
+SDK, which `THEIA_CLAUDE_CODE_PATH` points at. Orca runs an agent's **CLI** as
+a TUI inside a worktree, so it needs `claude`, `codex` and `opencode` as
+programs on PATH. The image carries both kinds; the SDK has no CLI and the CLI
+is not importable as an SDK, so neither can serve the other's purpose.
+
+What is shared is the account: `agent_secrets` provisions `OPENAI_API_KEY` and
+`ANTHROPIC_API_KEY` per user from credstore, both kinds read them from the
+environment, and the entrypoint additionally writes codex's `auth.json`
+because that CLI ignores the variable. So Theia's chat and an agent in an Orca
+terminal act as the same person against the same provider.
+
+The panel offers the agents this container actually has, not the three names in
+`ORCA_AGENTS`: the runtime reports which of them resolve on PATH, and the
+absent ones are named under the buttons. An image built without one of the
+CLIs used to offer it anyway, and the agent answered `command not found`
+inside its TUI two clicks later.
 
 What it costs, measured rather than estimated: **1.25 GB** of image (4.9 GB
 against 3.7 GB) and an Electron process per session. `STUDIO_ORCA_VERSION=`

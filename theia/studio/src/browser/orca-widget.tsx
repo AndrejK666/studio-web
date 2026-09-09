@@ -149,6 +149,17 @@ export class OrcaWidget extends ReactWidget {
         this.changes = worktree ? await this.orca.changes(worktree.path) : [];
     }
 
+    /**
+     * Agents this container can start.
+     *
+     * The runtime reports what it found on PATH; the full list is the
+     * fallback for an older backend that does not report any, which is
+     * better than offering nothing at all.
+     */
+    protected agents(): readonly string[] {
+        return this.status?.agents?.length ? this.status.agents : ORCA_AGENTS;
+    }
+
     protected selectedWorktree(): OrcaWorktree | undefined {
         return (
             this.worktrees.find(w => w.id === this.selected)
@@ -193,7 +204,8 @@ export class OrcaWidget extends ReactWidget {
             return;
         }
         void this.run(`Creating ${name}`, async () => {
-            const created = await this.orca.createTask({ name, agent: this.taskAgent, prompt });
+            const agent = this.agents().includes(this.taskAgent) ? this.taskAgent : this.agents()[0];
+            const created = await this.orca.createTask({ name, agent, prompt });
             this.taskName = '';
             this.taskPrompt = '';
             this.messages.info(
@@ -342,7 +354,7 @@ export class OrcaWidget extends ReactWidget {
                             this.update();
                         }}
                     >
-                        {ORCA_AGENTS.map(agent => (
+                        {this.agents().map(agent => (
                             <option key={agent} value={agent}>
                                 {agent}
                             </option>
@@ -480,7 +492,7 @@ export class OrcaWidget extends ReactWidget {
                 {selector && (
                     <>
                         <div className="studio-orca-form">
-                            {ORCA_AGENTS.map(agent => (
+                            {this.agents().map(agent => (
                                 <button
                                     key={agent}
                                     className="theia-button secondary"
@@ -490,6 +502,15 @@ export class OrcaWidget extends ReactWidget {
                                     Start {agent}
                                 </button>
                             ))}
+                            {this.status?.agents && this.status.agents.length < ORCA_AGENTS.length && (
+                                // Naming the absent ones beats leaving someone
+                                // wondering why the panel offers fewer agents
+                                // than the documentation does.
+                                <span className="studio-orca-meta">
+                                    Not in this image:{' '}
+                                    {ORCA_AGENTS.filter(a => !this.status?.agents?.includes(a)).join(', ')}
+                                </span>
+                            )}
                         </div>
                         <input
                             className="theia-input"

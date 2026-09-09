@@ -138,13 +138,34 @@ COPY --from=cfs /opt/cfs/ /opt/cfs/
 # `cfs init` fails before it reaches the project checkout.
 COPY --from=cfs --chown=node:node /home/node/.cf-studio/cache/ /home/node/.cf-studio/cache/
 
-# Agent runtimes for the native Theia AI providers. Neither @theia/ai-codex
-# nor @theia/ai-claude-code bundles its executable: the former dynamically
-# imports @openai/codex-sdk (which ships no CLI of its own and spawns the
-# `codex` binary), the latter resolves @anthropic-ai/claude-agent-sdk from the
-# global npm root. Codex CLI is pinned to the SDK version resolved in
-# package-lock.json — a mismatched pair breaks the wire protocol.
-RUN npm install -g @openai/codex@0.49.0 @anthropic-ai/claude-agent-sdk@0.3.223 \
+# Agent runtimes. Two audiences, and they are not interchangeable.
+#
+# Theia's own AI providers: neither @theia/ai-codex nor @theia/ai-claude-code
+# bundles an executable. The former dynamically imports @openai/codex-sdk
+# (which ships no CLI of its own and spawns the `codex` binary), the latter
+# resolves @anthropic-ai/claude-agent-sdk from the global npm root — an SDK,
+# not a CLI, which is what THEIA_CLAUDE_CODE_PATH points at. Codex CLI is
+# pinned to the SDK version resolved in package-lock.json: a mismatched pair
+# breaks the wire protocol.
+#
+# Orca's agents: it runs the agent's CLI as a TUI inside a worktree, so it
+# needs `claude` and `opencode` as programs. The claude-agent-sdk above is NOT
+# that program — a session offered three agents and two of them answered
+# `command not found`. Do not try to serve both audiences from one package:
+# the SDK has no CLI and the CLI is not importable as an SDK.
+#
+# Both read the same keys from the environment (agent_secrets provisions
+# OPENAI_API_KEY / ANTHROPIC_API_KEY per user), which is why Theia's chat and
+# an Orca terminal act as the same account.
+#
+# Measured cost of the two CLIs: 558 MB (claude-code 207 MB, opencode-ai
+# 353 MB). Their vendored binaries are already single-platform, so
+# trim-vendor-binaries.sh has nothing to take off them.
+RUN npm install -g \
+      @openai/codex@0.49.0 \
+      @anthropic-ai/claude-agent-sdk@0.3.223 \
+      @anthropic-ai/claude-code@2.1.266 \
+      opencode-ai@1.18.30 \
     && npm cache clean --force
 
 # Same six-platform vendor tree, again: 252 MB installed, 50 MB usable.

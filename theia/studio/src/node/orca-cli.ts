@@ -97,6 +97,52 @@ export function invocationError(failure: InvocationFailure, args: readonly strin
     return new OrcaCliError(failure.message ?? 'orca invocation failed', args, failure.stderr ?? '');
 }
 
+/**
+ * Where to run Orca commands.
+ *
+ * They used to run from the Theia backend's own working directory,
+ * /app/browser-app, which is not an Orca-managed checkout — so every command
+ * that needs a repository selector answered "Missing repo selector. Pass
+ * --repo or run from inside an Orca-managed worktree", including the panel's
+ * own Create-worktree button. The session's workspace IS the repository the
+ * panel registers, so that is where these belong.
+ *
+ * Returns undefined when none of the candidates exists, which leaves the
+ * inherited directory in place rather than pointing the CLI at nothing.
+ */
+/**
+ * Which of [[ORCA_AGENTS]] this container can start.
+ *
+ * Resolved against PATH rather than by running anything: an agent's TUI is
+ * not something to launch just to find out whether it exists. PATHEXT is
+ * honoured so a developer machine answers as truthfully as a container.
+ */
+export function availableAgents(
+    agents: readonly string[],
+    env: NodeJS.ProcessEnv = process.env,
+    exists: (path: string) => boolean = existsSync
+): readonly string[] {
+    const dirs = (env.PATH ?? '').split(path.delimiter).filter(Boolean);
+    const suffixes = ['', ...(env.PATHEXT ?? '').split(path.delimiter).filter(Boolean)];
+    return agents.filter(agent =>
+        dirs.some(dir => suffixes.some(suffix => exists(path.join(dir, agent + suffix))))
+    );
+}
+
+export function commandCwd(
+    env: NodeJS.ProcessEnv = process.env,
+    exists: (path: string) => boolean = existsSync
+): string | undefined {
+    const candidates = [env.STUDIO_WORKSPACE_ROOT, env.STUDIO_REPOSITORY_ROOT, '/workspace'];
+    for (const candidate of candidates) {
+        const path = candidate?.trim();
+        if (path && exists(path)) {
+            return path;
+        }
+    }
+    return undefined;
+}
+
 export function candidateBinaries(env: NodeJS.ProcessEnv = process.env, platform: string = os.platform()): string[] {
     const out: string[] = [];
     const configured = env.ORCA_CLI?.trim();
@@ -176,7 +222,8 @@ export class OrcaCli {
             const result = await execFileAsync(binary, full, {
                 timeout: Math.min(timeoutMs, MAX_TIMEOUT_MS),
                 maxBuffer: OUTPUT_LIMIT,
-                windowsHide: true
+                windowsHide: true,
+                cwd: commandCwd()
             });
             stdout = result.stdout;
         } catch (error) {

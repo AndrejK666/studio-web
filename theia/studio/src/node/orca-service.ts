@@ -18,9 +18,10 @@ import {
     type OrcaTerminal,
     type OrcaWaitOutcome,
     type OrcaWorktree,
-    type OrcaWorktreeChange
+    type OrcaWorktreeChange,
+    ORCA_AGENTS
 } from '../common/orca-protocol';
-import { OrcaCli, OrcaCliError, OrcaCliMissingError } from './orca-cli';
+import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents } from './orca-cli';
 import { GitExecutor } from './git-executor';
 
 /** `terminal wait --for tui-idle` blocks until the agent stops producing. */
@@ -55,7 +56,8 @@ export class OrcaServiceImpl implements OrcaService {
                 // not (which is exactly the headless case).
                 desktopRunning: asString(app.desktopWindowStatus)
                     ? asString(app.desktopWindowStatus) === 'available'
-                    : app.running === true
+                    : app.running === true,
+                agents: availableAgents(ORCA_AGENTS)
             };
         } catch (error) {
             // Not reachable is a normal state, not a failure of the IDE: the
@@ -65,7 +67,11 @@ export class OrcaServiceImpl implements OrcaService {
                 state: 'unreachable',
                 desktopRunning: false,
                 error: message(error),
-                cliMissing: error instanceof OrcaCliMissingError
+                cliMissing: error instanceof OrcaCliMissingError,
+                // Reported even here: the panel's agent list does not depend
+                // on a runtime answering, and an image missing its agents is
+                // worth seeing next to a runtime that is missing too.
+                agents: availableAgents(ORCA_AGENTS)
             };
         }
     }
