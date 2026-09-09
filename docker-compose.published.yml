@@ -31,6 +31,12 @@
 # then use: the root tenant is seeded by backend-bootstrap, which has no
 # published image and is not overridden here (see the bottom of this file).
 #
+# Every service here also carries `pull_policy: always`, because the default
+# tag is a MOVING one: `edge` from three days ago is still called `edge` on
+# this machine, and using it in silence is the opposite of running what the tip
+# of main runs. With the policy set, `up` refuses to be quietly out of date and
+# the explicit `pull` above is belt and braces.
+#
 # `--no-build` matters. Compose keeps the `build:` section from the base file
 # even when an override supplies an `image:`, and would rebuild from source the
 # moment the tag is missing locally — quietly giving you the opposite of what
@@ -45,6 +51,7 @@
 services:
   backend:
     image: ghcr.io/constructorfabric/studio-web/studio-backend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
     environment:
       # The session image is not a compose service: the backend launches it
       # through the host daemon, by the name in config/docker.yaml. Point it at
@@ -55,18 +62,22 @@ services:
 
   frontend:
     image: ghcr.io/constructorfabric/studio-web/studio-frontend:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
 
   frontend-prototype:
     image: ghcr.io/constructorfabric/studio-web/studio-frontend-prototype:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
 
   graph-postgres:
     image: ghcr.io/constructorfabric/studio-web/graph-postgres:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
 
   # The backend waits for this one (docker-compose.yml explains why), so it
   # has to resolve here too — pointed at the published tag, which makes the
   # dependency a pull instead of a ten-minute build.
   session-image:
     image: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
+    pull_policy: always
 
   # backend-bootstrap is deliberately NOT overridden. It is a --no-default-features
   # build whose whole purpose is to have no LLM chain, so it seeds the root tenant

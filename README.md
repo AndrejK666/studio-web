@@ -72,6 +72,10 @@ STUDIO_IMAGE_TAG=latest \
   docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
 ```
 
+Every published service is pinned to `pull_policy: always`, because `edge` is a
+moving tag: a copy pulled three days ago is still called `edge` on your machine,
+and using it in silence is the opposite of running what the tip of `main` runs.
+
 `edge` is the tip of `main`, moved by every push to it; `latest` is the last
 stable release tag and moves only when one is cut, so it lags `main` by however
 long it has been since — at the time of writing, six days. `sha-<commit>` is the

@@ -35,6 +35,22 @@ echo "==> step 2/2: full stack (backend + frontend, llm chain on)"
 docker compose build backend frontend
 docker compose up -d backend frontend
 
+# The session image is the one thing `up` does not rebuild once it exists —
+# deliberately, it is a ten-minute build — so say when it has fallen behind
+# the checkout instead of letting a session start on yesterday's agents. This
+# is exactly how a session came up without the `claude` CLI while the fix sat
+# in the working tree.
+image_built=$(docker image inspect cf-studio-theia:local --format "{{.Created}}" 2>/dev/null || true)
+if [ -n "$image_built" ]; then
+    head_at=$(git log -1 --format=%cI 2>/dev/null || true)
+    if [ -n "$head_at" ] && [ "$(date -d "$image_built" +%s 2>/dev/null || echo 0)" -lt "$(date -d "$head_at" +%s 2>/dev/null || echo 0)" ]; then
+        echo
+        echo "==> NOTE: cf-studio-theia:local was built $image_built, before HEAD ($head_at)."
+        echo "    A new session would start on the older image. Refresh it with:"
+        echo "      docker compose build session-image"
+    fi
+fi
+
 echo
 echo "==> done."
 echo "    Portal:   http://localhost:8080   (sign in: studio-admin-token)"
