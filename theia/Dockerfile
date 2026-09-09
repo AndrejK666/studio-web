@@ -155,13 +155,24 @@ ARG TARGETARCH
 RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
     sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules
 
-# ── Orca runtime (optional; the IDE's Agents panel drives it) ─────────────
-# Opt-in by build arg: the package is ~155 MB on the wire, ~270 MB installed,
-# and the panel degrades to "not reachable" without it.
+# ── Orca runtime (the IDE's Agents panel drives it) ───────────────────────
+# Shipped by default. It used to be opt-in, and the result was a session whose
+# Agents panel could only report that the runtime was missing — which is what a
+# stand showed, because neither the release workflow nor the deployment ever
+# passed the build arg. A panel that cannot work by default is not a feature.
 #
-#   docker build -t cf-studio-theia:orca \
-#     --build-arg STUDIO_ORCA_DEB_URL=https://github.com/stablyai/orca/releases/download/v1.4.197/orca-ide_1.4.197_amd64.deb \
-#     --build-arg STUDIO_ORCA_DEB_SHA256=<sha256> .
+# The cost is real and measured: 1.25 GB on the image (4.9 GB against 3.7 GB).
+# Pinned by version and per-architecture digest, both taken from the release's
+# own asset digests — the amd64 one verified against the downloaded package.
+# v1.4.198 publishes amd64 and arm64, so TARGETARCH selects the package rather
+# than the build being amd64-only.
+#
+# For a smaller image, at the cost of the panel:
+#
+#   docker build --build-arg STUDIO_ORCA_VERSION= -t cf-studio-theia:no-orca .
+#
+# An explicit STUDIO_ORCA_DEB_URL still wins, for a package from somewhere else
+# (a mirror, a pre-release); pass its sha256 alongside.
 #
 # Three things about this package, each found by probing v1.4.197's amd64 deb
 # in a container:
@@ -175,15 +186,35 @@ RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-ven
 #     platform failed to initialize" -> SIGSEGV), reproducibly on a restart.
 #     Hence xvfb here, and `xvfb-run` in the entrypoint: three cold starts in
 #     a row then reached `state: ready` in 2 s each.
+ARG STUDIO_ORCA_VERSION=1.4.198
+ARG STUDIO_ORCA_SHA256_AMD64=f0e54c3dbe4ebaa2991b94c7e0e9c5949efe31f46942bbf379075669f7382b6c
+ARG STUDIO_ORCA_SHA256_ARM64=0cea17609a834c2b14f237b441b24657abfda505ec5eecd96f38ad607f3e86d8
 ARG STUDIO_ORCA_DEB_URL=""
 ARG STUDIO_ORCA_DEB_SHA256=""
-RUN if [ -n "$STUDIO_ORCA_DEB_URL" ]; then \
+ARG TARGETARCH
+RUN url="$STUDIO_ORCA_DEB_URL"; sha="$STUDIO_ORCA_DEB_SHA256"; \
+    arch="${TARGETARCH:-amd64}"; \
+    if [ -z "$url" ] && [ -n "$STUDIO_ORCA_VERSION" ]; then \
+      case "$arch" in \
+        amd64) sha="$STUDIO_ORCA_SHA256_AMD64" ;; \
+        arm64) sha="$STUDIO_ORCA_SHA256_ARM64" ;; \
+        *) sha="" ;; \
+      esac; \
+      if [ -n "$sha" ]; then \
+        url="https://github.com/stablyai/orca/releases/download/v${STUDIO_ORCA_VERSION}/orca-ide_${STUDIO_ORCA_VERSION}_${arch}.deb"; \
+      else \
+        echo "orca: no package published for $arch — the panel will say it is not installed"; \
+      fi; \
+    fi; \
+    if [ -n "$url" ]; then \
       set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends curl; \
-      curl -fsSL --retry 3 -o /tmp/orca.deb "$STUDIO_ORCA_DEB_URL"; \
-      if [ -n "$STUDIO_ORCA_DEB_SHA256" ]; then \
-        echo "$STUDIO_ORCA_DEB_SHA256  /tmp/orca.deb" | sha256sum -c -; \
+      curl -fsSL --retry 3 -o /tmp/orca.deb "$url"; \
+      if [ -n "$sha" ]; then \
+        echo "$sha  /tmp/orca.deb" | sha256sum -c -; \
+      else \
+        echo "orca: installing an unpinned package from $url"; \
       fi; \
       apt-get install -y --no-install-recommends /tmp/orca.deb \
         libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
@@ -196,7 +227,7 @@ RUN if [ -n "$STUDIO_ORCA_DEB_URL" ]; then \
       rm -rf /var/lib/apt/lists/*; \
       ls -l /usr/bin/orca-ide; \
     else \
-      echo "orca not installed (STUDIO_ORCA_DEB_URL empty) — the Agents panel reports 'not reachable'"; \
+      echo "orca: not installed — the Agents panel will say so, and why"; \
     fi
 
 # Non-root: the workspace bind-mount owner should match (uid 1000 = node).
