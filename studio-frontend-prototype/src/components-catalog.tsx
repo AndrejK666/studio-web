@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { CatalogNode, Connection } from "./api";
+import type { CatalogNode, Connection, DocType, StudioKit } from "./api";
 import { errText } from "./format";
 import schemaJson from "./components-catalog.schema.json";
 
@@ -50,7 +50,136 @@ interface Schema {
 }
 
 const SCHEMA = schemaJson as unknown as Schema;
+/** The component types this page knows by name.
+ *
+ *  A component type is a GTS type, and these are the ones the presentation
+ *  below differs for. Everything else the catalogue carries renders with the
+ *  gear schema, which is the honest default rather than a guess.
+ */
+const FRONTX_TYPE = "gts.cf.studio.catalog.frontx.v1~";
+/** The kit node type, as the backend registers it. Named here so the
+ *  synthesised built-ins and the synced nodes cannot drift apart into two
+ *  types that render as two rows in the type picker. */
+const KIT_TYPE = "gts.cf.studio.catalog.kit.v1~";
+/** The document-type node type, as studio-documents registers it.
+ *
+ *  Note the namespace: `doc`, not `catalog`. A document type is a component --
+ *  a named thing an organization publishes and a project takes -- but a
+ *  different gear owns it, and it keeps that gear's identity here. The
+ *  catalogue lists it; it does not annex it. */
+const DOCUMENT_TYPE = "gts.cf.studio.doc.document_type.v1~";
+
 const ALL_FIELDS: Field[] = SCHEMA.groups.flatMap((g) => g.fields);
+
+/** Every field the gear schema declares, by key, so a type's schema can reuse a
+ *  label and a source rather than restate them. */
+const GEAR_FIELDS: Record<string, Field> = Object.fromEntries(
+  ALL_FIELDS.map((f) => [f.key, f]),
+);
+
+/** Fields picked out of the gear schema by key. A key it does not know is
+ *  dropped rather than rendered blank -- a schema that names a field nothing
+ *  fills is the bug this whole mechanism exists to fix. */
+function pick(keys: string[]): Field[] {
+  return keys.map((k) => GEAR_FIELDS[k]).filter((f): f is Field => Boolean(f));
+}
+
+/** A field this type has and the gear schema does not. */
+function own(key: string, label: string, kind: Kind, ref: string): Field {
+  return { key, label, kind, lamp: false, source: { class: "repo", ref } };
+}
+
+/** The parts of the presentation that are the same whatever the type: the
+ *  legends and the source-class glossary a reader needs to interpret any cell. */
+function schemaFrom(groups: Group[], composition: CompositionPart[] = []): Schema {
+  return {
+    groups,
+    composition,
+    statusLegend: SCHEMA.statusLegend,
+    docStateLegend: SCHEMA.docStateLegend,
+    sourceClasses: SCHEMA.sourceClasses,
+  };
+}
+
+/** A micro-frontend fills eleven keys. The gear schema declares sixty-two, so
+ *  rendering one against the other is a page of "no data" with the handful of
+ *  real values lost in it -- crates, migrations, supported databases and
+ *  published versions are not things a package in an npm monorepo has. */
+const FRONTX_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: pick(["description", "category", "path", "version"]),
+  },
+  {
+    id: "contracts",
+    title: "Contracts and dependencies",
+    icon: "C",
+    fields: [...pick(["deps", "openapi"]), own("deps_names", "Dependencies", "text", "package.json")],
+  },
+  { id: "qa", title: "Quality assurance", icon: "Q", fields: pick(["unitmods"]) },
+  { id: "ops", title: "Operations", icon: "O", fields: pick(["guideline"]) },
+  { id: "security", title: "Security and compliance", icon: "K", fields: pick(["licence"]) },
+  { id: "delivery", title: "Delivery health", icon: "D", fields: pick(["lastchange"]) },
+]);
+
+/** A kit is a repository, a ref and a manifest -- and it keeps them on the node
+ *  itself rather than in an editable profile, because for a kit the manifest is
+ *  what a profile is for a gear. */
+const KIT_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: [
+      ...pick(["description"]),
+      own("publisher", "Publisher", "text", ".cf-studio-kit.toml"),
+    ],
+  },
+  {
+    id: "source",
+    title: "Source",
+    icon: "C",
+    fields: [
+      own("repository", "Repository", "text", "catalogue source"),
+      own("git_ref", "Git ref", "label", "catalogue source"),
+      own("manifest_path", "Manifest", "text", "repository tree"),
+    ],
+  },
+]);
+
+/** A document type is a template, a checklist and a questionnaire. It has no
+ *  repository and no version, and saying so by omission is the point. */
+const DOCUMENT_SCHEMA: Schema = schemaFrom([
+  {
+    id: "summary",
+    title: "Summary",
+    icon: "S",
+    fields: [
+      ...pick(["description"]),
+      own("owner", "Defined at", "label", "studio-documents"),
+      own("sections", "Sections", "metric", "type template"),
+    ],
+  },
+]);
+
+/** The presentation for one component type.
+ *
+ *  Keyed by GTS type, because that is what a component type IS -- see the type
+ *  picker above. An unknown type falls back to the gear schema, which is the
+ *  only honest default: it is the one that describes a crate, and a type we do
+ *  not know is more likely to be a new crate-shaped thing than a new shape.
+ *
+ *  These live in the client for now. They are presentation, but they are also
+ *  data about a type, and the right home is beside the type itself -- see the
+ *  note in the pull request. */
+function schemaFor(typeId: string): Schema {
+  if (typeId === FRONTX_TYPE) return FRONTX_SCHEMA;
+  if (typeId === KIT_TYPE) return KIT_SCHEMA;
+  if (typeId === DOCUMENT_TYPE) return DOCUMENT_SCHEMA;
+  return SCHEMA;
+}
 
 /** One field's answer for one gear: full text, brief, number, lamp, link, when. */
 interface FieldVal {
@@ -248,21 +377,57 @@ interface RepoSel {
   gitRef: string;
 }
 
-/** Where the Components page pulls from: the platform Gears repository and/or
- *  the FrontX micro-frontends repository (each via a connector), and/or
- *  crates.io. At least one should be enabled. */
+/** Where the Components page pulls from: the platform Gears repository, the
+ *  FrontX micro-frontends repository, a kit repository (each via a connector),
+ *  and/or crates.io. At least one should be enabled.
+ *
+ *  A kit repository is a source like any other because a kit is a component
+ *  like any other. The registry's built-in list is a hardcoded function with a
+ *  single entry; a repository source is how a catalogue gets a second one
+ *  without shipping a release. */
 interface Sources {
   cratesIo: boolean;
   keyword: string;
   gears: RepoSel;
   frontx: RepoSel;
+  kits: RepoSel;
 }
+
+/** The branches worth one click. `HEAD` is the repository's default branch —
+ *  which is not the same as `main` on every repository, so it stays a distinct
+ *  choice rather than an alias for one. Anything else (a tag, a commit, a
+ *  release branch) goes in through "Other…". */
+const BRANCH_CHOICES: { value: string; label: string }[] = [
+  { value: "HEAD", label: "HEAD (default branch)" },
+  { value: "main", label: "main" },
+  { value: "develop", label: "develop" },
+];
+/** Sentinel for the select's "Other…" entry. `~` is forbidden in a git ref
+ *  name, so this can never collide with a real branch. */
+const CUSTOM_BRANCH = "~custom";
 
 const DEFAULT_SOURCES: Sources = {
   cratesIo: true,
   keyword: "constructorfabric",
   gears: { enabled: false, connectionId: "", repo: "constructorfabric/gears-rust", gitRef: "HEAD" },
-  frontx: { enabled: false, connectionId: "", repo: "constructorfabric/gears-frontx", gitRef: "HEAD" },
+  // FrontX is developed on `develop` — the templates this frontend was
+  // scaffolded from are pinned to it (see studio-frontend/.frontx/provenance.json),
+  // so reading `HEAD` there shows a catalogue behind the one people work in.
+  frontx: {
+    enabled: false,
+    connectionId: "",
+    repo: "constructorfabric/gears-frontx",
+    gitRef: "develop",
+  },
+  // The one kit the registry ships, as the default target: a repository whose
+  // root holds a `.cf-studio-kit.toml`. Pointed at a monorepo the scan finds
+  // every manifest in it, so this is a starting point and not a limit.
+  kits: {
+    enabled: false,
+    connectionId: "",
+    repo: "constructorfabric/studio-kit-sdlc",
+    gitRef: "HEAD",
+  },
 };
 
 const SOURCES_KEY = "cf.components.sources";
@@ -303,6 +468,7 @@ function syncBody(
   const pairs: [string, RepoSel][] = [
     ["gears", s.gears],
     ["frontx", s.frontx],
+    ["kits", s.kits],
   ];
   for (const [mode, sel] of pairs) {
     if (!sel.enabled) continue;
@@ -343,6 +509,59 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
   );
 }
 
+
+
+
+
+/** A document type as a catalogue node.
+ *
+ *  What it has and a gear does not is a template, a section checklist and an
+ *  intake questionnaire; what it lacks is versions and downloads. Hence a type
+ *  of its own, and a mapping that fills what the catalogue renders rather than
+ *  inventing the fields it cannot.
+ */
+function docTypeAsNode(t: DocType): CatalogNode {
+  return {
+    type_id: DOCUMENT_TYPE,
+    instance_id: `doc-type:${t.key}`,
+    value: {
+      name: t.key,
+      kind: "document",
+      description: t.description || t.name,
+      keywords: [t.owner, `${t.sections.length} sections`],
+      categories: ["document"],
+    },
+  };
+}
+
+/** A kit as a catalogue node.
+ *
+ *  A kit IS a component: a named, versioned, published thing a project takes
+ *  from the shared list. It sat in a list of its own only because it reaches
+ *  the portal through a different gear, and that made the catalogue look like
+ *  it did not contain half of what a project can install.
+ *
+ *  The mapping fills what the catalogue renders and stays silent where a kit
+ *  has nothing to give: no download counts, no crate versions. Inventing zeroes
+ *  would sort kits against gears on a number that means nothing.
+ */
+function kitAsNode(kit: StudioKit): CatalogNode {
+  return {
+    type_id: KIT_TYPE,
+    instance_id: `kit:${kit.slug}`,
+    value: {
+      name: kit.slug,
+      kind: "kit",
+      description: kit.description,
+      max_version: kit.default_version,
+      newest_version: kit.default_version,
+      repository: kit.repository_url || null,
+      keywords: [kit.publisher, kit.visibility].filter(Boolean),
+      categories: ["kit"],
+    },
+  };
+}
+
 export function ComponentsCatalog({
   token,
   tenantId,
@@ -371,6 +590,11 @@ export function ComponentsCatalog({
   const [sources, setSources] = useState<Sources>(() => loadSources());
   const [showSources, setShowSources] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
+  // Which component type the cards below are. Empty means every type.
+  const [typeFilter, setTypeFilter] = useState("");
+  // `gts_id -> title`, read from the types-registry. A type with no title falls
+  // back to its own identifier rather than to a guess.
+  const [typeTitles, setTypeTitles] = useState<Record<string, string>>({});
 
   const setSrc = (patch: Partial<Sources>) =>
     setSources((cur) => {
@@ -379,12 +603,36 @@ export function ComponentsCatalog({
       return next;
     });
 
-  const setRepo = (which: "gears" | "frontx", patch: Partial<RepoSel>) =>
+  const setRepo = (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) =>
     setSources((cur) => {
       const next = { ...cur, [which]: { ...cur[which], ...patch } };
       saveSources(next);
       return next;
     });
+
+  // The registry names the types; the catalogue says which of them have
+  // components. Neither alone makes the selector below.
+  useEffect(() => {
+    let live = true;
+    api
+      .gtsTypeTitles(token)
+      .then(({ entities }) => {
+        if (!live) return;
+        const next: Record<string, string> = {};
+        for (const e of entities ?? []) {
+          const title = e.content?.title?.trim();
+          if (title) next[e.gts_id] = title;
+        }
+        setTypeTitles(next);
+      })
+      .catch(() => {
+        // A registry that will not answer costs the labels, not the selector.
+        if (live) setTypeTitles({});
+      });
+    return () => {
+      live = false;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -405,14 +653,41 @@ export function ComponentsCatalog({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const [{ nodes }, profileResponse] = await Promise.all([
+      const [{ nodes }, profileResponse, kitResponse, docTypeResponse] =
+        await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch((error): { nodes: CatalogNode[] } => {
           if (error instanceof ApiError && error.status === 404) return { nodes: [] };
           throw error;
         }),
+        // Its own gear, so its own failure: a kit registry that is down leaves
+        // the gears listed rather than blanking the whole catalogue.
+        api.kits(token).catch((): { items: StudioKit[] } => ({ items: [] })),
+        // Same again, and only when there is an organization to ask about:
+        // document types resolve per tenant, and this page is the
+        // organization's.
+        tenantId
+          ? api.orgDocTypes(token, tenantId).catch((): { items: DocType[] } => ({ items: [] }))
+          : Promise.resolve({ items: [] as DocType[] }),
       ]);
-      setGears(nodes ?? []);
+      // The registry's built-in kits and the kits a sync found from a
+      // repository are the same things under the same slugs. A synced node
+      // wins: it carries the repository, the ref and the manifest path that a
+      // hardcoded catalogue entry cannot. The built-ins stay so that a
+      // deployment which has never run a kit sync still shows them.
+      const synced = new Set(
+        (nodes ?? [])
+          .filter((n) => n.type_id === KIT_TYPE)
+          .map((n) => String(n.value.name ?? "")),
+      );
+      const builtIns = (kitResponse.items ?? [])
+        .filter((k) => !synced.has(k.slug))
+        .map(kitAsNode);
+      setGears([
+        ...(nodes ?? []),
+        ...builtIns,
+        ...(docTypeResponse.items ?? []).map(docTypeAsNode),
+      ]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
@@ -422,7 +697,7 @@ export function ComponentsCatalog({
     } catch (e) {
       setErr(errText(e));
     }
-  }, [token]);
+  }, [token, tenantId]);
 
   useEffect(() => {
     void reload();
@@ -474,6 +749,7 @@ export function ComponentsCatalog({
     const needle = query.trim().toLowerCase();
     const cat = categoryFilter.trim().toLowerCase();
     const rows = (gears ?? [])
+      .filter((g) => !typeFilter || g.type_id === typeFilter)
       .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
       .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
       .filter((g) => !cat || componentCategory(g, profiles[nameOf(g)]).toLowerCase().includes(cat))
@@ -491,7 +767,7 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, kindFilter, hideSdk, sortMode, categoryFilter, profiles]);
+  }, [gears, query, typeFilter, kindFilter, hideSdk, sortMode, categoryFilter, profiles]);
 
   // Report the distinct categories present, so the filter rail can offer them.
   useEffect(() => {
@@ -571,11 +847,18 @@ export function ComponentsCatalog({
             />
           )}
 
+          <TypePicker
+            gears={gears}
+            titles={typeTitles}
+            value={typeFilter}
+            onChange={setTypeFilter}
+          />
+
           <p className="gcat-sub">
             A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
-            repository, and micro-frontends from FrontX — read through a connector, with crates.io
-            adding published versions. Each component opens a page of grouped fields, traffic lights and
-            sources; an empty cell is a finding, not an omission.
+            repository, micro-frontends from FrontX, and kits — read through a connector, with
+            crates.io adding published versions. Each component opens a page of grouped fields,
+            traffic lights and sources; an empty cell is a finding, not an omission.
           </p>
 
           {sync && <p className="gcat-hint">Sync: {sync}</p>}
@@ -664,19 +947,99 @@ function RepoSourceEditor({
           />
         </label>
         <label className="src-row">
-          <span>Ref</span>
-          <input
-            placeholder="HEAD"
-            value={sel.gitRef}
+          <span>Branch</span>
+          <select
+            value={BRANCH_CHOICES.some((b) => b.value === sel.gitRef) ? sel.gitRef : CUSTOM_BRANCH}
             disabled={!sel.enabled}
-            onChange={(e) => onChange({ gitRef: e.target.value })}
-          />
+            onChange={(e) =>
+              // Choosing "Other…" keeps whatever is typed; the input below is
+              // what actually edits it.
+              onChange({ gitRef: e.target.value === CUSTOM_BRANCH ? "" : e.target.value })
+            }
+          >
+            {BRANCH_CHOICES.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+            <option value={CUSTOM_BRANCH}>Other…</option>
+          </select>
         </label>
+        {!BRANCH_CHOICES.some((b) => b.value === sel.gitRef) && (
+          <label className="src-row">
+            <span>Ref</span>
+            <input
+              placeholder="branch, tag or commit"
+              value={sel.gitRef}
+              disabled={!sel.enabled}
+              onChange={(e) => onChange({ gitRef: e.target.value })}
+            />
+          </label>
+        )}
         <p className="src-note">
           {note}
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
         </p>
       </div>
+    </div>
+  );
+}
+
+/** The component types the catalogue actually holds, as a row of chips.
+ *
+ *  A component type is a GTS type, not a label: `catalog.gear.v1~`,
+ *  `catalog.kit.v1~`, `catalog.frontx.v1~`. Each is a different shape with
+ *  different fields, and mixing them in one list means every card is read
+ *  against a schema that may not be its own.
+ *
+ *  The row is built from the nodes present rather than from a list in this
+ *  file, so a type the catalogue starts carrying appears here without an edit,
+ *  and one it stops carrying stops taking up room. Names come from the
+ *  types-registry, which ADR-0013 makes the catalogue of meaning for exactly
+ *  this purpose; an unnamed type falls back to its own identifier rather than
+ *  to a prettified guess.
+ */
+function TypePicker({
+  gears,
+  titles,
+  value,
+  onChange,
+}: {
+  gears: CatalogNode[] | null;
+  titles: Record<string, string>;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of gears ?? []) m.set(g.type_id, (m.get(g.type_id) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => (titles[a[0]] ?? a[0]).localeCompare(titles[b[0]] ?? b[0]));
+  }, [gears, titles]);
+
+  // One type is no choice, and none is nothing to choose from.
+  if (counts.length < 2) return null;
+
+  const total = counts.reduce((n, [, c]) => n + c, 0);
+  return (
+    <div className="gcat-types">
+      <span className="gcat-types-label">Type</span>
+      <button
+        className={`gcat-type${value === "" ? " on" : ""}`}
+        onClick={() => onChange("")}
+        title="Every component type"
+      >
+        All <span className="gcat-type-n">{total}</span>
+      </button>
+      {counts.map(([id, n]) => (
+        <button
+          key={id}
+          className={`gcat-type${value === id ? " on" : ""}`}
+          onClick={() => onChange(value === id ? "" : id)}
+          title={id}
+        >
+          {titles[id] ?? id} <span className="gcat-type-n">{n}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -690,7 +1053,7 @@ function SourcesPanel({
 }: {
   sources: Sources;
   setSrc: (patch: Partial<Sources>) => void;
-  setRepo: (which: "gears" | "frontx", patch: Partial<RepoSel>) => void;
+  setRepo: (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) => void;
   connections: Connection[];
   tenantId: string | undefined;
 }) {
@@ -706,9 +1069,17 @@ function SourcesPanel({
       />
       <RepoSourceEditor
         title="FrontX (micro-frontends)"
-        note="Micro-frontend packages from the FrontX repository."
+        note="Every package in the FrontX monorepo — packages/* plus the root-level scaffolding templates (template-shell, template-mfe). FrontX develops on `develop`."
         sel={sources.frontx}
         onChange={(p) => setRepo("frontx", p)}
+        connections={connections}
+        tenantId={tenantId}
+      />
+      <RepoSourceEditor
+        title="Kits"
+        note="Every `.cf-studio-kit.toml` in the repository — one at the root, or several in subdirectories. A kit is installed into a project's repositories rather than depended on, so it carries a repository and a ref instead of a version ladder."
+        sel={sources.kits}
+        onChange={(p) => setRepo("kits", p)}
         connections={connections}
         tenantId={tenantId}
       />
@@ -823,6 +1194,11 @@ function GearDetail({
   onSaved: (profile: Record<string, unknown>) => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
+  // The presentation follows the component's TYPE. Rendering a micro-frontend
+  // against the gear schema is a page of "no data" with its handful of real
+  // values lost in it, which is what this page used to do.
+  const schema = schemaFor(gear.type_id);
+  const schemaFields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const [view, setView] = useState<View>("filled");
   const [versions, setVersions] = useState<CatalogNode[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -835,9 +1211,11 @@ function GearDetail({
     }
     return base;
   }, [gear.value, profile, versions]);
-  const filled = ALL_FIELDS.filter((f) => values[f.key]).length;
-  const pct = Math.round((filled / ALL_FIELDS.length) * 100);
-  const derivable = ALL_FIELDS.filter((f) => f.source.class === "repo" || f.source.class === "api").length;
+  const filled = schemaFields.filter((f) => values[f.key]).length;
+  const pct = schemaFields.length ? Math.round((filled / schemaFields.length) * 100) : 0;
+  const derivable = schemaFields.filter(
+    (f) => f.source.class === "repo" || f.source.class === "api",
+  ).length;
 
   useEffect(() => {
     let live = true;
@@ -891,11 +1269,11 @@ function GearDetail({
 
       {gear.value.description && <p className="gcat-sub">{String(gear.value.description)}</p>}
 
-      {view === "filled" && <HealthStrip values={values} />}
-      {view === "filled" && <Kpis values={values} />}
+      {view === "filled" && <HealthStrip values={values} schema={schema} />}
+      {view === "filled" && <Kpis values={values} schema={schema} />}
 
       <div className="grid">
-        {SCHEMA.groups.map((group) => (
+        {schema.groups.map((group) => (
           <Panel key={group.id} group={group} values={values} view={view} />
         ))}
       </div>
@@ -1051,13 +1429,13 @@ function ValueCell({
 
 // ── health strip ─────────────────────────────────────────────────────────────
 
-function HealthStrip({ values }: { values: Values }) {
+function HealthStrip({ values, schema }: { values: Values; schema: Schema }) {
   const goTo = (id: string) => {
     document.getElementById(`panel-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
   return (
     <div className="health">
-      {SCHEMA.groups.map((group) => {
+      {schema.groups.map((group) => {
         const h = groupHealth(group, values);
         const order: Lamp[] = ["bad", "watch", "good", "grey"];
         const pips = h.n
@@ -1082,8 +1460,8 @@ function HealthStrip({ values }: { values: Values }) {
 
 // ── KPIs: composition bar + facts ────────────────────────────────────────────
 
-function Kpis({ values }: { values: Values }) {
-  const parts = SCHEMA.composition.map((c) => ({ ...c, n: values[c.key]?.n ?? 0 }));
+function Kpis({ values, schema }: { values: Values; schema: Schema }) {
+  const parts = schema.composition.map((c) => ({ ...c, n: values[c.key]?.n ?? 0 }));
   const total = parts.reduce((a, p) => a + p.n, 0);
   const ratio = values.ratio?.b ?? values.ratio?.v ?? "—";
   const adr = values.adr?.n;
@@ -1898,6 +2276,12 @@ const GCAT_CSS = `
 .gcat .gtxt { font-size:11.5px; color:var(--studio-muted); line-height:1.35; max-width:280px; }
 .gcat .gtxt b { color:var(--studio-text); font-family:var(--studio-mono); }
 
+.gcat .gcat-types { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+.gcat .gcat-types-label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--studio-muted); margin-right:2px; }
+.gcat .gcat-type { font-size:12px; padding:3px 10px; border:1px solid var(--border,#e2e4e9); border-radius:999px; background:transparent; cursor:pointer; color:inherit; }
+.gcat .gcat-type:hover { border-color:var(--accent,#4f46e5); }
+.gcat .gcat-type.on { border-color:var(--accent,#4f46e5); background:var(--accent-soft,#eef2ff); font-weight:600; }
+.gcat .gcat-type-n { opacity:.55; font-variant-numeric:tabular-nums; margin-left:2px; }
 .gcat .gcat-sub { font-size:14px; line-height:1.5; color:var(--studio-muted); max-width:82ch; margin:0 0 14px; }
 .gcat .gcat-hint { font-size:11.5px; color:var(--studio-muted); margin:6px 0; }
 .gcat .gcat-err { color:var(--studio-danger); font-size:12px; margin:6px 0; }

@@ -48,7 +48,27 @@ RUN npm ci --ignore-scripts=false
 # drawio-editor has no `prepare` script (unlike studio), so `npm ci` doesn't
 # compile its lib/ — build it explicitly before bundling the browser app.
 RUN npm --prefix drawio-editor run build
-RUN npm run build:browser
+# The frontend is minified. Measured on this app (esbuild, same inputs):
+# lib/frontend/bundle.js 10 487 027 B unminified vs 5 426 206 B minified
+# (1 864 535 B vs 1 431 277 B gzipped), and development mode also emits a
+# 15 MB source map into the image. Every cold session pays the difference
+# in transfer and, more importantly, in parse time. Build with
+# --build-arg STUDIO_BUNDLE_MODE=development for a debuggable image.
+ARG STUDIO_BUNDLE_MODE=production
+RUN if [ "$STUDIO_BUNDLE_MODE" = development ]; then \
+      npm run build:browser:dev; \
+    else \
+      npm run build:browser; \
+    fi
+
+# @openai/codex-sdk vendors six prebuilt binaries and this image runs one.
+# Measured on the session image: 223 MB under codex-sdk/vendor, of which 44 MB
+# is the platform the container is built for. Trimmed here rather than in the
+# runtime stage so the COPY below carries the smaller tree — pruning after the
+# copy would leave the weight in the layer that every session pull downloads.
+ARG TARGETARCH
+RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
+    sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /app/node_modules
 
 # Constructor Studio deliberately requires a newer Python patch release than
 # Debian Bookworm ships (3.11.2). Build its isolated environment with the
@@ -127,12 +147,96 @@ COPY --from=cfs --chown=node:node /home/node/.cf-studio/cache/ /home/node/.cf-st
 RUN npm install -g @openai/codex@0.49.0 @anthropic-ai/claude-agent-sdk@0.3.223 \
     && npm cache clean --force
 
+# Same six-platform vendor tree, again: 252 MB installed, 50 MB usable.
+# @anthropic-ai's own 278 MB binary is NOT touched — npm already resolved that
+# one to a single platform (claude-agent-sdk-linux-x64), so there is nothing
+# there to drop.
+ARG TARGETARCH
+RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
+    sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules
+
+# ── Orca runtime (the IDE's Agents panel drives it) ───────────────────────
+# Shipped by default. It used to be opt-in, and the result was a session whose
+# Agents panel could only report that the runtime was missing — which is what a
+# stand showed, because neither the release workflow nor the deployment ever
+# passed the build arg. A panel that cannot work by default is not a feature.
+#
+# The cost is real and measured: 1.25 GB on the image (4.9 GB against 3.7 GB).
+# Pinned by version and per-architecture digest, both taken from the release's
+# own asset digests — the amd64 one verified against the downloaded package.
+# v1.4.198 publishes amd64 and arm64, so TARGETARCH selects the package rather
+# than the build being amd64-only.
+#
+# For a smaller image, at the cost of the panel:
+#
+#   docker build --build-arg STUDIO_ORCA_VERSION= -t cf-studio-theia:no-orca .
+#
+# An explicit STUDIO_ORCA_DEB_URL still wins, for a package from somewhere else
+# (a mirror, a pre-release); pass its sha256 alongside.
+#
+# Three things about this package, each found by probing v1.4.197's amd64 deb
+# in a container:
+#   * the CLI is `orca-ide`, not `orca` — /opt/Orca/resources/bin/orca-ide,
+#     linked as /usr/bin/orca-ide;
+#   * its Depends are incomplete: without the Electron runtime libraries below
+#     the binary does not even load (libasound.so.2 missing);
+#   * with them present, `orca-ide status` answers with no display at all —
+#     but `orca serve` is a different story: without a display it sometimes
+#     initializes X11 anyway and dies ("Missing X server or $DISPLAY … The
+#     platform failed to initialize" -> SIGSEGV), reproducibly on a restart.
+#     Hence xvfb here, and `xvfb-run` in the entrypoint: three cold starts in
+#     a row then reached `state: ready` in 2 s each.
+ARG STUDIO_ORCA_VERSION=1.4.198
+ARG STUDIO_ORCA_SHA256_AMD64=f0e54c3dbe4ebaa2991b94c7e0e9c5949efe31f46942bbf379075669f7382b6c
+ARG STUDIO_ORCA_SHA256_ARM64=0cea17609a834c2b14f237b441b24657abfda505ec5eecd96f38ad607f3e86d8
+ARG STUDIO_ORCA_DEB_URL=""
+ARG STUDIO_ORCA_DEB_SHA256=""
+ARG TARGETARCH
+RUN url="$STUDIO_ORCA_DEB_URL"; sha="$STUDIO_ORCA_DEB_SHA256"; \
+    arch="${TARGETARCH:-amd64}"; \
+    if [ -z "$url" ] && [ -n "$STUDIO_ORCA_VERSION" ]; then \
+      case "$arch" in \
+        amd64) sha="$STUDIO_ORCA_SHA256_AMD64" ;; \
+        arm64) sha="$STUDIO_ORCA_SHA256_ARM64" ;; \
+        *) sha="" ;; \
+      esac; \
+      if [ -n "$sha" ]; then \
+        url="https://github.com/stablyai/orca/releases/download/v${STUDIO_ORCA_VERSION}/orca-ide_${STUDIO_ORCA_VERSION}_${arch}.deb"; \
+      else \
+        echo "orca: no package published for $arch — the panel will say it is not installed"; \
+      fi; \
+    fi; \
+    if [ -n "$url" ]; then \
+      set -eux; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends curl; \
+      curl -fsSL --retry 3 -o /tmp/orca.deb "$url"; \
+      if [ -n "$sha" ]; then \
+        echo "$sha  /tmp/orca.deb" | sha256sum -c -; \
+      else \
+        echo "orca: installing an unpinned package from $url"; \
+      fi; \
+      apt-get install -y --no-install-recommends /tmp/orca.deb \
+        libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+        libcups2 libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0 \
+        libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 \
+        libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 \
+        libxrandr2 xvfb xauth; \
+      rm -f /tmp/orca.deb; \
+      apt-get purge -y curl; apt-get autoremove -y; \
+      rm -rf /var/lib/apt/lists/*; \
+      ls -l /usr/bin/orca-ide; \
+    else \
+      echo "orca: not installed — the Agents panel will say so, and why"; \
+    fi
+
 # Non-root: the workspace bind-mount owner should match (uid 1000 = node).
 USER node
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 COPY --chown=node:node docker/materialize-workspace.mjs /usr/local/lib/studio-materialize-workspace.mjs
+COPY --chown=node:node docker/git-credentials.mjs /usr/local/lib/studio-git-credentials.mjs
 # Wrapper around the codex binary: @theia/ai-codex spawns codex without a
 # working directory, so it lands in /app/browser-app (not a git repo) and
 # refuses to run. The wrapper forces the session workspace as cwd and passes
@@ -154,7 +258,8 @@ ENV STUDIO_GIT_MODE=disabled \
     CFS_CACHE_DIR=/home/node/.cf-studio/cache \
     SHELL=/bin/bash \
     THEIA_CODEX_PATH=/usr/local/bin/codex-studio \
-    THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+    THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs \
+    ORCA_CLI=/usr/bin/orca-ide
 
 VOLUME ["/workspace"]
 EXPOSE 3003

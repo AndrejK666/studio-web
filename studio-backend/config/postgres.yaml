@@ -13,8 +13,19 @@ server:
 database:
   # NB: this does NOT create missing Postgres databases, despite what it sounds
   # like — toolkit-db only consults it to create SQLite parent directories
-  # (manager.rs, finalize_sqlite_paths). Postgres databases come from
-  # docker/initdb/01-create-databases.sql, which runs once on an empty volume.
+  # (manager.rs, finalize_sqlite_paths).
+  #
+  # The databases come from `backend-bootstrap`, which reads `gears.*.database`
+  # out of config/docker.yaml on every compose start and creates the ones that
+  # are missing. This note used to point at docker/initdb/01-create-databases.sql
+  # instead; that file has since been emptied on purpose, and says so, precisely
+  # because a list that only runs on a new volume went stale every time a
+  # stateful gear was added.
+  #
+  # The consequence for THIS profile, which runs the backend on the host against
+  # that same server: a gear configured here needs its database to exist, and it
+  # will if docker.yaml configures the gear too. Adding a gear here and nowhere
+  # else gets a connection error on the first request, not at boot.
   auto_provision: true
   servers:
     pg_main:
@@ -314,6 +325,26 @@ gears:
       dbname: "studio_settings"
     config:
       max_field_length: 200
+
+  # Document types, journey stages, capabilities and the documents themselves
+  # (ADR-0014). Without this section the gear stands down and registers no
+  # routes -- not a boot error, just a portal where the catalogue endpoints
+  # 404. It was configured in docker.yaml, k8s.yaml and oidc.yaml and missing
+  # here, so a backend run from this profile silently lost the whole gear.
+  #
+  # PostgreSQL only: its migrations refuse any other backend, which is why
+  # dev.yaml (SQLite) has no counterpart to this and cannot.
+  studio-documents:
+    database:
+      server: "pg_main"
+      dbname: "studio_documents"
+
+  studio-user:
+    database:
+      server: "pg_main"
+      # Canonical identity store (users, logins, memberships, aliases).
+      # backend-bootstrap creates this database from config on start.
+      dbname: "studio_users"
 
   file-storage:
     database:

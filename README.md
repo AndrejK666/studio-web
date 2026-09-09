@@ -98,16 +98,17 @@ The exact Secret contract, Helm values, session RBAC bootstrap, S3 setup and
 break-glass recovery procedure are documented in [`deploy/README.md`](deploy/README.md).
 The CI/CD promotion rules are in [`deploy/PIPELINES.md`](deploy/PIPELINES.md).
 
-Routine deployment flow:
+Routine delivery flow:
 
-1. Push or merge code to `main`. The Build Images workflow publishes an
-   immutable `sha-<commit>` snapshot, rebuilding only components whose build
-   context changed.
-2. In GitHub Actions, run **Deploy Services** from `main`.
-3. For dev select a `sha-<commit>` image tag and the required service
-   component. For test select a published `v*` release tag.
-4. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
-   `infra-v*` tag and run **Deploy Infra**.
+1. Push a branch or merge to `main`. The single **Studio Delivery** workflow
+   runs **Test changed components**, then **Build & Publish**, producing a
+   complete immutable `sha-<commit>` image set while rebuilding only affected
+   components. It never deploys automatically.
+2. In **Studio Delivery**, choose `deploy-services`. Select `dev` and a
+   `sha-<commit>` tag for a branch snapshot, or select `dev`/`test` and a
+   published `v*` tag for a release.
+3. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
+   `infra-v*` tag, then choose `deploy-infra` in **Studio Delivery**.
 
 Do not use a cluster-admin kubeconfig in GitHub Actions. Each GitHub
 Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
@@ -115,14 +116,27 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 
 ## CI/CD
 
-- **Test** runs on pushes and pull requests, filtered by changed component.
-- **Build Images** runs for `main`, version tags (`v*`), infrastructure tags
-  (`infra-v*`), and manual requests. Main snapshots rebuild only changed images
-  and copy unchanged images into the same immutable SHA snapshot.
-- **Deploy Services** is manual and deploys `backend`, `frontend`,
-  `prototype`, or `all`. SHA snapshots are dev-only; release tags may be
-  promoted to configured shared environments.
-- **Deploy Infra** is manual and accepts only published `infra-v*` tags.
+- **Studio Delivery** is the only user-facing Actions workflow. It runs tests
+  for every pull request and push; a push then publishes images only after its
+  tests succeed. Pull requests never publish or deploy.
+- Manual stages are `validate`, `build`, `deploy-services`, and `deploy-infra`.
+  Services can deploy `backend`, `frontend`, `prototype`, or `all`. SHA
+  snapshots are dev-only; release tags may be promoted to configured shared
+  environments. Infrastructure accepts only published `infra-v*` tags.
+
+The backend's gates can be run before a pull request, in the image CI uses:
+
+```bash
+scripts/backend-check.sh            # fmt, clippy, build, features, test
+scripts/backend-check.sh clippy     # one gate
+scripts/backend-check.sh test studio_session   # a gate plus cargo args
+```
+
+It needs only Docker: the gates want a linker plus `protobuf-compiler` and
+`cmake`, which on a Windows checkout would otherwise mean an administrator
+install of Visual Studio Build Tools. CI stays the authority — it also runs a
+gear-assembly smoke test — but a backend change once reached `main` without
+compiling because CI was the only check and had not finished.
 
 ```bash
 # service release

@@ -61,6 +61,13 @@ pub struct CreateObjectRequest {
     /// different objects; omitted = unscoped (tenant-wide).
     #[serde(default)]
     pub scope: Option<String>,
+    /// Refuse the write if the object already exists, instead of replacing it.
+    /// The only conditional write the graph can express: it takes an expected
+    /// version on write but reports none on read, so an `if_version` for a
+    /// read-then-update has nothing to pass back (`docs/gears-rust-issues.md`
+    /// §5). Default false — the historical upsert.
+    #[serde(default)]
+    pub if_absent: bool,
     /// The object payload. A `name` field, if present, is used as the node's
     /// display name.
     #[schema(value_type = Object)]
@@ -70,6 +77,8 @@ pub struct CreateObjectRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct CreateObjectResponse {
+    /// Whether the write was conditional on the object not already existing.
+    pub if_absent: bool,
     pub type_id: String,
     pub instance_id: String,
 }
@@ -167,6 +176,14 @@ pub struct CreateRelationRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct CreateRelationResponse {
+    /// The relation verb the edge type is for.
+    pub verb: String,
+    /// The declared relation's property name in the model.
+    pub name: Option<String>,
+    /// Its human label from the model.
+    pub label: Option<String>,
+    /// The cardinality the model states for it.
+    pub cardinality: Option<String>,
     pub type_id: String,
     pub from: String,
     pub to: String,
@@ -176,6 +193,13 @@ pub struct CreateRelationResponse {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ModelSyncResponse {
+    /// The model version now stored.
+    pub version: u64,
+    /// Type ids that kept the schema they were first registered with because
+    /// the model now declares different search paths for them. Their payloads
+    /// still store and read normally; only the indexing is pinned, and moving
+    /// it is a graph-storage type migration.
+    pub pinned_types: Vec<String>,
     /// Object-type nodes upserted (one per entity).
     pub object_types: u64,
     /// `inherits` edges upserted.
@@ -258,7 +282,31 @@ pub struct ObjectGraphNodeDto {
 pub struct ObjectsGraphResponse {
     pub nodes: Vec<ObjectGraphNodeDto>,
     pub edges: Vec<ModelGraphEdgeDto>,
+    /// Nodes returned (never above `limit`).
+    pub total: u32,
+    /// True when the bound cut the result: narrow with `type`/`scope`, or raise
+    /// `limit`, to see the rest.
+    pub truncated: bool,
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ObjectsGraphQuery {
+    /// Filter to one type (ontology id, node type id or leaf). Omitted = every
+    /// domain type.
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Filter to one workspace/project scope. Omitted = every scope.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Node ceiling. Default 500, capped at 5000; a rendered graph stops being
+    /// readable long before either.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Default and ceiling for the instance graph's node bound.
+const OBJECTS_GRAPH_LIMIT: usize = 500;
+const OBJECTS_GRAPH_MAX_LIMIT: usize = 5000;
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -282,17 +330,70 @@ pub struct AddFieldResponse {
     /// The updated entity definition.
     #[schema(value_type = Object)]
     pub entity: Value,
+    /// The model version this edit produced.
+    pub version: u64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RevisionDto {
+    /// The version number. Also its position in the history.
+    pub version: u64,
+    /// RFC-3339, when the change was made.
+    pub at: String,
+    /// The subject that made it.
+    pub by: String,
+    /// `seed` | `add_field` | `import` | `revert`.
+    pub op: String,
+    /// The entity it touched; empty for a whole-model change.
+    pub target: String,
+    /// One line describing the change.
+    pub summary: String,
+    /// The RFC-6902 patch that made it, over the ontology document.
+    #[schema(value_type = Object)]
+    pub patch: Value,
+    /// Its inverse. Empty when the change cannot be undone (an import
+    /// replaces the whole document), which also blocks reverting past it.
+    #[schema(value_type = Object)]
+    pub undo: Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RevisionsResponse {
+    /// The history, newest first.
+    pub revisions: Vec<RevisionDto>,
+    /// The current version.
+    pub head: u64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RevertRequest {
+    /// The version to restore the model to.
+    pub to: u64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RevertResponse {
+    /// The new head. A revert is recorded as a version of its own, so history
+    /// is appended to rather than rewritten.
+    pub version: u64,
+    /// The versions it undid, newest first.
+    pub undone: Vec<u64>,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 async fn list_types(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<TypesResponse>> {
     let ontology = handle
         .0
-        .ontology_document()
+        .ontology_document(&ctx)
+        .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(TypesResponse { ontology }))
 }
@@ -309,6 +410,7 @@ async fn create_object(
             req.type_ref.trim(),
             req.key.trim(),
             req.scope.as_deref(),
+            req.if_absent,
             req.value,
         )
         .await
@@ -320,6 +422,7 @@ async fn create_object(
     Ok(Json(CreateObjectResponse {
         type_id: created.type_id,
         instance_id: created.instance_id,
+        if_absent: req.if_absent,
     }))
 }
 
@@ -348,12 +451,13 @@ async fn list_objects(
 }
 
 async fn relation_catalog(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<RelationCatalogResponse>> {
     let catalog = handle
         .0
-        .relation_catalog()
+        .relation_catalog(&ctx)
+        .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(RelationCatalogResponse {
         relations: catalog
@@ -392,7 +496,7 @@ async fn create_relation(
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateRelationRequest>,
 ) -> ApiResult<JsonBody<CreateRelationResponse>> {
-    let type_id = handle
+    let created = handle
         .0
         .create_relation(&ctx, req.relation.trim(), req.from.trim(), req.to.trim())
         .await
@@ -402,7 +506,11 @@ async fn create_relation(
                 .create()
         })?;
     Ok(Json(CreateRelationResponse {
-        type_id,
+        type_id: created.type_id,
+        verb: created.verb,
+        name: created.name,
+        label: created.label,
+        cardinality: created.cardinality,
         from: req.from,
         to: req.to,
     }))
@@ -418,6 +526,8 @@ async fn sync_model(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(ModelSyncResponse {
+        version: r.version,
+        pinned_types: r.pinned_types,
         object_types: r.object_types,
         inherits: r.inherits,
         declares: r.declares,
@@ -485,13 +595,23 @@ async fn model_graph(
 async fn objects_graph(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
+    Query(q): Query<ObjectsGraphQuery>,
 ) -> ApiResult<JsonBody<ObjectsGraphResponse>> {
-    let (nodes, edges) = handle
+    let limit = q
+        .limit
+        .unwrap_or(OBJECTS_GRAPH_LIMIT)
+        .clamp(1, OBJECTS_GRAPH_MAX_LIMIT);
+    let type_ref = q.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let (nodes, edges, truncated) = handle
         .0
-        .objects_graph(&ctx)
+        .objects_graph(&ctx, limit, type_ref, scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let total = nodes.len() as u32;
     Ok(Json(ObjectsGraphResponse {
+        total,
+        truncated,
         nodes: nodes
             .into_iter()
             .map(|n| ObjectGraphNodeDto {
@@ -515,7 +635,7 @@ async fn objects_graph(
 }
 
 async fn add_field(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
     Path(id): Path<String>,
     Json(req): Json<AddFieldRequest>,
@@ -523,6 +643,7 @@ async fn add_field(
     let entity = handle
         .0
         .add_field(
+            &ctx,
             id.trim(),
             FieldSpec {
                 name: req.name.trim().to_string(),
@@ -531,12 +652,58 @@ async fn add_field(
                 required: req.required,
             },
         )
+        .await
         .map_err(|e| {
             StudioDomainModelError::invalid_argument()
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok(Json(AddFieldResponse { entity }))
+    let (entity, version) = entity;
+    Ok(Json(AddFieldResponse { entity, version }))
+}
+
+async fn list_revisions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+) -> ApiResult<JsonBody<RevisionsResponse>> {
+    let revisions = handle
+        .0
+        .revisions(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let head = revisions.first().map(|r| r.version).unwrap_or(0);
+    Ok(Json(RevisionsResponse {
+        head,
+        revisions: revisions
+            .into_iter()
+            .map(|r| RevisionDto {
+                version: r.version,
+                at: r.at,
+                by: r.by,
+                op: r.op,
+                target: r.target,
+                summary: r.summary,
+                patch: r.patch,
+                undo: r.undo,
+            })
+            .collect(),
+    }))
+}
+
+async fn revert_model(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<RevertRequest>,
+) -> ApiResult<JsonBody<RevertResponse>> {
+    let r = handle.0.revert(&ctx, req.to).await.map_err(|e| {
+        StudioDomainModelError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    })?;
+    Ok(Json(RevertResponse {
+        version: r.version,
+        undone: r.undone,
+    }))
 }
 
 // ── Route registration ────────────────────────────────────────────────────
@@ -713,7 +880,7 @@ pub fn register_routes(
         .description(
             "Returns the objects created via POST /objects and the relations \
              between them (member/owns/references/composes/derives) — the \
-             instance layer, distinct from the type/model graph.",
+             instance layer, distinct from the type/model graph. Bounded by \n             `limit` (default 500, max 5000) and narrowable by \n             `type`/`scope`; only edges with both endpoints on the page \n             are returned, and `truncated` says whether the bound cut \n             the result.",
         )
         .tag("StudioDomainModel")
         .authenticated()
@@ -747,6 +914,53 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The updated type definition",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-domain-model/v1/model/versions")
+        .operation_id("studio_domain_model.list_revisions")
+        .summary("The model's change history")
+        .description(
+            "Every recorded change to the model, newest first: who made it, \
+             when, a one-line summary, and the RFC-6902 patch that made it \
+             together with its inverse. The history is what makes a model edit \
+             auditable and reversible.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_revisions)
+        .json_response_with_schema::<RevisionsResponse>(
+            openapi,
+            StatusCode::OK,
+            "The change history",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/model/revert")
+        .operation_id("studio_domain_model.revert_model")
+        .summary("Restore the model to an earlier version")
+        .description(
+            "Undoes every change back to the requested version by applying \
+             their inverse patches, and records the result as a new version — \
+             history is appended to, never rewritten. Refused when a change in \
+             the range records no inverse (an import replaces the whole \
+             document, so nothing can undo it).",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<RevertRequest>(openapi, "The version to restore")
+        .handler(revert_model)
+        .json_response_with_schema::<RevertResponse>(
+            openapi,
+            StatusCode::OK,
+            "The new head and what it undid",
         )
         .error_400(openapi)
         .error_401(openapi)

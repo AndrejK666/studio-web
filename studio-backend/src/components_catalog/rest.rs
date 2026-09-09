@@ -203,7 +203,12 @@ pub struct RepoSourceDto {
     pub repo: String,
     /// Git ref to read (default `HEAD`).
     pub git_ref: Option<String>,
-    /// Discovery mode: `"gears"` (default) or `"frontx"`.
+    /// Discovery mode: `"gears"` (default), `"frontx"` or `"kits"`.
+    ///
+    /// It selects what the scan looks for and, with it, what kind of component
+    /// the repository contributes: a `gear.toml` directory, a FrontX package,
+    /// or a `.cf-studio-kit.toml` manifest. Kits land as their own node type
+    /// rather than as gears wearing a label.
     pub mode: Option<String>,
 }
 

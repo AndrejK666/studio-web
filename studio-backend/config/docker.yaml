@@ -638,6 +638,12 @@ gears:
       port_range_end: 41099
       max_session_secs: 14400
       git_mode: "disabled"
+      # Orca runtime for the IDE's Agents panel. On, like the k8s profile: the
+      # session image carries the runtime by default, and leaving this false
+      # would make the panel report an unreachable runtime beside a binary
+      # that is right there. It is container-local — a desktop Orca on the
+      # host is not reachable from the session, by design.
+      orca_enabled: true
       # ADR-0010: mint the per-session S2S control token and inject
       # STUDIO_THEIA_S2S_TOKEN + STUDIO_GATEWAY_URL into the session container,
       # so the forwarder self-arms and the studio-theia gear can dial the node.

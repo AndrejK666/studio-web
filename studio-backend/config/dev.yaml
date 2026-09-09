@@ -323,6 +323,13 @@ gears:
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
+  # NB `studio-documents` is deliberately absent from this profile. Its
+  # migrations are PostgreSQL only (ADR-0014), so giving it a SQLite database
+  # here would fail the gear's init rather than enable it. The gear stands down
+  # without a `database:` section, so the rest of the assembly boots normally
+  # and the document and catalogue endpoints simply are not served. Use
+  # postgres.yaml or the compose stack when you need them.
+
   simple-user-settings:
     database:
       server: "sqlite_main"

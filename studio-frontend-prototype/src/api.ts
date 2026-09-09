@@ -144,25 +144,59 @@ export type ProjectStatus = "draft" | "active" | "archived";
  *  the UI now that the studio-project gear no longer guards them server-side. */
 export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
 
-/** The canonical journey-stage catalogue (was `GET /studio-project/v1/stages`).
- *  Intent is always applied; the rest are opt-in. A project's `stages` should be
- *  a subset of these keys, kept in this order. */
-export const JOURNEY_STAGES: { key: string; label: string; required: boolean }[] = [
-  { key: "intent", label: "Intent", required: true },
-  { key: "brd", label: "BRD", required: false },
-  { key: "prd", label: "PRD", required: false },
-  { key: "prd_spec", label: "PRD-Spec", required: false },
-  { key: "architecture", label: "Architecture", required: false },
-  { key: "ui_design", label: "UI Design", required: false },
-  { key: "user_stories", label: "User Stories", required: false },
-  { key: "testing", label: "Testing", required: false },
-];
+/** One journey stage, as the catalogue serves it.
+ *
+ *  This used to be a hardcoded array here, left behind when the studio-project
+ *  gear was retired and `GET /studio-project/v1/stages` went with it. It is the
+ *  path a product takes through the studio, so an organization has to be able
+ *  to change it — which a constant in a client cannot express. ADR-0014
+ *  section 7 moved the catalogue back to the server; `api.stages()` reads it.
+ *
+ *  What comes back is already the EFFECTIVE list for that workspace: the
+ *  platform catalogue, overlaid by the organization, overlaid by the workspace,
+ *  with hidden entries removed and the whole thing in catalogue order. A client
+ *  must not re-sort it or assume `intent` is present — a workspace may have
+ *  replaced it. */
+/** One capability a product may need, and the words that find components
+ *  providing it.
+ *
+ *  Was `CAP_KEYWORDS` in documents.tsx — a table in a UI file that decided
+ *  which components a workspace could be offered. It is catalogue data now,
+ *  overlaid the same three ways as everything else. */
+export interface Capability {
+  key: string;
+  label: string;
+  /** Empty means "match the key itself". */
+  terms: string[];
+  owner: string;
+  owner_tenant_id?: string | null;
+}
 
-/** Normalise a stage selection to the required set + chosen keys, in catalogue
- *  order — the same idempotent normalisation the old gear did server-side. */
-export function normalizeStages(selected: readonly string[]): string[] {
+export interface JourneyStage {
+  key: string;
+  label: string;
+  required: boolean;
+  position: number;
+  /** Document-type keys this stage is not complete without. */
+  requires: string[];
+  /** Detectors every required document must pass before the stage completes. */
+  gates: string[];
+  /** "builtin" | "organization" | "workspace" — which level defined it. */
+  owner: string;
+  owner_tenant_id?: string | null;
+}
+
+/** Normalise a stage selection against a catalogue: the required entries plus
+ *  what was chosen, in catalogue order.
+ *
+ *  Takes the catalogue rather than closing over one, because there is no longer
+ *  a single right answer — it depends on the workspace. */
+export function normalizeStages(
+  selected: readonly string[],
+  catalogue: readonly JourneyStage[],
+): string[] {
   const chosen = new Set(selected);
-  return JOURNEY_STAGES.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
+  return catalogue.filter((s) => s.required || chosen.has(s.key)).map((s) => s.key);
 }
 
 export type RepoSource = "local" | "git" | "github" | "gitlab";
@@ -277,6 +311,17 @@ export interface ArtifactNodePage {
 
 /** One node from the gears catalog — a `gear` crate or a `crate_version`. The
  *  payload shape differs by type; read it loosely. */
+/** One registered type, as the registry returns it. Only the fields a screen
+ *  needs; the registry carries the whole schema document too. */
+export interface GtsEntity {
+  gts_id: string;
+  content?: { title?: string; description?: string };
+}
+
+export interface GtsEntityPage {
+  entities: GtsEntity[];
+}
+
 export interface CatalogNode {
   type_id: string;
   instance_id: string;
@@ -820,7 +865,7 @@ export interface DocType {
   name: string;
   description: string;
   gts_type_id: string;
-  owner: "builtin" | "workspace";
+  owner: "builtin" | "organization" | "workspace";
   owner_tenant_id?: string | null;
   body: string;
   sections: DocSection[];
@@ -828,6 +873,18 @@ export interface DocType {
   /** Intake questionnaire; empty for types without one. */
   questionnaire?: DocQuestion[];
 }
+/** One questionnaire answer on the wire. Exactly one value field is meaningful
+ *  per question kind. */
+export interface DocAnswer {
+  question_id: string;
+  /** `text`, `long_text` and `single`. */
+  text?: string;
+  /** `multi`. */
+  choices?: string[];
+  /** `bool`. */
+  flag?: boolean;
+}
+
 export interface Doc {
   id: string;
   tenant_id: string;
@@ -838,6 +895,9 @@ export interface Doc {
   content: string;
   status: "draft" | "review" | "approved";
   conforms: boolean;
+  /** Capability keys the document declares. The server indexes these from the
+   *  document's own front matter on every write — do not parse the body. */
+  capabilities: string[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -888,9 +948,82 @@ export const api = {
 
   /* ── studio-documents gear (types + templates + validation) ── */
 
+  /** Define, replace or hide a journey stage in this workspace.
+   *
+   *  `hidden: true` is a tombstone: it removes the inherited entry from the
+   *  effective catalogue instead of replacing it. Reverting is `deleteStage`. */
+  upsertStage: (
+    token: string,
+    workspaceId: string,
+    body: {
+      key: string;
+      label: string;
+      required?: boolean;
+      position?: number;
+      requires?: string[];
+      gates?: string[];
+      hidden?: boolean;
+    },
+  ) =>
+    request<JourneyStage>(`/studio-documents/v1/workspaces/${workspaceId}/stages`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Drop this workspace's own entry for `key`, so what it inherits shows
+   *  through again. Idempotent. */
+  deleteStage: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  upsertCapability: (
+    token: string,
+    workspaceId: string,
+    body: { key: string; label: string; terms?: string[]; hidden?: boolean },
+  ) =>
+    request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCapability: (token: string, workspaceId: string, key: string) =>
+    request<void>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  /** The effective capability vocabulary for a workspace (ADR-0014 s5). */
+  capabilities: (token: string, workspaceId: string) =>
+    request<{ items: Capability[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/capabilities`,
+      token,
+    ),
+
+  /** The effective journey-stage catalogue for a workspace (ADR-0014 s7). */
+  stages: (token: string, workspaceId: string) =>
+    request<{ items: JourneyStage[] }>(
+      `/studio-documents/v1/workspaces/${workspaceId}/stages`,
+      token,
+    ),
+
   docTypes: (token: string, workspaceId: string) =>
     request<{ items: DocType[] }>(
       `/studio-documents/v1/workspaces/${workspaceId}/types`,
+      token,
+    ),
+
+  /** What an organization publishes to the workspaces under it.
+   *
+   *  Its own editing view, not what a workspace sees: a workspace may replace
+   *  or hide any of it. The Components page is organization-scoped, so this is
+   *  the level whose document types belong in its catalogue. */
+  orgDocTypes: (token: string, organizationId: string) =>
+    request<{ items: DocType[] }>(
+      `/studio-documents/v1/organizations/${organizationId}/types`,
       token,
     ),
 
@@ -926,7 +1059,7 @@ export const api = {
   createWorkspaceDocument: (
     token: string,
     workspaceId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(`/studio-documents/v1/workspaces/${workspaceId}/documents`, token, {
       method: "POST",
@@ -937,7 +1070,7 @@ export const api = {
     token: string,
     workspaceId: string,
     projectId: string,
-    body: { type_key: string; title: string; content?: string },
+    body: { type_key: string; title: string; content?: string; answers?: DocAnswer[] },
   ) =>
     request<Doc>(
       `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/documents`,
@@ -1330,6 +1463,16 @@ export const api = {
   gears: (token: string) => request<unknown>("/gear-orchestrator/v1/gears", token),
   oagwUpstreams: (token: string) => request<unknown>("/oagw/v1/upstreams", token),
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
+
+  /** The same registry, read for what a screen needs: the human name of a type.
+   *
+   *  ADR-0013 makes this the catalogue of MEANING — "titles and descriptions are
+   *  read by consoles and by the generated frontend, so they are written for
+   *  people". A screen that labels a type should therefore ask here rather than
+   *  prettify an identifier, which is how `domain.skill` would end up displayed
+   *  as "Skill" when the model calls it "Competency". */
+  gtsTypeTitles: (token: string) =>
+    request<GtsEntityPage>("/types-registry/v1/entities", token),
 
   // ── Domain model (studio-domain-model gear) ──
   /** Upload a domain-model document to make it the active ontology. */

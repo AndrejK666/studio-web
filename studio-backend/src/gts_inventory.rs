@@ -146,7 +146,7 @@ pub fn schemas() -> Vec<Value> {
             GRAPH_STORAGE,
             gear,
             BOOT_FAILS,
-            crate::domain_model::gts::derived_schema(&nt.type_id),
+            crate::domain_model::gts::derived_node_schema(&nt.type_id),
         ));
     }
     for et in ontology.edge_types() {
@@ -357,6 +357,45 @@ fn declared_ids(profile_text: &str) -> BTreeSet<String> {
     out
 }
 
+/// The gears a deployment profile gives a database of their own.
+///
+/// Line-based rather than a YAML parse, for the same reason [`declared_ids`] is:
+/// the profiles are the input to a gear runtime this module deliberately does
+/// not start, and a dependency on a YAML crate to read two indentation levels
+/// would buy nothing. Only the `gears:` block is considered -- the profiles also
+/// carry a top-level `database:` for the server itself.
+#[cfg(test)]
+fn gears_with_a_database(profile_text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut in_gears = false;
+    let mut gear: Option<&str> = None;
+
+    for line in profile_text.lines() {
+        if !line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
+            in_gears = line.trim_end() == "gears:";
+            gear = None;
+            continue;
+        }
+        if !in_gears {
+            continue;
+        }
+        // `  gear-name:` opens a gear; `    database:` inside one claims a
+        // database. Anything deeper belongs to whatever was opened last.
+        if let Some(name) = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+            .and_then(|rest| rest.strip_suffix(':'))
+        {
+            gear = Some(name.trim());
+        } else if line.trim_end() == "    database:"
+            && let Some(name) = gear
+        {
+            out.insert(name.to_owned());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     //! What these guard, in one line each: the snapshot is current; every
@@ -389,6 +428,109 @@ mod tests {
              registered type's schema as immutable."
         );
         Ok(())
+    }
+
+    /// Gears a profile deliberately gives no database, and why.
+    ///
+    /// A gear without a `database:` section STANDS DOWN: it registers no routes
+    /// and logs a warning nobody reads. That is not a boot error, so an
+    /// omission looks exactly like a decision — `studio-documents` was missing
+    /// from `postgres.yaml` for precisely that reason, and the whole document
+    /// and catalogue surface was absent from that profile without anyone
+    /// noticing.
+    ///
+    /// Every entry here is a claim somebody wrote down. An unlisted omission
+    /// fails the test, and so does a listed one that no longer applies -- which
+    /// is how the fourth entry left: `studio-user` was recorded here as an open
+    /// question, the question was answered, and the test demanded the entry go
+    /// with it.
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 5] = [
+        (
+            "dev.yaml",
+            "studio-credstore-pg",
+            "on purpose, and the profile says so: the seeds there are real values \
+             read from the file, and the persistent store would win vendor \
+             selection and orphan them",
+        ),
+        (
+            "postgres.yaml",
+            "studio-credstore-pg",
+            "same reason as dev.yaml, and stated in the same words there",
+        ),
+        (
+            "dev.yaml",
+            "studio-documents",
+            "its migrations are PostgreSQL only (ADR-0014), so a SQLite database \
+             here would fail the gear's init rather than enable it",
+        ),
+        (
+            "dev.yaml",
+            "studio-tasks",
+            "background work runs on the PostgreSQL outbox (see \
+             docs/background-work.md); this profile is for poking at the API \
+             without a database to hand, and the three routes that enqueue a \
+             run answer 503 there with that reason",
+        ),
+        (
+            "dev.yaml",
+            "studio-scheduler",
+            "nothing to schedule where studio-tasks stands down, and it keeps \
+             its own state in the same PostgreSQL outbox family",
+        ),
+    ];
+
+    #[test]
+    fn every_profile_gives_the_same_gears_a_database_or_records_why_not() {
+        // The reference is the union rather than one chosen profile: a gear
+        // added to a single profile is as much a discrepancy as one missing
+        // from a single profile, and picking a "complete" profile would hide
+        // the first case entirely.
+        let everywhere: BTreeSet<String> = PROFILES
+            .iter()
+            .flat_map(|(_, text)| gears_with_a_database(text))
+            .collect();
+        assert!(
+            everywhere.len() > 5,
+            "parsed {} gears with a database across every profile, which cannot \
+             be right — teach `gears_with_a_database` about the shape the \
+             profiles now use",
+            everywhere.len()
+        );
+
+        for (name, text) in PROFILES {
+            let present = gears_with_a_database(text);
+            let missing: BTreeSet<&String> = everywhere.difference(&present).collect();
+
+            for gear in &missing {
+                assert!(
+                    DATABASE_OMISSIONS
+                        .iter()
+                        .any(|(profile, omitted, _)| *profile == name && *omitted == gear.as_str()),
+                    "{name} gives no database to `{gear}`, which every other \
+                     profile does. The gear will stand down there and serve \
+                     nothing. Add the section, or record the reason in \
+                     DATABASE_OMISSIONS"
+                );
+            }
+
+            for (profile, omitted, _) in DATABASE_OMISSIONS {
+                if profile != name {
+                    continue;
+                }
+                assert!(
+                    !present.contains(omitted),
+                    "{name} now gives `{omitted}` a database, but \
+                     DATABASE_OMISSIONS still claims it deliberately does not. \
+                     Drop that entry"
+                );
+                assert!(
+                    everywhere.contains(omitted),
+                    "DATABASE_OMISSIONS records `{omitted}` as omitted from \
+                     {name}, but no profile configures it at all — the entry is \
+                     stale"
+                );
+            }
+        }
     }
 
     #[test]
@@ -540,9 +682,16 @@ mod tests {
     }
 
     /// Types that live in the platform catalog and nowhere else, with the
-    /// reason. Documents are stored in the gear's own PostgreSQL tables, not in
-    /// the graph, so they have no graph-storage counterpart by design.
-    const CATALOG_ONLY_PREFIXES: [&str; 1] = ["gts.cf.studio.doc."];
+    /// reason. Documents and the catalogues that describe them are stored in
+    /// the gear's own PostgreSQL tables, not in the graph, so they have no
+    /// graph-storage counterpart today.
+    ///
+    /// `process.` joined `doc.` with the journey-stage catalogue (ADR-0014
+    /// section 5). ADR-0014 section 6 does intend a per-tenant graph projection
+    /// for both, and the day it lands these prefixes shrink rather than grow --
+    /// which is exactly why this list is a decision written down and not a
+    /// filter that quietly widens.
+    const CATALOG_ONLY_PREFIXES: [&str; 2] = ["gts.cf.studio.doc.", "gts.cf.studio.process."];
 
     #[test]
     fn every_graph_type_is_also_in_the_platform_catalog() {
