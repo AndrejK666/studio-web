@@ -9,7 +9,7 @@ repository import.
 
 | Piece | Before |
 | --- | --- |
-| Time triggers | Nothing in the platform's 35 gears schedules anything. Two hand-rolled `tokio::time::interval` loops in-assembly: `studio-session`'s reaper and the platform gateway's directory sync. Both fire in *every* process. |
+| Time triggers | Nothing in the platform's 35 gears schedules anything. Two hand-rolled `tokio::time::interval` loops in-assembly: `studio-session`'s reaper and the platform gateway's directory sync. Both fire in *every* process. The reaper is a schedule now; the gateway's loop is not ours. |
 | Task tracking | Three separate in-memory registries — `connectors::graph_sync_tasks`, `artifact_ingest::tasks`, `components_catalog::tasks` — each with its own `Mutex<HashMap<String, TaskRecord>>`, its own `TaskStatus`, its own retention and its own `GET …/tasks/{id}`. All lost on restart; none cancellable; none retryable. All three are gone: their routes now read runs. |
 | Durable execution | `toolkit-db`'s transactional outbox, in use by `studio-notify` since the notification queue landed. |
 
@@ -179,6 +179,24 @@ Both sync task types report through the same mechanism —
 synchronous reporter and drains it into progress writes. Work that predates
 runs keeps its own signature.
 
+`session.reap` stops IDE sessions past `max_session_secs`. It replaced a
+60-second `tokio::time::interval` in `studio-session`'s `start` that ran in
+every replica and reported to the log and nowhere else; a `session-reaper`
+schedule at `*/5 * * * *` fires it now, and each pass leaves a run saying what
+it stopped.
+
+Moving it needed one change to the work itself: the pass used to reap from
+`SessionService`'s in-memory session map, which holds only what *that* replica
+launched plus what it adopted at boot. A scheduled run executes in whichever
+replica the queue picked, so it now lists the runtime through the driver and
+reaps what it finds there — which is also the honest model, since the container
+or Pod is the fact and our map is a cache of it.
+
+Where sessions are switched off, or there is no container runtime to reach, the
+gear registers no handler — and the scheduler skips a platform schedule whose
+task type nothing in the process can run, rather than creating one that
+dead-letters every five minutes.
+
 `tasks.retention_sweep` prunes finished runs (default 30 days) and cleans up
 `resolved`/`discarded` dead letters. A `tasks-retention-sweep` schedule at
 `17 3 * * *` is registered at boot with `ensure`, which does **not** overwrite:
@@ -218,9 +236,9 @@ which is every PostgreSQL profile: `config/postgres.yaml`, `docker.yaml`,
 
 ## Still to do
 
-- **Replacing the hand-rolled loops.** `studio-session`'s reaper is a schedule
-  waiting to happen (and today it fires in every replica). The platform
-  gateway's directory sync is the other one, and it is not ours.
+- **The last hand-rolled loop.** The platform gateway's directory sync is the
+  other `tokio::time::interval` in this assembly, and it is not ours to move.
+  `studio-session`'s reaper is done — see `session.reap` above.
 - **Cancelling the long ones for real.** `connector.graph_sync`,
   `artifact.ingest` and `catalog.sync` are the three runs somebody would
   actually want to stop, and none of them reads `TaskContext::cancelled` — each

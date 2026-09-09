@@ -1,5 +1,4 @@
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -12,6 +11,7 @@ use super::config::StudioSessionConfig;
 use super::docker::DockerDriver;
 use super::driver::SessionDriver;
 use super::k8s::KubernetesDriver;
+use super::reap_task;
 use super::rest;
 use super::service::SessionService;
 
@@ -123,6 +123,13 @@ impl Gear for StudioSessionGear {
                 crate::studio_session::sdk::StudioSessionDiscoveryLocalClient::new(service.clone()),
             ));
 
+        // Reaping expired sessions is a `session.reap` run, fired by a
+        // schedule — see `super::reap_task` for what that replaced. Registered
+        // here because the service it needs is built here.
+        crate::tasks::registry::register(Arc::new(reap_task::SessionReapTask::new(
+            service.clone(),
+        )))?;
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-session gear already initialized"))?;
@@ -147,34 +154,19 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
 
 #[async_trait]
 impl toolkit::contracts::RunnableCapability for StudioSessionGear {
-    /// Background reaper: stops sessions past their maximum age.
+    /// Keeps the session image warm. Reaping used to live here too, as a
+    /// 60-second timer in every replica; it is a `session.reap` schedule now
+    /// (see [`super::reap_task`]).
     ///
     /// NB: `start()` must RETURN — the runtime awaits it before starting the
-    /// next gear in topo order. The loop therefore runs in a spawned task
-    /// tied to the runtime's cancellation token (same pattern as credstore's
-    /// reaper tick).
-    async fn start(&self, cancel: CancellationToken) -> anyhow::Result<()> {
+    /// next gear in topo order. The keeper therefore runs in a spawned task.
+    async fn start(&self, _cancel: CancellationToken) -> anyhow::Result<()> {
         let Some(service) = self.service.get().cloned() else {
-            return Ok(()); // sessions disabled — nothing to reap
+            return Ok(()); // sessions disabled — nothing to keep warm
         };
         // Background image keeper: boot pull + notify-driven refreshes, so
         // launch requests never pull inline (30s gateway deadline).
-        tokio::spawn(SessionService::image_keeper(service.clone()));
-        tokio::spawn(async move {
-            info!("studio-session: reaper started (tick 60s)");
-            loop {
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(60)) => {
-                        let reaped = service.reap_expired().await;
-                        if reaped > 0 {
-                            info!("studio-session: reaped {reaped} expired session(s)");
-                        }
-                    }
-                }
-            }
-            info!("studio-session: reaper stopped");
-        });
+        tokio::spawn(SessionService::image_keeper(service));
         Ok(())
     }
 
