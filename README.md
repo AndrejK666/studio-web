@@ -66,7 +66,20 @@ docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-
 # an exact snapshot rather than the rolling edge tag
 STUDIO_IMAGE_TAG=sha-<40-char-commit> \
   docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+
+# the last stable release, which is NOT the tip of main
+STUDIO_IMAGE_TAG=latest \
+  docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
 ```
+
+Every published service is pinned to `pull_policy: always`, because `edge` is a
+moving tag: a copy pulled three days ago is still called `edge` on your machine,
+and using it in silence is the opposite of running what the tip of `main` runs.
+
+`edge` is the tip of `main`, moved by every push to it; `latest` is the last
+stable release tag and moves only when one is cut, so it lags `main` by however
+long it has been since — at the time of writing, six days. `sha-<commit>` is the
+only tag that cannot move under you, and it is what a stand is deployed with.
 
 Three things worth knowing before you trust either mode:
 
@@ -74,14 +87,23 @@ Three things worth knowing before you trust either mode:
   section even when an override supplies an `image:`, so a missing tag would
   be silently rebuilt from source — the opposite of the point. `pull` first;
   then a missing tag is a visible error.
-* **The session image follows.** The Theia session image is not a Compose
-  service — the backend launches it through the host daemon by the name in
-  `studio-backend/config/docker.yaml`. Locally that is `cf-studio-theia:local`,
-  which you build yourself (`docker build -f theia/Dockerfile -t
-  cf-studio-theia:local theia`); in published mode the override points it at
-  the same snapshot as the backend and pulls it. Either way a *running*
-  session keeps the image it started with — restart the session to pick up a
-  new one.
+* **The session image is built too.** The backend launches it through the host
+  daemon rather than running it as a service, so nobody built it for you and it
+  drifted behind the checkout — a session started on a three-hour-old tag whose
+  panel offered agents that image did not carry. It is now the `session-image`
+  service: `docker compose up` builds `cf-studio-theia:local` when that tag is
+  missing, the backend waits for it, and the container it starts runs `true`
+  and exits. Refresh it deliberately with `docker compose build session-image`
+  (ten minutes — Theia's npm ci and bundle, plus the Orca package); `up` does
+  not rebuild it, and neither does `scripts/dev-up.sh`. In published mode the
+  override points that service at the same snapshot as the backend, so the
+  dependency is a pull. Either way a *running* session keeps the image it
+  started with — recreate the session to pick up a new one.
+* **Export `GITHUB_TOKEN` before the first build.** The session image resolves
+  the Constructor Studio skill engine through `api.github.com`, whose anonymous
+  limit is 60/hour per IP, and the Dockerfile fails the build rather than ship a
+  CLI with nothing behind it. `export GITHUB_TOKEN=$(gh auth token)` is enough;
+  Compose passes it as a build secret, so it never lands in image history.
 * **An empty database still needs `scripts/dev-up.sh` once.** The root tenant
   is seeded by `backend-bootstrap`, a `--no-default-features` build with no LLM
   chain and no published counterpart, so that one service builds from source in
