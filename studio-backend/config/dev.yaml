@@ -367,6 +367,13 @@ gears:
         - key: "openai-key"
           value: "sk-REPLACE_ME"
 
+  # No studio-tasks or studio-scheduler section here either, for the same
+  # reason as studio-notify below: both keep their queue in toolkit-db's
+  # transactional outbox, whose PostgreSQL path locks partitions with
+  # `FOR UPDATE SKIP LOCKED`. Without a `database:` block each stands down with
+  # a warning — background work runs inline as it did before, and nothing is
+  # scheduled. Use config/postgres.yaml to exercise either locally.
+
   # No studio-notify section in this profile on purpose. Its migrations target
   # PostgreSQL only — the delivery queue is toolkit-db's outbox, whose
   # PostgreSQL path uses `FOR UPDATE SKIP LOCKED` for partition locking, and
