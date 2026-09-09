@@ -256,6 +256,17 @@ export interface ArtifactNodePage {
 
 /** One node from the gears catalog — a `gear` crate or a `crate_version`. The
  *  payload shape differs by type; read it loosely. */
+/** One registered type, as the registry returns it. Only the fields a screen
+ *  needs; the registry carries the whole schema document too. */
+export interface GtsEntity {
+  gts_id: string;
+  content?: { title?: string; description?: string };
+}
+
+export interface GtsEntityPage {
+  entities: GtsEntity[];
+}
+
 export interface CatalogNode {
   type_id: string;
   instance_id: string;
@@ -1386,6 +1397,16 @@ export const api = {
   gears: (token: string) => request<unknown>("/gear-orchestrator/v1/gears", token),
   oagwUpstreams: (token: string) => request<unknown>("/oagw/v1/upstreams", token),
   gtsEntities: (token: string) => request<unknown>("/types-registry/v1/entities", token),
+
+  /** The same registry, read for what a screen needs: the human name of a type.
+   *
+   *  ADR-0013 makes this the catalogue of MEANING — "titles and descriptions are
+   *  read by consoles and by the generated frontend, so they are written for
+   *  people". A screen that labels a type should therefore ask here rather than
+   *  prettify an identifier, which is how `domain.skill` would end up displayed
+   *  as "Skill" when the model calls it "Competency". */
+  gtsTypeTitles: (token: string) =>
+    request<GtsEntityPage>("/types-registry/v1/entities", token),
 
   // ── Domain model (studio-domain-model gear) ──
   /** Upload a domain-model document to make it the active ontology. */
