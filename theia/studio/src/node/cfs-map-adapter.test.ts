@@ -393,9 +393,13 @@ describe('cfs map adapter', () => {
     });
 
     it('keeps the runtime map schema byte-matched with the authoritative project copy', async () => {
+        // The project's own copy, which theia/Dockerfile installs at the
+        // runtime path. This used to resolve five levels up — OUTSIDE the
+        // repository — so it only ever passed in a checkout that happened to
+        // sit inside a CFS-managed workspace, and failed everywhere else.
         const canonicalSchemaPath = path.resolve(
             __dirname,
-            '../../../../../.cf-studio/.core/schemas/map.schema.json'
+            '../../../docker/cfs-map.schema.json'
         );
         const [runtimeBytes, canonicalBytes] = await Promise.all([
             fs.readFile(CFS_MAP_RUNTIME_SCHEMA_PATH),
