@@ -28,7 +28,10 @@ pub fn type_schemas() -> Vec<Value> {
     [
         (
             DOCUMENT_TYPE,
-            "DocumentType",
+            // Written for a person, not for a compiler: ADR-0013 makes the
+            // catalogue's titles a product surface, and this one is rendered as
+            // a component type on the Components page.
+            "Document type",
             "A document type: a template, section checklist and conformance rules.",
         ),
         (
