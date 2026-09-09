@@ -380,6 +380,11 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
   );
 }
 
+/** The kit node type, as the backend registers it. Named here so the
+ *  synthesised built-ins and the synced nodes cannot drift apart into two
+ *  types that render as two rows in the type picker. */
+const KIT_TYPE = "gts.cf.studio.catalog.kit.v1~";
+
 /** A kit as a catalogue node.
  *
  *  A kit IS a component: a named, versioned, published thing a project takes
@@ -393,7 +398,7 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
  */
 function kitAsNode(kit: StudioKit): CatalogNode {
   return {
-    type_id: "gts.cf.studio.catalog.kit.v1~",
+    type_id: KIT_TYPE,
     instance_id: `kit:${kit.slug}`,
     value: {
       name: kit.slug,
@@ -509,7 +514,20 @@ export function ComponentsCatalog({
         // the gears listed rather than blanking the whole catalogue.
         api.kits(token).catch((): { items: StudioKit[] } => ({ items: [] })),
       ]);
-      setGears([...(nodes ?? []), ...(kitResponse.items ?? []).map(kitAsNode)]);
+      // The registry's built-in kits and the kits a sync found from a
+      // repository are the same things under the same slugs. A synced node
+      // wins: it carries the repository, the ref and the manifest path that a
+      // hardcoded catalogue entry cannot. The built-ins stay so that a
+      // deployment which has never run a kit sync still shows them.
+      const synced = new Set(
+        (nodes ?? [])
+          .filter((n) => n.type_id === KIT_TYPE)
+          .map((n) => String(n.value.name ?? "")),
+      );
+      const builtIns = (kitResponse.items ?? [])
+        .filter((k) => !synced.has(k.slug))
+        .map(kitAsNode);
+      setGears([...(nodes ?? []), ...builtIns]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
