@@ -61,6 +61,15 @@ RUN if [ "$STUDIO_BUNDLE_MODE" = development ]; then \
       npm run build:browser; \
     fi
 
+# @openai/codex-sdk vendors six prebuilt binaries and this image runs one.
+# Measured on the session image: 223 MB under codex-sdk/vendor, of which 44 MB
+# is the platform the container is built for. Trimmed here rather than in the
+# runtime stage so the COPY below carries the smaller tree — pruning after the
+# copy would leave the weight in the layer that every session pull downloads.
+ARG TARGETARCH
+RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
+    sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /app/node_modules
+
 # Constructor Studio deliberately requires a newer Python patch release than
 # Debian Bookworm ships (3.11.2). Build its isolated environment with the
 # official Python 3.12 image, then copy that runtime and venv into Theia.
@@ -137,6 +146,14 @@ COPY --from=cfs --chown=node:node /home/node/.cf-studio/cache/ /home/node/.cf-st
 # package-lock.json — a mismatched pair breaks the wire protocol.
 RUN npm install -g @openai/codex@0.49.0 @anthropic-ai/claude-agent-sdk@0.3.223 \
     && npm cache clean --force
+
+# Same six-platform vendor tree, again: 252 MB installed, 50 MB usable.
+# @anthropic-ai's own 278 MB binary is NOT touched — npm already resolved that
+# one to a single platform (claude-agent-sdk-linux-x64), so there is nothing
+# there to drop.
+ARG TARGETARCH
+RUN --mount=type=bind,source=docker/trim-vendor-binaries.sh,target=/tmp/trim-vendor.sh \
+    sh /tmp/trim-vendor.sh "${TARGETARCH:-amd64}" /usr/local/lib/node_modules
 
 # ── Orca runtime (optional; the IDE's Agents panel drives it) ─────────────
 # Opt-in by build arg: the package is ~155 MB on the wire, ~270 MB installed,
