@@ -77,6 +77,21 @@ export interface OrcaTerminal {
     readonly warning?: string;
 }
 
+/**
+ * One uncommitted change in a worktree, as `git status` sees it.
+ *
+ * This is what an agent leaves behind, and the panel's reason for asking: a
+ * worktree's `status` says the agent is done, not what it did.
+ */
+export interface OrcaWorktreeChange {
+    /** Porcelain code, e.g. ` M`, `A `, `??`. Two characters, staged first. */
+    readonly code: string;
+    /** Path relative to the worktree root — what a person reads. */
+    readonly path: string;
+    /** Absolute path, so the panel can open the file without knowing the root. */
+    readonly absolutePath: string;
+}
+
 /** Start a task in a *new* checkout: Orca creates the worktree and the agent. */
 export interface OrcaCreateTaskRequest {
     /** Becomes the branch and the worktree directory name. */
@@ -113,6 +128,8 @@ export interface OrcaService {
     registerWorkspace(path: string): Promise<void>;
     currentWorktree(): Promise<OrcaWorktree | undefined>;
     listTerminals(worktree: string): Promise<OrcaTerminal[]>;
+    /** Uncommitted changes in one worktree, by absolute path. */
+    changes(worktreePath: string): Promise<OrcaWorktreeChange[]>;
     createTask(request: OrcaCreateTaskRequest): Promise<OrcaWorktree | undefined>;
     startAgent(request: OrcaStartAgentRequest): Promise<OrcaTerminal | undefined>;
     send(handle: string, text: string, enter: boolean): Promise<void>;

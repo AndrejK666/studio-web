@@ -207,11 +207,19 @@ does, no vendored code, upgrades from upstream.
 The panel sits in the right area of the default layout, and toggles from
 **View → Agents (Orca)** (command `studio.orca.toggle`). A session that
 already has a saved layout picks it up after `View: Reset Workbench Layout`.
-It does four things: shows whether a runtime is reachable; creates a task
+It does five things: shows whether a runtime is reachable; creates a task
 (`worktree create --agent --prompt`), which gives the agent its own checkout so
 the one you are editing is untouched; starts an agent in the selected worktree
 (`terminal create`, then `terminal send` once `terminal wait --for tui-idle`
-reports the TUI settled); and steers a running one (send / wait / interrupt).
+reports the TUI settled); steers a running one (send / wait / interrupt); and
+lists what the agent changed in that checkout, each file opening in the editor
+on a click.
+
+That last one is read with git rather than through Orca — uncommitted changes
+are a property of the checkout, and `GitExecutor` is what the rest of this
+backend already uses for git. A worktree's own `status` says an agent
+finished; it does not say what it touched, and the alternative was a terminal
+and `git status` in a panel that exists so you do not need one.
 
 Requirements: an `orca` binary and a reachable runtime. The binary is looked up
 as `$ORCA_CLI`, then the desktop install for the platform, then `orca` on PATH.

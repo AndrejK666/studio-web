@@ -8,6 +8,7 @@
 // the IDE. What we cannot tolerate silently is a *missing* identity (path,
 // handle), so those fall back to something visible rather than to `undefined`.
 
+import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import {
     type OrcaCreateTaskRequest,
@@ -16,9 +17,11 @@ import {
     type OrcaStartAgentRequest,
     type OrcaTerminal,
     type OrcaWaitOutcome,
-    type OrcaWorktree
+    type OrcaWorktree,
+    type OrcaWorktreeChange
 } from '../common/orca-protocol';
 import { OrcaCli, OrcaCliError } from './orca-cli';
+import { GitExecutor } from './git-executor';
 
 /** `terminal wait --for tui-idle` blocks until the agent stops producing. */
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
@@ -30,6 +33,11 @@ export class OrcaServiceImpl implements OrcaService {
 
     @inject(OrcaCli)
     protected readonly cli!: OrcaCli;
+
+    // Changes are read with git, not with Orca: they are a property of the
+    // checkout, and this is the executor the rest of the backend already uses.
+    @inject(GitExecutor)
+    protected readonly git!: GitExecutor;
 
     async status(): Promise<OrcaRuntimeStatus> {
         try {
@@ -81,6 +89,32 @@ export class OrcaServiceImpl implements OrcaService {
             // The IDE may be opened on a folder Orca does not manage. That is
             // not an error — it just means "no current worktree".
             return undefined;
+        }
+    }
+
+    /**
+     * Uncommitted changes in one worktree.
+     *
+     * Empty on any failure, deliberately: Orca can still list a worktree
+     * whose directory is gone, and a panel that threw here would lose the
+     * runtime status and the terminal list along with it.
+     */
+    async changes(worktreePath: string): Promise<OrcaWorktreeChange[]> {
+        const root = worktreePath.trim();
+        if (!root) {
+            return [];
+        }
+        try {
+            const records = await this.git.statusPorcelain(root);
+            return parseStatusRecords(records).map(entry => ({
+                ...entry,
+                absolutePath: path.join(root, entry.path)
+            }));
+        } catch (error) {
+            console.warn(
+                `[orca] cannot read changes in ${root}: ${error instanceof Error ? error.message : String(error)}`
+            );
+            return [];
         }
     }
 
@@ -167,6 +201,37 @@ export class OrcaServiceImpl implements OrcaService {
 }
 
 // ── payload mapping ────────────────────────────────────────────────────────
+
+/**
+ * `git status --porcelain=v1 -z` records into changes.
+ *
+ * Two details the format imposes. `-z` separates records with NUL and does
+ * NOT quote or escape paths, so a path with a space or a quote in it arrives
+ * intact. And a rename or copy is *two* records: the entry naming the new
+ * path, then a bare record with the old one — which has to be consumed here,
+ * or it would be reported as a change of its own with the next entry's code.
+ */
+export function parseStatusRecords(
+    records: readonly string[]
+): readonly { code: string; path: string }[] {
+    const out: { code: string; path: string }[] = [];
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index];
+        // `XY path`: two status characters, a space, then the path.
+        if (record.length < 4) {
+            continue;
+        }
+        const code = record.slice(0, 2);
+        const relative = record.slice(3);
+        if (code.startsWith('R') || code.startsWith('C')) {
+            index += 1; // the source path, which belongs to this same entry
+        }
+        if (relative) {
+            out.push({ code, path: relative });
+        }
+    }
+    return out;
+}
 
 export function toWorktree(row: Record<string, unknown>): OrcaWorktree {
     // `worktree ps` names the id `worktreeId` where `worktree list` names it
