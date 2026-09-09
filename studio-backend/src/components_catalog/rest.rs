@@ -121,6 +121,30 @@ pub struct SaveGearProfileRequest {
     pub profile: Value,
 }
 
+/// The field schemas this tenant renders component pages against.
+///
+/// Open shape on purpose. A schema is a layout, and this endpoint's job is to
+/// let a deployment describe a component kind this build has never heard of —
+/// pinning the JSON into a closed response DTO would put that behind a
+/// release, which is the thing the schemas moved out of the client to escape.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FieldSchemaListResponse {
+    /// One entry per component type, `{describes, groups, composition,
+    /// statusLegend, docStateLegend, sourceClasses, owner}`. `owner` is
+    /// `builtin` or `tenant`, so a screen can offer to revert what it shows.
+    #[schema(value_type = Vec<Object>)]
+    pub schemas: Vec<Value>,
+}
+
+/// This tenant's own schema for one component type, replacing what it inherits.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SaveFieldSchemaRequest {
+    #[schema(value_type = Object)]
+    pub schema: Value,
+}
+
 /// One file of a scaffolded gear to write into the repo.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -401,6 +425,64 @@ async fn save_profile(
     Ok(Json(dto))
 }
 
+async fn list_field_schemas(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<FieldSchemaListResponse>> {
+    let schemas = catalog
+        .service
+        .list_field_schemas(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let schemas = schemas
+        .into_iter()
+        .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
+        .filter(|v| !v.is_null())
+        .collect();
+    Ok(Json(FieldSchemaListResponse { schemas }))
+}
+
+async fn save_field_schema(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(describes): Path<String>,
+    Json(body): Json<SaveFieldSchemaRequest>,
+) -> ApiResult<JsonBody<CatalogNodeDto>> {
+    let saved = catalog
+        .service
+        .save_field_schema(&ctx, &describes, body.schema)
+        .await
+        .map_err(|e| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("invalid field schema: {e:#}"))
+                .create()
+        })?;
+    let value = serde_json::to_value(&saved)
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(CatalogNodeDto {
+        type_id: super::gts::FIELD_SCHEMA_TYPE.to_string(),
+        instance_id: super::gts::field_schema_instance_id(&saved.describes),
+        value,
+    }))
+}
+
+async fn delete_field_schema(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(describes): Path<String>,
+) -> ApiResult<StatusCode> {
+    catalog
+        .service
+        .delete_field_schema(&ctx, &describes)
+        .await
+        .map_err(|e| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn get_project_repo(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -631,6 +713,52 @@ pub fn register_routes(
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/field-schemas")
+        .operation_id("studio_components_catalog.list_field_schemas")
+        .summary("The field schema each component type is rendered against")
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_field_schemas)
+        .json_response_with_schema::<FieldSchemaListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Field schemas, built-ins overlaid by this tenant's own",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/field-schemas/{describes}")
+        .operation_id("studio_components_catalog.save_field_schema")
+        .summary("Replace the field schema this tenant renders one component type against")
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("describes", "GTS type id the schema describes")
+        .handler(save_field_schema)
+        .json_request::<SaveFieldSchemaRequest>(openapi, "Field schema")
+        .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved field schema")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router =
+        OperationBuilder::delete("/studio-components-catalog/v1/field-schemas/{describes}")
+            .operation_id("studio_components_catalog.delete_field_schema")
+            .summary("Revert one component type to the built-in field schema")
+            .tag("StudioComponentsCatalog")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("describes", "GTS type id the schema describes")
+            .handler(delete_field_schema)
+            .no_content_response(StatusCode::NO_CONTENT, "Reverted")
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
     let router =
         OperationBuilder::get("/studio-components-catalog/v1/projects/{project_id}/gear-repo")

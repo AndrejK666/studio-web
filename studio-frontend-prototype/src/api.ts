@@ -313,6 +313,46 @@ export interface ArtifactNodePage {
  *  payload shape differs by type; read it loosely. */
 /** One registered type, as the registry returns it. Only the fields a screen
  *  needs; the registry carries the whole schema document too. */
+/** The presentation of one component type: which fields a component page shows
+ *  for it, grouped, and where each one is read from.
+ *
+ *  Served by studio-components-catalog and stored in graph-storage beside the
+ *  type it describes, so a workspace can change a page without a release. This
+ *  used to be a JSON file compiled into this bundle. */
+export interface FieldSchemaSource {
+  class: "repo" | "api" | "manual" | "none";
+  ref: string;
+}
+
+export interface FieldSchemaField {
+  key: string;
+  label: string;
+  kind: "text" | "label" | "docstate" | "bool" | "metric" | "status";
+  lamp: boolean;
+  source: FieldSchemaSource;
+  example?: string;
+  domain?: Record<string, unknown>;
+}
+
+export interface FieldSchemaGroup {
+  id: string;
+  title: string;
+  icon: string;
+  fields: FieldSchemaField[];
+}
+
+export interface FieldSchema {
+  /** The GTS type this schema is the presentation of. */
+  describes: string;
+  groups: FieldSchemaGroup[];
+  composition: { key: string; label: string; color: string }[];
+  statusLegend: Record<string, string>;
+  docStateLegend: Record<string, string>;
+  sourceClasses: Record<string, { label: string; hint: string }>;
+  /** `builtin` — what the deployment ships — or `tenant`, a stored override. */
+  owner: "builtin" | "tenant";
+}
+
 export interface GtsEntity {
   gts_id: string;
   content?: { title?: string; description?: string };
@@ -1473,6 +1513,32 @@ export const api = {
    *  as "Skill" when the model calls it "Competency". */
   gtsTypeTitles: (token: string) =>
     request<GtsEntityPage>("/types-registry/v1/entities", token),
+
+  /** The field schema each component type is rendered against.
+   *
+   *  Built-ins overlaid by whatever this tenant has stored, so what comes back
+   *  is what the page should show — the client does not merge levels. */
+  fieldSchemas: (token: string) =>
+    request<{ schemas: FieldSchema[] }>(
+      "/studio-components-catalog/v1/field-schemas",
+      token,
+    ),
+
+  /** Replace this tenant's schema for one component type. */
+  saveFieldSchema: (token: string, describes: string, schema: unknown) =>
+    request<unknown>(
+      `/studio-components-catalog/v1/field-schemas/${encodeURIComponent(describes)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ schema }) },
+    ),
+
+  /** Drop this tenant's schema for one component type, back to the built-in. */
+  deleteFieldSchema: (token: string, describes: string) =>
+    request<void>(
+      `/studio-components-catalog/v1/field-schemas/${encodeURIComponent(describes)}`,
+      token,
+      { method: "DELETE" },
+    ),
 
   // ── Domain model (studio-domain-model gear) ──
   /** Upload a domain-model document to make it the active ontology. */

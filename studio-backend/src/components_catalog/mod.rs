@@ -8,6 +8,7 @@
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
 mod cratesio;
+pub(crate) mod field_schema;
 pub(crate) mod gts;
 mod repo_enrich;
 mod rest;

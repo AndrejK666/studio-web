@@ -46,14 +46,27 @@ pub const KIT_TYPE: &str = "gts.cf.studio.catalog.kit.v1~";
 /// than a shape and left every reader to guess which fields applied.
 pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
 
+/// The presentation of one component type: which fields a page shows for it,
+/// grouped, and where each one is read from.
+///
+/// A node that describes a TYPE rather than an instance, which is unusual
+/// enough to say why. The types-registry is the catalogue of meaning and its
+/// studio documents are deliberately free-form, so a field schema cannot
+/// become `properties` there (see `super::field_schema`). Graph-storage is
+/// tenant-scoped, which is exactly what makes a schema overridable per tenant
+/// without inventing a second overlay mechanism. Keyed on the type it
+/// describes: one schema per type per tenant.
+pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 6] = [
+pub const ALL_NODE_TYPES: [&str; 7] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
     PROJECT_GEAR_REPO_TYPE,
     KIT_TYPE,
     FRONTX_TYPE,
+    FIELD_SCHEMA_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -113,7 +126,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 6] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 7] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -143,6 +156,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 6] = [
         FRONTX_TYPE,
         "Micro-frontend",
         "A FrontX package: a micro-frontend or a scaffolding template from the FrontX monorepo.",
+    ),
+    (
+        FIELD_SCHEMA_TYPE,
+        "Field schema",
+        "The fields a component page shows for one component type, grouped, with the source of each.",
     ),
 ];
 
@@ -281,6 +299,21 @@ pub fn frontx_node(name: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: FRONTX_TYPE,
         instance_id: frontx_instance_id(name),
+        value,
+    }
+}
+
+/// Instance id of a field schema, keyed on the GTS type it describes — so a
+/// tenant has at most one schema per type and saving one twice replaces it.
+pub fn field_schema_instance_id(describes: &str) -> String {
+    anon_id(&["field_schema", describes])
+}
+
+/// The presentation of one component type. `value` is the schema payload.
+pub fn field_schema_node(describes: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: FIELD_SCHEMA_TYPE,
+        instance_id: field_schema_instance_id(describes),
         value,
     }
 }
