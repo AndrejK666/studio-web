@@ -1380,11 +1380,13 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
-  /** Poll a background sync task. Terminal states are `succeeded` / `failed`. */
+  /** Poll a background sync task. Terminal states are `succeeded` / `failed` /
+   * `cancelled`. The task id is a studio-tasks run id, so `taskRun` reads the
+   * same work with attempts, timings and a cancel verb. */
   artifactSyncTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       repo_full_path: string;
       message?: string | null;
       issues: number;
@@ -1507,11 +1509,12 @@ export const api = {
       method: "POST",
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
-  /** Poll a background catalog sync task. */
+  /** Poll a background catalog sync task. The task id is a studio-tasks run
+   * id — see `taskRun`. */
   componentsCatalogTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       message?: string | null;
       gears: number;
       versions: number;

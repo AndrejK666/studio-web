@@ -10,7 +10,7 @@ repository import.
 | Piece | Before |
 | --- | --- |
 | Time triggers | Nothing in the platform's 35 gears schedules anything. Two hand-rolled `tokio::time::interval` loops in-assembly: `studio-session`'s reaper and the platform gateway's directory sync. Both fire in *every* process. |
-| Task tracking | Three separate in-memory registries — `connectors::graph_sync_tasks`, `artifact_ingest::tasks`, `components_catalog::tasks` — each with its own `Mutex<HashMap<String, TaskRecord>>`, its own `TaskStatus`, its own retention and its own `GET …/tasks/{id}`. All lost on restart; none cancellable; none retryable. |
+| Task tracking | Three separate in-memory registries — `connectors::graph_sync_tasks`, `artifact_ingest::tasks`, `components_catalog::tasks` — each with its own `Mutex<HashMap<String, TaskRecord>>`, its own `TaskStatus`, its own retention and its own `GET …/tasks/{id}`. All lost on restart; none cancellable; none retryable. All three are gone: their routes now read runs. |
 | Durable execution | `toolkit-db`'s transactional outbox, in use by `studio-notify` since the notification queue landed. |
 
 ## Why not serverless-runtime
@@ -149,6 +149,36 @@ It sets its own attempt cap (8 rather than 5), which is what
 `TaskHandler::max_attempts` is for: a chat platform's failures skew transient,
 and inheriting the default would drop messages on a rate limit.
 
+`connector.graph_sync` walks a repository into the knowledge graph. Its
+`result` is the walk's own outcome (nodes, edges, files, contributors), which
+is what `GET /studio-connector/v1/graph/sync-tasks/{id}` answers with. A
+connection that has been deleted since the run was queued fails permanently
+rather than retrying five times — a scheduled import outliving its connection
+is the ordinary way that happens.
+
+`artifact.ingest` pulls one repository's issues, pull requests, comments,
+commits and files into the artifact graph. Two things are worth knowing:
+
+- **The payload carries a credstore reference, not a token.** A queued run is a
+  row somebody can read, and the handler resolves the reference per attempt —
+  so a rotated token is picked up by a retry instead of failing it. The route
+  still resolves it once before enqueuing, so a `secret_ref` the caller cannot
+  read is answered on that request.
+- **Its counts tick up while it runs.** The pipeline reports every phase with
+  the counts so far, and those land in the run's `result` — the same field the
+  final counts land in, in the same shape. That is what
+  `GET /studio-artifact-ingest/v1/tasks/{id}` reads, so the portal's existing
+  poll shows live progress exactly as it did.
+
+`catalog.sync` reads crates.io and the gear repositories into the catalog
+graph. One partition key (`catalog`) for the whole gear: two syncs at once
+would write the same deterministic gear nodes, so they queue behind each other.
+
+Both sync task types report through the same mechanism —
+`TaskContext::progress_bridge`, which hands a pipeline that cannot await a
+synchronous reporter and drains it into progress writes. Work that predates
+runs keeps its own signature.
+
 `tasks.retention_sweep` prunes finished runs (default 30 days) and cleans up
 `resolved`/`discarded` dead letters. A `tasks-retention-sweep` schedule at
 `17 3 * * *` is registered at boot with `ensure`, which does **not** overwrite:
@@ -174,20 +204,29 @@ touched, for the same cross-tenant-write reason as above.
 ```
 
 `backend-bootstrap` creates both databases from those blocks. Drop the
-`studio-tasks` block and its API answers 503 and nothing is queued; drop
-`studio-scheduler`'s and nothing fires on its own while the queue keeps
-working. PostgreSQL only — `config/dev.yaml` deliberately configures neither.
+`studio-scheduler` block and nothing fires on its own while the queue keeps
+working.
+
+Dropping the **`studio-tasks`** block costs more than it used to. Its own API
+answers 503, and so do the three routes whose work is now a run:
+`POST /studio-connector/v1/connections/{id}/graph/sync`,
+`POST /studio-artifact-ingest/v1/sync` and
+`POST /studio-components-catalog/v1/sync`. Each says why in the response
+detail. PostgreSQL only, so `config/dev.yaml` — the SQLite profile — is exactly
+that deployment: use `config/postgres.yaml` to exercise any of them locally.
 
 ## Still to do
 
-- **Three migrations onto this substrate**, none of which needs a new
-  decision. `studio-notify` is done — its own outbox is gone and delivery is
-  the `notify.deliver` task type, with the run as the record (see
-  [queued-notifications.md](./queued-notifications.md)). Remaining: the three
-  in-memory registries (`connectors::graph_sync_tasks`,
-  `artifact_ingest::tasks`, `components_catalog::tasks`) become handlers. Each
-  touches a working gear's REST DTOs and wants its own verification pass.
 - **Replacing the hand-rolled loops.** `studio-session`'s reaper is a schedule
-  waiting to happen (and today it fires in every replica).
+  waiting to happen (and today it fires in every replica). The platform
+  gateway's directory sync is the other one, and it is not ours.
+- **Cancelling the long ones for real.** `connector.graph_sync`,
+  `artifact.ingest` and `catalog.sync` are the three runs somebody would
+  actually want to stop, and none of them reads `TaskContext::cancelled` — each
+  wraps a pipeline that predates runs and takes a progress handle, not a token.
+  So a cancel on one of those is recorded and honoured only when the work ends
+  on its own: the run reads `cancelled`, but everything it had already written
+  is written. Threading the token in beside the progress handle is the fix, and
+  it is the same edit in all three.
 - **Per-tenant schedules**, and a sweep that reaches other tenants' runs — both
   blocked on enumerating tenants, as above.

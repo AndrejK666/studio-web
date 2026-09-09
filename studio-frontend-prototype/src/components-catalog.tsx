@@ -449,8 +449,9 @@ export function ComponentsCatalog({
           await reload();
           break;
         }
-        if (t.status === "failed") {
-          setSync(t.message || "sync failed");
+        // `cancelled` too — see the artifact sync loop in App.tsx.
+        if (t.status === "failed" || t.status === "cancelled") {
+          setSync(t.message || `sync ${t.status}`);
           break;
         }
         const phase = (t.message || t.status).replace(/…$/, "");

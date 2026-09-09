@@ -3,6 +3,10 @@
 //! `POST /studio-components-catalog/v1/sync` enqueues a background sync of the
 //! crates.io keyword into the graph and returns a task id; `GET /tasks/{id}`
 //! polls it. `GET /gears` and `GET /versions` read the catalog back.
+//!
+//! The sync is a `catalog.sync` run on `studio-tasks`, so the task id is a run
+//! id and `GET /studio-tasks/v1/runs/{task_id}` answers the same question with
+//! more detail. The response shapes here are unchanged.
 
 use std::sync::Arc;
 
@@ -12,10 +16,12 @@ use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
-use super::service::{CatalogService, RepoSource, SyncSources};
+use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
+use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
 
 /// Errors attributable to a components-catalog resource (e.g. an unknown task).
@@ -24,7 +30,34 @@ pub struct StudioComponentsCatalogError;
 
 /// Service handle, injected into the handlers.
 #[derive(Clone)]
-pub struct Catalog(pub Arc<CatalogService>);
+pub struct Catalog {
+    pub service: Arc<CatalogService>,
+    /// Resolved per request rather than held: a sync is a run now, and both the
+    /// enqueue and the poll endpoint read through here — lazily, so this gear
+    /// does not care whether `studio-tasks` initialized first.
+    hub: Arc<ClientHub>,
+}
+
+impl Catalog {
+    pub fn new(service: Arc<CatalogService>, hub: Arc<ClientHub>) -> Self {
+        Self { service, hub }
+    }
+
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "catalog syncs are not available in this deployment \
+                         (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
+    }
+}
 
 struct License;
 impl AsRef<str> for License {
@@ -47,8 +80,9 @@ pub struct CatalogSyncEnqueued {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct CatalogTaskStatusResponse {
+    /// The run id. `GET /studio-tasks/v1/runs/{task_id}` has the full record.
     pub task_id: String,
-    /// `queued` | `running` | `succeeded` | `failed`.
+    /// `queued` | `running` | `succeeded` | `failed` | `cancelled`.
     pub status: String,
     /// Current phase while running, or the error message on failure.
     pub message: Option<String>,
@@ -226,37 +260,78 @@ async fn sync(
     Extension(catalog): Extension<Catalog>,
     body: Option<Json<SyncRequestDto>>,
 ) -> ApiResult<JsonBody<CatalogSyncEnqueued>> {
+    let queue = catalog.queue()?;
     let sources = match body {
-        Some(Json(req)) => req.into_sources(catalog.0.default_keyword()),
+        Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
         None => SyncSources {
-            crates_io: Some(catalog.0.default_keyword().to_string()),
+            crates_io: Some(catalog.service.default_keyword().to_string()),
             repos: Vec::new(),
         },
     };
-    let task_id = catalog.0.enqueue_sync(ctx, sources);
+    let payload = serde_json::to_value(&sources)
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let run_id = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: ctx.subject_tenant_id(),
+                task_type: TASK_TYPE,
+                payload,
+                // One catalog per tenant, upserted by deterministic node key:
+                // two syncs at once would write the same gear nodes, so they
+                // queue behind each other instead.
+                partition_key: Some("catalog"),
+                idempotency_key: None,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
     Ok(Json(CatalogSyncEnqueued {
-        task_id,
+        task_id: run_id.to_string(),
         status: "queued".to_string(),
     }))
 }
 
+/// The state of one background catalog sync.
+///
+/// Served from the `catalog.sync` run rather than from a registry of this
+/// gear's own: same response shape, but it survives a restart and the counts
+/// come from the run's `result` — which the sync updates per phase, so they
+/// tick up while it works.
 async fn task_status(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<CatalogTaskStatusResponse>> {
-    let rec = catalog.0.task(&id).ok_or_else(|| {
+    let queue = catalog.queue()?;
+    let not_found = || {
         StudioComponentsCatalogError::not_found("no such sync task")
             .with_resource(id.clone())
             .create()
-    })?;
+    };
+    // Task ids used to be this gear's own strings; they are run ids now, and an
+    // unparseable one is simply not a task this deployment has.
+    let run_id = Uuid::parse_str(&id).map_err(|_| not_found())?;
+    let run = queue
+        .run(ctx.subject_tenant_id(), run_id)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .ok_or_else(not_found)?;
+
+    let counts = CatalogCounts::of_result(run.result);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(CatalogTaskStatusResponse {
-        task_id: rec.id,
-        status: rec.status.as_str().to_string(),
-        message: rec.message,
-        gears: rec.gears,
-        versions: rec.versions,
-        stored: rec.stored,
+        task_id: id,
+        status: run.state.as_str().to_string(),
+        // What it did if it finished, why it stopped if it failed, where it is
+        // if it is still going — in that order of usefulness to whoever is
+        // polling.
+        message: run.summary.or(run.last_error).or(run.progress),
+        gears: count(counts.gears),
+        versions: count(counts.versions),
+        stored: count(counts.stored),
     }))
 }
 
@@ -276,7 +351,7 @@ async fn list_gears(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let nodes = catalog
-        .0
+        .service
         .list_nodes(&ctx, Some(super::gts::GEAR_TYPE))
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
@@ -290,7 +365,7 @@ async fn list_profiles(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let nodes = catalog
-        .0
+        .service
         .list_profiles(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
@@ -306,7 +381,7 @@ async fn save_profile(
     Json(body): Json<SaveGearProfileRequest>,
 ) -> ApiResult<JsonBody<CatalogNodeDto>> {
     let node = catalog
-        .0
+        .service
         .save_profile(&ctx, &name, body.profile)
         .await
         .map_err(|e| {
@@ -327,7 +402,7 @@ async fn get_project_repo(
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let node = catalog
-        .0
+        .service
         .get_project_repo(&ctx, &project_id.to_string())
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
@@ -349,7 +424,7 @@ async fn set_project_repo(
         "branch": body.branch.unwrap_or_else(|| "main".to_string()),
     });
     let node = catalog
-        .0
+        .service
         .set_project_repo(&ctx, &project_id.to_string(), repo)
         .await
         .map_err(|e| {
@@ -379,7 +454,7 @@ async fn scaffold_gear(
         })
         .collect();
     let w = catalog
-        .0
+        .service
         .scaffold_into_repo(
             &ctx,
             &project_id.to_string(),
@@ -407,7 +482,7 @@ async fn create_repo(
     Json(body): Json<CreateRepoRequest>,
 ) -> ApiResult<JsonBody<CreateRepoResultDto>> {
     let created = catalog
-        .0
+        .service
         .create_project_repo(
             &ctx,
             &project_id.to_string(),
@@ -437,7 +512,7 @@ async fn list_versions(
     Query(q): Query<VersionsQuery>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
     let mut nodes = catalog
-        .0
+        .service
         .list_nodes(&ctx, Some("crate_version"))
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
@@ -458,6 +533,7 @@ pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<CatalogService>,
+    hub: Arc<ClientHub>,
 ) -> Router {
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
@@ -484,7 +560,7 @@ pub fn register_routes(
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("id", "Sync task id")
+        .path_param("id", "Sync task id (a studio-tasks run id)")
         .handler(task_status)
         .json_response_with_schema::<CatalogTaskStatusResponse>(
             openapi,
@@ -631,5 +707,5 @@ pub fn register_routes(
             .error_500(openapi)
             .register(router, openapi);
 
-    router.layer(Extension(Catalog(service)))
+    router.layer(Extension(Catalog::new(service, hub)))
 }

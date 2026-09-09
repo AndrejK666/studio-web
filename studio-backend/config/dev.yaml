@@ -371,8 +371,14 @@ gears:
   # reason as studio-notify below: both keep their queue in toolkit-db's
   # transactional outbox, whose PostgreSQL path locks partitions with
   # `FOR UPDATE SKIP LOCKED`. Without a `database:` block each stands down with
-  # a warning — background work runs inline as it did before, and nothing is
-  # scheduled. Use config/postgres.yaml to exercise either locally.
+  # a warning and nothing is scheduled.
+  #
+  # That has a price in this profile, and it is not hidden: the three routes
+  # that enqueue a run answer 503 with the reason —
+  # POST /studio-connector/v1/connections/{id}/graph/sync,
+  # POST /studio-artifact-ingest/v1/sync and
+  # POST /studio-components-catalog/v1/sync. Everything else works. Use
+  # config/postgres.yaml to exercise those locally.
 
   mini-chat:
     database:

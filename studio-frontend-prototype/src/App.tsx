@@ -4665,8 +4665,10 @@ function ProjectSources({
           onSynced?.();
           break;
         }
-        if (t.status === "failed") {
-          setSync((s) => ({ ...s, [r.name]: t.message || "sync failed" }));
+        // `cancelled` too: somebody stopped the run from Background work, and
+        // polling for a state it will never leave is how you hang a UI.
+        if (t.status === "failed" || t.status === "cancelled") {
+          setSync((s) => ({ ...s, [r.name]: t.message || `sync ${t.status}` }));
           break;
         }
         // Live line: the current phase, plus counts and how many objects are
