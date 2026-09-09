@@ -11,6 +11,8 @@ import {
     type EnqueueStudioOperationRequest,
     type StudioAuditDeltaRequest,
     type StudioOperationDeltaRequest,
+    type StudioNotifyEditorRequest,
+    type StudioNotifyEditorResult,
     type StudioOpenInEditorRequest,
     type StudioOpenInEditorResult,
     type StudioRetryOperationRequest,
@@ -175,6 +177,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             getOperationDeltas: request => this.getOperationDeltas(request),
             retryOperation: request => this.retryOperation(request),
             openInEditor: request => this.openInEditor(request),
+            notifyEditor: request => this.notifyEditor(request),
             installKit: request => this.kitInstaller.install(request, this.repositoryRegistry)
         });
     }
@@ -200,6 +203,25 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             }
         });
         return { opened: delivered > 0, resolvedRelativePath: request.relativePath };
+    }
+
+    /**
+     * Show a Studio-originated message in this session's IDE.
+     *
+     * Same shape as `openInEditor` and for the same reason: the node backend
+     * has no UI, so the message goes to the browser clients and `shown`
+     * reports whether any of them could act on it. A session whose tab nobody
+     * has open answers `shown: false` rather than pretending.
+     */
+    async notifyEditor(request: StudioNotifyEditorRequest): Promise<StudioNotifyEditorResult> {
+        let delivered = 0;
+        this.broadcast(client => {
+            if (client.onNotifyEditor) {
+                client.onNotifyEditor(request);
+                delivered++;
+            }
+        });
+        return { shown: delivered > 0 };
     }
 
     async resolveWorkspacePath(request: StudioWorkspaceRequest) {

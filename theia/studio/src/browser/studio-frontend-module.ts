@@ -37,6 +37,7 @@ import { AuditFrontendController } from './audit-controller';
 import { StudioRuntimeFrontendClient } from './studio-runtime-client';
 import { WorkspaceSourcesFrontendController } from './workspace-sources-controller';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
+import { NotifyEditorFrontendController } from './notify-editor-controller';
 import { WorkspaceSourcesContribution } from './workspace-sources-contribution';
 import { WorkspaceSourcesWidget } from './workspace-sources-widget';
 import { WorkspaceSourceRootDecorator, WorkspaceSourceRootService } from './workspace-source-root-decorator';
@@ -66,6 +67,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(GitOperationsFrontendController).toSelf().inSingletonScope();
     bind(AuditFrontendController).toSelf().inSingletonScope();
     bind(OpenInEditorFrontendController).toSelf().inSingletonScope();
+    bind(NotifyEditorFrontendController).toSelf().inSingletonScope();
     bind(WorkspaceSourcesFrontendController).toSelf().inSingletonScope();
     bind(WorkspaceSourceRootService).toSelf().inSingletonScope();
     bind(WorkspaceSourceRootDecorator).toSelf().inSingletonScope();
