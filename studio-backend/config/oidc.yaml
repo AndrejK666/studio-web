@@ -612,6 +612,55 @@ gears:
       vendor: "constructorfabric"
       priority: 100
 
+  # Chat platforms — where Studio delivers notifications. Two drivers per
+  # platform, and the difference matters when configuring one:
+  #
+  #   <platform>            a bot token or API key. One connection reaches every
+  #                         channel the bot was invited to, the channels are
+  #                         listed by GET /connections/{id}/targets, and each
+  #                         message names the one it goes to.
+  #   <platform>_webhook    an incoming-webhook URL, which is itself the
+  #                         credential and already names its channel. Nothing to
+  #                         list; one connection per channel.
+  #
+  # Neither needs any configuration here: the endpoints are the platforms' own
+  # and the credential arrives with the connection. Dropping a block removes
+  # nothing — the gear runs on these defaults either way; removing the gear from
+  # the assembly is what makes a provider disappear from GET /providers.
+  #
+  # Verifying a Slack or Zulip webhook DELIVERS a message to its channel:
+  # neither platform will describe a webhook URL without being posted to. A
+  # Discord webhook is readable at its own URL and is verified silently.
+  slack-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  slack-webhook-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  zulip-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  zulip-webhook-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  discord-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  discord-webhook-connector-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
   # Owns the connection catalogue (tenant metadata) and the REST surface.
   # Tokens live in credstore; the scope chosen on create maps onto the
   # credstore sharing mode (personal -> private, workspace -> tenant,

@@ -1,4 +1,15 @@
-//! Source connectors — bring repositories into Studio instead of typing URLs.
+//! Connectors — the providers Studio talks to, and the credentials it talks
+//! with.
+//!
+//! Three kinds today, and the difference between them is only which of the
+//! driver contract's capabilities a driver implements:
+//!
+//! * **source hosts** (GitLab, GitHub, Bitbucket) — bring repositories into
+//!   Studio instead of typing clone URLs;
+//! * **model providers** (Anthropic, OpenAI) — the key the IDE agents
+//!   authenticate with;
+//! * **chat platforms** (Slack, Zulip, Discord) — where Studio delivers
+//!   notifications, each with a bot-token and an incoming-webhook variant.
 //!
 //! Three moving parts, deliberately separated:
 //!
@@ -22,6 +33,7 @@
 
 mod ai_providers;
 mod bitbucket;
+mod discord;
 pub mod driver;
 mod github;
 mod gitlab;
@@ -30,9 +42,12 @@ mod graph_sync;
 #[cfg(feature = "graph")]
 mod graph_sync_tasks;
 pub(crate) mod gts;
+mod notify;
 mod plugin;
 mod rest;
 pub(crate) mod service;
+mod slack;
+mod zulip;
 
 use std::sync::Arc;
 
@@ -56,12 +71,18 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 5] = [
+const KNOWN_DRIVERS: [&str; 11] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
     gts::ANTHROPIC_INSTANCE_ID,
     gts::OPENAI_INSTANCE_ID,
+    gts::SLACK_INSTANCE_ID,
+    gts::SLACK_WEBHOOK_INSTANCE_ID,
+    gts::ZULIP_INSTANCE_ID,
+    gts::ZULIP_WEBHOOK_INSTANCE_ID,
+    gts::DISCORD_INSTANCE_ID,
+    gts::DISCORD_WEBHOOK_INSTANCE_ID,
 ];
 
 /// Source-host driver plugin ids (github/gitlab/bitbucket), for gears that
@@ -128,6 +149,7 @@ impl Gear for StudioConnectorGear {
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-connector gear already initialized"))?;

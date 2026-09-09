@@ -24,6 +24,17 @@ pub const GITHUB_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio
 pub const BITBUCKET_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.bitbucket_connector.v1";
 pub const ANTHROPIC_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.anthropic_connector.v1";
 pub const OPENAI_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1";
+// Chat platforms. Two ids per platform, because a bot token and an incoming
+// webhook are different credentials with different reach — see
+// `super::slack`'s module note — and a driver is addressed by exactly one id.
+pub const SLACK_INSTANCE_ID: &str =
+    "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.slack_connector.v1";
+pub const SLACK_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.slack_webhook_connector.v1";
+pub const ZULIP_INSTANCE_ID: &str =
+    "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.zulip_connector.v1";
+pub const ZULIP_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.zulip_webhook_connector.v1";
+pub const DISCORD_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_connector.v1";
+pub const DISCORD_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_webhook_connector.v1";
 
 /// Tenant-metadata schema holding the connection catalogue of one tenant.
 /// Connections are configuration, not secrets: the token lives in credstore
