@@ -45,8 +45,9 @@ export class OrcaCliError extends Error {
 export class OrcaCliMissingError extends OrcaCliError {
     constructor(searched: readonly string[]) {
         super(
-            'the orca CLI was not found. Set ORCA_CLI to its path, or install Orca ' +
-                `(github.com/stablyai/orca). Looked at: ${searched.join(', ')}`,
+            'the orca CLI is not installed. A session image carries it only when built ' +
+                'with --build-arg STUDIO_ORCA_DEB_URL=…; elsewhere set ORCA_CLI to the ' +
+                `binary, or install Orca (github.com/stablyai/orca). Looked at: ${searched.join(', ')}`,
             [],
             ''
         );
@@ -62,6 +63,40 @@ export class OrcaCliMissingError extends OrcaCliError {
  * developer's machine has; `orca` on PATH last, since that is the case we can
  * neither verify nor blame precisely.
  */
+/** The shape Node's failed `execFile` hands back. */
+export interface InvocationFailure {
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly message?: string;
+    /** `ENOENT` when there was no binary to run. */
+    readonly code?: string;
+}
+
+/**
+ * What a failed invocation should surface.
+ *
+ * Pure and exported because the interesting case cannot be reproduced by
+ * spawning: on a machine with the Orca desktop app installed, Windows
+ * resolves `orca` through its App Paths registry entry even with PATH empty,
+ * so "nothing to run" is not a state a test can arrange there.
+ *
+ * ENOENT is the one that used to leak: the candidate list ends in bare names,
+ * which `binary()` always accepts, so a missing CLI only ever showed up as the
+ * loader's `spawn orca ENOENT` — and that told a session's owner nothing.
+ */
+export function invocationError(failure: InvocationFailure, args: readonly string[]): OrcaCliError {
+    if (failure.code === 'ENOENT') {
+        return new OrcaCliMissingError(candidateBinaries());
+    }
+    // A refused command still carries the envelope on stdout, and its message
+    // beats "exit code 1".
+    const envelope = parseEnvelope(failure.stdout ?? '');
+    if (envelope && envelope.ok === false) {
+        return new OrcaCliError(describeError(envelope), args, failure.stderr ?? '');
+    }
+    return new OrcaCliError(failure.message ?? 'orca invocation failed', args, failure.stderr ?? '');
+}
+
 export function candidateBinaries(env: NodeJS.ProcessEnv = process.env, platform: string = os.platform()): string[] {
     const out: string[] = [];
     const configured = env.ORCA_CLI?.trim();
@@ -104,7 +139,11 @@ export class OrcaCli {
     /**
      * The binary to run.
      *
-     * @throws OrcaCliMissingError when nothing on the candidate list exists.
+     * The bare names at the end of the candidate list are always accepted
+     * here — resolving a name against PATH (and PATHEXT, on Windows) is the
+     * loader's job, not ours. Which means this cannot report a missing CLI:
+     * the failure surfaces when the spawn fails, and [[OrcaCliMissingError]]
+     * is raised there instead.
      */
     binary(): string {
         if (this.resolved) {
@@ -141,15 +180,7 @@ export class OrcaCli {
             });
             stdout = result.stdout;
         } catch (error) {
-            // A non-zero exit still carries the envelope on stdout for a
-            // refused command (bad selector, no runtime), and that message is
-            // far more useful than "exit code 1".
-            const e = error as { stdout?: string; stderr?: string; message?: string };
-            const envelope = parseEnvelope(e.stdout ?? '');
-            if (envelope && envelope.ok === false) {
-                throw new OrcaCliError(describeError(envelope), full, e.stderr ?? '');
-            }
-            throw new OrcaCliError(e.message ?? 'orca invocation failed', full, e.stderr ?? '');
+            throw invocationError(error as InvocationFailure, full);
         }
         const envelope = parseEnvelope(stdout);
         if (!envelope) {
