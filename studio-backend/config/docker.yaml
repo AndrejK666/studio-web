@@ -629,8 +629,20 @@ gears:
       # Locally-built Theia image that carries studio-event-forwarder.ts (the
       # ghcr `edge` tag predates it). Build it first:
       #   docker build -f theia/Dockerfile -t cf-studio-theia:local theia
-      image: "cf-studio-theia:local"
-      always_pull: false
+      # Which session image to launch, and whether to pull it first.
+      #
+      # Defaults are the locally built tag: `docker compose up --build` builds
+      # everything else from this checkout, and the session image is the one
+      # thing compose cannot build for you (it is not a compose service), so
+      # build it yourself — the command is in the comment above.
+      #
+      # docker-compose.published.yml sets both to run the images the pipeline
+      # published instead: STUDIO_SESSION_IMAGE=ghcr.io/…/cf-studio-theia:<tag>
+      # and STUDIO_SESSION_ALWAYS_PULL=true, so a session comes from the same
+      # snapshot as the backend beside it rather than from whatever `:local`
+      # happens to be lying around.
+      image: "${STUDIO_SESSION_IMAGE:-cf-studio-theia:local}"
+      always_pull: ${STUDIO_SESSION_ALWAYS_PULL:-false}
       workspaces_root: "/srv/cf-studio-workspaces"
       bind_host: "127.0.0.1"
       public_host: "localhost"

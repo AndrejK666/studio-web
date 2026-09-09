@@ -48,6 +48,44 @@ docker compose ps
 
 The Compose profile starts these services: `graph-postgres`, `keycloak`,
 `backend-bootstrap`, `backend`, `frontend`, and `frontend-prototype`.
+
+### Two ways to run it: your sources, or the published images
+
+`docker-compose.yml` builds every service from this checkout. That is the
+default and what `scripts/dev-up.sh` uses — it is how you see a change you
+just made.
+
+`docker-compose.published.yml` is an override that swaps those builds for the
+images the pipeline pushed, so you can run what a stand runs:
+
+```bash
+docker login ghcr.io   # a token with read:packages; the registry is private
+docker compose -f docker-compose.yml -f docker-compose.published.yml pull
+docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+
+# an exact snapshot rather than the rolling edge tag
+STUDIO_IMAGE_TAG=sha-<40-char-commit> \
+  docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
+```
+
+Three things worth knowing before you trust either mode:
+
+* **`--no-build` is not optional.** Compose keeps the base file's `build:`
+  section even when an override supplies an `image:`, so a missing tag would
+  be silently rebuilt from source — the opposite of the point. `pull` first;
+  then a missing tag is a visible error.
+* **The session image follows.** The Theia session image is not a Compose
+  service — the backend launches it through the host daemon by the name in
+  `studio-backend/config/docker.yaml`. Locally that is `cf-studio-theia:local`,
+  which you build yourself (`docker build -f theia/Dockerfile -t
+  cf-studio-theia:local theia`); in published mode the override points it at
+  the same snapshot as the backend and pulls it. Either way a *running*
+  session keeps the image it started with — restart the session to pick up a
+  new one.
+* **An empty database still needs `scripts/dev-up.sh` once.** The root tenant
+  is seeded by `backend-bootstrap`, a `--no-default-features` build with no LLM
+  chain and no published counterpart, so that one service builds from source in
+  both modes.
 `graph-postgres` is the single local PostgreSQL instance; it contains both the
 application databases and `graph_storage`.
 
