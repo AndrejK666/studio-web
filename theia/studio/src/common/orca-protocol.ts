@@ -37,6 +37,12 @@ export interface OrcaRuntimeStatus {
     readonly desktopRunning: boolean;
     /** Why the runtime could not be reached, when it could not. */
     readonly error?: string;
+    /**
+     * True when there is no `orca` binary at all, as opposed to a binary whose
+     * runtime is not answering. The two need different advice: one is fixed by
+     * rebuilding the image, the other by starting a runtime.
+     */
+    readonly cliMissing?: boolean;
 }
 
 /** One Orca-managed checkout: a branch, a path, and its agent activity. */

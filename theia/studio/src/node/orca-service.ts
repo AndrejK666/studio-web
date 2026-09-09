@@ -20,7 +20,7 @@ import {
     type OrcaWorktree,
     type OrcaWorktreeChange
 } from '../common/orca-protocol';
-import { OrcaCli, OrcaCliError } from './orca-cli';
+import { OrcaCli, OrcaCliError, OrcaCliMissingError } from './orca-cli';
 import { GitExecutor } from './git-executor';
 
 /** `terminal wait --for tui-idle` blocks until the agent stops producing. */
@@ -64,7 +64,8 @@ export class OrcaServiceImpl implements OrcaService {
                 reachable: false,
                 state: 'unreachable',
                 desktopRunning: false,
-                error: message(error)
+                error: message(error),
+                cliMissing: error instanceof OrcaCliMissingError
             };
         }
     }

@@ -295,7 +295,18 @@ export class OrcaWidget extends ReactWidget {
                 </button>
                 {status && !status.reachable && (
                     <p className="studio-orca-hint">
-                        Start one with <code>orca serve</code> (headless) or open the Orca desktop app.
+                        {status.cliMissing
+                            // No binary: advising `orca serve` here sent people
+                            // looking for a runtime to start in an image that
+                            // never carried one.
+                            ? 'This session image was built without the Orca runtime. Rebuild it with '
+                            : 'Start one with '}
+                        {status.cliMissing
+                            ? <code>--build-arg STUDIO_ORCA_DEB_URL=…</code>
+                            : <code>orca serve</code>}
+                        {status.cliMissing
+                            ? ', or point ORCA_CLI at a binary this container has.'
+                            : ' (headless) or open the Orca desktop app.'}
                         {status.error ? ` Last error: ${status.error}` : ''}
                     </p>
                 )}

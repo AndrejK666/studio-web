@@ -11,7 +11,7 @@ import {
     toWaitOutcome,
     toWorktree
 } from './orca-service';
-import { OrcaCliError } from './orca-cli';
+import { OrcaCliError, OrcaCliMissingError, invocationError } from './orca-cli';
 import { parseEnvelope, describeError, candidateBinaries } from './orca-cli';
 
 describe('orca payload mapping', () => {
@@ -355,5 +355,65 @@ describe('worktree change parsing', () => {
 
     it('ignores records too short to carry a path', () => {
         expect(parseStatusRecords(['', ' M', ' M ', ' M x'])).toEqual([{ code: ' M', path: 'x' }]);
+    });
+});
+
+// A session image built without the Orca layer has no binary at all, and the
+// panel used to show the loader's `spawn orca ENOENT` — which says nothing
+// about what to do. The advice for that case existed but was unreachable: the
+// candidate list ends in bare names, which `binary()` always accepts.
+describe('a missing orca binary', () => {
+
+    // Not tested by spawning: this machine has the Orca desktop app, and
+    // Windows resolves `orca` through its App Paths registry entry even with
+    // PATH emptied — so "nothing to run" is a state a test cannot arrange
+    // here. The classification is what matters, and it is pure.
+    it('turns the loader ENOENT into advice about the image', () => {
+        const error = invocationError({ code: 'ENOENT', message: 'spawn orca ENOENT' }, ['status']);
+
+        expect(error.name).toBe('OrcaCliMissingError');
+        expect(error.message).toContain('STUDIO_ORCA_DEB_URL');
+        expect(error.message).toContain('ORCA_CLI');
+        // The loader's wording is what a session owner used to be left with.
+        expect(error.message).not.toContain('ENOENT');
+    });
+
+    it('still prefers a refused command envelope over the exit status', () => {
+        const error = invocationError(
+            { stdout: JSON.stringify({ ok: false, error: { message: 'no such worktree' } }), message: 'exit 1' },
+            ['worktree', 'list']
+        );
+
+        expect(error.name).toBe('OrcaCliError');
+        expect(error.message).toContain('no such worktree');
+    });
+
+    it('falls back to the process message when there is no envelope', () => {
+        const error = invocationError({ message: 'killed by signal' }, ['status']);
+
+        expect(error.name).toBe('OrcaCliError');
+        expect(error.message).toBe('killed by signal');
+    });
+    it('marks the status so the panel can advise on the image, not the runtime', async () => {
+        const impl = new OrcaServiceImpl();
+        const json = jest.fn().mockRejectedValue(new OrcaCliMissingError(['/usr/bin/orca-ide', 'orca']));
+        (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+        const status = await impl.status();
+
+        expect(status.reachable).toBe(false);
+        expect(status.cliMissing).toBe(true);
+        expect(status.error).toContain('not installed');
+    });
+
+    it('does not mark it when a binary exists and the runtime simply refused', async () => {
+        const impl = new OrcaServiceImpl();
+        const json = jest.fn().mockRejectedValue(new OrcaCliError('connection refused', ['status'], ''));
+        (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+        const status = await impl.status();
+
+        expect(status.reachable).toBe(false);
+        expect(status.cliMissing).toBe(false);
     });
 });
