@@ -122,8 +122,10 @@ export async function runRepoSync(
         onProgress({ line: counts(t) || "done", running: false, stored: t.stored });
         return;
       }
-      if (t.status === "failed") {
-        return done(t.message || "sync failed");
+      // `cancelled` too: somebody stopped the run from Background work, and
+      // polling for a state it will never leave is how you hang a UI.
+      if (t.status === "failed" || t.status === "cancelled") {
+        return done(t.message || `sync ${t.status}`);
       }
       // Live line: the current phase, the counts, and how many objects are
       // already in the graph.

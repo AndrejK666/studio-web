@@ -21,13 +21,16 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 // official plugin went green — see docs/keycloak-idp-migration.md.
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
+mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod registered_gears;
+mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 #[cfg(feature = "theia-bridge")]
 mod studio_theia; // ADR-0010: backend-to-backend bridge to the Theia node backend (opt-in)
+mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
 
 use std::path::{Path, PathBuf};

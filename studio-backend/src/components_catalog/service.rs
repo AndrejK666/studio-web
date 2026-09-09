@@ -20,8 +20,8 @@ use uuid::Uuid;
 use super::cratesio::{CrateDetail, CratesIoClient};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
-use super::tasks::{TaskRecord, TaskRegistry};
 use crate::connectors::service::ConnectorService;
+use crate::tasks::registry::SyncReporter;
 
 /// Pause between crates.io detail calls — crates.io asks callers to stay near
 /// ~1 request/second. One gear = one detail call, so this paces the whole sync.
@@ -282,7 +282,9 @@ impl CatalogSink for GraphSink {
 // ── Service ─────────────────────────────────────────────────────────────────
 
 /// A repository source the caller selected on the Gears page.
-#[derive(Clone, Debug)]
+///
+/// `Serialize` too: this is half of a `catalog.sync` run's payload.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RepoSource {
     pub tenant: Uuid,
     pub connection_id: Option<Uuid>,
@@ -292,19 +294,57 @@ pub struct RepoSource {
     pub mode: String,
 }
 
-/// Which sources one sync should read. At least one should be set.
-#[derive(Clone, Debug, Default)]
+/// Which sources one sync should read. At least one should be set — the
+/// handler refuses a run that names none.
+///
+/// This is a `catalog.sync` run's payload, so it round-trips through the queue.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct SyncSources {
     /// `Some(keyword)` enables crates.io with that keyword.
+    #[serde(default)]
     pub crates_io: Option<String>,
     /// Repository sources (gears repo, FrontX repo, …).
+    #[serde(default)]
     pub repos: Vec<RepoSource>,
+}
+
+/// What a catalog sync has counted.
+///
+/// Reported live through the progress bridge as the sync runs, and again as the
+/// run's final result when it finishes — one shape, so the poll endpoint reads
+/// a half-finished sync and a completed one the same way.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct CatalogCounts {
+    /// Gears (crates) discovered so far.
+    #[serde(default)]
+    pub gears: usize,
+    /// Version nodes built so far.
+    #[serde(default)]
+    pub versions: usize,
+    /// Nodes flushed to the graph store.
+    #[serde(default)]
+    pub stored: usize,
+}
+
+impl CatalogCounts {
+    /// The counts recorded on a run, or zeroes when it has not reported any
+    /// yet. Tolerant on purpose — see the artifact-ingest twin of this method.
+    pub fn of_result(result: Option<Value>) -> Self {
+        result
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// This value as a progress detail. Infallible in practice — three
+    /// integers always serialize.
+    fn as_detail(self) -> Value {
+        serde_json::to_value(self).unwrap_or_else(|_| json!({}))
+    }
 }
 
 pub struct CatalogService {
     crates: CratesIoClient,
     sink: Arc<dyn CatalogSink>,
-    tasks: Arc<TaskRegistry>,
     keyword: String,
     connectors: Option<Arc<ConnectorService>>,
 }
@@ -318,7 +358,6 @@ impl CatalogService {
         Self {
             crates: CratesIoClient::new(),
             sink,
-            tasks: Arc::new(TaskRegistry::default()),
             keyword,
             connectors,
         }
@@ -351,38 +390,16 @@ impl CatalogService {
         enricher.enrich(ctx).await
     }
 
-    pub fn task(&self, id: &str) -> Option<TaskRecord> {
-        self.tasks.get(id)
-    }
-
-    /// Enqueue a background catalog sync and return its task id.
-    pub fn enqueue_sync(self: &Arc<Self>, ctx: SecurityContext, sources: SyncSources) -> String {
-        let id = Uuid::new_v4().to_string();
-        self.tasks.create(&id);
-        let svc = Arc::clone(self);
-        let task_id = id.clone();
-        tokio::spawn(async move {
-            match svc.run_sync(&ctx, sources, Some(&task_id)).await {
-                Ok((gears, versions, stored)) => {
-                    svc.tasks
-                        .succeed(&task_id, gears as u32, versions as u32, stored as u32)
-                }
-                Err(e) => svc.tasks.fail(&task_id, &format!("{e:#}")),
-            }
-        });
-        id
-    }
-
     /// Read the selected sources into gear + version nodes and upsert them.
     /// Repository gears are discovered from `gear.toml` directories; crates.io
-    /// contributes published versions. The two merge by crate name. Returns
-    /// (gears, versions, stored-nodes).
+    /// contributes published versions. The two merge by crate name. Each phase
+    /// (and the counts so far) is reported to `progress`.
     pub async fn run_sync(
         &self,
         ctx: &SecurityContext,
         sources: SyncSources,
-        task_id: Option<&str>,
-    ) -> anyhow::Result<(usize, usize, usize)> {
+        progress: &SyncReporter,
+    ) -> anyhow::Result<CatalogCounts> {
         self.sink.register_types(ctx).await?;
 
         // Gear node value per crate name; version nodes/edges accumulate aside.
@@ -401,17 +418,17 @@ impl CatalogService {
 
         // ── crates.io ────────────────────────────────────────────────────────
         if let Some(keyword) = sources.crates_io.as_deref() {
-            self.report(task_id, "listing crates…", 0, 0, 0);
+            progress.set("listing crates…");
             let summaries = self.crates.list_by_keyword(keyword).await?;
             let total = summaries.len();
             tracing::info!(keyword = %keyword, gears = total, "components-catalog: listed crates");
             for (i, s) in summaries.iter().enumerate() {
-                self.report(
-                    task_id,
-                    &format!("crates.io {} ({}/{})", s.name, i + 1, total),
-                    i as u32,
-                    versions_total as u32,
-                    gear_values.len() as u32,
+                report(
+                    progress,
+                    format!("crates.io {} ({}/{})", s.name, i + 1, total),
+                    i,
+                    versions_total,
+                    gear_values.len(),
                 );
                 let detail = match self.crates.crate_detail(&s.name).await {
                     Ok(d) => d,
@@ -453,11 +470,11 @@ impl CatalogService {
             let mut last_err: Option<anyhow::Error> = None;
             let mut any_ok = false;
             for source in &sources.repos {
-                self.report(
-                    task_id,
-                    &format!("reading {} ({})", source.repo, source.mode),
-                    gear_values.len() as u32,
-                    versions_total as u32,
+                report(
+                    progress,
+                    format!("reading {} ({})", source.repo, source.mode),
+                    gear_values.len(),
+                    versions_total,
                     0,
                 );
                 match self.repo_gears(ctx, source).await {
@@ -564,14 +581,13 @@ impl CatalogService {
             stored,
             "components-catalog: sync stored"
         );
-        self.report(
-            task_id,
-            "done",
-            gears_total as u32,
-            versions_total as u32,
-            stored as u32,
-        );
-        Ok((gears_total, versions_total, stored))
+        let counts = CatalogCounts {
+            gears: gears_total,
+            versions: versions_total,
+            stored,
+        };
+        progress.set_with("done", counts.as_detail());
+        Ok(counts)
     }
 
     /// Read back catalog nodes, optionally filtered by type substring
@@ -778,12 +794,24 @@ impl CatalogService {
         self.set_project_repo(ctx, project_id, repo_val).await?;
         Ok(created)
     }
+}
 
-    fn report(&self, task_id: Option<&str>, message: &str, gears: u32, versions: u32, stored: u32) {
-        if let Some(id) = task_id {
-            self.tasks.report(id, message, gears, versions, stored);
+/// One phase, with what has been counted when it starts. Free-standing because
+/// it needs nothing from the service.
+///
+/// One database UPDATE per call, so this belongs on phase boundaries. The
+/// per-crate loop qualifies only because crates.io is paced at roughly one
+/// request a second — a report per item in a tight loop would not.
+fn report(progress: &SyncReporter, phase: String, gears: usize, versions: usize, stored: usize) {
+    progress.set_with(
+        phase,
+        CatalogCounts {
+            gears,
+            versions,
+            stored,
         }
-    }
+        .as_detail(),
+    );
 }
 
 /// Build a gear node, its version nodes and the `has_version` edges from one

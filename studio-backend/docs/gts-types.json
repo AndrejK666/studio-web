@@ -71,6 +71,30 @@
     {
       "gear": "studio-connector",
       "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.slack_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.slack_webhook_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.zulip_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.zulip_webhook_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_webhook_connector.v1"
     }
   ],
   "schemas": [

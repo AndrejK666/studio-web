@@ -374,6 +374,19 @@ gears:
         - key: "openai-key"
           value: "sk-REPLACE_ME"
 
+  # No studio-tasks or studio-scheduler section here either, for the same
+  # reason as studio-notify below: both keep their queue in toolkit-db's
+  # transactional outbox, which this assembly runs on PostgreSQL (partitions
+  # are locked with `FOR UPDATE SKIP LOCKED`). Without a `database:` block each
+  # stands down with a warning, and the three routes that enqueue a run answer
+  # 503 with the reason — POST /studio-connector/v1/connections/{id}/graph/sync,
+  # POST /studio-artifact-ingest/v1/sync and
+  # POST /studio-components-catalog/v1/sync.
+  #
+  # This profile is for poking at the API without a database to hand, so that
+  # is the trade it makes. Everything that runs this work runs on PostgreSQL:
+  # use config/postgres.yaml.
+
   mini-chat:
     database:
       server: "sqlite_main"

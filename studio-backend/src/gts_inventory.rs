@@ -219,6 +219,12 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::BITBUCKET_INSTANCE_ID),
         ("studio-connector", connectors::ANTHROPIC_INSTANCE_ID),
         ("studio-connector", connectors::OPENAI_INSTANCE_ID),
+        ("studio-connector", connectors::SLACK_INSTANCE_ID),
+        ("studio-connector", connectors::SLACK_WEBHOOK_INSTANCE_ID),
+        ("studio-connector", connectors::ZULIP_INSTANCE_ID),
+        ("studio-connector", connectors::ZULIP_WEBHOOK_INSTANCE_ID),
+        ("studio-connector", connectors::DISCORD_INSTANCE_ID),
+        ("studio-connector", connectors::DISCORD_WEBHOOK_INSTANCE_ID),
     ]
     .into_iter()
     .map(|(gear, instance_id)| json!({ "gear": gear, "instance_id": instance_id }))
@@ -438,7 +444,7 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 3] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 5] = [
         (
             "dev.yaml",
             "studio-credstore-pg",
@@ -456,6 +462,20 @@ mod tests {
             "studio-documents",
             "its migrations are PostgreSQL only (ADR-0014), so a SQLite database \
              here would fail the gear's init rather than enable it",
+        ),
+        (
+            "dev.yaml",
+            "studio-tasks",
+            "background work runs on the PostgreSQL outbox (see \
+             docs/background-work.md); this profile is for poking at the API \
+             without a database to hand, and the three routes that enqueue a \
+             run answer 503 there with that reason",
+        ),
+        (
+            "dev.yaml",
+            "studio-scheduler",
+            "nothing to schedule where studio-tasks stands down, and it keeps \
+             its own state in the same PostgreSQL outbox family",
         ),
     ];
 
@@ -599,23 +619,63 @@ mod tests {
         }
     }
 
+    /// Assert the segment grammar over one id. A GTS segment is
+    /// `vendor.package.namespace.type.vN` — five dot-separated tokens.
+    /// `cf.studio.connections.v1` had four and the registry rejected the whole
+    /// boot with a bare "Request validation failed" (see `connectors/gts.rs`).
+    fn assert_studio_segments(id: &str, what: &str) {
+        for segment in id.trim_end_matches('~').split('~') {
+            if !segment.starts_with("cf.studio") && !segment.starts_with("gts.cf.studio") {
+                continue; // platform-owned segment: not ours to police
+            }
+            let tokens: Vec<&str> = segment.trim_start_matches("gts.").split('.').collect();
+            assert!(
+                tokens.len() == 5 && tokens[4].starts_with('v'),
+                "{what} {id}: segment `{segment}` is not \
+                 vendor.package.namespace.type.vN — got {tokens:?}"
+            );
+        }
+    }
+
     #[test]
     fn every_studio_segment_is_a_valid_gts_segment() {
-        // A GTS segment is `vendor.package.namespace.type.vN` — five
-        // dot-separated tokens. `cf.studio.connections.v1` had four and the
-        // registry rejected the whole boot with a bare "Request validation
-        // failed" (see `connectors/gts.rs`).
         for e in schemas() {
-            let type_id = e["type_id"].as_str().unwrap_or_default();
-            for segment in type_id.trim_end_matches('~').split('~') {
-                if !segment.starts_with("cf.studio") && !segment.starts_with("gts.cf.studio") {
-                    continue; // platform-owned segment: not ours to police
-                }
-                let tokens: Vec<&str> = segment.trim_start_matches("gts.").split('.').collect();
+            assert_studio_segments(e["type_id"].as_str().unwrap_or_default(), "type");
+        }
+    }
+
+    /// The same grammar over the ids of *plugin instances*, which the schema
+    /// scan above does not reach.
+    ///
+    /// These are the riskier half. A plugin instance id is never written in a
+    /// profile and never checked by a test that reads one: it is a constant in
+    /// this crate that the gear registers at boot and then resolves its own
+    /// ClientHub client by. Get the grammar wrong and the registration is
+    /// refused; get the *contract prefix* wrong and registration succeeds
+    /// against nothing, leaving a provider that silently reports as
+    /// unavailable — which is the failure a person notices weeks later, from
+    /// the UI, with no log line to point at.
+    #[test]
+    fn every_plugin_instance_id_is_a_valid_derived_gts_id() {
+        let instances = plugin_instances();
+        assert!(
+            !instances.is_empty(),
+            "no plugin instances at all — the list is the point of this test"
+        );
+        for e in instances {
+            let id = e["instance_id"].as_str().unwrap_or_default();
+            assert_studio_segments(id, "plugin instance");
+            // The contract prefix belongs to a family, so it is asserted per
+            // gear rather than over the whole list: another gear's plugins
+            // would derive from their own contract, and this test must not
+            // stand in the way of adding one.
+            if e["gear"] == "studio-connector" {
                 assert!(
-                    tokens.len() == 5 && tokens[4].starts_with('v'),
-                    "{type_id}: segment `{segment}` is not \
-                     vendor.package.namespace.type.vN — got {tokens:?}"
+                    id.starts_with(crate::connectors::gts::CONNECTOR_PLUGIN_TYPE),
+                    "plugin instance {id} does not derive from the connector plugin \
+                     contract {} — the registry would refuse it, and a scoped client \
+                     registered under it would resolve for nobody",
+                    crate::connectors::gts::CONNECTOR_PLUGIN_TYPE
                 );
             }
         }

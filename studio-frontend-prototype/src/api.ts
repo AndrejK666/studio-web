@@ -35,6 +35,61 @@ export interface PlatformIdentity {
   organization_role?: "owner" | "member";
 }
 
+/* ── studio-tasks / studio-scheduler ── */
+
+/** One unit of background work. `GET /studio-tasks/v1/runs`. */
+export interface TaskRun {
+  id: string;
+  tenant_id: string;
+  /** `<gear>.<verb>` — `connector.graph_sync`, `notify.deliver`. */
+  task_type: string;
+  /** `queued` | `running` | `succeeded` | `failed` | `cancelled`. */
+  state: string;
+  /** What the handler was given. Shape belongs to the task type. */
+  payload: Record<string, unknown>;
+  /** What the run was told not to overtake, when ordering was asked for. */
+  partition_key?: string | null;
+  attempts: number;
+  /** The phase the handler last reported; kept after it ends. */
+  progress?: string | null;
+  /** One line about what it did, once it succeeded. */
+  summary?: string | null;
+  /** The handler's structured result, where it has one. */
+  result?: Record<string, unknown> | null;
+  last_error?: string | null;
+  cancel_requested: boolean;
+  requested_by: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+/** A recurring trigger. `GET /studio-scheduler/v1/schedules`. */
+export interface TaskSchedule {
+  id: string;
+  name: string;
+  task_type: string;
+  payload: Record<string, unknown>;
+  /** `cron` | `interval`. */
+  expression_kind: string;
+  /** A 5-field cron expression, or an ISO-8601 duration. */
+  expression: string;
+  timezone: string;
+  /** `allow` | `forbid` | `replace`. */
+  concurrency: string;
+  /** `skip` | `catch_up` | `backfill`. */
+  missed_policy: string;
+  max_catch_up_runs: number;
+  enabled: boolean;
+  next_run_at: string;
+  last_fired_at?: string | null;
+  /** The run the last firing produced. */
+  last_run_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Page<T> {
   items: T[];
   page_info?: { next_cursor: string | null; prev_cursor: string | null; limit: number };
@@ -1468,11 +1523,13 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
-  /** Poll a background sync task. Terminal states are `succeeded` / `failed`. */
+  /** Poll a background sync task. Terminal states are `succeeded` / `failed` /
+   * `cancelled`. The task id is a studio-tasks run id, so `taskRun` reads the
+   * same work with attempts, timings and a cancel verb. */
   artifactSyncTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       repo_full_path: string;
       message?: string | null;
       issues: number;
@@ -1595,11 +1652,12 @@ export const api = {
       method: "POST",
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
-  /** Poll a background catalog sync task. */
+  /** Poll a background catalog sync task. The task id is a studio-tasks run
+   * id — see `taskRun`. */
   componentsCatalogTask: (token: string, taskId: string) =>
     request<{
       task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed";
+      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
       message?: string | null;
       gears: number;
       versions: number;
@@ -1817,4 +1875,52 @@ export const api = {
       }
     }
   },
+  /* ── studio-tasks gear: durable background runs ── */
+
+  /** Newest first. `state` and `taskType` narrow it server-side. */
+  taskRuns: (
+    token: string,
+    opts?: { state?: string; taskType?: string; limit?: number },
+  ) => {
+    const q = new URLSearchParams();
+    if (opts?.state) q.set("state", opts.state);
+    if (opts?.taskType) q.set("task_type", opts.taskType);
+    if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+    const suffix = q.toString();
+    return request<{ items: TaskRun[] }>(
+      `/studio-tasks/v1/runs${suffix ? `?${suffix}` : ""}`,
+      token,
+    );
+  },
+
+  taskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}`, token),
+
+  /** What kinds of work this deployment can run at all. */
+  taskTypes: (token: string) =>
+    request<{ items: string[] }>("/studio-tasks/v1/task-types", token),
+
+  /** Cooperative: the flag is set, and a handler that never checks it will
+      not stop. Answers 202 for exactly that reason. */
+  cancelTaskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}/cancel`, token, {
+      method: "POST",
+    }),
+
+  retryTaskRun: (token: string, runId: string) =>
+    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}/retry`, token, {
+      method: "POST",
+    }),
+
+  /* ── studio-scheduler gear: cron/interval schedules ── */
+
+  schedules: (token: string) =>
+    request<{ items: TaskSchedule[] }>("/studio-scheduler/v1/schedules", token),
+
+  runScheduleNow: (token: string, scheduleId: string) =>
+    request<{ run_id: string }>(
+      `/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}/run-now`,
+      token,
+      { method: "POST" },
+    ),
 };
