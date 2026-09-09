@@ -13,6 +13,17 @@
 #   STUDIO_IMAGE_TAG=sha-<40-char-commit> \
 #     docker compose -f docker-compose.yml -f docker-compose.published.yml up -d --no-build
 #
+# Which tag to ask for, from the delivery workflow's own promotion rules:
+#
+#   sha-<commit>  every build. The only tag that cannot move under you.
+#   edge          the tip of main, moved by every push to it. The default here,
+#                 because "what a stand runs" is main, not a release.
+#   latest        the last STABLE release tag (vX.Y.Z; a prerelease vX-rc never
+#                 moves it). Older than edge by however long it has been since
+#                 that release — at the time of writing, six days and everything
+#                 merged in them.
+#   vX.Y.Z        that release, immutably.
+#
 #   # back to building from source
 #   scripts/dev-up.sh
 #
@@ -50,6 +61,12 @@ services:
 
   graph-postgres:
     image: ghcr.io/constructorfabric/studio-web/graph-postgres:${STUDIO_IMAGE_TAG:-edge}
+
+  # The backend waits for this one (docker-compose.yml explains why), so it
+  # has to resolve here too — pointed at the published tag, which makes the
+  # dependency a pull instead of a ten-minute build.
+  session-image:
+    image: ghcr.io/constructorfabric/studio-web/cf-studio-theia:${STUDIO_IMAGE_TAG:-edge}
 
   # backend-bootstrap is deliberately NOT overridden. It is a --no-default-features
   # build whose whole purpose is to have no LLM chain, so it seeds the root tenant

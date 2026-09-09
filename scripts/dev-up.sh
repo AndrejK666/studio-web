@@ -28,7 +28,12 @@ echo "==> root seeded — removing the bootstrap backend"
 docker compose --profile bootstrap rm -sf backend-bootstrap
 
 echo "==> step 2/2: full stack (backend + frontend, llm chain on)"
-docker compose up -d --build backend frontend
+# Built by name rather than with `up --build`: the backend now waits for the
+# session-image service, and `--build` would rebuild the Theia image — ten
+# minutes — on every single run. `up` still builds it when the tag is missing,
+# which is the first run and after `docker compose build session-image`.
+docker compose build backend frontend
+docker compose up -d backend frontend
 
 echo
 echo "==> done."
