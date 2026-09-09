@@ -1,8 +1,7 @@
 name: Studio Delivery
 
-# The single user-facing pipeline. It is introduced in preview mode first:
-# Test runs in this graph while the established publish/deploy workflows stay
-# authoritative until a full delivery run has been exercised in dev.
+# The single user-facing delivery pipeline. Reusable workflow files under this
+# directory deliberately have no manual trigger: start every operation here.
 on:
   push:
     branches: ["**"]
@@ -21,7 +20,7 @@ on:
           - deploy-services
           - deploy-infra
       source_ref:
-        description: Commit SHA, branch, or release tag (leave empty for the selected branch)
+        description: Full 40-character commit SHA, branch, or release tag (leave empty for the selected branch)
         required: false
         type: string
       environment:
@@ -75,14 +74,6 @@ jobs:
       source_ref: ${{ inputs.source_ref || github.sha }}
     secrets: inherit
 
-  publish-preview:
-    name: 2. Build & Publish (next stage)
-    needs: test
-    if: inputs.stage == 'validate'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Preview succeeded. The next migration adds the guarded Build & Publish stage here."
-
   publish:
     name: 2. Build & Publish
     needs: test
@@ -102,14 +93,6 @@ jobs:
       theia: ${{ github.ref_type == 'tag' && 'true' || needs.test.outputs.theia }}
       any_service: ${{ github.ref_type == 'tag' && 'true' || (needs.test.outputs.backend == 'true' || needs.test.outputs.frontend == 'true' || needs.test.outputs.prototype == 'true' || needs.test.outputs.theia == 'true' || needs.test.outputs.deployment == 'true') && 'true' || 'false' }}
     secrets: inherit
-
-  deploy-preview:
-    name: 3. Deploy & Verify (next stage)
-    needs: publish-preview
-    if: inputs.stage == 'validate'
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Preview succeeded. Deploy remains disabled until Build & Publish is proven in this graph."
 
   deploy-services:
     name: 3. Deploy Services

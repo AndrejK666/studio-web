@@ -1,19 +1,6 @@
-name: Deploy Infra
+name: Deploy Infrastructure (internal)
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: Target environment
-        type: choice
-        required: true
-        options:
-          - dev
-          - test
-      infra_tag:
-        description: Published infrastructure release tag (infra-vX.Y.Z)
-        type: string
-        required: true
   workflow_call:
     inputs:
       environment:

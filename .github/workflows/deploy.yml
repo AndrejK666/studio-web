@@ -1,34 +1,6 @@
-name: Deploy Services
+name: Deploy Services (internal)
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: Target environment
-        type: choice
-        required: true
-        options:
-          - dev
-          - test
-      component:
-        description: Service component to deploy
-        type: choice
-        required: true
-        default: all
-        options:
-          - all
-          - backend
-          - frontend
-          - prototype
-      image_tag:
-        description: Optional immutable sha-<commit> snapshot or v* release tag; leave empty to derive it from source_ref
-        type: string
-        required: false
-      source_ref:
-        description: Branch, release tag, or commit SHA to deploy (for example main, feature/catalog, v0.2.0-rc.1)
-        type: string
-        required: true
-        default: main
   workflow_call:
     inputs:
       environment:
