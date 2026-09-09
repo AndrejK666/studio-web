@@ -966,6 +966,22 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainmeta.revises.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainmeta.revises.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.composes.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -1056,16 +1072,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/mode",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1088,15 +1114,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1119,14 +1156,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1149,17 +1198,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/actor_kind",
-            "/payload/autonomy_level",
-            "/payload/description",
-            "/payload/name",
-            "/payload/reach",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1182,16 +1240,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1214,14 +1282,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1244,14 +1324,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1274,15 +1366,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/decision",
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1305,15 +1408,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1336,18 +1450,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/assignee_kind",
-            "/payload/description",
-            "/payload/job_role",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/job_role",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1370,15 +1492,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1401,15 +1534,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/event_kind",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1432,15 +1576,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1463,14 +1618,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1493,16 +1660,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/proposed_kind",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1525,15 +1702,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/resolution_method",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1556,16 +1744,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/check_kind",
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1588,16 +1786,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1620,15 +1828,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/decision",
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1651,17 +1870,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/status",
-            "/payload/subject_kind",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1684,16 +1912,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/message",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
             "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1716,16 +1954,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/kind",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1748,18 +1996,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/direction",
-            "/payload/kind",
-            "/payload/name",
-            "/payload/provider",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1782,18 +2038,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/category",
-            "/payload/description",
-            "/payload/name",
-            "/payload/provider",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1816,15 +2080,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1847,16 +2122,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/selection_strategy",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/selection_strategy",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1879,14 +2164,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1909,15 +2206,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1940,16 +2248,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/action",
-            "/payload/description",
-            "/payload/name",
-            "/payload/period",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -1972,19 +2290,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/metric_kind",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/payload/title"
           ]
         }
       },
@@ -2005,14 +2332,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2035,16 +2374,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/label",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
             "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2067,16 +2416,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/sensitivity",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/visibility"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2099,19 +2458,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/metric_kind",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/payload/title"
           ]
         }
       },
@@ -2132,19 +2500,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/criticality",
-            "/payload/dependency_kind",
-            "/payload/description",
-            "/payload/name",
-            "/payload/note",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/note",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2167,15 +2542,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2198,15 +2584,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2229,16 +2626,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2261,15 +2668,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2292,15 +2710,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2323,16 +2752,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/edge_type",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/edge_type",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2355,19 +2794,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/worktree_path"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/worktree_path"
+            "/payload/title"
           ]
         }
       },
@@ -2388,14 +2836,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2418,19 +2878,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/correlation_id",
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/type"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/type"
+            "/payload/title"
           ]
         }
       },
@@ -2451,19 +2920,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/result",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/type"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/type"
+            "/payload/title"
           ]
         }
       },
@@ -2484,19 +2962,27 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/source_field",
-            "/payload/summary",
-            "/payload/target_attribute",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/source_field",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/target_attribute",
             "/payload/title"
           ]
         }
@@ -2518,17 +3004,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/finding_kind",
-            "/payload/name",
-            "/payload/provenance_kind",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2551,16 +3046,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2583,18 +3088,27 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/term",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/term",
             "/payload/title"
           ]
         }
@@ -2616,16 +3130,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/severity",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2648,14 +3172,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2678,15 +3214,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2709,18 +3256,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/anchor_kind",
-            "/payload/anchor_path",
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
-            "/payload/anchor_path",
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2743,17 +3298,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/lifecycle_scope",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2776,16 +3340,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/kit_version",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/kit_version",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2808,14 +3382,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2838,14 +3424,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2868,17 +3466,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/index_status",
-            "/payload/name",
-            "/payload/schema_version",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/schema_version",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2901,14 +3508,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2931,14 +3550,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2961,16 +3592,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/link_type",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/link_type",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -2993,14 +3634,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3023,17 +3676,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/access_level",
-            "/payload/acquisition_mode",
-            "/payload/description",
-            "/payload/name",
-            "/payload/scope",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3056,16 +3718,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/dialect",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3088,18 +3760,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/anchor",
-            "/payload/description",
-            "/payload/heading",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
-            "/payload/anchor",
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
             "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3122,16 +3802,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/transport"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3154,17 +3844,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/acquisition",
-            "/payload/description",
-            "/payload/name",
-            "/payload/scope_kind",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3187,15 +3886,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3218,15 +3928,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/role",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3249,18 +3970,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/payload/title"
           ]
         }
       },
@@ -3281,15 +4012,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3312,16 +4054,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/provider",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3344,15 +4096,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/lock_state",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3375,14 +4138,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3405,16 +4180,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/node_type",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/node_type",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3437,17 +4222,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/channel",
-            "/payload/description",
-            "/payload/name",
-            "/payload/notification_type",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3470,17 +4264,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/source_type",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/source_type",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3503,16 +4306,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/tier",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3535,16 +4348,25 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/statement",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
             "/payload/statement",
             "/payload/summary",
             "/payload/title"
@@ -3568,16 +4390,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/unit_kind"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3600,14 +4432,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3630,15 +4474,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/ownership_kind",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3661,15 +4516,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/action",
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3692,20 +4558,27 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/display_name",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/timezone",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
             "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/timezone",
             "/payload/title"
           ]
         }
@@ -3727,16 +4600,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/headline",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
             "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3759,18 +4642,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/acquisition",
-            "/payload/description",
-            "/payload/name",
-            "/payload/policy_kind",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3793,18 +4684,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/goal",
-            "/payload/key",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
             "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3827,14 +4726,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3857,16 +4768,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/projection_type",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/projection_type",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3889,16 +4810,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3921,16 +4852,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/source_revision",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/source_revision",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3953,16 +4894,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -3985,15 +4936,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4016,16 +4978,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/record_type",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/record_type",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4048,17 +5020,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/attribute",
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
-            "/payload/attribute",
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4081,17 +5062,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/origin",
-            "/payload/scope",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4114,18 +5104,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/origin",
-            "/payload/predicate",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/predicate",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4148,16 +5146,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/source_relationship",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/source_relationship",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4180,14 +5188,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4210,16 +5230,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/report_kind",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4242,21 +5272,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/default_branch",
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/full_name",
-            "/payload/language",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
-            "/payload/default_branch",
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
             "/payload/full_name",
-            "/payload/language",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4279,21 +5314,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/encoding",
-            "/payload/extension",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/path",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/encoding",
-            "/payload/extension",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/path",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4316,16 +5356,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/review_type",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4348,17 +5398,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/category",
-            "/payload/description",
-            "/payload/impact",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4381,14 +5440,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4411,16 +5482,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/principal_kind",
-            "/payload/scope_type",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4443,17 +5524,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/constraint_kind",
-            "/payload/description",
-            "/payload/name",
-            "/payload/severity",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4476,17 +5566,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_installation_id",
-            "/payload/name",
-            "/payload/provider",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4509,16 +5608,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/category",
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4541,14 +5650,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4571,17 +5692,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/record_type",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/record_type",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4604,16 +5734,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/kind",
-            "/payload/name",
-            "/payload/provider",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4636,15 +5776,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4667,17 +5818,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/message",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
             "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4700,15 +5860,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4731,14 +5902,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4761,18 +5944,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/acquisition",
-            "/payload/description",
-            "/payload/name",
-            "/payload/purpose",
-            "/payload/slug",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
             "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4795,17 +5986,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/format",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4828,19 +6028,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/match_mode",
-            "/payload/message",
-            "/payload/name",
-            "/payload/presence",
-            "/payload/severity",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
             "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4863,17 +6070,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/region",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
-            "/payload/region",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4896,15 +6112,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4927,17 +6154,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/label",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/target_kind",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
             "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -4960,17 +6196,27 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/text",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/text",
             "/payload/title"
           ]
         }
@@ -4992,20 +6238,27 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/format",
-            "/payload/language",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/text",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/language",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/text",
             "/payload/title"
           ]
         }
@@ -5027,16 +6280,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/side_effect",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5059,15 +6322,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5090,22 +6364,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/correlation_id",
-            "/payload/description",
-            "/payload/from_state",
-            "/payload/name",
-            "/payload/operation",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/to_state"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/from_state",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/to_state"
+            "/payload/title"
           ]
         }
       },
@@ -5126,16 +6406,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5158,19 +6448,28 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/event_kind",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
-            "/payload/title",
-            "/payload/unit"
+            "/payload/title"
           ]
         }
       },
@@ -5191,15 +6490,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/visibility_default"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5222,15 +6532,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5253,16 +6574,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/severity",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5285,16 +6616,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/owner_kind",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/view_kind"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5317,16 +6658,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/external_id",
-            "/payload/name",
-            "/payload/state",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5349,16 +6700,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/icon",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
-            "/payload/icon",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5381,16 +6742,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/kind",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5413,17 +6784,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/automation_mode",
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title",
-            "/payload/version"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5446,14 +6826,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5476,16 +6868,26 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/correlation_id",
-            "/payload/description",
-            "/payload/name",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
@@ -5508,22 +6910,64 @@
         "type": "object",
         "x-gts-traits": {
           "full_text_search": [
-            "/payload/description",
-            "/payload/name",
-            "/payload/operation",
-            "/payload/status",
-            "/payload/summary",
-            "/payload/title"
+            "/name",
+            "/payload"
           ],
           "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
             "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
             "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
             "/payload/summary",
             "/payload/title"
           ]
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.write_back_capability.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domainmeta.model.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domainmeta.model.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domainmeta.model_version.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domainmeta.model_version.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -7834,6 +9278,32 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.domainmeta.model.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "The model document's non-entity part (model, source, buckets).",
+        "title": "Model",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domainmeta.model.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.domainmeta.model_version.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "One recorded change to the model, with the patch that made it.",
+        "title": "ModelVersion",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domainmeta.model_version.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.domainmeta.object_type.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "One domain entity as an object type in the model graph.",
@@ -7841,6 +9311,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domainmeta.object_type.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.domainmeta.revises.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A model version and the version it succeeded.",
+        "title": "Revises",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domainmeta.revises.v1~"
     },
     {
       "gear": "studio-domain-model",

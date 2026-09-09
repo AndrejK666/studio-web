@@ -11,8 +11,6 @@
 //! Because the graph type registered for each entity is open (see [`super::gts`]),
 //! adding a field is a pure ontology edit — no graph migration, no re-register.
 
-use std::collections::BTreeSet;
-
 use serde_json::{Value, json};
 
 use super::gts;
@@ -20,17 +18,15 @@ use super::gts;
 /// The embedded ontology: the full core domain model (all buckets).
 const ONTOLOGY_JSON: &str = include_str!("ontology.core.json");
 
-/// One node type to register, with a human title and description plus the
-/// payload paths the graph should index for it (see [`search_paths`]).
+/// One node type to register, with a human title and description. What the
+/// graph indexes for it is not here: those paths are the same for every domain
+/// type and fixed in [`gts::derived_node_schema`], because a registered
+/// schema cannot change and anything read off the model eventually does.
 #[derive(Debug, Clone)]
 pub struct NodeType {
     pub type_id: String,
     pub title: String,
     pub description: String,
-    /// Payload paths composing the lexical search text.
-    pub full_text_paths: Vec<String>,
-    /// Payload paths that are embedded.
-    pub vector_paths: Vec<String>,
 }
 
 /// One edge type to register (a distinct relation kind across the ontology),
@@ -92,6 +88,40 @@ impl Ontology {
         &self.doc
     }
 
+    /// The document's non-entity part (`model`, `source`, `buckets`, and any
+    /// other top-level key a model carries). Stored as the single
+    /// [`gts::META_MODEL`] node so the entities are not the only thing that
+    /// survives a round trip through the graph.
+    pub fn model_document(&self) -> Value {
+        let mut head = self.doc.clone();
+        if let Some(obj) = head.as_object_mut() {
+            obj.remove("entities");
+        }
+        head
+    }
+
+    /// Reassemble an ontology from what the graph stores: the model document's
+    /// non-entity part plus one entity document per `object_type` node. The
+    /// inverse of [`Self::model_document`] + [`Self::model_graph`], and the
+    /// reason the graph — not the embedded file — can be the model's system of
+    /// record.
+    ///
+    /// `entities` must already be in the model's order — the graph returns
+    /// nodes in projection order, which is not it. Each `object_type` node
+    /// carries the `ordinal` it was stored at for exactly this reason: the
+    /// order of the entity array is part of the document (the model UI renders
+    /// in it), so it is data to be stored, not something to re-derive.
+    pub fn from_parts(model_document: Value, entities: Vec<Value>) -> Result<Self, OntologyError> {
+        let mut doc = match model_document {
+            Value::Object(_) => model_document,
+            _ => json!({}),
+        };
+        doc.as_object_mut()
+            .ok_or(OntologyError::Malformed)?
+            .insert("entities".to_string(), Value::Array(entities));
+        Self::from_value(doc)
+    }
+
     /// The entities array.
     pub fn entities(&self) -> &[Value] {
         self.doc
@@ -124,13 +154,10 @@ impl Ontology {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                let (full_text_paths, vector_paths) = search_paths(e);
                 Some(NodeType {
                     type_id: gts::node_type_id(&entity_id),
                     title,
                     description,
-                    full_text_paths,
-                    vector_paths,
                 })
             })
             .collect()
@@ -272,46 +299,12 @@ impl Ontology {
         let mut edges: Vec<ModelEdgeMeta> = Vec::new();
         let mut skipped: usize = 0;
 
-        let field_count = |e: &Value| -> usize {
-            e.get("properties")
-                .and_then(Value::as_array)
-                .map(|ps| {
-                    ps.iter()
-                        .filter(|p| {
-                            !matches!(
-                                p.get("extends").and_then(Value::as_str),
-                                Some("edge") | Some("link")
-                            )
-                        })
-                        .count()
-                })
-                .unwrap_or(0)
-        };
-
-        for e in self.entities() {
-            let Some(id) = e.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            let name = e.get("name").and_then(Value::as_str).unwrap_or(id);
-            let relation_count = relation_properties(e).count();
-            nodes.push(ObjectTypeMeta {
-                entity_id: id.to_string(),
-                name: name.to_string(),
-                payload: json!({
-                    "id": id,
-                    "name": name,
-                    "bucket": e.get("bucket").and_then(Value::as_str).unwrap_or(""),
-                    "kind": e.get("kind").and_then(Value::as_str).unwrap_or(""),
-                    "layer": e.get("layer").and_then(Value::as_str).unwrap_or(""),
-                    "abstract": e.get("abstract").and_then(Value::as_bool).unwrap_or(false),
-                    "extends": e.get("extends").and_then(Value::as_str),
-                    "description": e.get("description").and_then(Value::as_str).unwrap_or(""),
-                    "node_type_id": gts::node_type_id(id),
-                    "field_count": field_count(e),
-                    "relation_count": relation_count,
-                }),
-            });
-        }
+        nodes.extend(
+            self.entities()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, e)| object_type_meta(e, i)),
+        );
 
         for e in self.entities() {
             let Some(id) = e.get("id").and_then(Value::as_str) else {
@@ -364,6 +357,72 @@ impl Ontology {
             edges,
             skipped,
         }
+    }
+
+    /// An entity and every base it extends, nearest first. A relation declared
+    /// on a base is a relation of everything that extends it, so endpoint
+    /// checking walks this rather than comparing one id.
+    ///
+    /// Cycles in `extends` are a malformed model, not a reason to hang: the
+    /// walk stops at the first id it has already seen.
+    pub fn ancestors(&self, entity_id: &str) -> Vec<String> {
+        let mut chain = vec![entity_id.to_string()];
+        let mut at = entity_id.to_string();
+        while let Some(base) = self
+            .entity(&at)
+            .and_then(|e| e.get("extends"))
+            .and_then(Value::as_str)
+            .filter(|b| !b.is_empty())
+            .and_then(|b| self.resolve_entity_id(b))
+        {
+            if chain.contains(&base) {
+                break;
+            }
+            chain.push(base.clone());
+            at = base;
+        }
+        chain
+    }
+
+    /// One declared relation by the entity that declares it and its property
+    /// name — the `project.uses` form. A bare name is *not* resolved here: on
+    /// its own it can mean several relations, or a verb, and only the endpoints
+    /// being related can say which.
+    pub fn declared_relation(&self, entity_id: &str, name: &str) -> Option<DeclaredRelation> {
+        let entity = self.resolve_entity_id(entity_id)?;
+        self.declared_relations()
+            .into_iter()
+            .find(|d| d.source == entity && d.name == name)
+    }
+
+    /// The entity ids, in the model's own order. Stored on the model node, so
+    /// a reload knows both which entities the model has and what order they go
+    /// in.
+    pub fn entity_ids(&self) -> Vec<String> {
+        self.entities()
+            .iter()
+            .filter_map(|e| e.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Where an entity sits in the document's `entities` array — the index a
+    /// JSON Patch path against it needs.
+    pub fn entity_index(&self, entity_id: &str) -> Option<usize> {
+        self.entities()
+            .iter()
+            .position(|e| e.get("id").and_then(Value::as_str) == Some(entity_id))
+    }
+
+    /// The `object_type` node for one entity — what the model-graph sync
+    /// stores for it. Used to write a single changed type back to the graph
+    /// without re-syncing the whole model.
+    pub fn object_type_node(&self, entity_id: &str) -> Option<ObjectTypeMeta> {
+        self.entities()
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.get("id").and_then(Value::as_str) == Some(entity_id))
+            .and_then(|(i, e)| object_type_meta(e, i))
     }
 
     /// Resolve a relation-property `type` (a target entity *name* like `Person`,
@@ -450,132 +509,6 @@ impl Ontology {
     }
 }
 
-/// Payload paths a domain type declares for lexical search and for embedding,
-/// derived from the entity's own fields — the model is the source here too, so
-/// each type indexes what it actually declares rather than a list fixed in
-/// code.
-///
-/// Returns `(full_text_paths, vector_paths)`, both sorted so a re-registration
-/// is byte-identical.
-///
-/// Three rules:
-///
-/// - **Relation properties are skipped.** They become edges, not payload.
-/// - **Only text is indexed.** Identifiers, timestamps, booleans, numbers,
-///   arrays and raw JSON carry nothing a search would rank.
-/// - **Vectors take prose only.** An enum (`active | suspended`) and a field
-///   named like an identifier (`external_id`, `slug`, `version`) are keyword
-///   matter; embedding them adds noise without adding meaning. They stay in the
-///   lexical set.
-///
-/// [`BASE_SEARCH_FIELDS`] is added to every type: the conventional human-facing
-/// fields an object carries whether or not its entity declares them. The gear
-/// skips a path a payload does not have, so naming them costs nothing and keeps
-/// the 43 entities whose declared fields are all identifiers and timestamps
-/// from registering with no vector path at all.
-fn search_paths(entity: &Value) -> (Vec<String>, Vec<String>) {
-    let mut full_text: BTreeSet<String> = BASE_SEARCH_FIELDS.iter().map(|f| path(f)).collect();
-    let mut vector: BTreeSet<String> = full_text.clone();
-    for p in entity
-        .get("properties")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-    {
-        // Relation properties become edges; `_`-prefixed names are ours
-        // (`_scope`), not the model's.
-        if matches!(
-            p.get("extends").and_then(Value::as_str),
-            Some("edge") | Some("link")
-        ) {
-            continue;
-        }
-        let Some(name) = p.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        if name.is_empty() || name.starts_with('_') {
-            continue;
-        }
-        let declared = p.get("type").and_then(Value::as_str).unwrap_or("").trim();
-        let Some(kind) = text_kind(declared) else {
-            continue;
-        };
-        full_text.insert(path(name));
-        if kind == TextKind::Prose && !is_identifier_name(name) {
-            vector.insert(path(name));
-        }
-    }
-    (
-        full_text.into_iter().collect(),
-        vector.into_iter().collect(),
-    )
-}
-
-/// Indexed on every domain type, declared or not.
-const BASE_SEARCH_FIELDS: [&str; 4] = ["name", "title", "description", "summary"];
-
-/// Declared types that are not text: nothing a lexical or vector search ranks.
-const NON_TEXT_TYPES: [&str; 14] = [
-    "EntityId",
-    "TypeId",
-    "KitId",
-    "SourceId",
-    "URL",
-    "Email",
-    "ExternalIdentity",
-    "VersionRange",
-    "Priority",
-    "timestamp",
-    "boolean",
-    "JSON",
-    "number",
-    "int",
-];
-
-/// Field names that read as identifiers whatever their declared type — keyword
-/// matter, so they are searched but not embedded.
-const IDENTIFIER_NAMES: [&str; 10] = [
-    "id",
-    "key",
-    "slug",
-    "version",
-    "external_id",
-    "url",
-    "state",
-    "status",
-    "provider",
-    "kind",
-];
-
-#[derive(PartialEq, Eq)]
-enum TextKind {
-    /// Free text: worth embedding.
-    Prose,
-    /// A closed value set (`draft | published`): worth matching, not embedding.
-    Enum,
-}
-
-fn path(field: &str) -> String {
-    format!("/payload/{field}")
-}
-
-fn text_kind(declared: &str) -> Option<TextKind> {
-    if declared.is_empty() || declared.ends_with("[]") {
-        return None;
-    }
-    if NON_TEXT_TYPES.iter().any(|t| declared.starts_with(t)) {
-        return None;
-    }
-    if declared.contains('|') {
-        return Some(TextKind::Enum);
-    }
-    declared.starts_with("string").then_some(TextKind::Prose)
-}
-
-fn is_identifier_name(name: &str) -> bool {
-    IDENTIFIER_NAMES.contains(&name) || name.ends_with("_id")
-}
-
 /// The relation-properties of an entity — those carrying an `extends`
 /// (`edge`/`link`), i.e. the ones that become graph edges rather than payload
 /// scalar fields.
@@ -644,6 +577,52 @@ pub enum ModelEdgeKind {
     Inherits,
     /// An entity to a related entity (one declared relation).
     Declares,
+}
+
+/// One entity as the `object_type` node the model graph stores for it: the
+/// flat keys a query or a visualization reads, plus the whole entity document
+/// verbatim under `entity`. That document is the authoritative copy — it is
+/// what makes the sync lossless, so the ontology can be reassembled from the
+/// graph rather than only written to it.
+fn object_type_meta(e: &Value, ordinal: usize) -> Option<ObjectTypeMeta> {
+    let id = e.get("id").and_then(Value::as_str)?;
+    let name = e.get("name").and_then(Value::as_str).unwrap_or(id);
+    let field_count = e
+        .get("properties")
+        .and_then(Value::as_array)
+        .map(|ps| {
+            ps.iter()
+                .filter(|p| {
+                    !matches!(
+                        p.get("extends").and_then(Value::as_str),
+                        Some("edge") | Some("link")
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    Some(ObjectTypeMeta {
+        entity_id: id.to_string(),
+        name: name.to_string(),
+        payload: json!({
+            "id": id,
+            "name": name,
+            "bucket": e.get("bucket").and_then(Value::as_str).unwrap_or(""),
+            "kind": e.get("kind").and_then(Value::as_str).unwrap_or(""),
+            "layer": e.get("layer").and_then(Value::as_str).unwrap_or(""),
+            "abstract": e.get("abstract").and_then(Value::as_bool).unwrap_or(false),
+            "extends": e.get("extends").and_then(Value::as_str),
+            "description": e.get("description").and_then(Value::as_str).unwrap_or(""),
+            "node_type_id": gts::node_type_id(id),
+            "field_count": field_count,
+            "relation_count": relation_properties(e).count(),
+            "entity": e.clone(),
+            // The entity's position in the model's entity array. That order is
+            // part of the document — the model UI renders in it — and the graph
+            // has no order of its own to recover it from.
+            "ordinal": ordinal,
+        }),
+    })
 }
 
 /// Push `value` onto `list` only if it is not already present (small sets, so
@@ -786,6 +765,91 @@ mod tests {
             && e.to_entity == "person"));
         // Non-core endpoints are skipped, not turned into dangling edges.
         assert!(g.skipped > 0);
+    }
+
+    #[test]
+    fn the_model_round_trips_through_its_graph_form() {
+        let o = Ontology::load();
+        // What the sync stores: the document's non-entity part as one node,
+        // and one entity document per object_type node.
+        let head = o.model_document();
+        assert!(head.get("buckets").is_some());
+        assert!(head.get("entities").is_none());
+        let entities = ordered_entities(&o);
+        assert_eq!(entities.len(), o.entities().len());
+
+        // What a reload reassembles: the same document, entity for entity, in
+        // the same order — so a boot off the graph is a boot off the model.
+        let back = Ontology::from_parts(head, entities).expect("reassembles");
+        assert_eq!(back.document(), o.document());
+    }
+
+    /// The entity documents in model order, the way a reload reconstructs them
+    /// from the graph: sorted on the `ordinal` each node was stored with, out of
+    /// nodes handed back in whatever order the graph likes.
+    fn ordered_entities(o: &Ontology) -> Vec<Value> {
+        let mut nodes = o.model_graph().nodes;
+        nodes.reverse(); // the graph's order is not the model's
+        nodes.sort_by_key(|n| n.payload["ordinal"].as_u64().unwrap_or(u64::MAX));
+        nodes
+            .into_iter()
+            .map(|n| n.payload["entity"].clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_stored_ordinal_is_what_recovers_the_models_order() {
+        let o = Ontology::load();
+        // Without the ordinal the graph's order stands, and what comes back is
+        // not the document that was stored.
+        let scrambled: Vec<Value> = o
+            .model_graph()
+            .nodes
+            .into_iter()
+            .rev()
+            .map(|n| n.payload["entity"].clone())
+            .collect();
+        let wrong = Ontology::from_parts(o.model_document(), scrambled).expect("reassembles");
+        assert_ne!(wrong.document(), o.document());
+        // With it, the model comes back exactly.
+        let back = Ontology::from_parts(o.model_document(), ordered_entities(&o)).unwrap();
+        assert_eq!(back.document(), o.document());
+    }
+
+    #[test]
+    fn one_types_node_carries_the_edit() {
+        let mut o = Ontology::load();
+        o.add_field(
+            "team",
+            FieldSpec {
+                name: "cost_center".into(),
+                type_name: "string".into(),
+                description: None,
+                required: false,
+            },
+        )
+        .unwrap();
+        // The single node written back carries the new field, so a reload sees
+        // the edit without the whole model being re-synced.
+        let node = o.object_type_node("team").expect("team object_type node");
+        let props = node.payload["entity"]["properties"].as_array().unwrap();
+        assert!(
+            props
+                .iter()
+                .any(|p| p["name"] == "cost_center" && p["type"] == "string")
+        );
+        // field_count counts payload fields, not the relation properties that
+        // become edges.
+        let scalar = props
+            .iter()
+            .filter(|p| {
+                !matches!(
+                    p.get("extends").and_then(Value::as_str),
+                    Some("edge") | Some("link")
+                )
+            })
+            .count();
+        assert_eq!(node.payload["field_count"], json!(scalar));
     }
 
     #[test]

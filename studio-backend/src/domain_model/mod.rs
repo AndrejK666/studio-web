@@ -2,10 +2,19 @@
 //! Storage, create objects of those types, extend the types, and read the
 //! model back so the frontend can be regenerated from it.
 //!
-//! The domain model is embedded from `studio-internal/domain-model-ui` (the
-//! full core model + system bases — 11 buckets, 140 entities). Each entity is registered
+//! Graph Storage is the model's system of record: the document embedded from
+//! `studio-internal/domain-model-ui` (the full core model + system bases — 11
+//! buckets, 140 entities) is the bootstrap seed a tenant runs until the graph
+//! holds a model of its own, and every edit is stored. So the model is per
+//! tenant, and it survives the process that changed it. Every edit is a
+//! numbered version carrying the patch that made it and its inverse, so the
+//! model has a history that can be read, audited and reverted.
+//!
+//! Each entity is registered
 //! as a GTS node type derived from the graph-storage `owned_node` family, and
-//! each relation kind as an endpoint-typed edge type derived from `static_edge`;
+//! each relation kind as an edge type derived from `static_edge` — carrying
+//! which declared relation it is, checked against the model's own source and
+//! target before it is written;
 //! objects are typed nodes keyed on a deterministic instance id. Prefers the
 //! real graph-storage gear; falls back to an in-memory store so the create/read
 //! loop still runs when the `graph` feature is off.

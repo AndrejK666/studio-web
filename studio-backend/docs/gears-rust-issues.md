@@ -147,3 +147,84 @@ metadata schemas with a working example.
 
 **Repro:** seed the schema above via `types-registry.config.entities` — `switch_to_ready`
 fails (`post-init failed for gear 'types-registry'`).
+
+---
+
+## 5. graph-storage: a node's version is writable but not readable, so only "create if absent" can be expressed
+
+*(Found 2026-09-09 while making the Studio domain model editable in the graph —
+`studio-backend/src/domain_model`. Against `cf-gears-graph-storage-v0.1.1`,
+rev `719ab47`.)*
+
+**Title:** `graph-storage: expose the node version on reads so expected_version can express a compare-and-set`
+
+**Body:**
+
+`NodeSpec.expected_version` implements a genuine compare-and-set — the ingest
+path refuses the batch when it disagrees with the stored row
+(`infra/store/ingest.rs`):
+
+```rust
+if let Some(expected) = spec.expected_version
+    && expected != current.version
+{
+    return Err(GraphStoreError::Conflict {
+        reason: format!("expected version {expected}, stored version is {}", current.version),
+    });
+}
+```
+
+The row carries it (`infra/storage/entity/node.rs`: *"Monotonic per-row version,
+the `expected_version` CAS target"*), and it is `1` on insert, `current + 1` on
+every update.
+
+**No read returns it.** `NodeView` and `NodeRow` carry an `ElementEnvelope`,
+which has `created_at/by`, `updated_at/by`, `deleted_at/by` and
+`graph_revision` — the revision the *read* observed, tenant-wide — but not the
+element's own version. `get_node`, `project_nodes`, `search` and `traverse` all
+go through those two types, so a producer that has just read a node has no
+value it could pass back as `expected_version`.
+
+So the ordinary optimistic-update flow is inexpressible:
+
+```
+read node -> modify payload -> write with expected_version = <the version I read>
+                                                              ^^^^^^^^^^^^^^^^^^^
+                                                              not obtainable
+```
+
+What *is* expressible is `expected_version: Some(0)`: no live row has version 0,
+so it means "this node must not exist". That is a usable create-if-absent, and
+we build on it — the domain model claims a version number by inserting a node at
+a key derived from that number, which gives cross-replica mutual exclusion for
+model edits. But it only guards *creation*. Every update in the gear is
+last-writer-wins, and two editors of one object silently clobber each other.
+
+Faking the missing primitive is possible and expensive: carry a revision counter
+in the payload and, for each write, first insert a claim node keyed on
+`(node_key, next_rev)` under `expected_version: 0`. It works — it is the same
+protocol as above — but it costs one extra node **per revision, forever** (a
+tombstoned key cannot be re-ingested before purge, so the claims cannot be
+cleaned up), and it doubles the write cost of every object. That is not a
+reasonable price for what one integer on the read path would give.
+
+**Proposal:** add the element's own version to `ElementEnvelope` (or to
+`NodeView` / `NodeRow` directly) — the value `expected_version` is compared
+against. It is already selected on the read path; only the mapping to the SDK
+type drops it. One field, no behaviour change, and `expected_version` becomes
+the compare-and-set the ingest code already implements.
+
+Same question for edges, which have no `expected_version` at all: a producer
+re-syncing a static edge cannot condition the write on what it read either.
+
+**Repro:**
+
+1. `ingest` a node, then `get_node` / `project_nodes` for it — the response has
+   no field whose value could be passed back as `expected_version`.
+2. Pass the only guessable values and watch both fail against a stored row:
+   `expected_version: 0` → `aborted` (correct, and is what makes create-if-absent
+   work); `expected_version: 1` → `aborted` for any node written more than once.
+
+**Impact:** every producer that edits stored nodes rather than only appending
+them has to choose between last-writer-wins and an unbounded side-table of
+claim nodes.
