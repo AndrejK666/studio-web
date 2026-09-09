@@ -40,7 +40,7 @@ mod gitlab;
 #[cfg(feature = "graph")]
 mod graph_sync;
 #[cfg(feature = "graph")]
-mod graph_sync_tasks;
+mod graph_sync_task;
 pub(crate) mod gts;
 mod notify;
 mod plugin;
@@ -218,6 +218,16 @@ impl Gear for StudioConnectorGear {
         // per delivery instead, which makes the two gears independent of
         // initialization order altogether — but publishing early costs nothing
         // and keeps the option open.
+        // The repository import is a task type now, so it survives a restart,
+        // can be cancelled and can be retried. Registered here because the
+        // service it needs is built here; the graph client and the alias
+        // resolver are resolved per run, inside the handler.
+        #[cfg(feature = "graph")]
+        crate::tasks::registry::register(Arc::new(graph_sync_task::GraphSyncTask::new(
+            Arc::clone(&service),
+            ctx.client_hub(),
+        )))?;
+
         let sender: Arc<dyn NotificationSender> = service.clone();
         ctx.client_hub().register_scoped::<dyn NotificationSender>(
             ClientScope::gts_id(NOTIFY_SENDER_INSTANCE_ID),
@@ -250,27 +260,14 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
             ctx.client_hub()
                 .get::<dyn graph_storage_sdk::GraphStorageClientV1>()
                 .inspect_err(|_| {
-                    warn!(
-                        "studio-connector: graph-storage client not registered — \
-                         repository import will answer 503"
-                    );
+                    warn!("studio-connector: no graph-storage client — imports answer 503");
                 })
                 .ok(),
-            // Same reasoning, and safe in either order: studio-identity
-            // publishes the resolver in its `init`, which runs before any
-            // gear's REST phase. Absent when that gear is inert (no database),
-            // in which case contributor nodes stay keyed per provider.
-            ctx.client_hub()
-                .get_scoped::<dyn crate::user_profile::AliasResolver>(&ClientScope::gts_id(
-                    crate::user_profile::IDENTITY_INSTANCE_ID,
-                ))
-                .inspect_err(|_| {
-                    warn!(
-                        "studio-connector: studio-user alias resolver not registered — \
-                         contributor nodes will not be resolved to Studio subjects"
-                    );
-                })
-                .ok(),
+            // The hub, not resolved clients: the import runs as a task now and
+            // its handler resolves what it needs per run — including the alias
+            // resolver, which used to be captured here. What is left on this
+            // path is the enqueue and the poll endpoint.
+            ctx.client_hub(),
         );
         // Built without the `graph` feature there is no knowledge graph to
         // import into, and the route is not registered at all.

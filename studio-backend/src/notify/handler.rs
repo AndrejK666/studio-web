@@ -216,10 +216,19 @@ impl TaskHandler for DeliveryTask {
             )
             .await
         {
-            Ok(sent) => TaskOutcome::Done(Some(match sent.id {
-                Some(id) => format!("delivered to {} ({id})", sent.target),
-                None => format!("delivered to {}", sent.target),
-            })),
+            Ok(sent) => TaskOutcome::done_with(
+                match &sent.id {
+                    Some(id) => format!("delivered to {} ({id})", sent.target),
+                    None => format!("delivered to {}", sent.target),
+                },
+                // Where it landed and the platform's own message id, for
+                // anything that wants to link to the post rather than read a
+                // sentence about it.
+                serde_json::json!({
+                    "target": sent.target,
+                    "platform_message_id": sent.id,
+                }),
+            ),
             Err(e) => {
                 let error = format!("{e:#}");
                 match classify(&error) {

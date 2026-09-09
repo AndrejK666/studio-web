@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS studio_tasks_runs (
     attempts SMALLINT NOT NULL DEFAULT 0,
     progress TEXT,
     summary TEXT,
+    result JSONB,
     last_error TEXT,
     cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
     idempotency_key TEXT,

@@ -387,8 +387,8 @@ impl SchedulerService {
             // Concurrency is judged against the run the last firing produced.
             if let Some(previous) = schedule.last_run_id
                 && concurrency != Concurrency::Allow
-                && let Some(state) = queue.state_of(self.owner, previous).await?
-                && !state.is_terminal()
+                && let Some(run) = queue.run(self.owner, previous).await?
+                && !run.state.is_terminal()
             {
                 match concurrency {
                     Concurrency::Forbid => {

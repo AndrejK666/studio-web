@@ -33,9 +33,16 @@ use uuid::Uuid;
 /// What a handler did with a task.
 #[derive(Debug, Clone)]
 pub enum TaskOutcome {
-    /// Finished. The string is a one-line summary for the run's history —
-    /// "412 nodes, 39 edges", not a log.
-    Done(Option<String>),
+    /// Finished. `summary` is one line for a person — "412 nodes, 39 edges",
+    /// not a log. `result` is for a program, and its shape belongs to the task
+    /// type: this gear stores it and does not read it.
+    ///
+    /// Built through [`TaskOutcome::done`] / [`TaskOutcome::done_with`] /
+    /// [`TaskOutcome::nothing`] rather than by hand.
+    Done {
+        summary: Option<String>,
+        result: Option<Value>,
+    },
     /// Did not finish, but might next time: a rate limit, a provider that is
     /// down, a lock somebody else holds. Retried with backoff up to the
     /// dispatcher's cap.
@@ -43,6 +50,24 @@ pub enum TaskOutcome {
     /// Will not finish without a human. Goes straight to the dead-letter table
     /// and the run reads `failed`.
     Failed(String),
+}
+
+impl TaskOutcome {
+    /// Finished, with a line for the history.
+    pub fn done(summary: impl Into<String>) -> Self {
+        Self::Done {
+            summary: Some(summary.into()),
+            result: None,
+        }
+    }
+
+    /// Finished, with a line for a person and a result for a program.
+    pub fn done_with(summary: impl Into<String>, result: Value) -> Self {
+        Self::Done {
+            summary: Some(summary.into()),
+            result: Some(result),
+        }
+    }
 }
 
 /// Everything a handler is given, and the only things it may assume.
@@ -94,6 +119,18 @@ impl TaskContext {
             .await;
     }
 
+    /// A progress handle that outlives this borrow.
+    ///
+    /// For a handler that hands its phases to code it does not own — see
+    /// [`ProgressReporter`].
+    pub fn reporter(&self) -> ProgressReporter {
+        ProgressReporter {
+            sink: Arc::clone(&self.progress),
+            tenant: self.tenant,
+            run_id: self.run_id,
+        }
+    }
+
     /// Whether somebody has asked this run to stop.
     ///
     /// A long-running handler should check this between units of work and
@@ -102,6 +139,26 @@ impl TaskContext {
     /// a coherent state.
     pub fn cancelled(&self) -> bool {
         self.cancel.is_cancelled()
+    }
+}
+
+/// Progress reporting detached from the borrow of a [`TaskContext`].
+///
+/// Some work this gear wraps reports its phase through a plain synchronous
+/// callback (`&dyn Fn(String)`), which cannot await. A reporter is cloneable
+/// and `'static`, so a handler can move one into a task that drains such a
+/// callback's messages.
+#[derive(Clone)]
+pub struct ProgressReporter {
+    sink: Arc<dyn ProgressSink>,
+    tenant: Uuid,
+    run_id: Uuid,
+}
+
+impl ProgressReporter {
+    /// Record the current phase.
+    pub async fn set(&self, phase: impl Into<String>) {
+        self.sink.set(self.tenant, self.run_id, phase.into()).await;
     }
 }
 
@@ -193,7 +250,7 @@ mod tests {
             self.0
         }
         async fn run(&self, _ctx: &TaskContext) -> TaskOutcome {
-            TaskOutcome::Done(None)
+            TaskOutcome::done("stub")
         }
     }
 

@@ -186,6 +186,9 @@ impl TaskDispatcher {
                     .col_expr(entity::Column::Summary, Expr::value(cut(summary)))
                     .col_expr(entity::Column::LastError, Expr::value(None::<String>));
             }
+            if let Some(result) = patch.result {
+                update = update.col_expr(entity::Column::Result, Expr::value(result.clone()));
+            }
             update.exec(&conn).await?;
             Ok::<(), anyhow::Error>(())
         };
@@ -202,6 +205,9 @@ struct Patch<'a> {
     attempts: Option<i16>,
     error: Option<&'a str>,
     summary: Option<&'a str>,
+    /// The handler's structured result. Written only on success, beside the
+    /// summary.
+    result: Option<&'a serde_json::Value>,
     starting: bool,
 }
 
@@ -212,6 +218,7 @@ impl<'a> Patch<'a> {
             attempts: None,
             error: None,
             summary: None,
+            result: None,
             starting: false,
         }
     }
@@ -350,7 +357,7 @@ impl LeasedMessageHandler for TaskDispatcher {
         }
 
         match outcome {
-            TaskOutcome::Done(summary) => {
+            TaskOutcome::Done { summary, result } => {
                 info!(
                     run_id = %run_id,
                     task_type = %row.task_type,
@@ -362,6 +369,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                     run_id,
                     Patch {
                         summary: summary.as_deref(),
+                        result: result.as_ref(),
                         ..Patch::state(RunState::Succeeded)
                     },
                 )

@@ -80,7 +80,11 @@ pub struct SyncRequest<'a> {
 }
 
 /// What a synchronisation did.
-#[derive(Debug, Clone, Default)]
+///
+/// `Serialize`/`Deserialize` because this is what a run records as its `result`
+/// and what the poll endpoint reads back out of it — the run is the only copy,
+/// so the shape has to survive the round trip.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SyncOutcome {
     /// Ref the tree was actually read at.
     pub git_ref: String,

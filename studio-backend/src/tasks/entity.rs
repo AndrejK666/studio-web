@@ -41,8 +41,12 @@ pub struct Model {
     /// The phase a running task last reported. Kept after the run ends: the
     /// last phase before a failure is usually the whole diagnosis.
     pub progress: Option<String>,
-    /// One line about what the run did, once it succeeded.
+    /// One line about what the run did, once it succeeded. For a person.
     pub summary: Option<String>,
+    /// The handler's own structured result, if it has one — counts from an
+    /// import, ids a caller needs. For a program: the shape belongs to the task
+    /// type, not to this gear, which is why it is opaque here.
+    pub result: Option<Json>,
     pub last_error: Option<String>,
     /// Set by the cancel endpoint. Cooperative — the dispatcher will not start
     /// a run that carries it, and a running handler sees it through its

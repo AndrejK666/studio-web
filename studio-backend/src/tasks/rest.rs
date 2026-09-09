@@ -74,8 +74,12 @@ pub struct RunDto {
     /// The phase the handler last reported. Kept after the run ends — the last
     /// phase before a failure is usually the diagnosis.
     pub progress: Option<String>,
-    /// One line about what it did, once it succeeded.
+    /// One line about what it did, once it succeeded — for a person.
     pub summary: Option<String>,
+    /// The handler's structured result, where it has one. Its shape belongs to
+    /// the task type; this gear stores it without reading it.
+    #[schema(value_type = Option<Object>)]
+    pub result: Option<serde_json::Value>,
     pub last_error: Option<String>,
     /// Whether somebody has asked it to stop.
     pub cancel_requested: bool,
@@ -132,6 +136,7 @@ fn to_dto(row: entity::Model) -> RunDto {
         attempts: i32::from(row.attempts),
         progress: row.progress,
         summary: row.summary,
+        result: row.result,
         last_error: row.last_error,
         cancel_requested: row.cancel_requested,
         requested_by: row.requested_by,

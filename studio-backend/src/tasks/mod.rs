@@ -97,12 +97,13 @@ pub trait TaskQueue: Send + Sync + 'static {
     /// Record and queue one run, returning its id.
     async fn enqueue(&self, ctx: &SecurityContext, run: NewRun<'_>) -> anyhow::Result<Uuid>;
 
-    /// Where a run this gear created has got to, or `None` if it is gone.
+    /// One run, as another gear sees it — or `None` if it is gone.
     ///
-    /// Here because a scheduler's concurrency policy is a statement about the
-    /// run it produced last time — `forbid` and `replace` are unanswerable
-    /// without it.
-    async fn state_of(&self, tenant: Uuid, run: Uuid) -> anyhow::Result<Option<RunState>>;
+    /// Here because a consumer that owns a task type has to answer for it: a
+    /// scheduler's `forbid` policy is a statement about the run it produced
+    /// last time, and a gear that kept its own poll endpoint has to serve it
+    /// from the run rather than from a second copy of the truth.
+    async fn run(&self, tenant: Uuid, run: Uuid) -> anyhow::Result<Option<RunView>>;
 
     /// Ask a run to stop, for a `replace` policy. Cooperative, like the REST
     /// verb it mirrors: it records the request and returns.
@@ -115,12 +116,19 @@ impl TaskQueue for TaskService {
         TaskService::enqueue(self, ctx, run).await.map(|row| row.id)
     }
 
-    async fn state_of(&self, tenant: Uuid, run: Uuid) -> anyhow::Result<Option<RunState>> {
+    async fn run(&self, tenant: Uuid, run: Uuid) -> anyhow::Result<Option<RunView>> {
         // A service identity, for the same reason the dispatcher builds one:
         // this is the gear's own bookkeeping, not a caller's read.
         let ctx = service_context(tenant)?;
         match TaskService::get(self, &ctx, tenant, run).await? {
-            Some(row) => Ok(Some(RunState::parse(&row.state)?)),
+            Some(row) => Ok(Some(RunView {
+                state: RunState::parse(&row.state)?,
+                payload: row.payload,
+                progress: row.progress,
+                summary: row.summary,
+                result: row.result,
+                last_error: row.last_error,
+            })),
             None => Ok(None),
         }
     }
@@ -171,6 +179,22 @@ pub fn platform_schedules() -> Vec<PlatformSchedule> {
         cron: "17 3 * * *",
         payload: serde_json::json!({ "keep_days": 30 }),
     }]
+}
+
+/// One run as another gear sees it. Deliberately not the entity: a consumer
+/// reads what a run *did*, not the bookkeeping around it.
+#[derive(Debug, Clone)]
+pub struct RunView {
+    pub state: RunState,
+    /// What the handler was given.
+    pub payload: serde_json::Value,
+    /// The phase it last reported.
+    pub progress: Option<String>,
+    /// One line for a person, once it succeeded.
+    pub summary: Option<String>,
+    /// The handler's structured result, where it has one.
+    pub result: Option<serde_json::Value>,
+    pub last_error: Option<String>,
 }
 
 /// Where a run has got to.

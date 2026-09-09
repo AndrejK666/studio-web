@@ -75,7 +75,7 @@ impl TaskHandler for RetentionSweep {
         // moment to honour a cancellation, and the sweep has nothing partial
         // to leave behind if it stops here.
         if ctx.cancelled() {
-            return TaskOutcome::Done(Some("cancelled before pruning anything".to_owned()));
+            return TaskOutcome::done("cancelled before pruning anything");
         }
 
         ctx.progress(format!("pruning runs finished before {cutoff}"))
@@ -103,9 +103,16 @@ impl TaskHandler for RetentionSweep {
             }
         };
 
-        TaskOutcome::Done(Some(format!(
-            "kept {keep_days} days: pruned {pruned} run(s), {dead_letters} resolved dead letter(s)"
-        )))
+        TaskOutcome::done_with(
+            format!(
+                "kept {keep_days} days: pruned {pruned} run(s),                  {dead_letters} resolved dead letter(s)"
+            ),
+            serde_json::json!({
+                "keep_days": keep_days,
+                "runs_pruned": pruned,
+                "dead_letters_pruned": dead_letters,
+            }),
+        )
     }
 }
 

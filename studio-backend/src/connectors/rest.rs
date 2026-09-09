@@ -28,14 +28,14 @@ use uuid::Uuid;
 
 use super::driver::{DriverIdentity, NotifyMessage, NotifyTarget, RemoteRepo};
 #[cfg(feature = "graph")]
-use super::graph_sync::{SyncOutcome, SyncRequest, sync_repository};
+use super::graph_sync::SyncOutcome;
 #[cfg(feature = "graph")]
-use super::graph_sync_tasks::TaskRegistry;
+use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
 use super::service::{Connection, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
-use crate::user_profile::AliasResolver;
-#[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
+#[cfg(feature = "graph")]
+use toolkit::client_hub::{ClientHub, ClientScope};
 
 /// Errors attributable to a connection as a resource.
 #[resource_error(gts_id!("cf.studio.connector.connection.v1~"))]
@@ -70,13 +70,10 @@ impl Connectors {
 #[derive(Clone)]
 pub struct GraphSink {
     client: Option<Arc<dyn GraphStorageClientV1>>,
-    /// The background imports this process has run, for the poll endpoint.
-    tasks: Arc<TaskRegistry>,
-    /// Identity resolution for contributor accounts. Absent when the
-    /// studio-user gear is inert (no database); person nodes then stay keyed
-    /// per provider. Carried here rather than as its own Extension because it
-    /// is only consulted on the graph path.
-    identity: Option<Arc<dyn AliasResolver>>,
+    /// Resolves the task queue per request. An import is a run now, and both
+    /// the enqueue and the poll endpoint read through here — lazily, so this
+    /// gear does not care whether `studio-tasks` initialized first.
+    hub: Arc<ClientHub>,
 }
 
 #[cfg(not(feature = "graph"))]
@@ -85,15 +82,8 @@ pub struct GraphSink;
 
 #[cfg(feature = "graph")]
 impl GraphSink {
-    pub fn new(
-        client: Option<Arc<dyn GraphStorageClientV1>>,
-        identity: Option<Arc<dyn AliasResolver>>,
-    ) -> Self {
-        Self {
-            client,
-            tasks: Arc::new(TaskRegistry::default()),
-            identity,
-        }
+    pub fn new(client: Option<Arc<dyn GraphStorageClientV1>>, hub: Arc<ClientHub>) -> Self {
+        Self { client, hub }
     }
 
     fn get(&self) -> ApiResult<&Arc<dyn GraphStorageClientV1>> {
@@ -102,6 +92,20 @@ impl GraphSink {
                 .with_detail("the knowledge graph is not available in this deployment")
                 .create()
         })
+    }
+
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "repository imports are not available in this deployment                          (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
     }
 }
 
@@ -1046,55 +1050,12 @@ pub struct GraphSyncTaskDto {
     pub outcome: Option<GraphSyncResultDto>,
 }
 
-/// Everything a background import needs, owned: the request is gone by the
-/// time the task runs.
-#[cfg(feature = "graph")]
-struct ImportJob {
-    connection_id: Uuid,
-    tenant: Uuid,
-    repo_full_path: String,
-    git_ref: Option<String>,
-    max_entries: usize,
-    max_contributors: u32,
-    project_id: Option<Uuid>,
-    project_name: Option<String>,
-    /// Resolver captured at request time, so the spawned task owns everything
-    /// it needs (the `GraphSink` extension is gone by then).
-    identity: Option<Arc<dyn AliasResolver>>,
-}
-
-#[cfg(feature = "graph")]
-impl ImportJob {
-    async fn run(
-        &self,
-        svc: &ConnectorService,
-        graph: &Arc<dyn GraphStorageClientV1>,
-        ctx: &SecurityContext,
-        progress: &(dyn Fn(String) + Sync),
-    ) -> anyhow::Result<SyncOutcome> {
-        sync_repository(
-            svc,
-            graph,
-            self.identity.as_ref(),
-            ctx,
-            &SyncRequest {
-                connection_id: self.connection_id,
-                tenant: self.tenant,
-                repo_full_path: &self.repo_full_path,
-                git_ref: self.git_ref.as_deref(),
-                max_entries: self.max_entries,
-                max_contributors: self.max_contributors,
-                project_id: self.project_id,
-                project_name: self.project_name.as_deref(),
-            },
-            progress,
-        )
-        .await
-    }
-}
-
-/// Walk a repository and write it into the caller's knowledge graph — in the
-/// background by default, inline on request.
+/// Walk a repository and write it into the caller's knowledge graph.
+///
+/// Enqueues a `connector.graph_sync` run and answers with its id. `wait: true`
+/// keeps the documented inline behaviour by polling that run until it finishes
+/// or a deadline passes — the work happens in the queue either way, so there is
+/// one code path and one record of it.
 #[cfg(feature = "graph")]
 async fn graph_sync(
     Extension(ctx): Extension<SecurityContext>,
@@ -1104,19 +1065,14 @@ async fn graph_sync(
     Json(body): Json<GraphSyncRequest>,
 ) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
     let svc = Arc::clone(connectors.get()?);
-    let sink = Arc::clone(graph.get()?);
-    let job = ImportJob {
-        connection_id: id,
-        tenant: body.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
-        repo_full_path: body.repo_full_path.trim().to_owned(),
-        git_ref: body.git_ref,
-        max_entries: body.max_entries,
-        max_contributors: body.max_contributors,
-        project_id: body.project_id,
-        project_name: body.project_name,
-        identity: graph.identity.clone(),
-    };
-    if job.repo_full_path.is_empty() {
+    // Resolved for its 503: an import cannot run where there is no graph, and
+    // saying so now beats a run that retries until it dead-letters.
+    let _ = graph.get()?;
+    let queue = graph.queue()?;
+
+    let tenant = body.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let repo_full_path = body.repo_full_path.trim().to_owned();
+    if repo_full_path.is_empty() {
         return Err(StudioConnectorError::invalid_argument()
             .with_constraint("repo_full_path must not be empty")
             .create());
@@ -1124,91 +1080,165 @@ async fn graph_sync(
     // The connection is resolved up front, with the request's own context, so a
     // wrong id or an unreadable token is answered now rather than found by a
     // poll later.
-    svc.driver_and_auth(&ctx, job.tenant, job.connection_id)
+    svc.driver_and_auth(&ctx, tenant, id).await.map_err(|e| {
+        StudioConnectorError::invalid_argument()
+            .with_constraint(format!("repository sync failed: {e:#}"))
+            .create()
+    })?;
+
+    let payload = serde_json::to_value(SyncPayload {
+        connection_id: id,
+        repo_full_path: repo_full_path.clone(),
+        git_ref: body.git_ref,
+        max_entries: body.max_entries,
+        max_contributors: body.max_contributors,
+        project_id: body.project_id,
+        project_name: body.project_name,
+    })
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let run_id = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant,
+                task_type: GRAPH_SYNC_TASK_TYPE,
+                payload,
+                // One repository's imports never run concurrently with each
+                // other: two walks of the same tree would fight over the same
+                // node keys.
+                partition_key: Some(&format!("{id}:{repo_full_path}")),
+                idempotency_key: None,
+            },
+        )
         .await
         .map_err(|e| {
-            StudioConnectorError::invalid_argument()
-                .with_constraint(format!("repository sync failed: {e:#}"))
+            StudioConnectorError::failed_precondition()
+                .with_precondition_violation(
+                    id.to_string(),
+                    format!("{e:#}"),
+                    "CONNECTOR_IMPORT_NOT_QUEUED",
+                )
                 .create()
         })?;
 
-    let tasks = Arc::clone(&graph.tasks);
-    let task_id = tasks.create(job.connection_id, &job.repo_full_path);
-
     if body.wait {
-        let progress = |phase: String| tasks.progress(&task_id, &phase);
-        return match job.run(&svc, &sink, &ctx, &progress).await {
-            Ok(outcome) => {
-                tasks.succeed(&task_id, outcome.clone());
-                Ok(Json(GraphSyncAcceptedDto {
-                    task_id,
-                    status: "succeeded".to_owned(),
-                    repo_full_path: job.repo_full_path,
-                    outcome: Some(outcome.into()),
-                }))
-            }
-            Err(e) => {
-                tasks.fail(&task_id, &format!("{e:#}"));
-                Err(StudioConnectorError::invalid_argument()
-                    .with_constraint(format!("repository sync failed: {e:#}"))
-                    .create())
-            }
-        };
+        return wait_for_import(&queue, tenant, run_id, repo_full_path).await;
     }
 
-    let repo_full_path = job.repo_full_path.clone();
-    let spawned_id = task_id.clone();
-    tokio::spawn(async move {
-        let progress = |phase: String| tasks.progress(&spawned_id, &phase);
-        match job.run(&svc, &sink, &ctx, &progress).await {
-            Ok(outcome) => {
-                tracing::info!(
-                    task_id = %spawned_id,
-                    repo = %job.repo_full_path,
-                    nodes = outcome.nodes_upserted,
-                    edges = outcome.edges_upserted,
-                    "studio-connector: repository import finished"
-                );
-                tasks.succeed(&spawned_id, outcome);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    task_id = %spawned_id,
-                    repo = %job.repo_full_path,
-                    error = %format!("{e:#}"),
-                    "studio-connector: repository import failed"
-                );
-                tasks.fail(&spawned_id, &format!("{e:#}"));
-            }
-        }
-    });
-
     Ok(Json(GraphSyncAcceptedDto {
-        task_id,
+        task_id: run_id.to_string(),
         status: "queued".to_owned(),
         repo_full_path,
         outcome: None,
     }))
 }
 
+/// Poll one import to completion, for `wait: true`.
+///
+/// Bounded well inside the gateway's deadline: an import of a few hundred files
+/// does not reliably finish in time, which the request field's own
+/// documentation has always said. Timing out here cancels nothing — the run
+/// carries on and the caller gets its id.
+#[cfg(feature = "graph")]
+async fn wait_for_import(
+    queue: &Arc<dyn crate::tasks::TaskQueue>,
+    tenant: Uuid,
+    run_id: Uuid,
+    repo_full_path: String,
+) -> ApiResult<JsonBody<GraphSyncAcceptedDto>> {
+    use crate::tasks::RunState;
+
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+    let until = std::time::Instant::now() + DEADLINE;
+    while std::time::Instant::now() < until {
+        tokio::time::sleep(POLL).await;
+        let Some(run) = queue
+            .run(tenant, run_id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        else {
+            break;
+        };
+        match run.state {
+            RunState::Succeeded => {
+                return Ok(Json(GraphSyncAcceptedDto {
+                    task_id: run_id.to_string(),
+                    status: run.state.as_str().to_owned(),
+                    repo_full_path,
+                    outcome: run.result.and_then(sync_outcome_of).map(Into::into),
+                }));
+            }
+            RunState::Failed | RunState::Cancelled => {
+                return Err(StudioConnectorError::invalid_argument()
+                    .with_constraint(format!(
+                        "repository sync failed: {}",
+                        run.last_error
+                            .unwrap_or_else(|| run.state.as_str().to_owned())
+                    ))
+                    .create());
+            }
+            RunState::Queued | RunState::Running => {}
+        }
+    }
+    // Still going. The honest answer is the task id — which is what the caller
+    // would have got without `wait`.
+    Ok(Json(GraphSyncAcceptedDto {
+        task_id: run_id.to_string(),
+        status: "running".to_owned(),
+        repo_full_path,
+        outcome: None,
+    }))
+}
+
+/// A run's `result` read back as the walk's own outcome.
+#[cfg(feature = "graph")]
+fn sync_outcome_of(result: serde_json::Value) -> Option<SyncOutcome> {
+    serde_json::from_value(result)
+        .inspect_err(|e| tracing::warn!("studio-connector: unreadable import result: {e}"))
+        .ok()
+}
+
 /// The state of one background import.
+///
+/// Served from the `connector.graph_sync` run rather than from a registry of
+/// this gear's own: the route and its response shape are unchanged, the state
+/// behind them now survives a restart. `task_id` is the run id, so
+/// `GET /studio-tasks/v1/runs/{task_id}` answers the same question with more
+/// detail.
 #[cfg(feature = "graph")]
 async fn graph_sync_task(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(graph): Extension<GraphSink>,
     Path(task_id): Path<String>,
 ) -> ApiResult<JsonBody<GraphSyncTaskDto>> {
-    let rec = graph.tasks.get(&task_id).ok_or_else(|| {
+    let queue = graph.queue()?;
+    let not_found = || {
         StudioConnectorError::not_found("no such import task")
             .with_resource(task_id.clone())
             .create()
-    })?;
+    };
+    // Task ids used to be this gear's own strings; they are run ids now, and an
+    // unparseable one is simply not a task this deployment has.
+    let run_id = Uuid::parse_str(&task_id).map_err(|_| not_found())?;
+    let run = queue
+        .run(ctx.subject_tenant_id(), run_id)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .ok_or_else(not_found)?;
+
+    let payload: Option<SyncPayload> = serde_json::from_value(run.payload).ok();
     Ok(Json(GraphSyncTaskDto {
-        task_id: rec.id,
-        connection_id: rec.connection_id,
-        repo_full_path: rec.repo_full_path,
-        status: rec.status.as_str().to_owned(),
-        message: rec.message,
-        outcome: rec.outcome.map(Into::into),
+        task_id,
+        connection_id: payload.as_ref().map_or_else(Uuid::nil, |p| p.connection_id),
+        repo_full_path: payload.map(|p| p.repo_full_path).unwrap_or_default(),
+        status: run.state.as_str().to_owned(),
+        // What it did if it finished, why it stopped if it failed, where it is
+        // if it is still going — in that order of usefulness to whoever is
+        // polling.
+        message: run.summary.or(run.last_error).or(run.progress),
+        outcome: run.result.and_then(sync_outcome_of).map(Into::into),
     }))
 }
