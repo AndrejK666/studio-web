@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { CatalogType } from "./api";
+import type { CatalogType, TypeCount } from "./api";
 import { errText } from "./format";
 
 /* ============================================================================
@@ -53,6 +53,10 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
   // prettifying an identifier — `domain.skill` is displayed "Competency" if
   // that is what the model calls it.
   const [titles, setTitles] = useState<Record<string, string>>({});
+  // `leaf_id -> count`, loaded after the table so hundreds of types render at
+  // once rather than waiting on one projection each. `null` while unknown: an
+  // absent count reads as "not counted yet", never as "empty".
+  const [objectCounts, setObjectCounts] = useState<Record<string, TypeCount> | null>(null);
   const [lens, setLens] = useState<Lens>("all");
   const [err, setErr] = useState<string | null>(null);
   // The type currently being written, so its row can say so and not be
@@ -73,6 +77,26 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .typeCounts(token)
+      .then(({ counts }) => {
+        if (!live) return;
+        const next: Record<string, TypeCount> = {};
+        for (const c of counts ?? []) next[c.leaf_id] = c;
+        setObjectCounts(next);
+      })
+      .catch(() => {
+        // A count that cannot be taken leaves the column blank. Showing zero
+        // would be a claim about the graph that nothing checked.
+        if (live) setObjectCounts(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token]);
 
   useEffect(() => {
     let live = true;
@@ -166,6 +190,12 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
         nodes are untouched either way — a mark is an opinion about a type, not a change to what
         is stored under it.
       </p>
+      <p className="objt-sub objt-note">
+        <strong>Objects</strong> counts the nodes of each type in this organization's graph.
+        graph-storage has no count in its contract, so the number is taken by paging and stops at
+        2 000 — past that it reads <code>2 000+</code>, which is also the point where the
+        Components page stops rendering.
+      </p>
 
       <div className="objt-lenses">
         {(Object.keys(LENS_LABEL) as Lens[]).map((l) => (
@@ -191,6 +221,7 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
             <tr>
               <th className="objt-tick">Component</th>
               <th>Type</th>
+              <th className="objt-num">Objects</th>
               <th>Namespace</th>
               <th>Page</th>
               <th>Identifier</th>
@@ -220,6 +251,9 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
                     </span>
                   )}
                 </td>
+                <td className="objt-num">
+                  <ObjectCount count={objectCounts?.[t.leaf_id]} known={objectCounts !== null} />
+                </td>
                 <td className="objt-dim">{familyOf(t.leaf_id)}</td>
                 <td>
                   <span className={`objt-pill objt-schema-${t.schema}`}>
@@ -240,12 +274,36 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
   );
 }
 
+/** How many nodes of a type there are, or an honest absence of that number.
+ *
+ *  Three states, and they are not the same thing: not counted yet, counted and
+ *  empty, counted past the cap. Only the middle one is a zero. */
+function ObjectCount({ count, known }: { count: TypeCount | undefined; known: boolean }) {
+  if (!known) return <span className="objt-dim">—</span>;
+  if (!count) return <span className="objt-dim">—</span>;
+  if (count.count === 0) return <span className="objt-zero">0</span>;
+  return (
+    <span
+      title={
+        count.capped
+          ? `More than ${count.count} — the count stops there, and so does the Components page`
+          : undefined
+      }
+    >
+      {count.count.toLocaleString()}
+      {count.capped && <span className="objt-plus">+</span>}
+    </span>
+  );
+}
+
 const OBJT_CSS = `
 .objt { padding: 22px 26px 40px; }
 .objt-head { display: flex; align-items: baseline; gap: 12px; }
 .objt-head h1 { font-size: 22px; margin: 0; }
 .objt-asof { color: var(--studio-muted); font-size: 12px; }
 .objt-sub { color: var(--studio-muted); font-size: 13px; max-width: 74ch; line-height: 1.55; }
+.objt-note { font-size: 12px; opacity: .85; }
+.objt-note code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
 .objt-lenses { display: flex; gap: 6px; margin: 14px 0 10px; flex-wrap: wrap; }
 .objt-lenses button {
   background: transparent; border: 1px solid var(--studio-border); color: inherit;
@@ -264,6 +322,9 @@ const OBJT_CSS = `
 .objt-table td { padding: 8px 10px; border-bottom: 1px solid var(--studio-border); vertical-align: middle; }
 .objt-table tr.is-component .objt-name { color: var(--studio-accent); }
 .objt-tick { width: 92px; }
+.objt-num { width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+.objt-zero { opacity: .4; }
+.objt-plus { opacity: .6; margin-left: 1px; }
 .objt-name { font-weight: 500; }
 .objt-dim { color: var(--studio-muted); }
 .objt-id { color: var(--studio-muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
