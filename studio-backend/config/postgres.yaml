@@ -315,6 +315,19 @@ gears:
     config:
       max_field_length: 200
 
+  # Document types, journey stages, capabilities and the documents themselves
+  # (ADR-0014). Without this section the gear stands down and registers no
+  # routes -- not a boot error, just a portal where the catalogue endpoints
+  # 404. It was configured in docker.yaml, k8s.yaml and oidc.yaml and missing
+  # here, so a backend run from this profile silently lost the whole gear.
+  #
+  # PostgreSQL only: its migrations refuse any other backend, which is why
+  # dev.yaml (SQLite) has no counterpart to this and cannot.
+  studio-documents:
+    database:
+      server: "pg_main"
+      dbname: "studio_documents"
+
   file-storage:
     database:
       server: "pg_main"
