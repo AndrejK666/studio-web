@@ -4,6 +4,10 @@ name: Studio Delivery
 # Test runs in this graph while the established publish/deploy workflows stay
 # authoritative until a full delivery run has been exercised in dev.
 on:
+  push:
+    branches: ["**"]
+    tags: ["v*", "infra-v*"]
+  pull_request:
   workflow_dispatch:
     inputs:
       stage:
@@ -59,13 +63,13 @@ permissions:
 concurrency:
   # Deployments serialize independently per target environment. A dev deploy
   # must never cancel an explicit test deploy (or the other way around).
-  group: studio-delivery-${{ inputs.stage }}-${{ (inputs.stage == 'deploy-services' || inputs.stage == 'deploy-infra') && inputs.environment || inputs.source_ref || github.ref }}
-  cancel-in-progress: ${{ inputs.stage != 'deploy-services' && inputs.stage != 'deploy-infra' }}
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'continuous' }}-${{ (inputs.stage == 'deploy-services' || inputs.stage == 'deploy-infra') && inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (inputs.stage != 'deploy-services' && inputs.stage != 'deploy-infra') }}
 
 jobs:
   test:
     name: 1. Test changed components
-    if: inputs.stage == 'validate' || inputs.stage == 'build'
+    if: github.event_name != 'workflow_dispatch' || inputs.stage == 'validate' || inputs.stage == 'build'
     uses: ./.github/workflows/ci.yml
     with:
       source_ref: ${{ inputs.source_ref || github.sha }}
@@ -82,7 +86,7 @@ jobs:
   publish:
     name: 2. Build & Publish
     needs: test
-    if: inputs.stage == 'build'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.stage == 'build')
     uses: ./.github/workflows/release.yml
     with:
       source_sha: ${{ inputs.source_ref || github.sha }}
@@ -91,6 +95,12 @@ jobs:
       source_ref_name: ${{ inputs.source_ref || github.ref_name }}
       source_ref_type: ${{ github.ref_type }}
       publish_latest: false
+      test_run_id: ${{ github.run_id }}
+      backend: ${{ github.ref_type == 'tag' && 'true' || needs.test.outputs.backend }}
+      frontend: ${{ github.ref_type == 'tag' && 'true' || needs.test.outputs.frontend }}
+      prototype: ${{ github.ref_type == 'tag' && 'true' || needs.test.outputs.prototype }}
+      theia: ${{ github.ref_type == 'tag' && 'true' || needs.test.outputs.theia }}
+      any_service: ${{ github.ref_type == 'tag' && 'true' || (needs.test.outputs.backend == 'true' || needs.test.outputs.frontend == 'true' || needs.test.outputs.prototype == 'true' || needs.test.outputs.theia == 'true' || needs.test.outputs.deployment == 'true') && 'true' || 'false' }}
     secrets: inherit
 
   deploy-preview:

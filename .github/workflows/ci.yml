@@ -1,9 +1,6 @@
-name: Test Changed Components
+name: Test Changed Components (internal)
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
   workflow_call:
     inputs:
       source_ref:
@@ -46,11 +43,14 @@ jobs:
     name: Detect affected components
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      prototype: ${{ steps.filter.outputs.prototype }}
-      theia: ${{ steps.filter.outputs.theia }}
-      infra: ${{ steps.filter.outputs.infra }}
+      # A release tag is an explicit reproducibility point. Test every service
+      # operand for v* and infrastructure operands for infra-v*, rather than
+      # relying on a tag diff that has no branch base.
+      backend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.backend }}
+      frontend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.frontend }}
+      prototype: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.prototype }}
+      theia: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.theia }}
+      infra: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.infra }}
       deployment: ${{ steps.filter.outputs.deployment }}
     steps:
       - uses: actions/checkout@v6

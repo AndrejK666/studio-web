@@ -1,28 +1,9 @@
-name: Publish Images
+name: Publish Images (internal)
 
-# Four ways in:
-#   * a stable `v*` tag — build service images, publish `latest`, and create a release.
-#   * a prerelease `v*-<label>` tag — build service images and create a
-#     prerelease without changing the stable `latest` channel.
-#   * an `infra-v*` tag — build graph PostgreSQL and Keycloak images, publish
-#     `infra-latest`, and create a separate infrastructure release.
-#   * a successful Test for a branch push — publish an immutable
-#     `sha-<full-commit>` snapshot without occupying a runner while tests run.
-#     Main also advances `edge`; a feature branch never moves `edge` or `latest`
-#     and its snapshot may be deployed only to dev (enforced by deploy.yml).
-#   * manual — rebuild an immutable snapshot for the selected ref.
+# Called only by Studio Delivery after its Test stage. Keeping this as a
+# reusable workflow prevents a second public Actions entry point and makes the
+# successful test result an explicit job dependency rather than a polled run.
 on:
-  push:
-    tags: ["v*", "infra-v*"]
-  workflow_run:
-    workflows: ["Test Changed Components"]
-    types: [completed]
-  workflow_dispatch:
-    inputs:
-      publish_latest:
-        description: "Also move the `latest` tag to this build"
-        type: boolean
-        default: false
   workflow_call:
     inputs:
       source_sha:
@@ -38,33 +19,41 @@ on:
         required: false
         type: boolean
         default: false
+      test_run_id:
+        required: true
+        type: string
+      backend:
+        required: true
+        type: string
+      frontend:
+        required: true
+        type: string
+      prototype:
+        required: true
+        type: string
+      theia:
+        required: true
+        type: string
+      any_service:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  # Serialize releases for one ref. Main snapshots may supersede an older
-  # build; version tags are never cancelled.
-  group: build-images-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
+  group: build-images-${{ inputs.source_sha }}
+  cancel-in-progress: ${{ inputs.source_ref_type != 'tag' }}
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-  SOURCE_SHA: ${{ github.event_name == 'workflow_call' && inputs.source_sha || (github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha) }}
-  SOURCE_REF_NAME: ${{ github.event_name == 'workflow_call' && inputs.source_ref_name || (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name) }}
-  SOURCE_REF_TYPE: ${{ github.event_name == 'workflow_call' && inputs.source_ref_type || (github.event_name == 'workflow_run' && 'branch' || github.ref_type) }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  SOURCE_REF_NAME: ${{ inputs.source_ref_name }}
+  SOURCE_REF_TYPE: ${{ inputs.source_ref_type }}
 
 jobs:
   require-ci:
-    # workflow_run executes from the default branch and has package-write
-    # potential later in this workflow. Never publish code from a fork or a
-    # pull_request Test; internal push Tests are the only branch trigger.
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
@@ -97,59 +86,12 @@ jobs:
 
       - name: Require successful tests for this exact commit
         id: tests
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            test "${{ github.event.workflow_run.conclusion }}" = success
-            test "${{ github.event.workflow_run.event }}" = push
-            test "${{ github.event.workflow_run.head_repository.full_name }}" = "$GITHUB_REPOSITORY"
-            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
-            echo "Successful Test workflow triggered this build for $SOURCE_SHA"
-            exit 0
-          fi
-
-          deadline=$((SECONDS + 1200))
-
-          while (( SECONDS < deadline )); do
-            # Use the file name rather than the display name so historical
-            # Test runs remain discoverable after a workflow rename.
-            runs="$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow ci.yml \
-              --commit "$SOURCE_SHA" \
-              --limit 10 \
-              --json databaseId,status,conclusion,url)"
-
-            if jq -e 'any(.[]; .status == "completed" and .conclusion == "success")' \
-              <<<"$runs" >/dev/null; then
-              run_id="$(jq -r '[.[] | select(.status == "completed" and .conclusion == "success") | .databaseId] | max' <<<"$runs")"
-              test -n "$run_id" && test "$run_id" != null
-              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-              echo "Successful Test workflow found for $SOURCE_SHA"
-              exit 0
-            fi
-
-            if jq -e 'any(.[]; .status != "completed")' <<<"$runs" >/dev/null; then
-              echo "Tests for $SOURCE_SHA are still running; waiting..."
-              sleep 15
-              continue
-            fi
-
-            if jq -e 'length > 0' <<<"$runs" >/dev/null; then
-              echo "Tests completed without success for $SOURCE_SHA" >&2
-              jq -r '.[] | "\(.status) \(.conclusion // "-") \(.url)"' <<<"$runs" >&2
-              exit 1
-            fi
-
-            echo "Test run for $SOURCE_SHA is not visible yet; waiting..."
-            sleep 10
-          done
-
-          echo "Timed out waiting for successful tests for $SOURCE_SHA" >&2
-          exit 1
+          test -n '${{ inputs.test_run_id }}'
+          echo "run_id=${{ inputs.test_run_id }}" >> "$GITHUB_OUTPUT"
+          echo "Studio Delivery Test stage succeeded for $SOURCE_SHA"
 
       - uses: actions/checkout@v6
         if: steps.classify.outputs.scope == 'services'
@@ -159,18 +101,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.SOURCE_SHA }}
 
-      - name: Download the originating push range
-        if: steps.classify.outputs.scope == 'services' && github.event_name == 'workflow_run'
-        id: source_range
-        continue-on-error: true
-        uses: actions/download-artifact@v7
-        with:
-          name: test-source-range
-          path: ${{ runner.temp }}/test-source-range
-          repository: ${{ github.repository }}
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
       - name: Select service components
         id: changes
         if: steps.classify.outputs.scope == 'services'
@@ -178,77 +108,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          full=false
-          snapshot_only=false
-          changed_file="$RUNNER_TEMP/service-image-paths"
-          : > "$changed_file"
-
-          # Tags and manual runs are explicit publication points: always
-          # produce a complete, independently reproducible image set.
-          if [ "$SOURCE_REF_TYPE" = "tag" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            full=true
-          else
-            if [ "${{ github.event_name }}" = "workflow_run" ]; then
-              if [ "${{ steps.source_range.outcome }}" = success ]; then
-                # shellcheck source=/dev/null
-                source "$RUNNER_TEMP/test-source-range/source-range.env"
-                test "$head" = "$SOURCE_SHA"
-              else
-                # Feature branches that started before this handoff existed
-                # have a successful Test but no range artifact. Publish a
-                # safe complete snapshot once rather than blocking them.
-                before=""
-              fi
-            else
-              before="${{ github.event.before }}"
-            fi
-            if [ -z "$before" ] || [[ "$before" =~ ^0+$ ]] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
-              full=true
-            else
-              git diff --name-only "$before" "$SOURCE_SHA" > "$changed_file"
-              # A change to the image pipeline itself gets one full proving
-              # build, so condition/output mistakes cannot silently skip it.
-              if grep -Eq '^\.github/workflows/release\.yml$' "$changed_file"; then
-                full=true
-              # A deploy workflow or Helm-only change must still get an
-              # immutable image-set tag. It does not change image sources, so
-              # copy the last known-good component images from `edge` rather
-              # than needlessly rebuilding the backend, UI, and Theia.
-              elif grep -Eq '^(\.github/workflows/deploy\.yml|deploy/)' "$changed_file"; then
-                snapshot_only=true
-              fi
-            fi
-          fi
-
-          selected() {
-            local pattern="$1"
-            if [ "$full" = true ] || grep -Eq "$pattern" "$changed_file"; then
-              printf 'true'
-            else
-              printf 'false'
-            fi
-          }
-
-          # graph-postgres is an infra operand. It is built and released only
-          # from infra-v*; changing it must not rebuild the runtime backend
-          # and file-storage sidecar on a normal service branch.
-          if [ "$full" = true ] || grep -Eq '^rust-toolchain\.toml$' "$changed_file"; then
-            backend=true
-          elif grep -Eq '^studio-backend/' "$changed_file" \
-            && grep -Ev '^studio-backend/docker/graph-postgres/' "$changed_file" >/dev/null; then
-            backend=true
-          else
-            backend=false
-          fi
-          frontend="$(selected '^studio-frontend/')"
-          prototype="$(selected '^studio-frontend-prototype/')"
-          theia="$(selected '^theia/')"
-          if [ "$backend" = true ] || [ "$frontend" = true ] || [ "$prototype" = true ] || [ "$theia" = true ] || [ "$snapshot_only" = true ]; then
-            any_service=true
-          else
-            any_service=false
-          fi
-
+          # The parent has already calculated the affected components and can
+          # only reach this reusable workflow after all requested test jobs
+          # succeeded. Reusing its values prevents a second, divergent diff.
+          backend='${{ inputs.backend }}'
+          frontend='${{ inputs.frontend }}'
+          prototype='${{ inputs.prototype }}'
+          theia='${{ inputs.theia }}'
+          any_service='${{ inputs.any_service }}'
+          for value in "$backend" "$frontend" "$prototype" "$theia" "$any_service"; do
+            test "$value" = true || test "$value" = false
+          done
           {
             echo "backend=$backend"
             echo "frontend=$frontend"
@@ -256,8 +126,7 @@ jobs:
             echo "theia=$theia"
             echo "any_service=$any_service"
           } >> "$GITHUB_OUTPUT"
-
-          echo "Selected: backend=$backend frontend=$frontend prototype=$prototype theia=$theia snapshot_only=$snapshot_only"
+          echo "Selected by Studio Delivery: backend=$backend frontend=$frontend prototype=$prototype theia=$theia"
 
   backend-binary:
     needs: require-ci
@@ -593,7 +462,7 @@ jobs:
       # components. `edge` is moved only after a successful complete set, so it
       # is the last known-good source for a remote registry-side copy.
       - name: Copy unchanged images into the immutable snapshot
-        if: env.SOURCE_REF_TYPE != 'tag' && github.event_name != 'workflow_dispatch'
+        if: env.SOURCE_REF_TYPE != 'tag'
         env:
           BUILD_BACKEND: ${{ needs.require-ci.outputs.backend }}
           BUILD_FRONTEND: ${{ needs.require-ci.outputs.frontend }}
@@ -742,7 +611,7 @@ jobs:
     # A main push publishes images, not releases.
     if: >-
       always() &&
-      github.ref_type == 'tag' &&
+      env.SOURCE_REF_TYPE == 'tag' &&
       needs.require-ci.outputs.scope == 'services' &&
       needs.backend-binary.result == 'success' &&
       needs.frontend-dist.result == 'success' &&
@@ -770,7 +639,7 @@ jobs:
     needs: [require-ci, infra-images]
     if: >-
       always() &&
-      github.ref_type == 'tag' &&
+      env.SOURCE_REF_TYPE == 'tag' &&
       needs.require-ci.outputs.scope == 'infra' &&
       needs.infra-images.result == 'success'
     runs-on: ubuntu-latest
