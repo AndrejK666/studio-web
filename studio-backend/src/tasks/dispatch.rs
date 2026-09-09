@@ -24,11 +24,13 @@
 //! of a flag nobody reads.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, Condition, EntityTrait};
+use serde_json::Value;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use toolkit_db::Db;
@@ -56,17 +58,18 @@ pub const MAX_ATTEMPTS: i16 = 5;
 /// How often a running task's cancel flag is re-read.
 const CANCEL_POLL: Duration = Duration::from_secs(5);
 
-/// Writes a running task's phase back to its row.
+/// Writes a running task's phase — and the counts it reports along with it —
+/// back to its row.
 pub(super) struct DbProgress {
     pub(super) db: Db,
 }
 
 #[async_trait]
 impl ProgressSink for DbProgress {
-    async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String) {
+    async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String, detail: Option<Value>) {
         let write = async {
             let conn = self.db.conn()?;
-            entity::Entity::update_many()
+            let mut update = entity::Entity::update_many()
                 .secure()
                 .scope_with(&AccessScope::for_tenant(tenant))
                 .filter(Condition::all().add(entity::Column::Id.eq(run_id)))
@@ -74,9 +77,14 @@ impl ProgressSink for DbProgress {
                 .col_expr(
                     entity::Column::UpdatedAt,
                     Expr::value(OffsetDateTime::now_utc()),
-                )
-                .exec(&conn)
-                .await?;
+                );
+            // A run that counts as it goes puts those counts here, so a poll
+            // endpoint reads live numbers out of the same field it reads the
+            // final ones from. Left alone when the report is a phase only.
+            if let Some(detail) = detail {
+                update = update.col_expr(entity::Column::Result, Expr::value(detail));
+            }
+            update.exec(&conn).await?;
             Ok::<(), anyhow::Error>(())
         };
         // Progress is a convenience for whoever is watching. Losing a line of
@@ -113,14 +121,18 @@ pub struct TaskDispatcher {
     /// Cancelled when the gear stops, so a long handler is told to wind up
     /// instead of being dropped mid-write.
     shutdown: CancellationToken,
+    /// Set once every gear has had its chance to register a handler — see the
+    /// missing-handler branch in [`Self::handle`].
+    ready: Arc<AtomicBool>,
 }
 
 impl TaskDispatcher {
-    pub fn new(db: Db, shutdown: CancellationToken) -> Self {
+    pub fn new(db: Db, shutdown: CancellationToken, ready: Arc<AtomicBool>) -> Self {
         Self {
             progress: Arc::new(DbProgress { db: db.clone() }),
             db,
             shutdown,
+            ready,
         }
     }
 
@@ -205,8 +217,9 @@ struct Patch<'a> {
     attempts: Option<i16>,
     error: Option<&'a str>,
     summary: Option<&'a str>,
-    /// The handler's structured result. Written only on success, beside the
-    /// summary.
+    /// The handler's structured result, written beside the summary. Replaces
+    /// whatever the run last reported as progress detail, which has the same
+    /// shape by convention — see [`registry::SyncReporter::set_with`].
     result: Option<&'a serde_json::Value>,
     starting: bool,
 }
@@ -273,31 +286,95 @@ impl LeasedMessageHandler for TaskDispatcher {
             return MessageResult::Ok;
         }
 
+        let attempt = msg.attempts.saturating_add(1);
+
         let Some(handler) = registry::handler(&row.task_type) else {
-            // Either a gear that owns this task type is not linked into this
-            // deployment, or its init has not run yet. Retry — bounded, so a
-            // task type nothing can run eventually dead-letters instead of
-            // spinning forever.
-            warn!(
-                run_id = %run_id,
-                task_type = %row.task_type,
-                "studio-tasks: no handler registered for this task type — waiting"
+            // Handlers are registered by the gears that own the work, and two
+            // of them can only do that in the REST phase — after this queue
+            // starts (see the note in `super`). A run delivered in the first
+            // moments of a process can therefore find its handler simply not
+            // there yet, and that is not the run's fault: while the process is
+            // still coming up, retry without spending an attempt on it.
+            if !self.ready.load(Ordering::Relaxed) {
+                info!(
+                    run_id = %run_id,
+                    task_type = %row.task_type,
+                    "studio-tasks: handlers are still registering — putting this run back"
+                );
+                return MessageResult::Retry;
+            }
+            // Past that, either the gear that owns this task type is not linked
+            // into this deployment or it failed to register. Retry, but not for
+            // ever: a task type nothing here can run has to end up somewhere a
+            // person will find it.
+            let reason = format!(
+                "no handler is registered for task type '{}' in this deployment",
+                row.task_type
             );
+            if attempt > MAX_ATTEMPTS {
+                warn!(run_id = %run_id, "studio-tasks: {reason} — dead-lettering");
+                self.record(
+                    tenant,
+                    run_id,
+                    Patch {
+                        error: Some(&reason),
+                        ..Patch::state(RunState::Failed)
+                    },
+                )
+                .await;
+                return MessageResult::Reject(reason);
+            }
+            warn!(run_id = %run_id, "studio-tasks: {reason} — waiting");
             return MessageResult::Retry;
         };
 
-        let attempt = msg.attempts.saturating_add(1);
+        // The queue counts an attempt when it hands the message over, not when
+        // a handler answers. So an attempt that never answered at all — cut
+        // short when the lease ran out, or lost with the process running it —
+        // is only ever caught here; the `Retry` arm below never sees one. This
+        // is what stops work that outlives its lease from being redelivered
+        // for ever.
+        if attempt > handler.max_attempts() {
+            let reason = format!(
+                "gave up after {} deliveries, the last of which never reported back — \
+                 the work is most likely longer than this queue's {}s lease",
+                attempt - 1,
+                super::LEASE.as_secs(),
+            );
+            warn!(run_id = %run_id, task_type = %row.task_type, "studio-tasks: {reason}");
+            self.record(
+                tenant,
+                run_id,
+                Patch {
+                    error: Some(&reason),
+                    ..Patch::state(RunState::Failed)
+                },
+            )
+            .await;
+            return MessageResult::Reject(reason);
+        }
+
         let security = match Self::worker_context(tenant) {
             Ok(ctx) => ctx,
             Err(e) => return MessageResult::Reject(format!("{e:#}")),
         };
 
+        // A row that already reads `running` on a fresh delivery means the last
+        // attempt never got to say anything. Record that on the row: otherwise
+        // the only visible symptom is `attempts` climbing.
+        let interrupted = (attempt > 1 && row.state == RunState::Running.as_str()).then(|| {
+            format!(
+                "attempt {} never reported back (its lease ran out, or its process stopped)",
+                attempt - 1
+            )
+        });
         self.record(
             tenant,
             run_id,
             Patch {
                 attempts: Some(attempt),
                 starting: true,
+                error: interrupted.as_deref(),
                 ..Patch::state(RunState::Running)
             },
         )

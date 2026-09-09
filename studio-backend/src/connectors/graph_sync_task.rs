@@ -15,16 +15,15 @@
 //! ## Progress crosses a sync boundary
 //!
 //! [`sync_repository`] reports its phase through a plain `&dyn Fn(String)`,
-//! which cannot await a database write. So the callback pushes into a channel
-//! and a drain task turns each message into a progress update through a
-//! [`ProgressReporter`]. That keeps the walk's own signature untouched — it
+//! which cannot await a database write. So the callback hands its lines to a
+//! [`SyncReporter`], and the drain task that comes with it turns each one into
+//! a progress update. That keeps the walk's own signature untouched — it
 //! predates all of this and has no business knowing about runs.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use toolkit::client_hub::{ClientHub, ClientScope};
 use tracing::warn;
 use uuid::Uuid;
@@ -107,40 +106,30 @@ impl TaskHandler for GraphSyncTask {
             .get_scoped::<dyn AliasResolver>(&ClientScope::gts_id(IDENTITY_INSTANCE_ID))
             .ok();
 
-        // The walk reports phases synchronously; a drain task turns them into
-        // progress writes. Unbounded because the sender must never block the
-        // walk, and the walk emits one message per phase, not per entry.
-        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        let reporter = ctx.reporter();
-        let drain = tokio::spawn(async move {
-            while let Some(phase) = rx.recv().await {
-                reporter.set(phase).await;
-            }
-        });
-        let progress = move |phase: String| {
-            // A closed channel means the drain is gone, which only happens on
-            // the way out. Losing a progress line then is not worth noticing.
-            let _ = tx.send(phase);
+        // The walk reports phases synchronously; the bridge's drain task turns
+        // them into progress writes.
+        let (progress, drain) = ctx.progress_bridge();
+        let outcome = {
+            let report = |phase: String| progress.set(phase);
+            sync_repository(
+                &self.service,
+                &graph,
+                identity.as_ref(),
+                &ctx.security,
+                &SyncRequest {
+                    connection_id: payload.connection_id,
+                    tenant: ctx.tenant,
+                    repo_full_path: &payload.repo_full_path,
+                    git_ref: payload.git_ref.as_deref(),
+                    max_entries: payload.max_entries,
+                    max_contributors: payload.max_contributors,
+                    project_id: payload.project_id,
+                    project_name: payload.project_name.as_deref(),
+                },
+                &report,
+            )
+            .await
         };
-
-        let outcome = sync_repository(
-            &self.service,
-            &graph,
-            identity.as_ref(),
-            &ctx.security,
-            &SyncRequest {
-                connection_id: payload.connection_id,
-                tenant: ctx.tenant,
-                repo_full_path: &payload.repo_full_path,
-                git_ref: payload.git_ref.as_deref(),
-                max_entries: payload.max_entries,
-                max_contributors: payload.max_contributors,
-                project_id: payload.project_id,
-                project_name: payload.project_name.as_deref(),
-            },
-            &progress,
-        )
-        .await;
 
         // Drop the sender so the drain ends, then let it finish the queue.
         drop(progress);

@@ -43,7 +43,9 @@ mod rest;
 pub mod service;
 mod sweep;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -52,7 +54,9 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::contracts::{DatabaseCapability, RunnableCapability};
 use toolkit::{Gear, GearCtx};
-use toolkit_db::outbox::{Outbox, OutboxHandle, Partitions, outbox_migrations_with_prefix};
+use toolkit_db::outbox::{
+    LeaseConfig, Outbox, OutboxHandle, Partitions, outbox_migrations_with_prefix,
+};
 use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -71,6 +75,29 @@ const QUEUE: &str = "runs";
 /// four: a task is long (a repository import is tens of seconds) and the
 /// partition it occupies is blocked while it runs.
 const PARTITIONS: u32 = 8;
+
+/// How long a run may hold its partition before the queue takes the message
+/// back and hands it to somebody else.
+///
+/// The default is 30 seconds, which is wrong for everything in this gear: the
+/// queue cancels the handler at `LEASE - LEASE_HEADROOM` and redelivers, so a
+/// repository import (tens of seconds) or a catalog sync (minutes) was cut
+/// short and started again for ever — and because the queue counts an attempt
+/// when it *hands over* a message, not when a handler answers, such an attempt
+/// never reached the retry cap either.
+///
+/// Fifteen minutes is the other side of that trade: a lease is also how long
+/// it takes to notice that the process holding a run has died, so this is the
+/// worst-case delay before a crashed run is retried, and how long its
+/// partition stays blocked (one of eight). Work that genuinely needs longer is
+/// caught by the attempt cap in [`dispatch`] and dead-lettered with that
+/// reason, rather than running unnoticed.
+const LEASE: Duration = Duration::from_secs(15 * 60);
+
+/// Time the queue keeps back, out of [`LEASE`], for the ack round-trip after a
+/// handler returns. Ten seconds rather than the default two: this gear's acks
+/// write the run row as well.
+const LEASE_HEADROOM: Duration = Duration::from_secs(10);
 
 /// Payload type on the queue.
 const PAYLOAD_TYPE: &str = "cf.studio.tasks.run.v1";
@@ -276,6 +303,10 @@ pub struct StudioTasksGear {
     /// than dropped. Owned here because the pipeline starts in `init`, before
     /// the runtime hands out its own token.
     shutdown: OnceLock<CancellationToken>,
+    /// False until the runtime's `start` phase, which is the first moment every
+    /// gear has had its chance to register a handler. The dispatcher reads it
+    /// to tell "nothing here can run this" from "not yet".
+    ready: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -316,7 +347,15 @@ impl Gear for StudioTasksGear {
             // repository walks — and holding a partition lock across that would
             // pin a database transaction for as long as the work takes. The
             // cost is at-least-once, so handlers must be idempotent.
-            .leased(TaskDispatcher::new(db.clone(), shutdown))
+            .leased(TaskDispatcher::new(
+                db.clone(),
+                shutdown,
+                Arc::clone(&self.ready),
+            ))
+            .lease(LeaseConfig {
+                duration: LEASE,
+                headroom: LEASE_HEADROOM,
+            })
             .start()
             .await?;
 
@@ -348,6 +387,7 @@ impl Gear for StudioTasksGear {
         info!(
             queue = QUEUE,
             partitions = PARTITIONS,
+            lease_secs = LEASE.as_secs(),
             task_types = ?registry::known_task_types(),
             "studio-tasks: run queue running"
         );
@@ -372,9 +412,16 @@ impl DatabaseCapability for StudioTasksGear {
 
 #[async_trait]
 impl RunnableCapability for StudioTasksGear {
-    /// Nothing to do: the pipeline came up in `init` (see the note there).
-    /// Declared so the gear gets a shutdown hook at all.
+    /// The pipeline itself came up in `init` (see the note there). What happens
+    /// here is that the dispatcher stops excusing an unknown task type: this
+    /// phase runs after every gear's `init` *and* REST registration, so from
+    /// now on a task type with no handler really has none.
     async fn start(&self, _cancel: CancellationToken) -> anyhow::Result<()> {
+        self.ready.store(true, Ordering::Relaxed);
+        info!(
+            task_types = ?registry::known_task_types(),
+            "studio-tasks: every handler is registered"
+        );
         Ok(())
     }
 

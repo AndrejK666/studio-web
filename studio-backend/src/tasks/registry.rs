@@ -25,6 +25,8 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use toolkit_security::SecurityContext;
 use tracing::info;
@@ -115,20 +117,39 @@ impl TaskContext {
     /// Record what the run is doing now.
     pub async fn progress(&self, phase: impl Into<String>) {
         self.progress
-            .set(self.tenant, self.run_id, phase.into())
+            .set(self.tenant, self.run_id, phase.into(), None)
             .await;
     }
 
-    /// A progress handle that outlives this borrow.
+    /// A progress handle for code that cannot await, and the task that drains
+    /// it.
     ///
-    /// For a handler that hands its phases to code it does not own — see
-    /// [`ProgressReporter`].
-    pub fn reporter(&self) -> ProgressReporter {
-        ProgressReporter {
-            sink: Arc::clone(&self.progress),
-            tenant: self.tenant,
-            run_id: self.run_id,
-        }
+    /// Work that predates runs reports its phase from a plain `fn` — a
+    /// `&dyn Fn(String)` callback, or a `&self` method deep in a pipeline —
+    /// which cannot await a database write. The [`SyncReporter`] takes those
+    /// calls without blocking and the returned task turns each one into a
+    /// progress update.
+    ///
+    /// The channel is unbounded because a report must never make the work wait,
+    /// and the work reports per phase, not per item. Drop the reporter and await
+    /// the handle to be sure the last line was written:
+    ///
+    /// ```ignore
+    /// let (progress, drain) = ctx.progress_bridge();
+    /// let outcome = walk(&progress).await;
+    /// drop(progress);
+    /// let _ = drain.await;
+    /// ```
+    pub fn progress_bridge(&self) -> (SyncReporter, JoinHandle<()>) {
+        let (tx, mut rx) = mpsc::unbounded_channel::<(String, Option<Value>)>();
+        let sink = Arc::clone(&self.progress);
+        let (tenant, run_id) = (self.tenant, self.run_id);
+        let drain = tokio::spawn(async move {
+            while let Some((phase, detail)) = rx.recv().await {
+                sink.set(tenant, run_id, phase, detail).await;
+            }
+        });
+        (SyncReporter { tx }, drain)
     }
 
     /// Whether somebody has asked this run to stop.
@@ -142,23 +163,33 @@ impl TaskContext {
     }
 }
 
-/// Progress reporting detached from the borrow of a [`TaskContext`].
-///
-/// Some work this gear wraps reports its phase through a plain synchronous
-/// callback (`&dyn Fn(String)`), which cannot await. A reporter is cloneable
-/// and `'static`, so a handler can move one into a task that drains such a
-/// callback's messages.
+/// Progress reporting from code that cannot await. Built by
+/// [`TaskContext::progress_bridge`].
 #[derive(Clone)]
-pub struct ProgressReporter {
-    sink: Arc<dyn ProgressSink>,
-    tenant: Uuid,
-    run_id: Uuid,
+pub struct SyncReporter {
+    tx: mpsc::UnboundedSender<(String, Option<Value>)>,
 }
 
-impl ProgressReporter {
+impl SyncReporter {
     /// Record the current phase.
-    pub async fn set(&self, phase: impl Into<String>) {
-        self.sink.set(self.tenant, self.run_id, phase.into()).await;
+    pub fn set(&self, phase: impl Into<String>) {
+        self.send(phase.into(), None);
+    }
+
+    /// Record the current phase and what the run has counted so far.
+    ///
+    /// The detail lands in the run's `result`, where a poll endpoint reads it:
+    /// partial while the run works, replaced by the handler's own result when
+    /// it finishes. That is why the two want the same shape — an import's poll
+    /// response must not lose its comment count the moment it succeeds.
+    pub fn set_with(&self, phase: impl Into<String>, detail: Value) {
+        self.send(phase.into(), Some(detail));
+    }
+
+    fn send(&self, phase: String, detail: Option<Value>) {
+        // A closed channel means the drain is gone, which happens on the way
+        // out. Losing a progress line then is not worth noticing.
+        let _ = self.tx.send((phase, detail));
     }
 }
 
@@ -166,7 +197,10 @@ impl ProgressReporter {
 /// drag a database handle through every handler signature.
 #[async_trait]
 pub(super) trait ProgressSink: Send + Sync + 'static {
-    async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String);
+    /// `detail`, when given, replaces the run's `result`; `None` leaves
+    /// whatever is there alone, so a phase line does not erase counts an
+    /// earlier one reported.
+    async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String, detail: Option<Value>);
 }
 
 /// One kind of background work.
