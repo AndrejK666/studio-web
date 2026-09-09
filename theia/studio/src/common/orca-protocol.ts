@@ -35,6 +35,14 @@ export interface OrcaRuntimeStatus {
      * headless `orca serve` — the session container's case.
      */
     readonly desktopRunning: boolean;
+    /**
+     * The agents this container can actually start, out of [[ORCA_AGENTS]].
+     *
+     * Orca runs an agent as its CLI in a terminal, so an agent it does not
+     * have is a `command not found` in a TUI two clicks later. The panel
+     * offers this list instead of the full one.
+     */
+    readonly agents?: readonly string[];
     /** Why the runtime could not be reached, when it could not. */
     readonly error?: string;
     /**
