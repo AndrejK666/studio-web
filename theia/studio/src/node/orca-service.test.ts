@@ -391,11 +391,38 @@ describe('a missing orca binary', () => {
         expect(error.message).toContain('no such worktree');
     });
 
-    it('falls back to the process message when there is no envelope', () => {
-        const error = invocationError({ message: 'killed by signal' }, ['status']);
+    // Node's own message is `Command failed: <the whole command line>`, which
+    // the panel used to show verbatim: the terminal handle, the text that was
+    // typed, and not one word about why. A live session showed exactly that.
+    it('names the command and the reason instead of echoing the command line', () => {
+        const error = invocationError({
+            code: 1,
+            message: 'Command failed: /usr/bin/orca-ide terminal send --terminal term_9d1 --text hello --enter --json',
+            stderr: 'runtime refused: terminal is not accepting input' + String.fromCharCode(10) + 'at Runtime.send'
+        }, ['terminal', 'send', '--terminal', 'term_9d1']);
+
+        expect(error.message).toBe(
+            'orca terminal send failed (exit 1): runtime refused: terminal is not accepting input'
+        );
+        // The typed text has no business in an error about the runtime.
+        expect(error.message).not.toContain('hello');
+        expect(error.message).not.toContain('Command failed');
+    });
+
+    it('says a kill was a timeout, which the exit code cannot', () => {
+        const error = invocationError(
+            { killed: true, message: 'Command failed: /usr/bin/orca-ide terminal wait' },
+            ['terminal', 'wait']
+        );
+
+        expect(error.message).toBe('orca terminal wait was killed before it answered (timeout)');
+    });
+
+    it('falls back to the process message when there is nothing better', () => {
+        const error = invocationError({ message: 'spawn EAGAIN' }, ['status']);
 
         expect(error.name).toBe('OrcaCliError');
-        expect(error.message).toBe('killed by signal');
+        expect(error.message).toBe('orca status failed: spawn EAGAIN');
     });
     it('marks the status so the panel can advise on the image, not the runtime', async () => {
         const impl = new OrcaServiceImpl();
@@ -481,5 +508,32 @@ describe('which agents a container can start', () => {
     it('honours PATHEXT, for a Windows checkout', () => {
         expect(availableAgents(agents, { PATH: 'C:/tools', PATHEXT: ['.COM', '.EXE', '.CMD'].join(path.delimiter) },
             exists('C:/tools/claude.CMD'))).toEqual(['claude']);
+    });
+});
+
+// stderr rode along on the error object and stopped there, so a failure
+// reached the panel with no reason attached.
+describe('what the panel is told', () => {
+
+    it('appends the runtime stderr to the status error', async () => {
+        const impl = new OrcaServiceImpl();
+        const json = jest.fn().mockRejectedValue(
+            new OrcaCliError('orca status failed (exit 1)', ['status'], 'connect ECONNREFUSED 127.0.0.1:6768')
+        );
+        (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+        const status = await impl.status();
+
+        expect(status.error).toBe('orca status failed (exit 1) — connect ECONNREFUSED 127.0.0.1:6768');
+    });
+
+    it('does not repeat a reason the message already carries', async () => {
+        const impl = new OrcaServiceImpl();
+        const json = jest.fn().mockRejectedValue(
+            new OrcaCliError('orca status failed (exit 1): boom', ['status'], 'boom')
+        );
+        (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+        expect((await impl.status()).error).toBe('orca status failed (exit 1): boom');
     });
 });

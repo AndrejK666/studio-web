@@ -68,8 +68,13 @@ export interface InvocationFailure {
     readonly stdout?: string;
     readonly stderr?: string;
     readonly message?: string;
-    /** `ENOENT` when there was no binary to run. */
-    readonly code?: string;
+    /**
+     * `ENOENT` when there was no binary to run — and the process exit code,
+     * as a number, when there was. Node overloads this field.
+     */
+    readonly code?: string | number;
+    /** True when the timeout killed it, rather than the CLI deciding to stop. */
+    readonly killed?: boolean;
 }
 
 /**
@@ -94,7 +99,21 @@ export function invocationError(failure: InvocationFailure, args: readonly strin
     if (envelope && envelope.ok === false) {
         return new OrcaCliError(describeError(envelope), args, failure.stderr ?? '');
     }
-    return new OrcaCliError(failure.message ?? 'orca invocation failed', args, failure.stderr ?? '');
+    // Node's own message is `Command failed: <the entire command line>`, which
+    // is what the panel used to show: the handle and the text that was typed,
+    // and not one word about why. Name the command, give the reason.
+    const what = args.slice(0, 2).join(' ') || 'invocation';
+    const stderr = (failure.stderr ?? '').trim().split(/\r?\n/)[0] ?? '';
+    if (failure.killed) {
+        return new OrcaCliError(
+            `orca ${what} was killed before it answered (timeout)`,
+            args,
+            failure.stderr ?? ''
+        );
+    }
+    const exit = typeof failure.code === 'number' ? ` (exit ${failure.code})` : '';
+    const reason = stderr || failure.message || 'no output';
+    return new OrcaCliError(`orca ${what} failed${exit}: ${reason}`, args, failure.stderr ?? '');
 }
 
 /**
