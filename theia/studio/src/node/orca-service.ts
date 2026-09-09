@@ -21,7 +21,7 @@ import {
     type OrcaWorktreeChange,
     ORCA_AGENTS
 } from '../common/orca-protocol';
-import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents } from './orca-cli';
+import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents, commandCwd } from './orca-cli';
 import { GitExecutor } from './git-executor';
 
 /** `terminal wait --for tui-idle` blocks until the agent stops producing. */
@@ -140,6 +140,18 @@ export class OrcaServiceImpl implements OrcaService {
             '--agent', request.agent,
             '--prompt', request.prompt
         ];
+        // Name the repository instead of relying on inference. `orca worktree
+        // create --help`: "If --repo is omitted, Orca infers the repo from the
+        // current Orca-managed worktree" — which is why this used to answer
+        // "Missing repo selector" when it ran from the Theia backend's own
+        // directory. Running in the workspace (see commandCwd) makes the
+        // inference work; saying it outright makes the command independent of
+        // where it runs. Verified against a live session: the workspace is the
+        // main worktree, `path:` is one of the selector forms the CLI accepts.
+        const root = commandCwd();
+        if (root) {
+            args.push('--repo', `path:${root}`);
+        }
         if (request.issue !== undefined) {
             args.push('--issue', String(request.issue));
         }

@@ -483,3 +483,51 @@ describe('which agents a container can start', () => {
             exists('C:/tools/claude.CMD'))).toEqual(['claude']);
     });
 });
+
+// `orca worktree create --help`: "If --repo is omitted, Orca infers the repo
+// from the current Orca-managed worktree." The panel's Create-worktree button
+// ran from the Theia backend's own directory, where that inference has nothing
+// to work with, and answered "Missing repo selector".
+describe('creating a worktree', () => {
+
+    it('names the repository rather than relying on inference', async () => {
+        const saved = process.env.STUDIO_WORKSPACE_ROOT;
+        process.env.STUDIO_WORKSPACE_ROOT = process.cwd(); // a path that exists
+        try {
+            const impl = new OrcaServiceImpl();
+            const json = jest.fn().mockResolvedValue({ worktrees: [] });
+            (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+            await impl.createTask({ name: 'feature-x', agent: 'claude', prompt: 'go' });
+
+            const args: string[] = json.mock.calls[0][0];
+            expect(args.slice(0, 2)).toEqual(['worktree', 'create']);
+            expect(args).toContain('--repo');
+            expect(args[args.indexOf('--repo') + 1]).toBe(`path:${process.cwd()}`);
+        } finally {
+            if (saved === undefined) {
+                delete process.env.STUDIO_WORKSPACE_ROOT;
+            } else {
+                process.env.STUDIO_WORKSPACE_ROOT = saved;
+            }
+        }
+    });
+
+    // Nothing to name is not a reason to send a broken selector.
+    it('omits the selector when no workspace can be resolved', async () => {
+        const saved = { ws: process.env.STUDIO_WORKSPACE_ROOT, repo: process.env.STUDIO_REPOSITORY_ROOT };
+        process.env.STUDIO_WORKSPACE_ROOT = '/definitely-not-here';
+        process.env.STUDIO_REPOSITORY_ROOT = '/definitely-not-here-either';
+        try {
+            const impl = new OrcaServiceImpl();
+            const json = jest.fn().mockResolvedValue({ worktrees: [] });
+            (impl as unknown as { cli: { json: jest.Mock } }).cli = { json };
+
+            await impl.createTask({ name: 'feature-x', agent: 'claude', prompt: 'go' });
+
+            expect(json.mock.calls[0][0]).not.toContain('--repo');
+        } finally {
+            Object.assign(process.env, { STUDIO_WORKSPACE_ROOT: saved.ws, STUDIO_REPOSITORY_ROOT: saved.repo });
+        }
+    });
+});
