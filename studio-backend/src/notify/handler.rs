@@ -11,6 +11,16 @@
 //! a crash between those two writes is exactly the lost notification the queue
 //! exists to prevent.
 //!
+//! ## Two kinds of destination
+//!
+//! A chat connection and an IDE session are both "somewhere to put a message",
+//! and almost nothing else about them is the same — see
+//! [`super::service::Destination`]. This handler is where that shows: the chat
+//! path reads a platform's refusal and decides whether it is worth another
+//! attempt; the editor path asks the studio-theia bridge, and a session that is
+//! not there right now is always worth another attempt because it may come
+//! back.
+//!
 //! ## Who delivers
 //!
 //! A queued delivery runs minutes after the request that asked for it, in a
@@ -41,6 +51,8 @@ use uuid::Uuid;
 
 use crate::connectors::driver::NotifyMessage;
 use crate::connectors::{NOTIFY_SENDER_INSTANCE_ID, NotificationSender};
+#[cfg(feature = "theia-bridge")]
+use crate::studio_theia::sdk::{NotifyEditor, SessionTarget, TheiaControlClientV1};
 use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Task type. A wire contract: it is stored on every queued run, so renaming
@@ -62,13 +74,36 @@ const _: () = assert!(MAX_ATTEMPTS > crate::tasks::DEFAULT_MAX_ATTEMPTS);
 
 /// What the accept path puts on the queue. The message itself, because the run
 /// is the only record there is.
+///
+/// Flat rather than a tagged enum, and the destination is decided by which
+/// field is present: a `workspace_id` means the IDE, a `connection_id` means a
+/// chat channel. That is not how a public API should be shaped, but this
+/// payload is read back out of runs that were queued by *older* builds of this
+/// gear — which wrote no tag at all — and a field-presence rule keeps every one
+/// of them readable without a migration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeliveryPayload {
-    pub connection_id: Uuid,
+    /// Chat destination: the connector connection to deliver through.
+    #[serde(default)]
+    pub connection_id: Option<Uuid>,
     /// Channel, for a provider that takes one. Absent for an incoming webhook,
     /// whose channel is fixed in the URL.
     #[serde(default)]
     pub target: Option<String>,
+    /// Editor destination: the workspace whose IDE session gets the message.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
+    /// `info` | `warn` | `error`, for the editor destination. Normalized by the
+    /// accept path, so anything unexpected here came from an older build.
+    #[serde(default)]
+    #[cfg_attr(
+        not(feature = "theia-bridge"),
+        allow(
+            dead_code,
+            reason = "read by the editor destination, which needs the theia-bridge feature"
+        )
+    )]
+    pub level: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -78,6 +113,35 @@ pub struct DeliveryPayload {
     /// Zulip topic; ignored by the other platforms.
     #[serde(default)]
     pub topic: Option<String>,
+}
+
+/// Where one queued message is going.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    Chat(Uuid),
+    Editor(Uuid),
+}
+
+impl DeliveryPayload {
+    /// Which destination this payload names.
+    ///
+    /// A payload naming both is refused rather than guessed: the accept path
+    /// cannot produce one, so it means a caller wrote a run row by hand or a
+    /// future build changed the shape — either way, picking one silently would
+    /// send the message somewhere nobody asked for.
+    pub fn bound(&self) -> anyhow::Result<Bound> {
+        match (self.connection_id, self.workspace_id) {
+            (Some(connection), None) => Ok(Bound::Chat(connection)),
+            (None, Some(workspace)) => Ok(Bound::Editor(workspace)),
+            (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                "this run names both a connection and a workspace, so there is no way \
+                 to tell where the message was meant to go"
+            )),
+            (None, None) => Err(anyhow::anyhow!(
+                "this run names neither a connection nor a workspace to deliver to"
+            )),
+        }
+    }
 }
 
 /// Whether an error is worth another attempt.
@@ -186,6 +250,27 @@ impl TaskHandler for DeliveryTask {
             }
         };
 
+        let bound = match payload.bound() {
+            Ok(bound) => bound,
+            // Same reasoning as an unreadable payload: no retry can fix it.
+            Err(e) => return TaskOutcome::Failed(format!("studio-notify: {e}")),
+        };
+
+        match bound {
+            Bound::Chat(connection_id) => self.to_chat(ctx, connection_id, payload).await,
+            Bound::Editor(workspace_id) => self.to_editor(ctx, workspace_id, payload).await,
+        }
+    }
+}
+
+impl DeliveryTask {
+    /// Post to Slack/Zulip/Discord through the connector drivers.
+    async fn to_chat(
+        &self,
+        ctx: &TaskContext,
+        connection_id: Uuid,
+        payload: DeliveryPayload,
+    ) -> TaskOutcome {
         let sender = match self
             .hub
             .get_scoped::<dyn NotificationSender>(&ClientScope::gts_id(NOTIFY_SENDER_INSTANCE_ID))
@@ -210,7 +295,7 @@ impl TaskHandler for DeliveryTask {
             .deliver(
                 &ctx.security,
                 ctx.tenant,
-                payload.connection_id,
+                connection_id,
                 payload.target.as_deref(),
                 &message,
             )
@@ -236,6 +321,88 @@ impl TaskHandler for DeliveryTask {
                     Verdict::Transient => TaskOutcome::Retry(error),
                 }
             }
+        }
+    }
+
+    /// Show the message in a workspace's running IDE, through the studio-theia
+    /// control bridge.
+    #[cfg(not(feature = "theia-bridge"))]
+    async fn to_editor(
+        &self,
+        _ctx: &TaskContext,
+        workspace_id: Uuid,
+        _payload: DeliveryPayload,
+    ) -> TaskOutcome {
+        // The accept path refuses this build's IDE destinations, so a run that
+        // gets here was queued by a binary that had the bridge and delivered by
+        // one that does not. Permanent: this process will never grow it.
+        TaskOutcome::Failed(format!(
+            "studio-notify: this build cannot notify the IDE for workspace {workspace_id} \
+             — it was compiled without the `theia-bridge` feature"
+        ))
+    }
+
+    #[cfg(feature = "theia-bridge")]
+    async fn to_editor(
+        &self,
+        ctx: &TaskContext,
+        workspace_id: Uuid,
+        payload: DeliveryPayload,
+    ) -> TaskOutcome {
+        let editor = match self.hub.get::<dyn TheiaControlClientV1>() {
+            Ok(editor) => editor,
+            // studio-theia stood down (the bridge is off in this deployment).
+            // A deployment state, not a property of the message — and the
+            // accept path already refuses this, so a run that reaches here was
+            // queued while the bridge was still wired.
+            Err(e) => {
+                warn!("studio-notify: no IDE bridge registered — waiting: {e}");
+                return TaskOutcome::Retry(format!("no IDE bridge available: {e}"));
+            }
+        };
+
+        // The body the IDE shows. `title` is the headline it leads with, so the
+        // text becomes the detail line beneath it; with no title, the text *is*
+        // the headline.
+        let (message, detail) = match payload.title {
+            Some(title) => (title, Some(payload.text)),
+            None => (payload.text, None),
+        };
+        let request = NotifyEditor {
+            level: payload.level.unwrap_or_else(|| "info".to_owned()),
+            message,
+            detail: detail.filter(|d| !d.trim().is_empty()),
+            link: payload.link,
+            source: Some("Studio".to_owned()),
+        };
+
+        match editor
+            .notify_editor(&ctx.security, &SessionTarget { workspace_id }, &request)
+            .await
+        {
+            Ok(result) if result.shown => TaskOutcome::done_with(
+                format!("shown in the IDE for workspace {workspace_id}"),
+                serde_json::json!({ "shown": true, "workspace_id": workspace_id }),
+            ),
+            // The session answered, and said no editor was open to show it. The
+            // delivery happened; nobody saw it. Recorded as what it is rather
+            // than dressed up as either success or failure — a person reading
+            // the run's history is exactly who needs to know the difference.
+            Ok(_) => TaskOutcome::done_with(
+                format!(
+                    "the IDE session for workspace {workspace_id} took the message, but no \
+                     editor was open to show it"
+                ),
+                serde_json::json!({ "shown": false, "workspace_id": workspace_id }),
+            ),
+            // Everything the bridge fails with is worth another attempt: a
+            // session restarting, a control port not yet listening, the
+            // discovery client mid-boot. There is no permanent case — a
+            // workspace that no longer has a session may have one again in a
+            // minute, and the attempt cap is what ends it.
+            Err(e) => TaskOutcome::Retry(format!(
+                "cannot reach the IDE for workspace {workspace_id}: {e}"
+            )),
         }
     }
 }
@@ -287,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn a_payload_round_trips_through_the_queue() {
+    fn a_chat_payload_round_trips_through_the_queue() {
         let json = serde_json::json!({
             "connection_id": "11111111-2222-3333-4444-555555555555",
             "target": "C0ABC",
@@ -299,13 +466,48 @@ mod tests {
         assert_eq!(payload.target.as_deref(), Some("C0ABC"));
         assert_eq!(payload.text, "3 tests red");
         assert!(payload.topic.is_none());
+        assert_eq!(
+            payload.bound().unwrap(),
+            Bound::Chat(Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap())
+        );
     }
 
     #[test]
-    fn a_payload_without_a_connection_is_refused_by_serde() {
-        // The one required field. A run that named no connection could only
-        // dead-letter, so it is better refused where the message is read.
-        let json = serde_json::json!({ "text": "hello" });
-        assert!(serde_json::from_value::<DeliveryPayload>(json).is_err());
+    fn an_editor_payload_round_trips_through_the_queue() {
+        let json = serde_json::json!({
+            "workspace_id": "22222222-3333-4444-5555-666666666666",
+            "level": "warn",
+            "text": "the import failed",
+        });
+        let payload: DeliveryPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.level.as_deref(), Some("warn"));
+        assert_eq!(
+            payload.bound().unwrap(),
+            Bound::Editor(Uuid::parse_str("22222222-3333-4444-5555-666666666666").unwrap())
+        );
+    }
+
+    #[test]
+    fn a_payload_naming_no_destination_is_refused_where_it_is_read() {
+        // A run that named nowhere to deliver could only dead-letter, so it is
+        // better refused with a sentence than attempted.
+        let payload: DeliveryPayload =
+            serde_json::from_value(serde_json::json!({ "text": "hello" })).unwrap();
+        let err = payload.bound().unwrap_err().to_string();
+        assert!(
+            err.contains("neither a connection nor a workspace"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_payload_naming_both_destinations_is_refused_rather_than_guessed() {
+        let payload: DeliveryPayload = serde_json::from_value(serde_json::json!({
+            "connection_id": "11111111-2222-3333-4444-555555555555",
+            "workspace_id": "22222222-3333-4444-5555-666666666666",
+            "text": "hello",
+        }))
+        .unwrap();
+        assert!(payload.bound().is_err());
     }
 }

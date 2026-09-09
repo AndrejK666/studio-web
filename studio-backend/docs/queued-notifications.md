@@ -7,6 +7,10 @@ with retries. Use it for anything that must not be lost; keep using
 `POST /studio-connector/v1/connections/{id}/messages` for "send a test message
 and tell me what Slack said".
 
+Two kinds of destination: a chat channel (Slack, Zulip, Discord) through a
+connector connection, or the Theia IDE of whoever has a workspace open — see
+[The other destination](#the-other-destination-the-ide).
+
 ## One route, and the run is the record
 
 ```bash
@@ -49,6 +53,53 @@ both were in one database and one transaction. Moving the queue into
 database and the queue entry in another — and a crash between those two writes
 is exactly the lost notification the queue exists to prevent. One system of
 record, one commit.
+
+## The other destination: the IDE
+
+A notification does not have to go to a chat platform. Give `workspace_id`
+instead of `connection_id` and the message is shown in the Theia IDE of whoever
+has that workspace open — the same queue, the same run, the same retries:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "http://localhost:8090/cf/studio-notify/v1/messages" -d "{
+    \"workspace_id\": \"$WS\",
+    \"level\": \"warn\",
+    \"title\": \"The repository import failed\",
+    \"text\": \"GitHub answered 401 — the token was rotated.\",
+    \"link\": \"http://localhost:8080/projects/14/sources\"
+  }"
+```
+
+`title` becomes the headline the IDE leads with and `text` the line beneath it;
+`link` is offered as an *Open* action. `level` is `info` (default), `warn` or
+`error`, and an invented one is refused rather than shown as grey information.
+
+It travels over the studio-theia control bridge
+([theia-bridge-contract-v1.md](../../docs/theia-bridge-contract-v1.md),
+`notifyEditor`), so it needs a backend built with the `theia-bridge` feature and
+`studio-session.theia_control_enabled` on. Where either is missing, the accept
+path says which one.
+
+**Two things worth knowing before using it.**
+
+*A toast is only worth sending to somebody who is there.* The accept path
+resolves the workspace to a **live** session and refuses when there is none —
+"no IDE session to notify for workspace …. Start a session, or send this to a
+chat connection instead". A chat message waits in a channel; an IDE
+notification has nobody to wait for.
+
+*Reaching the session is not the same as being seen.* A session can be running
+with no browser tab attached to it. The bridge answers `shown: false` for that,
+and the run succeeds with a summary saying so — "the IDE session for workspace
+… took the message, but no editor was open to show it" — because it is neither
+a failure to retry nor a delivery to celebrate. A caller that needs certainty
+that a person saw something should not be using a toast for it.
+
+Everything the bridge itself fails with is retried: a session restarting, a
+control port not yet listening, a discovery client mid-boot. There is no
+permanent case — a workspace with no session now may have one in a minute — so
+the attempt cap is what ends it, and the dead letter carries the last reason.
 
 ## What guarantees what
 

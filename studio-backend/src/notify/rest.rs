@@ -26,7 +26,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::service::{NewDelivery, NotifyService};
+use super::service::{Destination, NewDelivery, NotifyService};
 
 /// Errors attributable to a delivery as a resource.
 #[resource_error(gts_id!("cf.studio.notify.delivery.v1~"))]
@@ -51,14 +51,28 @@ impl LicenseFeature for License {}
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct SendRequest {
-    /// Connection to deliver through, from
-    /// `GET /studio-connector/v1/connections`.
-    #[schema(value_type = String)]
-    pub connection_id: Uuid,
+    /// Chat destination: the connection to deliver through, from
+    /// `GET /studio-connector/v1/connections`. Give this or `workspace_id`,
+    /// never both.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub connection_id: Option<Uuid>,
     /// Channel, from `GET /studio-connector/v1/connections/{id}/targets`.
     /// Omitted for a provider whose credential fixes the channel.
     #[serde(default)]
     pub target: Option<String>,
+    /// Editor destination: the workspace whose running IDE shows the message,
+    /// through the studio-theia control bridge. Give this or `connection_id`.
+    ///
+    /// Refused unless that workspace has a live session right now — a
+    /// notification nobody can see is not worth queuing.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
+    /// How the IDE styles it: `info` (default) | `warn` | `error`. Only for
+    /// `workspace_id`; a chat platform has no notion of severity.
+    #[serde(default)]
+    pub level: Option<String>,
     /// A short headline, rendered bold above the body.
     #[serde(default)]
     pub title: Option<String>,
@@ -102,14 +116,35 @@ async fn send(
     Extension(notify): Extension<Notify>,
     Json(req): Json<SendRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<QueuedDto>)> {
+    // Exactly one destination. Refused rather than defaulted: a caller who
+    // names both has two different ideas about where this message goes, and
+    // picking one is how a notification ends up somewhere nobody expected.
+    let to = match (req.connection_id, req.workspace_id) {
+        (Some(connection_id), None) => Destination::Chat {
+            connection_id,
+            target: req.target.as_deref(),
+        },
+        (None, Some(workspace_id)) => Destination::Editor {
+            workspace_id,
+            level: req.level.as_deref().unwrap_or("info"),
+        },
+        _ => {
+            return Err(StudioNotifyError::invalid_argument()
+                .with_constraint(
+                    "name exactly one destination: `connection_id` for a chat channel, or \
+                     `workspace_id` for the IDE of whoever has that workspace open",
+                )
+                .create());
+        }
+    };
+
     let run_id = notify
         .0
         .accept(
             &ctx,
             NewDelivery {
                 tenant: req.tenant_id.unwrap_or_else(|| ctx.subject_tenant_id()),
-                connection_id: req.connection_id,
-                target: req.target.as_deref(),
+                to,
                 title: req.title.as_deref(),
                 text: &req.text,
                 link: req.link.as_deref(),
@@ -146,14 +181,17 @@ pub fn register_routes(
         .operation_id("studio_notify.send")
         .summary("Queue a notification for delivery")
         .description(
-            "Verifies the connection against the provider catalogue, then queues the \
-             message as a `notify.deliver` run and answers 202 with its id. An \
-             unusable connection, a missing channel or a channel sent to a webhook \
-             connection are all 400 here rather than a failed delivery later. \
-             Delivery is retried with exponential backoff and dead-lettered after \
-             several attempts; the run carries the outcome, so poll \
-             `GET /studio-tasks/v1/runs/{id}`. Pass `idempotency_key` to make your \
-             own retry of this request safe.",
+            "Queues the message as a `notify.deliver` run and answers 202 with its \
+             id. Two kinds of destination: `connection_id` posts to a Slack, Zulip \
+             or Discord channel, and `workspace_id` shows the message in the Theia \
+             IDE of whoever has that workspace open. Whichever it is, it is \
+             verified while there is still a request to answer — an unusable \
+             connection, a missing channel, a channel sent to a webhook \
+             connection, or a workspace with no live IDE session are all 400 here \
+             rather than a failed delivery later. Delivery is retried with \
+             exponential backoff and dead-lettered after several attempts; the run \
+             carries the outcome, so poll `GET /studio-tasks/v1/runs/{id}`. Pass \
+             `idempotency_key` to make your own retry of this request safe.",
         )
         .tag("StudioNotify")
         .authenticated()
