@@ -611,7 +611,7 @@ jobs:
     # A main push publishes images, not releases.
     if: >-
       always() &&
-      env.SOURCE_REF_TYPE == 'tag' &&
+      inputs.source_ref_type == 'tag' &&
       needs.require-ci.outputs.scope == 'services' &&
       needs.backend-binary.result == 'success' &&
       needs.frontend-dist.result == 'success' &&
@@ -639,7 +639,7 @@ jobs:
     needs: [require-ci, infra-images]
     if: >-
       always() &&
-      env.SOURCE_REF_TYPE == 'tag' &&
+      inputs.source_ref_type == 'tag' &&
       needs.require-ci.outputs.scope == 'infra' &&
       needs.infra-images.result == 'success'
     runs-on: ubuntu-latest
