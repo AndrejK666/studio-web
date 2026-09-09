@@ -438,8 +438,11 @@ mod tests {
     /// noticing.
     ///
     /// Every entry here is a claim somebody wrote down. An unlisted omission
-    /// fails the test, and so does a listed one that no longer applies.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 4] = [
+    /// fails the test, and so does a listed one that no longer applies -- which
+    /// is how the fourth entry left: `studio-user` was recorded here as an open
+    /// question, the question was answered, and the test demanded the entry go
+    /// with it.
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 3] = [
         (
             "dev.yaml",
             "studio-credstore-pg",
@@ -457,14 +460,6 @@ mod tests {
             "studio-documents",
             "its migrations are PostgreSQL only (ADR-0014), so a SQLite database \
              here would fail the gear's init rather than enable it",
-        ),
-        (
-            "postgres.yaml",
-            "studio-user",
-            "OPEN QUESTION, not a decision. dev.yaml has it and this profile \
-             calls itself the same assembly, so this looks like the same kind of \
-             omission `studio-documents` was. Left as it is because the gear is \
-             not mine to switch on; delete this entry when somebody rules on it",
         ),
     ];
 
