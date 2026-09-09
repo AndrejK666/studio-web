@@ -387,6 +387,9 @@ impl CatalogService {
 
         // Gear node value per crate name; version nodes/edges accumulate aside.
         let mut gear_values: BTreeMap<String, Value> = BTreeMap::new();
+        // Components that carry a model of their own, keyed by slug. Declared
+        // beside the gears because they are upserted in the same breath.
+        let mut kit_values: BTreeMap<String, Value> = BTreeMap::new();
         let mut version_nodes: Vec<GtsNode> = Vec::new();
         let mut version_edges: Vec<GtsEdge> = Vec::new();
         let mut profile_nodes: Vec<GtsNode> = Vec::new();
@@ -457,6 +460,15 @@ impl CatalogService {
                     Ok(repo_gears) => {
                         any_ok = true;
                         for rg in repo_gears {
+                            // A component that carries its own model goes in as
+                            // its own node type. It has no crates.io half to be
+                            // merged with, and no profile: the fields a gear
+                            // keeps in an editable profile are, for a kit, the
+                            // manifest itself.
+                            if let Some(payload) = rg.payload {
+                                kit_values.insert(rg.crate_name.clone(), payload);
+                                continue;
+                            }
                             let kind = rg
                                 .kind
                                 .clone()
@@ -515,6 +527,12 @@ impl CatalogService {
             .map(|(name, value)| gts::gear_node(&name, value))
             .collect();
         let gears_total = all_nodes.len();
+        let kits_total = kit_values.len();
+        all_nodes.extend(
+            kit_values
+                .into_iter()
+                .map(|(slug, value)| gts::kit_node(slug.as_str(), value)),
+        );
         all_nodes.extend(version_nodes);
         all_nodes.extend(profile_nodes);
         let stored = all_nodes.len();
@@ -522,6 +540,7 @@ impl CatalogService {
 
         tracing::info!(
             gears = gears_total,
+            kits = kits_total,
             versions = versions_total,
             stored,
             "components-catalog: sync stored"
