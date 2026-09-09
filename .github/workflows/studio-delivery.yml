@@ -314,7 +314,9 @@ jobs:
       - run: echo "Test stage completed successfully."
   build-require-ci:
     name: 2. Build & Publish / require-ci
-    needs: test-complete
+    # test-complete proves the complete matrix; test-changes is also listed so
+    # this job can consume the selected-component outputs directly.
+    needs: [test-complete, test-changes]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.stage == 'build')
     runs-on: ubuntu-24.04
     outputs:
