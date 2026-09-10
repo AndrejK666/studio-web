@@ -102,3 +102,131 @@ impl LlmProxyConfig {
         env_non_empty(&self.api_key_env)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Which of the two places a setting comes from.
+    //!
+    //! Same indirection as `studio-spec-quality`, and the same reason: the
+    //! provider key stays out of the repository by living in a variable the
+    //! config only names. Here it decides which provider the IDE's AI talks to
+    //! and on whose account, so precedence resolving the wrong way is a bill
+    //! as much as a bug.
+    //!
+    //! Tests that write to the environment take [`crate::test_env::lock`]:
+    //! the process has one environment, so the lock has to be one too. Each
+    //! also uses a variable name of its own, so a failure names one test
+    //! rather than leaking.
+
+    use super::LlmProxyConfig;
+    use crate::test_env::lock;
+
+    fn config(suffix: &str) -> LlmProxyConfig {
+        LlmProxyConfig {
+            base_url_env: format!("STUDIO_TEST_LLM_BASE_URL_{suffix}"),
+            api_key_env: format!("STUDIO_TEST_LLM_API_KEY_{suffix}"),
+            model_env: format!("STUDIO_TEST_LLM_MODEL_{suffix}"),
+            ..LlmProxyConfig::default()
+        }
+    }
+
+    /// No default provider, on purpose: unconfigured means the IDE's AI is
+    /// off, not that it quietly points somewhere.
+    #[test]
+    fn an_unconfigured_proxy_resolves_to_nothing() {
+        let cfg = config("unset");
+        assert_eq!(cfg.resolve_base_url(), "");
+        assert_eq!(cfg.resolve_model(), "");
+        assert_eq!(cfg.resolve_api_key(), None);
+    }
+
+    #[test]
+    fn the_yaml_values_are_used_when_the_variables_are_unset() {
+        let cfg = LlmProxyConfig {
+            base_url: "https://api.example/v1".to_string(),
+            model: "some-model".to_string(),
+            ..config("yaml")
+        };
+        assert_eq!(cfg.resolve_base_url(), "https://api.example/v1");
+        assert_eq!(cfg.resolve_model(), "some-model");
+    }
+
+    #[test]
+    fn the_environment_beats_the_yaml_base_url_and_model() {
+        let _guard = lock();
+        let cfg = LlmProxyConfig {
+            base_url: "https://from-yaml.example/v1".to_string(),
+            model: "yaml-model".to_string(),
+            ..config("precedence")
+        };
+        unsafe {
+            std::env::set_var(&cfg.base_url_env, "https://from-env.example/v1");
+            std::env::set_var(&cfg.model_env, "env-model");
+        }
+        assert_eq!(cfg.resolve_base_url(), "https://from-env.example/v1");
+        assert_eq!(cfg.resolve_model(), "env-model");
+        unsafe {
+            std::env::remove_var(&cfg.base_url_env);
+            std::env::remove_var(&cfg.model_env);
+        }
+    }
+
+    /// The base URL is concatenated with `/chat/completions`, so a trailing
+    /// slash from either source would address `…/v1//chat/completions`.
+    #[test]
+    fn a_trailing_slash_is_trimmed_from_either_source() {
+        let cfg = LlmProxyConfig {
+            base_url: "https://api.example/v1/".to_string(),
+            ..config("trim_yaml")
+        };
+        assert_eq!(cfg.resolve_base_url(), "https://api.example/v1");
+
+        let _guard = lock();
+        let cfg = config("trim_env");
+        unsafe { std::env::set_var(&cfg.base_url_env, "https://api.example/v1/") };
+        assert_eq!(cfg.resolve_base_url(), "https://api.example/v1");
+        unsafe { std::env::remove_var(&cfg.base_url_env) };
+    }
+
+    /// A literal key beats the environment — the opposite of the base URL, and
+    /// worth pinning for that reason alone.
+    #[test]
+    fn a_literal_key_beats_the_environment() {
+        let _guard = lock();
+        let cfg = LlmProxyConfig {
+            api_key: "from-yaml".to_string(),
+            ..config("key_precedence")
+        };
+        unsafe { std::env::set_var(&cfg.api_key_env, "from-env") };
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("from-yaml"));
+        unsafe { std::env::remove_var(&cfg.api_key_env) };
+    }
+
+    /// A deployment script that exports an empty variable must leave the proxy
+    /// unconfigured rather than send a `Bearer ` with nothing after it.
+    #[test]
+    fn a_blank_key_is_absent_from_either_source() {
+        let _guard = lock();
+        let cfg = LlmProxyConfig {
+            api_key: "   ".to_string(),
+            ..config("blank_yaml")
+        };
+        assert_eq!(cfg.resolve_api_key(), None);
+
+        let cfg = config("blank_env");
+        unsafe { std::env::set_var(&cfg.api_key_env, "  ") };
+        assert_eq!(cfg.resolve_api_key(), None);
+        unsafe { std::env::remove_var(&cfg.api_key_env) };
+    }
+
+    #[test]
+    fn the_defaults_name_the_variables_a_deployment_sets() {
+        let cfg = LlmProxyConfig::default();
+        assert_eq!(cfg.base_url_env, "STUDIO_LLM_BASE_URL");
+        assert_eq!(cfg.api_key_env, "STUDIO_LLM_API_KEY");
+        assert!(
+            !cfg.developer_message_settings.is_empty(),
+            "the IDE needs a system-prompt role to configure itself with"
+        );
+    }
+}
