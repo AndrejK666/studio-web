@@ -203,6 +203,42 @@ impl Service {
     }
 }
 
+/// The account-management type families whose authorization must never depend
+/// on reading the access config, because that read is one of them.
+///
+/// All three, not just the metadata one: the previous spelling of this guard
+/// matched `am.tenant` as a substring, which caught tenants, tenant metadata
+/// and tenant types alike, and the breadth is deliberate — an AM resource is
+/// never a Studio Work resource, so clamping it costs nothing.
+const RECURSION_GUARDED_FAMILIES: [&str; 3] = [
+    "gts.cf.core.am.tenant.v1",
+    "gts.cf.core.am.tenant_metadata.v1",
+    "gts.cf.core.am.tenant_type.v1",
+];
+
+/// The family a GTS type id belongs to: everything before the first `~`.
+///
+/// A GTS id is a `~`-terminated chain in which the first segment names the base
+/// type and each later one narrows it, so
+/// `gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~` *is* a
+/// tenant-metadata type and comparing families is how you say so.
+fn family_of(type_id: &str) -> &str {
+    type_id.split_once('~').map_or(type_id, |(base, _)| base)
+}
+
+/// Is this the read that would recurse?
+///
+/// It compares the family rather than looking for a substring. The two are the
+/// same for every id in use today and diverge on the ones that matter: a
+/// substring search exempts anything whose id merely *contains* the words —
+/// another vendor's `gts.acme.am.tenant.v1~`, or a Studio type that grows a
+/// `tenant_metadata` segment of its own — from a role gate it was never meant
+/// to escape. Nothing is role-gated yet, so that is latent rather than live,
+/// which is exactly the kind of thing to fix while it still costs nothing.
+fn is_recursion_guarded(type_id: &str) -> bool {
+    RECURSION_GUARDED_FAMILIES.contains(&family_of(type_id))
+}
+
 /// What a request can be answered with before anything is read.
 ///
 /// Reading the org access config is a call into account-management, and the
@@ -242,7 +278,7 @@ impl Plan {
         // read the config to decide (that read is itself PEP-gated → would
         // recurse).
         let rt = request.resource.resource_type.as_str();
-        if rt.contains("tenant_metadata") || rt.contains("am.tenant") {
+        if is_recursion_guarded(rt) {
             return Self::Clamp(tid);
         }
 
@@ -482,6 +518,53 @@ mod tests {
         "gts.cf.core.rg.group.v1~",
         "gts.cf.core.users.user.v1~",
     ];
+
+    /// The read that would recurse must be guarded, or the PDP asks itself
+    /// whether it may ask itself.
+    #[test]
+    fn the_access_config_read_is_guarded() {
+        assert!(
+            is_recursion_guarded(ACCESS_METADATA_TYPE),
+            "authorizing the config read must not require the config"
+        );
+        for family in RECURSION_GUARDED_FAMILIES {
+            assert!(is_recursion_guarded(&format!("{family}~")));
+        }
+    }
+
+    /// The point of comparing families rather than searching for a substring.
+    /// Each of these contains the words the old guard looked for, and none of
+    /// them is an account-management type — so each would have been exempted
+    /// from a role gate it was never meant to escape.
+    #[test]
+    fn a_type_that_merely_contains_the_words_is_not_guarded() {
+        for impostor in [
+            // Another vendor's tenant type.
+            "gts.acme.am.tenant.v1~",
+            // A Studio type that grows a metadata segment of its own.
+            "gts.cf.studio.doc.tenant_metadata.v1~",
+            // A near-miss on the family name itself.
+            "gts.cf.core.am.tenanted.v1~",
+        ] {
+            assert!(
+                !is_recursion_guarded(impostor),
+                "{impostor} is not an account-management type and must stay gateable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_derived_type_belongs_to_its_base_family() {
+        assert_eq!(
+            family_of("gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"),
+            "gts.cf.core.am.tenant_metadata.v1"
+        );
+        // An id with no chain at all is its own family.
+        assert_eq!(
+            family_of("gts.cf.studio.doc.document.v1"),
+            "gts.cf.studio.doc.document.v1"
+        );
+    }
 
     #[test]
     fn a_request_with_no_tenant_is_denied() {
