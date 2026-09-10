@@ -1,15 +1,17 @@
 {{- /*
-  The session registry is process-local (studio_session::service::SessionService
-  holds it in a RwLock<HashMap>), so a second backend replica cannot see the
-  first's sessions. Both ways of asking for one are refused here rather than
-  left to a comment in values.yaml: autoscaling, and a plain replica count.
+  Sessions are no longer held in a map this process owns — the runtime is asked
+  for them (studio_session::service::SessionService), ids are derived from the
+  workspace, and a lost launch race resolves to the session that won. What is
+  still missing is a run of two real replicas against a real cluster, so both
+  ways of asking for a second one stay refused: autoscaling, and a plain
+  replica count. See the note in values.yaml.
 */}}
 {{- if .Values.backend.sessions.enabled }}
 {{- if .Values.backend.autoscaling.enabled }}
-{{- fail "backend.autoscaling.enabled must be false while backend.sessions.enabled is true (session registry is process-local)" }}
+{{- fail "backend.autoscaling.enabled must be false while backend.sessions.enabled is true (multi-replica sessions are not verified on a cluster yet)" }}
 {{- end }}
 {{- if gt (int .Values.backend.replicas) 1 }}
-{{- fail "backend.replicas must be 1 while backend.sessions.enabled is true (session registry is process-local: a second replica cannot see the first's sessions)" }}
+{{- fail "backend.replicas must be 1 while backend.sessions.enabled is true (multi-replica sessions are not verified on a cluster yet)" }}
 {{- end }}
 {{- end }}
 apiVersion: apps/v1
