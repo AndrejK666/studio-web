@@ -9,22 +9,28 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      stage:
-        description: Stage set to execute
+      operation:
+        description: Operation to execute
         required: true
         type: choice
-        default: validate
+        default: Build and publish
         options:
-          - validate
-          - build
-          - deploy-services
-          - deploy-infra
+          - Build and publish
+          - Deploy existing images
+      deployment_type:
+        description: Deployment type (required only for Deploy existing images)
+        required: false
+        type: choice
+        default: Services
+        options:
+          - Services
+          - Infrastructure
       source_ref:
         description: Full 40-character commit SHA, branch, or release tag (leave empty for the selected branch)
         required: false
         type: string
       environment:
-        description: Deployment target (required for deploy-services or deploy-infra)
+        description: Deployment target (required only for Deploy existing images)
         required: false
         type: choice
         default: dev
@@ -32,7 +38,7 @@ on:
           - dev
           - test
       component:
-        description: Service component to deploy (deploy-services only)
+        description: Service component to deploy (Services only)
         required: false
         type: choice
         default: all
@@ -42,11 +48,11 @@ on:
           - frontend
           - prototype
       image_tag:
-        description: Immutable sha-<commit> snapshot or v* release tag (deploy-services only; must match source_ref)
+        description: Immutable sha-<commit> snapshot or v* release tag (Services only; must match source_ref)
         required: false
         type: string
       infra_tag:
-        description: Published infrastructure release tag infra-vX.Y.Z (deploy-infra only)
+        description: Published infrastructure release tag infra-vX.Y.Z (Infrastructure only)
         required: false
         type: string
 
@@ -57,8 +63,8 @@ permissions:
 concurrency:
   # Deployments serialize independently per target environment. A dev deploy
   # must never cancel an explicit test deploy (or the other way around).
-  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.stage || 'continuous' }}-${{ (github.event.inputs.stage == 'deploy-services' || github.event.inputs.stage == 'deploy-infra') && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.stage != 'deploy-services' && github.event.inputs.stage != 'deploy-infra') }}
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.operation != 'Deploy existing images' }}
 
 env:
   REGISTRY: ghcr.io
@@ -69,8 +75,8 @@ env:
 
 jobs:
   test-changes:
-    name: 1. Test changed components / Detect affected components
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.stage == 'validate' || github.event.inputs.stage == 'build'
+    name: Detect changed components
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish'
     runs-on: ubuntu-latest
     outputs:
       # A release tag is an explicit reproducibility point. Test every service
@@ -298,7 +304,9 @@ jobs:
       - name: Lint test chart
         run: helm lint deploy/helm/studio-web -f deploy/helm/values-test.example.yaml
   test-complete:
-    name: 1. Test changed components / complete
+    # This is an aggregate gate and therefore appears after the individual
+    # component test jobs in GitHub's graph.
+    name: 1. Tests passed
     needs: [test-changes, test-backend, test-frontend, test-prototype, test-theia-session-gate, test-infra, test-deployment-config]
     if: >-
       always() &&
@@ -313,11 +321,11 @@ jobs:
     steps:
       - run: echo "Test stage completed successfully."
   build-require-ci:
-    name: 2. Build & Publish / require-ci
+    name: Prepare build
     # test-complete proves the complete matrix; test-changes is also listed so
     # this job can consume the selected-component outputs directly.
     needs: [test-complete, test-changes]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'build')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Build and publish')
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
@@ -915,7 +923,8 @@ jobs:
           generate_release_notes: true
 
   build-complete:
-    name: 2. Build & Publish / complete
+    # This gate appears after image build/publish jobs complete.
+    name: 2. Images published
     # The publish jobs are intentionally skipped for a manual deployment: it
     # consumes an already immutable image. Treat skipped as a completed stage
     # so the graph stays linear without rebuilding the artifact.
@@ -939,7 +948,7 @@ jobs:
     # existing immutable image. `always()` prevents GitHub's implicit
     # success() guard from treating those skipped transitive dependencies as
     # a reason to skip this explicit deployment stage.
-    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services'
+    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.deployment_type == 'Services'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       IMAGE_TAG: ${{ github.event.inputs.image_tag }}
@@ -1258,7 +1267,7 @@ jobs:
     # See deploy-services: a deployment consumes an existing immutable image,
     # but still follows the common stage gate in the visual graph.
     needs: build-complete
-    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'Deploy existing images' && github.event.inputs.deployment_type == 'Infrastructure' && github.ref == 'refs/heads/main'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       INFRA_TAG: ${{ github.event.inputs.infra_tag }}
