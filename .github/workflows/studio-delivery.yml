@@ -57,20 +57,20 @@ permissions:
 concurrency:
   # Deployments serialize independently per target environment. A dev deploy
   # must never cancel an explicit test deploy (or the other way around).
-  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && inputs.stage || 'continuous' }}-${{ (inputs.stage == 'deploy-services' || inputs.stage == 'deploy-infra') && inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (inputs.stage != 'deploy-services' && inputs.stage != 'deploy-infra') }}
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.stage || 'continuous' }}-${{ (github.event.inputs.stage == 'deploy-services' || github.event.inputs.stage == 'deploy-infra') && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.stage != 'deploy-services' && github.event.inputs.stage != 'deploy-infra') }}
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-  SOURCE_SHA: ${{ inputs.source_ref || github.sha }}
-  SOURCE_REF_NAME: ${{ inputs.source_ref || github.ref_name }}
+  SOURCE_SHA: ${{ github.event.inputs.source_ref || github.sha }}
+  SOURCE_REF_NAME: ${{ github.event.inputs.source_ref || github.ref_name }}
   SOURCE_REF_TYPE: ${{ github.ref_type }}
 
 jobs:
   test-changes:
     name: 1. Test changed components / Detect affected components
-    if: github.event_name != 'workflow_dispatch' || inputs.stage == 'validate' || inputs.stage == 'build'
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.stage == 'validate' || github.event.inputs.stage == 'build'
     runs-on: ubuntu-latest
     outputs:
       # A release tag is an explicit reproducibility point. Test every service
@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref || github.sha }}
+          ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -317,7 +317,7 @@ jobs:
     # test-complete proves the complete matrix; test-changes is also listed so
     # this job can consume the selected-component outputs directly.
     needs: [test-complete, test-changes]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.stage == 'build')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'build')
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.classify.outputs.scope }}
@@ -935,15 +935,15 @@ jobs:
     # manual deploy the test jobs are intentionally skipped, so test-complete
     # is a fast gate rather than a rebuild or a second test run.
     needs: build-complete
-    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-services'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-      IMAGE_TAG: ${{ inputs.image_tag }}
-      NAMESPACE: studio-${{ inputs.environment }}
+      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+      NAMESPACE: studio-${{ github.event.inputs.environment }}
       KUBECONFIG: /tmp/studio-kubeconfig
     runs-on: ubuntu-24.04
     environment:
-      name: ${{ inputs.environment }}
+      name: ${{ github.event.inputs.environment }}
       url: ${{ steps.target.outputs.url }}
     steps:
       - uses: actions/checkout@v6
@@ -955,7 +955,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_ref='${{ inputs.source_ref || github.ref_name }}'
+          source_ref='${{ github.event.inputs.source_ref || github.ref_name }}'
           git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*'
 
           if [[ "$source_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
@@ -990,15 +990,15 @@ jobs:
           fi
 
           if [ "$source_kind" = snapshot ]; then
-            if [ "${{ inputs.environment }}" != "dev" ]; then
-              echo "Branch snapshots may be deployed only to dev; use a v* release tag for ${{ inputs.environment }}" >&2
+            if [ "${{ github.event.inputs.environment }}" != "dev" ]; then
+              echo "Branch snapshots may be deployed only to dev; use a v* release tag for ${{ github.event.inputs.environment }}" >&2
               exit 1
             fi
           fi
 
           echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
 
-          case "${{ inputs.environment }}" in
+          case "${{ github.event.inputs.environment }}" in
             dev)
               host=studio-dev.cfabric.org
               prototype_host=studio-dev-poc.cfabric.org
@@ -1103,7 +1103,7 @@ jobs:
           prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
           keycloak_tag="$(current_tag keycloak)"
 
-          case "${{ inputs.component }}" in
+          case "${{ github.event.inputs.component }}" in
             all)
               backend_tag="$IMAGE_TAG"
               frontend_tag="$IMAGE_TAG"
@@ -1168,7 +1168,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          values="deploy/helm/values-${{ inputs.environment }}.example.yaml"
+          values="deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml"
           common_args=(
             -f "$values"
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
@@ -1197,7 +1197,7 @@ jobs:
           set -euo pipefail
           helm upgrade --install studio deploy/helm/studio-web \
             -n "$NAMESPACE" \
-            -f "deploy/helm/values-${{ inputs.environment }}.example.yaml" \
+            -f "deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml" \
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.fileStorage.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
@@ -1217,7 +1217,7 @@ jobs:
           set -euo pipefail
           host="${{ steps.target.outputs.host }}"
 
-          case "${{ inputs.component }}" in
+          case "${{ github.event.inputs.component }}" in
             all) components=(backend frontend frontend-prototype) ;;
             backend) components=(backend) ;;
             frontend) components=(frontend) ;;
@@ -1233,7 +1233,7 @@ jobs:
 
           curl --fail --silent --show-error --retry 6 --retry-all-errors \
             "https://$host/" >/dev/null
-          if [ "${{ inputs.component }}" = all ] || [ "${{ inputs.component }}" = prototype ]; then
+          if [ "${{ github.event.inputs.component }}" = all ] || [ "${{ github.event.inputs.component }}" = prototype ]; then
             curl --fail --silent --show-error --retry 6 --retry-all-errors \
               "https://${{ steps.target.outputs.prototype_host }}/" >/dev/null
             curl --fail --silent --show-error --retry 6 --retry-all-errors \
@@ -1254,15 +1254,15 @@ jobs:
     # See deploy-services: a deployment consumes an existing immutable image,
     # but still follows the common stage gate in the visual graph.
     needs: build-complete
-    if: github.event_name == 'workflow_dispatch' && inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-      INFRA_TAG: ${{ inputs.infra_tag }}
-      NAMESPACE: studio-${{ inputs.environment }}
+      INFRA_TAG: ${{ github.event.inputs.infra_tag }}
+      NAMESPACE: studio-${{ github.event.inputs.environment }}
       KUBECONFIG: /tmp/studio-kubeconfig
     runs-on: ubuntu-24.04
     environment:
-      name: ${{ inputs.environment }}
+      name: ${{ github.event.inputs.environment }}
       url: ${{ steps.target.outputs.url }}
     steps:
       - uses: actions/checkout@v6
@@ -1293,7 +1293,7 @@ jobs:
             --jq .isDraft)"
           test "$is_draft" = "false"
 
-          case "${{ inputs.environment }}" in
+          case "${{ github.event.inputs.environment }}" in
             dev) host=studio-dev.cfabric.org ;;
             test) host=studio-test.cfabric.org ;;
             *) echo "Unsupported environment" >&2; exit 1 ;;
@@ -1369,14 +1369,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          template="deploy/k8s/cloudnative-pg/${{ inputs.environment }}-cluster.template.yaml"
+          template="deploy/k8s/cloudnative-pg/${{ github.event.inputs.environment }}-cluster.template.yaml"
           graph_image="$IMAGE_PREFIX/graph-postgres:$INFRA_TAG"
           sed "s#\${GRAPH_POSTGRES_IMAGE}#$graph_image#g" "$template" \
             | kubectl apply --server-side --force-conflicts \
                 --field-manager=studio-infra-deployer \
                 --dry-run=server -n "$NAMESPACE" -f - >/dev/null
 
-          values="deploy/helm/values-${{ inputs.environment }}.example.yaml"
+          values="deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml"
           common_args=(
             -f "$values"
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
@@ -1395,7 +1395,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          template="deploy/k8s/cloudnative-pg/${{ inputs.environment }}-cluster.template.yaml"
+          template="deploy/k8s/cloudnative-pg/${{ github.event.inputs.environment }}-cluster.template.yaml"
           graph_image="$IMAGE_PREFIX/graph-postgres:$INFRA_TAG"
           sed "s#\${GRAPH_POSTGRES_IMAGE}#$graph_image#g" "$template" \
             | kubectl apply --server-side \
@@ -1430,7 +1430,7 @@ jobs:
           set -euo pipefail
           helm upgrade --install studio deploy/helm/studio-web \
             -n "$NAMESPACE" \
-            -f "deploy/helm/values-${{ inputs.environment }}.example.yaml" \
+            -f "deploy/helm/values-${{ github.event.inputs.environment }}.example.yaml" \
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
             --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
