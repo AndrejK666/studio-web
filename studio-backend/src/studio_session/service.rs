@@ -76,6 +76,23 @@ pub struct ReapOutcome {
     pub failed: usize,
 }
 
+/// UUIDv5 namespace for a session's deterministic id.
+const SESSION_NS: Uuid = Uuid::from_u128(0x4a1e_63b8_0d57_4c92_8f3a_e05d_71c4_9b26);
+
+/// The id of the session for a workspace.
+///
+/// Derived rather than drawn at random, because the workspace already
+/// identifies the session: the service admits one live session per workspace,
+/// and the runtime names it after the workspace too
+/// (`cf-studio-session-<workspace>`). A random id was a third name for the
+/// same thing, and one that only the process which drew it knew — a restart
+/// re-drew it on adoption, and a second replica would draw a different one for
+/// the same container. Deriving it means every process, before or after a
+/// restart, calls that session by the same name.
+pub fn session_id_for(workspace_id: Uuid) -> Uuid {
+    Uuid::new_v5(&SESSION_NS, workspace_id.as_bytes())
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: Uuid,
@@ -512,7 +529,7 @@ impl SessionService {
         }
 
         let port = self.allocate_port().await?;
-        let session_id = Uuid::new_v4();
+        let session_id = session_id_for(workspace_id);
         let name = format!("cf-studio-session-{workspace_id}");
 
         // Session gate token: random 256-bit, hex. The container's entry
@@ -975,7 +992,9 @@ impl SessionService {
         let mut sessions = self.sessions.write().await;
         let mut count = 0;
         for a in adopted {
-            let id = Uuid::new_v4();
+            // The same id the launching process used, and the same one every
+            // other replica derives — see [`session_id_for`].
+            let id = session_id_for(a.workspace_id);
             sessions.insert(
                 id,
                 Session {
@@ -994,9 +1013,9 @@ impl SessionService {
                     } else {
                         a.created_at_epoch_secs
                     },
-                    sources: Vec::new(),
+                    sources: a.sources,
                     session_token: a.session_token,
-                    control_token: String::new(),
+                    control_token: a.control_token,
                 },
             );
             count += 1;
@@ -1092,7 +1111,32 @@ fn git_author_name(
 
 #[cfg(test)]
 mod tests {
-    use super::git_author_name;
+    use uuid::Uuid;
+
+    use super::{git_author_name, session_id_for};
+
+    /// The property the whole change rests on: two processes — a restart, or a
+    /// second replica — reach the same id for the same workspace without ever
+    /// talking to each other.
+    #[test]
+    fn the_same_workspace_always_gets_the_same_session_id() {
+        let ws = Uuid::parse_str("6f9619ff-8b86-d011-b42d-00cf4fc964ff").unwrap();
+        assert_eq!(session_id_for(ws), session_id_for(ws));
+        // Pinned, not just self-consistent: a change here renames every live
+        // session, so it has to be a deliberate edit rather than a refactor.
+        assert_eq!(
+            session_id_for(ws).to_string(),
+            "a7dc39c6-a484-5da8-b975-d085ad65f208"
+        );
+    }
+
+    #[test]
+    fn different_workspaces_get_different_session_ids() {
+        assert_ne!(
+            session_id_for(Uuid::from_u128(1)),
+            session_id_for(Uuid::from_u128(2))
+        );
+    }
 
     #[test]
     fn prefers_the_display_name() {
