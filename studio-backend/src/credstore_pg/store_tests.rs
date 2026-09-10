@@ -1,11 +1,19 @@
-//! SQLite-backed integration tests for [`PgValueStore`].
+//! Postgres-backed integration tests for [`PgValueStore`].
 //!
-//! These exercise the real migration, entity mapping, scope clamp and upsert
-//! against a fresh in-memory database — the parts of this gear that no
-//! pure-function test can reach and that a compile cannot vouch for. Postgres
-//! is the production target, but the code paths under test (SeaORM entity,
-//! `ON CONFLICT`, scope condition) are backend-agnostic, and running on SQLite
-//! keeps the suite dependency-free.
+//! These exercise the real migration, entity mapping, scope clamp and upsert —
+//! the parts of this gear that no pure-function test can reach and that a
+//! compile cannot vouch for.
+//!
+//! They used to run on an in-memory SQLite, on the argument that the paths
+//! under test (SeaORM entity, `ON CONFLICT`, scope condition) are
+//! backend-agnostic. Two things retired it: the gear only ever runs on
+//! PostgreSQL, so the SQLite half of its migration was shipped code that
+//! nothing in production executes; and the suite stopped being dependency-free
+//! anyway once `documents::repo_tests` began asking for a server. What is left
+//! of the argument is that this file now proves the SQL the deployment runs.
+//!
+//! Each test takes a **database of its own** ([`crate::test_pg::fresh_database`])
+//! rather than a fresh tenant, because one of them reads the whole table.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::sync::Arc;
@@ -30,13 +38,10 @@ fn key_of(byte: u8) -> String {
     STANDARD.encode([byte; KEY_LEN])
 }
 
-/// A store on a fresh in-memory database, plus the DSN so a second store can
-/// be attached to the SAME database under a different key.
+/// A store on a database of this test's own, plus the DSN so a second store
+/// can be attached to the SAME database under a different key.
 async fn setup_with_key(key_byte: u8) -> (PgValueStore, String) {
-    let dsn = format!(
-        "sqlite:file:credstore_pg_{}?mode=memory&cache=shared",
-        Uuid::new_v4()
-    );
+    let dsn = crate::test_pg::fresh_database("credstore_pg").await;
     let store = attach(&dsn, key_byte, true).await;
     (store, dsn)
 }
@@ -51,7 +56,7 @@ async fn attach(dsn: &str, key_byte: u8, migrate: bool) -> PgValueStore {
         },
     )
     .await
-    .expect("connect sqlite");
+    .expect("connect");
 
     if migrate {
         run_migrations_for_testing(&db, Migrator::migrations())
@@ -307,7 +312,7 @@ async fn values_are_not_stored_in_plaintext() {
         },
     )
     .await
-    .expect("connect sqlite");
+    .expect("connect");
     let provider = DBProvider::<anyhow::Error>::new(db);
     let conn = provider.conn().expect("conn");
     let rows = crate::credstore_pg::entity::Entity::find()

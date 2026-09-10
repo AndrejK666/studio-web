@@ -8,27 +8,16 @@
 //!
 //! They run against a **real PostgreSQL**, because the assembly ships one for
 //! every gear database and a test that proved the SQL on a different engine
-//! would be proving it about an engine we do not ship. The database comes from
-//! Testcontainers: one per test process, started on first use and thrown away
-//! with it. That buys two things a shared server does not.
+//! would be proving it about an engine we do not ship. Where that server comes
+//! from is [`crate::test_pg`]'s business.
 //!
-//! * `cargo test` needs no setup beyond a Docker daemon -- no compose stack to
-//!   remember, no environment to export.
-//! * An EDITED migration always re-applies. Against a long-lived database the
-//!   migration ledger says it already ran, so the change silently does not take
-//!   and the test either fails against the old schema or, worse, passes against
-//!   it. A fresh database cannot have that problem.
-//!
-//! `STUDIO_TEST_PG_DSN` still overrides it, for pointing at a database you
-//! already have. Nothing here assumes an empty one: every test uses a fresh
-//! tenant id, and every query is tenant-scoped.
+//! Nothing here assumes an empty database: these tests share one with every
+//! other suite, so each takes a fresh tenant id and every query is
+//! tenant-scoped.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::sync::Arc;
 
-use testcontainers::ContainerAsync;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
 use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 use toolkit_db::migration_runner::run_migrations_for_testing;
@@ -42,65 +31,32 @@ use crate::documents::repo::{
     DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
 };
 
-/// The database every test in this process shares.
+/// The migrations, run once against the shared database.
 ///
-/// A `OnceCell` because the container has to outlive the tests that use it:
-/// dropping the `ContainerAsync` stops Postgres, so the guard is held here for
-/// the life of the process rather than by whichever test happened to start it.
-/// Migrations run once, inside the same initialisation, so no two test threads
-/// race to create the same tables.
-static DB: OnceCell<TestDb> = OnceCell::const_new();
+/// A `OnceCell` so no two test threads race to create the same tables. The
+/// server itself, and the choice between a container and `STUDIO_TEST_PG_DSN`,
+/// belong to [`crate::test_pg`].
+static MIGRATED: OnceCell<&'static str> = OnceCell::const_new();
 
-struct TestDb {
-    dsn: String,
-    /// Held, never read: this is what keeps the container alive. `None` when
-    /// `STUDIO_TEST_PG_DSN` pointed us at a database somebody else owns.
-    _container: Option<ContainerAsync<Postgres>>,
-}
-
-async fn db() -> &'static TestDb {
-    DB.get_or_init(|| async {
-        let (dsn, container) = match std::env::var("STUDIO_TEST_PG_DSN") {
-            Ok(dsn) => (dsn, None),
-            Err(_) => {
-                let container = Postgres::default().start().await.expect(
-                    "start a PostgreSQL container -- these tests need a Docker daemon, \
-                         or set STUDIO_TEST_PG_DSN to a database you already have",
-                );
-                // Ask the container where it is rather than assuming
-                // localhost: when the tests themselves run inside a container,
-                // the published port is on the host, not on this loopback.
-                let host = container.get_host().await.expect("container host");
-                let port = container
-                    .get_host_port_ipv4(5432)
-                    .await
-                    .expect("published port");
-                (
-                    format!("postgres://postgres:postgres@{host}:{port}/postgres"),
-                    Some(container),
-                )
-            }
-        };
-
-        let conn = connect_db(&dsn, ConnectOpts::default())
-            .await
-            .unwrap_or_else(|e| panic!("connect to {dsn} failed: {e}"));
-        run_migrations_for_testing(&conn, Migrator::migrations())
-            .await
-            .expect("run migrations");
-
-        TestDb {
-            dsn,
-            _container: container,
-        }
-    })
-    .await
+async fn db() -> &'static str {
+    MIGRATED
+        .get_or_init(|| async {
+            let dsn = crate::test_pg::shared_dsn().await;
+            let conn = connect_db(dsn, ConnectOpts::default())
+                .await
+                .unwrap_or_else(|e| panic!("connect to {dsn} failed: {e}"));
+            run_migrations_for_testing(&conn, Migrator::migrations())
+                .await
+                .expect("run migrations");
+            dsn
+        })
+        .await
 }
 
 async fn repo() -> DocumentsRepo {
-    let db = db().await;
+    let dsn = db().await;
     let conn = connect_db(
-        &db.dsn,
+        dsn,
         ConnectOpts {
             max_conns: Some(4),
             min_conns: Some(1),

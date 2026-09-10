@@ -1,8 +1,15 @@
 //! `SeaORM` migrations for the `studio-credstore-pg` gear.
 //!
-//! Raw per-backend `SQL` (not the schema builder) so the `CHECK` constraint is
-//! preserved verbatim — the same approach credstore's own `m0001` takes, for
-//! the same reason.
+//! Raw `SQL` (not the schema builder) so the `CHECK` constraint is preserved
+//! verbatim — the same approach credstore's own `m0001` takes, for the same
+//! reason.
+//!
+//! **PostgreSQL only.** This carried a parallel SQLite dialect so its tests
+//! could run without a server. The gear never ran on SQLite in any deployment,
+//! so that half was shipped code the product never executed — and the tests it
+//! existed for now run on PostgreSQL, which is what they are meant to prove.
+//! `studio-documents` dropped its own second dialect first, and for a sharper
+//! reason: the two spellings had drifted into a real bug.
 
 use toolkit_db::sea_orm_migration::prelude::*;
 
@@ -20,8 +27,7 @@ mod m0001 {
     use toolkit_db::sea_orm_migration::sea_orm;
     use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
 
-    const MYSQL_NOT_SUPPORTED: &str = "studio-credstore-pg migrations: MySQL is not supported \
-        (this migration set targets PostgreSQL/SQLite)";
+    const UNSUPPORTED: &str = "studio-credstore-pg migrations: PostgreSQL only";
 
     pub struct Migration;
 
@@ -51,25 +57,12 @@ CREATE TABLE IF NOT EXISTS studio_credstore_values (
 );
                     "
                 }
-                sea_orm::DatabaseBackend::Sqlite => {
-                    r"
-CREATE TABLE IF NOT EXISTS studio_credstore_values (
-    id BLOB PRIMARY KEY NOT NULL,
-    tenant_id BLOB NOT NULL,
-    reference TEXT NOT NULL CHECK (length(reference) BETWEEN 1 AND 255),
-    owner_id BLOB NOT NULL,
-    nonce BLOB NOT NULL,
-    ciphertext BLOB NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-                    "
-                }
-                // Postgres and Sqlite are the only supported engines; MySQL and any
-                // future backend fall through to the same unsupported-engine error
-                // (DatabaseBackend is #[non_exhaustive] in sea-orm 2.0).
+                // Every other backend falls through to the same error
+                // (`DatabaseBackend` is `#[non_exhaustive]` in sea-orm 2.0), so a
+                // deployment that points this gear at one fails at migration time
+                // rather than at the first read.
                 _ => {
-                    return Err(DbErr::Custom(MYSQL_NOT_SUPPORTED.to_owned()));
+                    return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
                 }
             };
 
@@ -78,9 +71,11 @@ CREATE TABLE IF NOT EXISTS studio_credstore_values (
         }
 
         async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-            let backend = manager.get_database_backend();
-            if matches!(backend, sea_orm::DatabaseBackend::MySql) {
-                return Err(DbErr::Custom(MYSQL_NOT_SUPPORTED.to_owned()));
+            if !matches!(
+                manager.get_database_backend(),
+                sea_orm::DatabaseBackend::Postgres
+            ) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
             }
             manager
                 .get_connection()
