@@ -16,10 +16,10 @@ reconciled through GitHub afterward.
 
 | Stage in **Studio Delivery** | Responsibility | Trigger |
 | --- | --- | --- |
-| **1. Test changed components** | Test and validate changed source and deployment definitions | Every pull request, branch push, and manual `validate`/`build` run |
-| **2. Build & Publish** | Build and publish either service or infrastructure images | After tests on every push, or manual `build` |
-| **3. Deploy Infrastructure** | Reconcile PostgreSQL and Keycloak for one environment | Manual `deploy-infra` using an `infra-v*` release only |
-| **3. Deploy Services** | Deploy backend, frontend, or both | Manual `deploy-services` using a branch snapshot or service release |
+| **1. Test changed components** | Test and validate changed source and deployment definitions | Every pull request, branch push, and manual **Build and publish** run |
+| **2. Build & Publish** | Build and publish either service or infrastructure images | After tests on every push, or manual **Build and publish** |
+| **3. Deploy Infrastructure** | Reconcile PostgreSQL and Keycloak for one environment | Manual **Deploy existing images** with **Infrastructure**, using an `infra-v*` release only |
+| **3. Deploy Services** | Deploy backend, frontend, or both | Manual **Deploy existing images** with **Services**, using a branch snapshot or service release |
 
 Publishing and deployment are intentionally separate. Creating a Git tag may
 publish a release, but it never deploys automatically to an environment.
@@ -200,7 +200,8 @@ are copied from the last known-good `edge` snapshot so every commit still gets
 a complete immutable `sha-<full-commit>` image set.
 
 - A branch snapshot may be deployed only to `dev`. In **Studio Delivery**, set
-  the stage to `deploy-services`, set `source_ref` to the branch name, and
+  the operation to **Deploy existing images**, select **Services**, set
+  `source_ref` to the branch name, and
   leave `image_tag` empty; the workflow
   resolves the exact commit and its `sha-…` tag.
 - A stable release tag such as `v1.4.0` may be deployed to `dev` or `test` and
