@@ -935,7 +935,11 @@ jobs:
     # manual deploy the test jobs are intentionally skipped, so test-complete
     # is a fast gate rather than a rebuild or a second test run.
     needs: build-complete
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services'
+    # A manual deploy intentionally skips the build jobs and consumes an
+    # existing immutable image. `always()` prevents GitHub's implicit
+    # success() guard from treating those skipped transitive dependencies as
+    # a reason to skip this explicit deployment stage.
+    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-services'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       IMAGE_TAG: ${{ github.event.inputs.image_tag }}
@@ -1254,7 +1258,7 @@ jobs:
     # See deploy-services: a deployment consumes an existing immutable image,
     # but still follows the common stage gate in the visual graph.
     needs: build-complete
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.stage == 'deploy-infra' && github.ref == 'refs/heads/main'
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       INFRA_TAG: ${{ github.event.inputs.infra_tag }}
