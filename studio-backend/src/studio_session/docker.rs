@@ -40,12 +40,16 @@ impl DockerDriver {
         Ok(Self { docker, cfg })
     }
 
-    /// Read `STUDIO_SESSION_TOKEN` back out of a container's env. Empty when
-    /// the container cannot be inspected or predates the gate (older image):
-    /// the session is then adopted ungated, and a relaunch mints a fresh one.
-    async fn adopted_token(&self, container_id: &str) -> String {
+    /// Read a container's env back out of the daemon. Empty when the container
+    /// cannot be inspected or predates the gate (older image): the session is
+    /// then adopted ungated, and a relaunch mints a fresh token.
+    ///
+    /// `docker ps` does not carry env, so this costs one inspect per adopted
+    /// container — a handful, once, at startup. Everything it returns is
+    /// already in the container's env, so it hands out nothing new.
+    async fn adopted_env(&self, container_id: &str) -> Vec<String> {
         if container_id.is_empty() {
-            return String::new();
+            return Vec::new();
         }
         let inspected = match self.docker.inspect_container(container_id, None).await {
             Ok(c) => c,
@@ -55,17 +59,17 @@ impl DockerDriver {
                     "studio-session: cannot inspect adopted container ({e}) — \
                      it will need a relaunch to be opened from the portal"
                 );
-                return String::new();
+                return Vec::new();
             }
         };
-        inspected
-            .config
-            .and_then(|c| c.env)
-            .unwrap_or_default()
-            .iter()
-            .find_map(|kv| kv.strip_prefix("STUDIO_SESSION_TOKEN=").map(str::to_string))
-            .unwrap_or_default()
+        inspected.config.and_then(|c| c.env).unwrap_or_default()
     }
+}
+
+/// One `KEY=value` lookup in a container's env.
+fn env_value<'a>(env: &'a [String], key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    env.iter().find_map(|kv| kv.strip_prefix(&prefix))
 }
 
 #[async_trait]
@@ -225,11 +229,9 @@ impl SessionDriver for DockerDriver {
                 continue;
             };
             let container_id = c.id.clone().unwrap_or_default();
-            // Recover the gate token the container was started with. `docker
-            // ps` does not carry env, so this costs one inspect per adopted
-            // container — a handful, once, at startup. It reads a value already
-            // in the container's env, so it hands out nothing new.
-            let session_token = self.adopted_token(&container_id).await;
+            // Recover what the container was started with: the gate token, the
+            // Theia control token, and the sources the summary is built from.
+            let env = self.adopted_env(&container_id).await;
             out.push(AdoptedSession {
                 workspace_id: ws,
                 tenant_id: tenant,
@@ -237,7 +239,16 @@ impl SessionDriver for DockerDriver {
                 address: SessionAddress::Loopback { port },
                 running: c.state.as_deref() == Some("running"),
                 created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or(0),
-                session_token,
+                session_token: env_value(&env, "STUDIO_SESSION_TOKEN")
+                    .unwrap_or_default()
+                    .to_string(),
+                control_token: env_value(&env, "STUDIO_THEIA_S2S_TOKEN")
+                    .unwrap_or_default()
+                    .to_string(),
+                sources: super::driver::adopted_sources(
+                    env_value(&env, "STUDIO_ROOT_URL"),
+                    env_value(&env, "STUDIO_SOURCES"),
+                ),
             });
         }
         Ok(out)

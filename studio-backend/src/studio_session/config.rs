@@ -88,6 +88,16 @@ pub struct StudioSessionConfig {
     /// Stop sessions older than this (seconds). 0 disables the reaper.
     #[serde(default = "default_max_session_secs")]
     pub max_session_secs: u64,
+    /// How long a listing of the runtime's sessions is reused before the next
+    /// read asks the driver again.
+    ///
+    /// The runtime — the Docker daemon or the Kubernetes API — is what knows
+    /// which sessions exist; this process only caches the answer. Longer means
+    /// fewer calls and a staler view; 0 asks on every read, which the IDE proxy
+    /// makes expensive. Sessions change on the order of minutes, so seconds of
+    /// staleness cost nothing a reload does not fix.
+    #[serde(default = "default_registry_ttl_secs")]
+    pub registry_ttl_secs: u64,
     /// STUDIO_GIT_MODE passed to the container: disabled | commit | push.
     #[serde(default = "default_git_mode")]
     pub git_mode: String,
@@ -153,6 +163,7 @@ impl Default for StudioSessionConfig {
             port_range_start: default_port_start(),
             port_range_end: default_port_end(),
             max_session_secs: default_max_session_secs(),
+            registry_ttl_secs: default_registry_ttl_secs(),
             git_mode: default_git_mode(),
             agent_secrets: default_agent_secrets(),
             orca_enabled: false,
@@ -223,6 +234,9 @@ fn default_orca_port() -> u16 {
 }
 fn default_max_session_secs() -> u64 {
     4 * 3600
+}
+fn default_registry_ttl_secs() -> u64 {
+    3
 }
 fn default_workspace_volume_size() -> String {
     "10Gi".into()

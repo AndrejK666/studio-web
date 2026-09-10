@@ -38,6 +38,12 @@ const POD_LABEL: &str = "cf.studio.pod";
 const THEIA_PORT: i32 = 3003;
 const SESSION_READY_PATH: &str = "/__studio_session_ready__";
 const SESSION_TOKEN_ENV: &str = "STUDIO_SESSION_TOKEN";
+/// The Theia backend-control token (ADR-0010), recovered on adoption so a
+/// restarted backend can still reach the node it launched.
+const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
+/// The two variables a session's source summary is rebuilt from.
+const ROOT_URL_ENV: &str = "STUDIO_ROOT_URL";
+const SOURCES_ENV: &str = "STUDIO_SOURCES";
 
 pub struct KubernetesDriver {
     client: Client,
@@ -419,19 +425,23 @@ impl SessionDriver for KubernetesDriver {
                 .and_then(|s| s.phase.as_deref())
                 .map(|p| p == "Running")
                 .unwrap_or(false);
-            // Recover the gate token from the Pod's env — visible to anyone who
-            // can read Pods in this namespace, so it hands out nothing new.
-            let session_token = pod
+            // Recover what the Pod was started with — visible to anyone who can
+            // read Pods in this namespace, so it hands out nothing new.
+            let env = pod
                 .spec
                 .as_ref()
                 .and_then(|s| s.containers.first())
-                .and_then(|c| c.env.as_ref())
-                .and_then(|env| {
-                    env.iter()
-                        .find(|e| e.name == SESSION_TOKEN_ENV)
-                        .and_then(|e| e.value.clone())
-                })
+                .and_then(|c| c.env.as_deref())
                 .unwrap_or_default();
+            let env_value = |name: &str| {
+                env.iter()
+                    .find(|e| e.name == name)
+                    .and_then(|e| e.value.as_deref())
+            };
+            let session_token = env_value(SESSION_TOKEN_ENV).unwrap_or_default().to_string();
+            let control_token = env_value(CONTROL_TOKEN_ENV).unwrap_or_default().to_string();
+            let sources =
+                super::driver::adopted_sources(env_value(ROOT_URL_ENV), env_value(SOURCES_ENV));
             out.push(AdoptedSession {
                 workspace_id: ws,
                 tenant_id: tenant,
@@ -448,6 +458,8 @@ impl SessionDriver for KubernetesDriver {
                     .map(|t| t.0.as_second().max(0) as u64)
                     .unwrap_or(0),
                 session_token,
+                control_token,
+                sources,
             });
         }
         Ok(out)

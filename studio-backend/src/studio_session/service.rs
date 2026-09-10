@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Context, anyhow};
@@ -76,6 +76,23 @@ pub struct ReapOutcome {
     pub failed: usize,
 }
 
+/// UUIDv5 namespace for a session's deterministic id.
+const SESSION_NS: Uuid = Uuid::from_u128(0x4a1e_63b8_0d57_4c92_8f3a_e05d_71c4_9b26);
+
+/// The id of the session for a workspace.
+///
+/// Derived rather than drawn at random, because the workspace already
+/// identifies the session: the service admits one live session per workspace,
+/// and the runtime names it after the workspace too
+/// (`cf-studio-session-<workspace>`). A random id was a third name for the
+/// same thing, and one that only the process which drew it knew — a restart
+/// re-drew it on adoption, and a second replica would draw a different one for
+/// the same container. Deriving it means every process, before or after a
+/// restart, calls that session by the same name.
+pub fn session_id_for(workspace_id: Uuid) -> Uuid {
+    Uuid::new_v5(&SESSION_NS, workspace_id.as_bytes())
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: Uuid,
@@ -101,10 +118,24 @@ pub struct Session {
     pub control_token: String,
 }
 
+/// What the runtime last said its sessions were, and when it said it.
+///
+/// This is a cache, not a registry. The Docker daemon and the Kubernetes API
+/// are what know which sessions exist — they create them, they outlive this
+/// process, and they are the same answer for every replica. Keeping a copy
+/// here only spares the IDE proxy a driver call per request.
+#[derive(Default)]
+struct SessionCache {
+    /// `None` until the first listing: an empty map and "never asked" are
+    /// different answers, and only the second one must go and ask.
+    listed_at: Option<Instant>,
+    by_id: HashMap<Uuid, Session>,
+}
+
 pub struct SessionService {
     cfg: StudioSessionConfig,
     driver: Arc<dyn SessionDriver>,
-    sessions: RwLock<HashMap<Uuid, Session>>,
+    sessions: RwLock<SessionCache>,
     /// Resolves repo access tokens (PATs) stored as credstore secrets.
     credstore: RwLock<Option<Arc<dyn CredStoreClientV1>>>,
     /// Reads the caller's IdP record, for a session's commit authorship.
@@ -130,11 +161,107 @@ impl SessionService {
         Arc::new(Self {
             cfg,
             driver,
-            sessions: RwLock::new(HashMap::new()),
+            sessions: RwLock::new(SessionCache::default()),
             credstore: RwLock::new(None),
             account_management: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
         })
+    }
+
+    /// Every session the runtime has, keyed by id.
+    ///
+    /// Asks the driver when the cached listing is older than
+    /// `registry_ttl_secs`, and otherwise hands back what it already had.
+    /// A driver that cannot be listed leaves the previous answer standing:
+    /// a momentary API hiccup should not make live sessions disappear from
+    /// the portal, and the next read tries again.
+    async fn snapshot(&self) -> HashMap<Uuid, Session> {
+        let ttl = Duration::from_secs(self.cfg.registry_ttl_secs);
+        {
+            let cache = self.sessions.read().await;
+            if let Some(listed_at) = cache.listed_at
+                && listed_at.elapsed() < ttl
+            {
+                return cache.by_id.clone();
+            }
+        }
+        match self.refresh().await {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                tracing::warn!(
+                    "studio-session: cannot list the runtime's sessions ({e:#}) — \
+                     serving the last listing"
+                );
+                self.sessions.read().await.by_id.clone()
+            }
+        }
+    }
+
+    /// Re-read the sessions from the runtime, replacing the cache.
+    ///
+    /// The runtime decides what exists: anything it does not list is gone from
+    /// the cache, whoever put it there. Only `Running` is carried over, and
+    /// only for a session the runtime still has — that state is not the
+    /// runtime's to report (a Pod is `Running` well before Theia accepts a
+    /// connection), so it is established once by the reachability probe in
+    /// [`Self::get`] and would otherwise flap back to `Starting` on every
+    /// refresh.
+    async fn refresh(&self) -> anyhow::Result<HashMap<Uuid, Session>> {
+        let listed = self.driver.list_adoptable().await?;
+        let mut cache = self.sessions.write().await;
+        let previous = std::mem::take(&mut cache.by_id);
+
+        cache.by_id = listed
+            .into_iter()
+            .map(|a| {
+                let id = session_id_for(a.workspace_id);
+                let was_running = previous
+                    .get(&id)
+                    .is_some_and(|p| p.state == SessionState::Running);
+                let session = Session {
+                    id,
+                    workspace_id: a.workspace_id,
+                    tenant_id: a.tenant_id,
+                    handle: a.handle,
+                    address: a.address,
+                    state: match (a.running, was_running) {
+                        (false, _) => SessionState::Stopped,
+                        (true, true) => SessionState::Running,
+                        (true, false) => SessionState::Starting,
+                    },
+                    created_at_epoch_secs: if a.created_at_epoch_secs == 0 {
+                        now_secs()
+                    } else {
+                        a.created_at_epoch_secs
+                    },
+                    sources: a.sources,
+                    session_token: a.session_token,
+                    control_token: a.control_token,
+                };
+                (id, session)
+            })
+            .collect();
+        cache.listed_at = Some(Instant::now());
+        Ok(cache.by_id.clone())
+    }
+
+    /// Put a session into the cache without waiting for the next listing.
+    ///
+    /// Used right after a launch: the caller is told the session exists, so
+    /// the very next read must agree, and `Starting` is a state the runtime
+    /// cannot report anyway.
+    async fn cache_put(&self, session: Session) {
+        self.sessions
+            .write()
+            .await
+            .by_id
+            .insert(session.id, session);
+    }
+
+    /// Drop a session from the cache after its runtime is destroyed, so a
+    /// listing that is still inside its TTL does not resurrect it.
+    async fn cache_forget(&self, id: Uuid) {
+        self.sessions.write().await.by_id.remove(&id);
     }
 
     pub async fn set_credstore(&self, client: Arc<dyn CredStoreClientV1>) {
@@ -383,31 +510,25 @@ impl SessionService {
         let tenant_id = ctx.subject_tenant_id();
         let actor_id = ctx.subject_id();
         {
-            let existing = {
-                let sessions = self.sessions.read().await;
-                sessions
-                    .values()
-                    .find(|s| {
-                        s.workspace_id == workspace_id
-                            && s.tenant_id == tenant_id
-                            && s.state != SessionState::Stopped
-                    })
-                    .cloned()
-            };
+            let existing = self.snapshot().await.into_values().find(|s| {
+                s.workspace_id == workspace_id
+                    && s.tenant_id == tenant_id
+                    && s.state != SessionState::Stopped
+            });
             if let Some(existing) = existing {
-                // Reuse only when the runtime is actually alive. It may have
-                // been removed out-of-band (docker rm -f, host cleanup) while
-                // the in-memory registry still lists the session — reusing then
-                // hands the portal a dead address.
+                // Reuse only when the runtime is actually alive. The listing
+                // can be up to `registry_ttl_secs` old, and a container removed
+                // out of band (docker rm -f, host cleanup) is still in it —
+                // reusing then hands the portal a dead address.
                 if self.driver.is_running(&existing.handle).await {
                     return Ok((existing, true));
                 }
                 tracing::warn!(
                     session_id = %existing.id,
                     handle = %existing.handle,
-                    "studio-session: registered session has no live runtime — discarding it and launching fresh"
+                    "studio-session: listed session has no live runtime — discarding it and launching fresh"
                 );
-                self.sessions.write().await.remove(&existing.id);
+                self.cache_forget(existing.id).await;
             }
         }
 
@@ -512,7 +633,7 @@ impl SessionService {
         }
 
         let port = self.allocate_port().await?;
-        let session_id = Uuid::new_v4();
+        let session_id = session_id_for(workspace_id);
         let name = format!("cf-studio-session-{workspace_id}");
 
         // Session gate token: random 256-bit, hex. The container's entry
@@ -642,7 +763,36 @@ impl SessionService {
             name,
             port,
         };
-        let launched = self.driver.launch(&spec).await?;
+        let launched = match self.driver.launch(&spec).await {
+            Ok(launched) => launched,
+            Err(e) => {
+                // The runtime names a session after its workspace, so two
+                // launches racing for one workspace are two attempts at one
+                // name and the loser is refused (a Kubernetes 409). Whoever
+                // won has a session running with its own tokens, and that is
+                // the session to hand back — the ones minted here reach
+                // nothing. Ask the runtime rather than trust the reason.
+                if let Some(existing) =
+                    self.refresh()
+                        .await
+                        .unwrap_or_default()
+                        .into_values()
+                        .find(|s| {
+                            s.workspace_id == workspace_id
+                                && s.tenant_id == tenant_id
+                                && s.state != SessionState::Stopped
+                        })
+                {
+                    tracing::info!(
+                        session_id = %existing.id,
+                        "studio-session: launch lost a race for this workspace — \
+                         reusing the session that won ({e:#})"
+                    );
+                    return Ok((existing, true));
+                }
+                return Err(e);
+            }
+        };
 
         let session = Session {
             id: session_id,
@@ -669,10 +819,7 @@ impl SessionService {
                 }))
                 .collect(),
         };
-        self.sessions
-            .write()
-            .await
-            .insert(session_id, session.clone());
+        self.cache_put(session.clone()).await;
         Ok((session, false))
     }
 
@@ -822,32 +969,31 @@ impl SessionService {
     /// Refresh state: Starting → Running once the session port accepts a
     /// connection (driver probe).
     pub async fn get(&self, tenant_id: Uuid, id: Uuid) -> Option<Session> {
-        // Read the address under a short read lock, probe without the lock,
-        // then commit the transition under a write lock. Holding the write
-        // lock across the network probe would serialize every GET.
-        let (state, address) = {
-            let sessions = self.sessions.read().await;
-            let session = sessions.get(&id)?;
-            if session.tenant_id != tenant_id {
-                return None; // tenant isolation: not yours == not found
-            }
-            (session.state.clone(), session.address.clone())
-        };
-        if state == SessionState::Starting && self.driver.is_reachable(&address).await {
-            let mut sessions = self.sessions.write().await;
-            if let Some(s) = sessions.get_mut(&id) {
-                if s.state == SessionState::Starting {
-                    s.state = SessionState::Running;
-                }
-                return Some(s.clone());
-            }
-            return None;
+        let mut session = self.snapshot().await.remove(&id)?;
+        if session.tenant_id != tenant_id {
+            return None; // tenant isolation: not yours == not found
         }
-        let sessions = self.sessions.read().await;
-        sessions
-            .get(&id)
-            .filter(|s| s.tenant_id == tenant_id)
-            .cloned()
+        if session.state != SessionState::Starting {
+            return Some(session);
+        }
+        // Whether the IDE is answering yet is the one thing the runtime cannot
+        // tell us — a Pod is `Running` well before Theia binds — so it is
+        // probed here, outside the cache lock, and remembered so the next
+        // refresh keeps it (see [`Self::refresh`]).
+        if !self.driver.is_reachable(&session.address).await {
+            return Some(session);
+        }
+        session.state = SessionState::Running;
+        let mut cache = self.sessions.write().await;
+        match cache.by_id.get_mut(&id) {
+            Some(cached) => {
+                cached.state = SessionState::Running;
+                Some(cached.clone())
+            }
+            // Destroyed while we probed. It is gone, and saying so is better
+            // than re-inserting it.
+            None => None,
+        }
     }
 
     /// Proxy lookup by session id ALONE. The browser opens the IDE in an
@@ -857,11 +1003,7 @@ impl SessionService {
     /// session container's own entry gate) is the capability instead. This
     /// returns just the driver address to proxy to.
     pub async fn proxy_target(&self, id: Uuid) -> Option<SessionAddress> {
-        self.sessions
-            .read()
-            .await
-            .get(&id)
-            .map(|s| s.address.clone())
+        self.snapshot().await.get(&id).map(|s| s.address.clone())
     }
 
     /// Resolve the internal Theia control endpoint for the caller's live
@@ -880,8 +1022,7 @@ impl SessionService {
             return None;
         }
         let tenant_id = ctx.subject_tenant_id();
-        let sessions = self.sessions.read().await;
-        let session = sessions.values().find(|s| {
+        let session = self.snapshot().await.into_values().find(|s| {
             s.workspace_id == workspace_id
                 && s.tenant_id == tenant_id
                 && s.state != SessionState::Stopped
@@ -917,9 +1058,9 @@ impl SessionService {
         if !self.cfg.theia_control_enabled || token.is_empty() {
             return None;
         }
-        let sessions = self.sessions.read().await;
-        sessions
-            .values()
+        self.snapshot()
+            .await
+            .into_values()
             .find(|s| s.state != SessionState::Stopped && s.control_token == token)
             .map(|s| crate::studio_session::sdk::SessionIdentity {
                 session_id: s.id,
@@ -929,25 +1070,20 @@ impl SessionService {
     }
 
     pub async fn list(&self, tenant_id: Uuid) -> Vec<Session> {
-        self.sessions
-            .read()
+        self.snapshot()
             .await
-            .values()
+            .into_values()
             .filter(|s| s.tenant_id == tenant_id)
-            .cloned()
             .collect()
     }
 
     pub async fn stop(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<bool> {
-        let session = {
-            let sessions = self.sessions.read().await;
-            match sessions.get(&id) {
-                Some(s) if s.tenant_id == tenant_id => s.clone(),
-                _ => return Ok(false),
-            }
+        let session = match self.snapshot().await.remove(&id) {
+            Some(s) if s.tenant_id == tenant_id => s,
+            _ => return Ok(false),
         };
         self.driver.destroy(&session.handle).await?;
-        self.sessions.write().await.remove(&id);
+        self.cache_forget(id).await;
         Ok(true)
     }
 
@@ -955,11 +1091,12 @@ impl SessionService {
     /// Only the Docker driver publishes it; the Kubernetes driver targets the
     /// fixed in-container port and ignores the value.
     async fn allocate_port(&self) -> anyhow::Result<u16> {
-        let sessions = self.sessions.read().await;
-        let used: Vec<u16> = sessions
-            .values()
-            .filter_map(|s| match &s.address {
-                SessionAddress::Loopback { port } => Some(*port),
+        let used: Vec<u16> = self
+            .snapshot()
+            .await
+            .into_values()
+            .filter_map(|s| match s.address {
+                SessionAddress::Loopback { port } => Some(port),
                 SessionAddress::Service { .. } => None,
             })
             .collect();
@@ -968,40 +1105,15 @@ impl SessionService {
             .ok_or_else(|| anyhow!("no free session ports in the configured range"))
     }
 
-    /// Adopt sessions left over from a previous backend run, so a restart
-    /// does not orphan running IDE sessions.
+    /// Take stock of the sessions left over from a previous backend run, so a
+    /// restart does not orphan running IDE sessions.
+    ///
+    /// Nothing is adopted any more in the sense of being taken into a registry
+    /// this process owns — the runtime keeps its sessions whether or not the
+    /// backend asks. This is the first listing, done at boot so the count can
+    /// be logged rather than discovered on the first request.
     pub async fn adopt_existing(&self) -> anyhow::Result<usize> {
-        let adopted = self.driver.list_adoptable().await?;
-        let mut sessions = self.sessions.write().await;
-        let mut count = 0;
-        for a in adopted {
-            let id = Uuid::new_v4();
-            sessions.insert(
-                id,
-                Session {
-                    id,
-                    workspace_id: a.workspace_id,
-                    tenant_id: a.tenant_id,
-                    handle: a.handle,
-                    address: a.address,
-                    state: if a.running {
-                        SessionState::Running
-                    } else {
-                        SessionState::Stopped
-                    },
-                    created_at_epoch_secs: if a.created_at_epoch_secs == 0 {
-                        now_secs()
-                    } else {
-                        a.created_at_epoch_secs
-                    },
-                    sources: Vec::new(),
-                    session_token: a.session_token,
-                    control_token: String::new(),
-                },
-            );
-            count += 1;
-        }
-        Ok(count)
+        Ok(self.refresh().await?.len())
     }
 
     /// One reaping pass: stop every session past `max_session_secs`.
@@ -1040,16 +1152,10 @@ impl SessionService {
             match self.driver.destroy(&session.handle).await {
                 Ok(()) => {
                     outcome.stopped += 1;
-                    // Drop it from this replica's map as well, when it is there:
-                    // the handle is the driver's key, the map's is our own id.
-                    let mut sessions = self.sessions.write().await;
-                    if let Some(id) = sessions
-                        .values()
-                        .find(|s| s.handle == session.handle)
-                        .map(|s| s.id)
-                    {
-                        sessions.remove(&id);
-                    }
+                    // Drop it from the cache too, so a listing still inside
+                    // its TTL does not keep offering a session that is gone.
+                    self.cache_forget(session_id_for(session.workspace_id))
+                        .await;
                 }
                 Err(e) => {
                     outcome.failed += 1;
@@ -1092,7 +1198,32 @@ fn git_author_name(
 
 #[cfg(test)]
 mod tests {
-    use super::git_author_name;
+    use uuid::Uuid;
+
+    use super::{git_author_name, session_id_for};
+
+    /// The property the whole change rests on: two processes — a restart, or a
+    /// second replica — reach the same id for the same workspace without ever
+    /// talking to each other.
+    #[test]
+    fn the_same_workspace_always_gets_the_same_session_id() {
+        let ws = Uuid::parse_str("6f9619ff-8b86-d011-b42d-00cf4fc964ff").unwrap();
+        assert_eq!(session_id_for(ws), session_id_for(ws));
+        // Pinned, not just self-consistent: a change here renames every live
+        // session, so it has to be a deliberate edit rather than a refactor.
+        assert_eq!(
+            session_id_for(ws).to_string(),
+            "a7dc39c6-a484-5da8-b975-d085ad65f208"
+        );
+    }
+
+    #[test]
+    fn different_workspaces_get_different_session_ids() {
+        assert_ne!(
+            session_id_for(Uuid::from_u128(1)),
+            session_id_for(Uuid::from_u128(2))
+        );
+    }
 
     #[test]
     fn prefers_the_display_name() {
@@ -1131,5 +1262,259 @@ mod tests {
         );
         assert_eq!(git_author_name(Some(" Ada "), None, None, "ada"), "Ada");
         assert!(git_author_name(None, None, None, "   ").is_empty());
+    }
+
+    // ── The runtime is the registry ───────────────────────────────────────
+    //
+    // A fake runtime stands in for the Docker daemon / Kubernetes API. What
+    // these tests are about is that the service asks it rather than
+    // remembering — which is what lets two replicas agree.
+
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use anyhow::anyhow;
+    use async_trait::async_trait;
+
+    use super::super::driver::{
+        AdoptedSession, LaunchSpec, LaunchedSession, SessionAddress, SessionDriver,
+    };
+    use super::{Arc, SessionService, SessionState, StudioSessionConfig};
+
+    #[derive(Default)]
+    struct FakeRuntime {
+        listed: Mutex<Vec<AdoptedSession>>,
+        listings: AtomicUsize,
+        fails: Mutex<bool>,
+        reachable: Mutex<bool>,
+    }
+
+    impl FakeRuntime {
+        fn with(sessions: Vec<AdoptedSession>) -> Arc<Self> {
+            Arc::new(Self {
+                listed: Mutex::new(sessions),
+                reachable: Mutex::new(true),
+                ..Self::default()
+            })
+        }
+        fn set(&self, sessions: Vec<AdoptedSession>) {
+            *self.listed.lock().unwrap() = sessions;
+        }
+        fn start_failing(&self) {
+            *self.fails.lock().unwrap() = true;
+        }
+        fn listings(&self) -> usize {
+            self.listings.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl SessionDriver for FakeRuntime {
+        async fn image_present(&self) -> bool {
+            true
+        }
+        async fn refresh_image(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn launch(&self, _spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
+            unimplemented!("these tests never launch")
+        }
+        async fn is_running(&self, handle: &str) -> bool {
+            self.listed
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s.handle == handle && s.running)
+        }
+        async fn is_reachable(&self, _address: &SessionAddress) -> bool {
+            *self.reachable.lock().unwrap()
+        }
+        async fn destroy(&self, handle: &str) -> anyhow::Result<()> {
+            self.listed.lock().unwrap().retain(|s| s.handle != handle);
+            Ok(())
+        }
+        async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
+            self.listings.fetch_add(1, Ordering::SeqCst);
+            if *self.fails.lock().unwrap() {
+                return Err(anyhow!("the runtime is unreachable"));
+            }
+            Ok(self.listed.lock().unwrap().clone())
+        }
+    }
+
+    const TENANT: Uuid = Uuid::from_u128(0x11);
+
+    fn running_session(workspace: Uuid, port: u16) -> AdoptedSession {
+        AdoptedSession {
+            workspace_id: workspace,
+            tenant_id: TENANT,
+            handle: format!("pod-{workspace}"),
+            address: SessionAddress::Loopback { port },
+            running: true,
+            created_at_epoch_secs: 1_700_000_000,
+            session_token: "gate".into(),
+            control_token: "s2s".into(),
+            sources: vec!["docs (git)".into()],
+        }
+    }
+
+    /// `registry_ttl_secs: 0` — every read asks the runtime, which is what
+    /// most of these tests want to observe.
+    fn service(runtime: Arc<FakeRuntime>) -> Arc<SessionService> {
+        SessionService::new(
+            StudioSessionConfig {
+                registry_ttl_secs: 0,
+                theia_control_enabled: true,
+                ..StudioSessionConfig::default()
+            },
+            runtime,
+        )
+    }
+
+    /// The property the whole change is for: two services sharing a runtime
+    /// and sharing nothing else answer identically. That is two replicas.
+    #[tokio::test]
+    async fn two_services_over_one_runtime_agree() {
+        let ws = Uuid::from_u128(0xA1);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let (one, two) = (service(runtime.clone()), service(runtime.clone()));
+
+        let from_one = one.list(TENANT).await;
+        let from_two = two.list(TENANT).await;
+        assert_eq!(from_one.len(), 1);
+        assert_eq!(from_one[0].id, from_two[0].id);
+        assert_eq!(from_one[0].handle, from_two[0].handle);
+
+        // Including by id — the one lookup a process-local registry could not
+        // answer for a session another replica had launched.
+        let id = from_one[0].id;
+        assert!(two.get(TENANT, id).await.is_some());
+        assert!(two.proxy_target(id).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_session_the_runtime_dropped_is_gone() {
+        let ws = Uuid::from_u128(0xA2);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = service(runtime.clone());
+        let id = service.list(TENANT).await[0].id;
+
+        runtime.set(Vec::new());
+        assert!(service.list(TENANT).await.is_empty());
+        assert!(service.get(TENANT, id).await.is_none());
+    }
+
+    /// A container that stopped on its own reads as stopped, without anyone
+    /// having told this process about it.
+    #[tokio::test]
+    async fn a_stopped_runtime_reads_as_stopped() {
+        let ws = Uuid::from_u128(0xA3);
+        let mut stopped = running_session(ws, 41000);
+        stopped.running = false;
+        let service = service(FakeRuntime::with(vec![stopped]));
+        assert_eq!(service.list(TENANT).await[0].state, SessionState::Stopped);
+    }
+
+    /// Whether the IDE answers is the one thing the runtime cannot report, so
+    /// it is probed once and must then survive every later listing.
+    #[tokio::test]
+    async fn running_survives_the_next_listing() {
+        let ws = Uuid::from_u128(0xA4);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = service(runtime.clone());
+        let id = service.list(TENANT).await[0].id;
+
+        assert_eq!(
+            service.list(TENANT).await[0].state,
+            SessionState::Starting,
+            "a listed session starts out only started"
+        );
+        assert_eq!(
+            service.get(TENANT, id).await.unwrap().state,
+            SessionState::Running,
+            "the reachability probe promotes it"
+        );
+        assert_eq!(
+            service.list(TENANT).await[0].state,
+            SessionState::Running,
+            "and a fresh listing does not undo that"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_listing_is_reused_until_its_ttl_runs_out() {
+        let ws = Uuid::from_u128(0xA5);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = SessionService::new(
+            StudioSessionConfig {
+                registry_ttl_secs: 300,
+                ..StudioSessionConfig::default()
+            },
+            runtime.clone(),
+        );
+
+        for _ in 0..5 {
+            assert_eq!(service.list(TENANT).await.len(), 1);
+        }
+        assert_eq!(
+            runtime.listings(),
+            1,
+            "five reads inside the TTL are one call to the runtime"
+        );
+    }
+
+    /// A momentary API failure must not empty the portal.
+    #[tokio::test]
+    async fn a_runtime_that_cannot_be_listed_leaves_the_last_answer_standing() {
+        let ws = Uuid::from_u128(0xA6);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = service(runtime.clone());
+        assert_eq!(service.list(TENANT).await.len(), 1);
+
+        runtime.start_failing();
+        assert_eq!(service.list(TENANT).await.len(), 1);
+    }
+
+    /// Stopping must take effect at once, not when the listing next expires.
+    #[tokio::test]
+    async fn stopping_takes_effect_before_the_next_listing() {
+        let ws = Uuid::from_u128(0xA7);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = SessionService::new(
+            StudioSessionConfig {
+                registry_ttl_secs: 300,
+                ..StudioSessionConfig::default()
+            },
+            runtime.clone(),
+        );
+        let id = service.list(TENANT).await[0].id;
+
+        assert!(service.stop(TENANT, id).await.unwrap());
+        assert!(service.list(TENANT).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn another_tenants_session_is_not_found() {
+        let ws = Uuid::from_u128(0xA8);
+        let service = service(FakeRuntime::with(vec![running_session(ws, 41000)]));
+        let id = service.list(TENANT).await[0].id;
+        let stranger = Uuid::from_u128(0x99);
+
+        assert!(service.get(stranger, id).await.is_none());
+        assert!(service.list(stranger).await.is_empty());
+        assert!(!service.stop(stranger, id).await.unwrap());
+    }
+
+    /// The bridge's authentication primitive, resolved on a service that never
+    /// minted the token — the studio-theia ingress can land on any replica.
+    #[tokio::test]
+    async fn a_control_token_resolves_on_a_service_that_never_minted_it() {
+        let ws = Uuid::from_u128(0xA9);
+        let elsewhere = service(FakeRuntime::with(vec![running_session(ws, 41000)]));
+
+        let identity = elsewhere.resolve_control_token("s2s").await.unwrap();
+        assert_eq!(identity.workspace_id, ws);
+        assert_eq!(identity.tenant_id, TENANT);
+        assert!(elsewhere.resolve_control_token("forged").await.is_none());
     }
 }

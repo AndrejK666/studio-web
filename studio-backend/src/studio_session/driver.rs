@@ -87,6 +87,45 @@ pub struct AdoptedSession {
     /// `STUDIO_SESSION_TOKEN` recovered from the runtime (empty if the driver
     /// cannot read it back — the session is then adopted ungated).
     pub session_token: String,
+    /// `STUDIO_THEIA_S2S_TOKEN` recovered the same way (empty when the bridge
+    /// was off for this session, or when the driver cannot read it back).
+    /// Without it an adopted session keeps running but the backend can no
+    /// longer issue control calls to its Theia node.
+    pub control_token: String,
+    /// Human-readable source summaries, rebuilt from the session's env by
+    /// [`adopted_sources`].
+    pub sources: Vec<String>,
+}
+
+/// Rebuild a session's source summaries from the env it was launched with.
+///
+/// The launch path derives these from the request; adoption has only the
+/// runtime, so it reads back the same two variables the entrypoint uses.
+/// `STUDIO_SOURCES` is JSON — an array of objects with a `name` — and its
+/// tokens are ignored here: only names reach the summary.
+///
+/// Local binds are not represented. They are Docker-only, live nowhere in the
+/// env, and the Kubernetes driver rejects them at launch — so on the path that
+/// actually runs multi-replica this is the complete list.
+pub fn adopted_sources(root_url: Option<&str>, studio_sources: Option<&str>) -> Vec<String> {
+    let root = root_url
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(|_| "workspace root (git)".to_string());
+
+    let listed = studio_sources
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| {
+            entry
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(|name| format!("{name} (git)"))
+        });
+
+    root.into_iter().chain(listed).collect()
 }
 
 /// The runtime behind [`SessionService`](super::service::SessionService).
@@ -118,4 +157,61 @@ pub trait SessionDriver: Send + Sync {
 
     /// List labeled sessions surviving from a previous backend run.
     async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adopted_sources;
+
+    const TWO: &str = r#"[{"name":"docs","dir":"docs","url":"https://git/docs.git","branch":null,"token":"secret"},
+                          {"name":"api","dir":"api","url":"https://git/api.git","branch":"main","token":null}]"#;
+
+    #[test]
+    fn lists_the_root_first_then_each_named_source() {
+        assert_eq!(
+            adopted_sources(Some("https://git/root.git"), Some(TWO)),
+            ["workspace root (git)", "docs (git)", "api (git)"]
+        );
+    }
+
+    #[test]
+    fn each_variable_stands_on_its_own() {
+        assert_eq!(
+            adopted_sources(Some("https://git/root.git"), None),
+            ["workspace root (git)"]
+        );
+        assert_eq!(
+            adopted_sources(None, Some(TWO)),
+            ["docs (git)", "api (git)"]
+        );
+        assert!(adopted_sources(None, None).is_empty());
+    }
+
+    /// A session launched with no root repository has the variable set to an
+    /// empty string rather than left out, so blank must read as absent.
+    #[test]
+    fn treats_a_blank_root_url_as_absent() {
+        assert!(adopted_sources(Some("   "), None).is_empty());
+    }
+
+    /// Adoption must never fail over a summary. Anything unreadable in
+    /// `STUDIO_SOURCES` costs the names, not the session.
+    #[test]
+    fn survives_a_payload_it_cannot_read() {
+        assert!(adopted_sources(None, Some("not json")).is_empty());
+        assert!(adopted_sources(None, Some(r#"{"name":"docs"}"#)).is_empty());
+        assert_eq!(
+            adopted_sources(None, Some(r#"[{"dir":"docs"},{"name":"api"}]"#)),
+            ["api (git)"]
+        );
+    }
+
+    /// The tokens in `STUDIO_SOURCES` are read past, not carried: a summary
+    /// ends up in an API response, and the env it came from does not.
+    #[test]
+    fn carries_no_token_into_the_summary() {
+        for summary in adopted_sources(Some("https://git/root.git"), Some(TWO)) {
+            assert!(!summary.contains("secret"), "{summary} leaked a token");
+        }
+    }
 }
