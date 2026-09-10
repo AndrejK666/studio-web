@@ -51,6 +51,13 @@ pub struct AssignIdentityRequest {
 #[toolkit_macros::api_dto(response)]
 pub struct PlatformIdentityListDto {
     pub items: Vec<PlatformIdentityDto>,
+    /// `true` when the realm holds more identities than one read of it takes.
+    ///
+    /// Sorting happens after reading, so a partial read is not the first page
+    /// of this list — it is a different set of people, and the ones waiting to
+    /// be placed may be among those missing. A screen that shows the list
+    /// without saying this looks complete and is not.
+    pub truncated: bool,
 }
 
 fn to_dto(identity: DirectoryIdentity) -> PlatformIdentityDto {
@@ -95,16 +102,13 @@ async fn list_identities(
 ) -> ApiResult<JsonBody<PlatformIdentityListDto>> {
     require_platform_admin(&ctx)?;
     let service = configured_service(service)?;
-    let items = service
-        .list(&ctx)
-        .await
-        .map_err(|error| {
-            CanonicalError::internal(format!("identity directory failed: {error:#}")).create()
-        })?
-        .into_iter()
-        .map(to_dto)
-        .collect();
-    Ok(Json(PlatformIdentityListDto { items }))
+    let directory = service.list(&ctx).await.map_err(|error| {
+        CanonicalError::internal(format!("identity directory failed: {error:#}")).create()
+    })?;
+    Ok(Json(PlatformIdentityListDto {
+        items: directory.identities.into_iter().map(to_dto).collect(),
+        truncated: directory.truncated,
+    }))
 }
 
 async fn assign_identity(
@@ -139,7 +143,10 @@ pub fn register_routes(
         .summary("List identities known to Studio's Keycloak realm")
         .description(
             "Platform-admin-only identity directory. Includes authenticated but unassigned users; \
-             organization owners must use their tenant-scoped People endpoint instead.",
+             organization owners must use their tenant-scoped People endpoint instead. Newest \
+             first. The realm is read a page at a time up to a ceiling, and `truncated` says \
+             whether that ceiling was reached — the list is then part of the directory rather \
+             than its first page, since the sort happens after the read.",
         )
         .tag("StudioIdentity")
         .authenticated()

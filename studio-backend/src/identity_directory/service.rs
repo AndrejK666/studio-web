@@ -8,13 +8,33 @@ use gts::GtsTypeId;
 use reqwest::Client;
 use serde::Deserialize;
 use toolkit_security::SecurityContext;
+use tracing::warn;
 use uuid::Uuid;
 
 pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 const HOME_TENANT_ATTRIBUTE: &str = "tenant_id";
 const ORGANIZATION_ROLE_ATTRIBUTE: &str = "studio_organization_role";
 const TENANT_GROUP_ROOT: &str = "tenants";
+/// Records asked for per page of a Keycloak admin listing.
+const PAGE_SIZE: usize = 200;
+/// Pages one listing will read before giving up and saying so. Ten pages of
+/// full representations is already a heavy screen; past that, the answer is
+/// that this deployment needs the directory to paginate to its caller rather
+/// than read the realm on every load.
+const MAX_PAGES: usize = 10;
 const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~";
+
+/// What one read of the realm saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Directory {
+    /// Newest first, ties by username.
+    pub identities: Vec<DirectoryIdentity>,
+    /// `true` when the read stopped at its page ceiling rather than at the end
+    /// of the realm. The caller is then looking at part of the directory, and
+    /// saying so is the difference between a screen that is short and a screen
+    /// that is wrong.
+    pub truncated: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryIdentity {
@@ -127,6 +147,18 @@ impl DirectoryIdentity {
     }
 }
 
+/// Where each page of a listing starts: `0, 200, 400, …`, [`MAX_PAGES`] of
+/// them.
+///
+/// A named iterator rather than an index arithmetic in the loop, because this
+/// is where paging goes wrong — a window that never advances asks Keycloak for
+/// the same page for ever, and one that advances by the wrong step skips
+/// people silently. Both are visible here and neither is visible in a `for`
+/// header.
+fn page_offsets() -> impl Iterator<Item = usize> {
+    (0..MAX_PAGES).map(|page| page * PAGE_SIZE)
+}
+
 /// Newest first, ties broken by username.
 ///
 /// The screen this feeds is an onboarding queue, so the people who just
@@ -207,24 +239,62 @@ impl IdentityDirectoryService {
         Ok(response.access_token)
     }
 
-    async fn keycloak_users(&self, token: &str) -> Result<Vec<KeycloakUser>> {
+    /// Read a Keycloak admin listing to its end, a page at a time.
+    ///
+    /// Keycloak pages everything and defaults to a small window, so a single
+    /// request answers "the first N" and says nothing about the rest. That is
+    /// the wrong shape for both callers here: the directory sorts what it gets
+    /// *after* reading it, so a cap applied in Keycloak's order silently drops
+    /// people the screen would have put at the top; and the membership sync
+    /// removes the tenant groups it did not ask for, so one it never saw stays.
+    ///
+    /// [`MAX_PAGES`] bounds it anyway — a realm larger than anyone expected
+    /// must not turn one screen into an unbounded number of admin calls. The
+    /// flag says whether the ceiling was reached, so a caller can tell the
+    /// difference between "that is everyone" and "that is as far as we read".
+    async fn paged<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        url: &str,
+        what: &'static str,
+    ) -> Result<(Vec<T>, bool)> {
+        let mut out: Vec<T> = Vec::new();
+        for offset in page_offsets() {
+            let first = offset.to_string();
+            let batch = self
+                .http
+                .get(url)
+                .bearer_auth(token)
+                .query(&[
+                    ("first", first.as_str()),
+                    ("max", PAGE_SIZE.to_string().as_str()),
+                    ("briefRepresentation", "false"),
+                ])
+                .send()
+                .await
+                .with_context(|| format!("list Keycloak {what}"))?
+                .error_for_status()
+                .with_context(|| format!("Keycloak rejected the {what} listing"))?
+                .json::<Vec<T>>()
+                .await
+                .with_context(|| format!("decode Keycloak {what} response"))?;
+
+            // A short page is the end of the listing — Keycloak has no total
+            // to compare against, so this is what "no more" looks like.
+            let short = batch.len() < PAGE_SIZE;
+            out.extend(batch);
+            if short {
+                return Ok((out, false));
+            }
+        }
+        Ok((out, true))
+    }
+
+    /// Every identity in the realm, and whether the read stopped short of the
+    /// end (see [`Self::paged`]).
+    async fn keycloak_users(&self, token: &str) -> Result<(Vec<KeycloakUser>, bool)> {
         let url = format!("{}/admin/realms/{}/users", self.admin_base_url, self.realm);
-        self.http
-            .get(url)
-            .bearer_auth(token)
-            .query(&[
-                ("first", "0"),
-                ("max", "200"),
-                ("briefRepresentation", "false"),
-            ])
-            .send()
-            .await
-            .context("list Keycloak users")?
-            .error_for_status()
-            .context("Keycloak rejected the identity-directory request")?
-            .json::<Vec<KeycloakUser>>()
-            .await
-            .context("decode Keycloak users response")
+        self.paged(token, &url, "users").await
     }
 
     async fn tenant_group(&self, token: &str, tenant_id: Uuid) -> Result<KeycloakGroup> {
@@ -292,23 +362,20 @@ impl IdentityDirectoryService {
             "{}/admin/realms/{}/users/{}/groups",
             self.admin_base_url, self.realm, identity_id
         );
-        let current = self
-            .http
-            .get(&groups_url)
-            .bearer_auth(token)
-            .query(&[
-                ("first", "0"),
-                ("max", "200"),
-                ("briefRepresentation", "false"),
-            ])
-            .send()
-            .await
-            .context("list Keycloak user groups")?
-            .error_for_status()
-            .context("Keycloak rejected the user group lookup")?
-            .json::<Vec<KeycloakGroup>>()
-            .await
-            .context("decode Keycloak user groups")?;
+        // Paged for the same reason, with a sharper consequence: the loop below
+        // removes the tenant groups this identity is in and should not be, so a
+        // group the listing never reached would leave the identity a member of
+        // an organization it has been moved out of.
+        let (current, truncated) = self
+            .paged::<KeycloakGroup>(token, &groups_url, "user groups")
+            .await?;
+        if truncated {
+            warn!(
+                %identity_id,
+                "studio-identity-directory: this identity is in more groups than one listing \
+                 reads — a stale organization membership may survive the move"
+            );
+        }
 
         let tenant_path_prefix = format!("/{TENANT_GROUP_ROOT}/");
         for group in current
@@ -338,9 +405,10 @@ impl IdentityDirectoryService {
         Ok(())
     }
 
-    pub async fn list(&self, ctx: &SecurityContext) -> Result<Vec<DirectoryIdentity>> {
+    /// The realm's identities, newest first, and whether that is all of them.
+    pub async fn list(&self, ctx: &SecurityContext) -> Result<Directory> {
         let token = self.admin_token().await?;
-        let users = self.keycloak_users(&token).await?;
+        let (users, truncated) = self.keycloak_users(&token).await?;
         let mut tenants = HashMap::<Uuid, Option<String>>::new();
         let mut identities = Vec::with_capacity(users.len());
 
@@ -372,7 +440,10 @@ impl IdentityDirectoryService {
         }
 
         sort_identities(&mut identities);
-        Ok(identities)
+        Ok(Directory {
+            identities,
+            truncated,
+        })
     }
 
     /// Assign an existing Keycloak identity to an Account Management tenant.
@@ -551,6 +622,32 @@ mod tests {
     fn with_tenant(mut value: serde_json::Value, tenant: &str) -> serde_json::Value {
         value["attributes"] = json!({ "tenant_id": [tenant] });
         value
+    }
+
+    /// The arithmetic paging gets wrong. A window that never advances asks
+    /// Keycloak for page one for ever; one that advances by the wrong step
+    /// leaves people out with nothing to show for it. Neither is visible in
+    /// the loop that consumes this.
+    #[test]
+    fn the_pages_start_at_zero_and_advance_by_a_whole_page() {
+        let offsets: Vec<usize> = super::page_offsets().collect();
+        assert_eq!(offsets.first(), Some(&0), "the first page starts at zero");
+        assert_eq!(offsets.len(), super::MAX_PAGES);
+        for pair in offsets.windows(2) {
+            assert_eq!(
+                pair[1] - pair[0],
+                super::PAGE_SIZE,
+                "a gap or an overlap between pages loses or repeats records"
+            );
+        }
+    }
+
+    /// What the ceiling actually is, spelled out. Raising either constant
+    /// changes how much of a realm one screen reads, which is a decision about
+    /// how heavy that screen is allowed to be — not an implementation detail.
+    #[test]
+    fn the_ceiling_is_two_thousand_identities() {
+        assert_eq!(super::MAX_PAGES * super::PAGE_SIZE, 2_000);
     }
 
     #[test]
