@@ -5,12 +5,51 @@
 
 import { ApiError } from "./api";
 
+/** A canonical error's body, as much of it as this helper reads. */
+interface ProblemBody {
+  title?: string;
+  detail?: string;
+  context?: {
+    /** `invalid_argument`: what the caller broke. */
+    constraint?: string;
+    /** `failed_precondition`: one entry per unmet precondition. */
+    violations?: { description?: string }[];
+  };
+}
+
+/**
+ * The backend's own sentence, where it wrote one.
+ *
+ * `detail` is enough for most canonical errors, but two shapes keep the part
+ * worth reading somewhere else: a `failed_precondition` says "Operation
+ * precondition not met" in `detail` and puts the reason in
+ * `context.violations[].description`, and an `invalid_argument` repeats itself
+ * in `context.constraint`. The notification surfaces live on exactly those two
+ * — "this connection is an incoming webhook, its channel is fixed in the URL",
+ * "no IDE session to notify for workspace X" — so dropping them left a person
+ * reading the name of a category instead of the answer.
+ */
 export function errText(e: unknown): string {
-  if (e instanceof ApiError) {
-    const b = e.body as { title?: string; detail?: string } | undefined;
-    return `HTTP ${e.status}${b?.title ? ` · ${b.title}` : ""}${b?.detail ? ` — ${b.detail}` : ""}`;
+  if (!(e instanceof ApiError)) return String(e);
+
+  const body = e.body as ProblemBody | undefined;
+  const detail = body?.detail?.trim();
+  const reasons = (body?.context?.violations ?? [])
+    .map((v) => v.description?.trim())
+    .filter((d): d is string => Boolean(d));
+  const constraint = body?.context?.constraint?.trim();
+  if (reasons.length === 0 && constraint) {
+    reasons.push(constraint);
   }
-  return String(e);
+
+  // Kept only when it adds something: `invalid_argument` already puts the
+  // constraint in `detail`, and repeating it reads as a stutter.
+  const said = reasons.filter((r) => r !== detail);
+  const parts = [detail, ...said].filter((p): p is string => Boolean(p));
+
+  return `HTTP ${e.status}${body?.title ? ` · ${body.title}` : ""}${
+    parts.length > 0 ? ` — ${parts.join(" — ")}` : ""
+  }`;
 }
 
 /** Case-insensitive "does any of these fields contain the needle". */
