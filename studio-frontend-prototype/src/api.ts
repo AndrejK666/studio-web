@@ -817,6 +817,35 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return body as T;
 }
 
+/** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
+const MAX_PAGE = 200;
+
+/**
+ * Walk a paged list endpoint to completion and return every item.
+ *
+ * The backend list contract is `?offset=&limit=` -> `{ [key]: [...], total }`,
+ * defaulting to 50 per page. Screens that filter or lay out a whole collection
+ * client-side (the gear catalogue, the artifact graph) need all of it, and
+ * asking once would silently render only the first page. `total` is the count
+ * before paging, so the walk stops the moment it has that many.
+ */
+async function requestAllPages<T>(path: string, token: string, key: string): Promise<T[]> {
+  const separator = path.includes("?") ? "&" : "?";
+  const items: T[] = [];
+  for (let offset = 0; ; offset += MAX_PAGE) {
+    const body = await request<Record<string, unknown>>(
+      `${path}${separator}offset=${offset}&limit=${MAX_PAGE}`,
+      token,
+    );
+    const page = (body[key] as T[] | undefined) ?? [];
+    items.push(...page);
+    const total = typeof body.total === "number" ? body.total : items.length;
+    // An empty page also terminates: a server that ignores the parameters, or a
+    // collection shrinking under a concurrent write, must not spin forever.
+    if (page.length === 0 || items.length >= total) return items;
+  }
+}
+
 const artifactSleep = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -1145,17 +1174,24 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  workspaceDocuments: (token: string, workspaceId: string) =>
-    request<{ items: Doc[] }>(
+  // All pages: the documents screen keeps the list in state and reads the
+  // selected document's body straight out of it. Real paging UI is the next
+  // step — until then the walk is what keeps the screen showing everything.
+  workspaceDocuments: async (token: string, workspaceId: string) => ({
+    items: await requestAllPages<Doc>(
       `/studio-documents/v1/workspaces/${workspaceId}/documents`,
       token,
+      "items",
     ),
+  }),
 
-  projectDocuments: (token: string, workspaceId: string, projectId: string) =>
-    request<{ items: Doc[] }>(
+  projectDocuments: async (token: string, workspaceId: string, projectId: string) => ({
+    items: await requestAllPages<Doc>(
       `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/documents`,
       token,
+      "items",
     ),
+  }),
 
   createWorkspaceDocument: (
     token: string,
@@ -1784,11 +1820,15 @@ export const api = {
 
   /** Relations between ingested nodes (authored_by / modifies / …), optionally
    * scoped to a tenant (both endpoints must be in-scope). */
-  artifactEdges: (token: string, scope?: string) =>
-    request<{ edges: ArtifactEdge[] }>(
+  artifactEdges: async (token: string, scope?: string) => ({
+    // All pages: the caller draws a graph, and one page of relations would
+    // render a fraction of the edges between nodes it is already showing.
+    edges: await requestAllPages<ArtifactEdge>(
       `/studio-artifact-ingest/v1/edges${scope ? `?scope=${encodeURIComponent(scope)}` : ""}`,
       token,
+      "edges",
     ),
+  }),
 
   /** Register an already-uploaded manual/generated file in the artifact graph.
    * The graph stores metadata and the file-storage reference, never bytes. */

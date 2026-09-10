@@ -1109,21 +1109,19 @@ export class ArtifactGraphWidget extends ReactWidget {
             // Scope both reads to the tenant that opened this session, so the
             // graph shows only its artifacts (a workspace shows every project
             // under it; a project shows just itself).
-            const [nRes, eRes] = await Promise.all([
-                StudioApi.fetch(StudioApi.scoped('/studio-artifact-ingest/v1/nodes')),
-                StudioApi.fetch(StudioApi.scoped('/studio-artifact-ingest/v1/edges')).catch(() => undefined),
+            // Both lists are paged (50 per page by default), and a graph needs
+            // all of it — one page would draw a fraction of the artifacts and
+            // look like an ingest that never finished.
+            const [nodes, edges] = await Promise.all([
+                StudioApi.fetchAllPages<ArtifactNode>(
+                    StudioApi.scoped('/studio-artifact-ingest/v1/nodes'), 'nodes',
+                ),
+                StudioApi.fetchAllPages<ArtifactEdge>(
+                    StudioApi.scoped('/studio-artifact-ingest/v1/edges'), 'edges',
+                ).catch(() => [] as ArtifactEdge[]),
             ]);
-            if (!nRes.ok) {
-                throw new Error(`HTTP ${nRes.status}`);
-            }
-            const nJson = await nRes.json() as { nodes?: ArtifactNode[] };
-            this.nodes = nJson.nodes ?? [];
-            if (eRes && eRes.ok) {
-                const eJson = await eRes.json() as { edges?: ArtifactEdge[] };
-                this.edges = eJson.edges ?? [];
-            } else {
-                this.edges = [];
-            }
+            this.nodes = nodes;
+            this.edges = edges;
         } catch (e) {
             this.error = e instanceof Error ? e.message : String(e);
             this.nodes = this.nodes ?? [];

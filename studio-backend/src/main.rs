@@ -22,6 +22,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 #[cfg(feature = "llm")]
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
+mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod registered_gears;
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot

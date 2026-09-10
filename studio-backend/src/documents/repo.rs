@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, QueryFilter};
+use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, Order, QueryFilter};
 use toolkit_db::DBProvider;
 use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict};
 use toolkit_security::AccessScope;
@@ -304,11 +304,25 @@ impl DocumentsRepo {
         Ok(result.rows_affected > 0)
     }
 
+    /// Documents in scope, newest first, plus how many the filter matches.
+    ///
+    /// `LIMIT`/`OFFSET` are in the query rather than applied to a materialised
+    /// `Vec`: a workspace accumulates documents forever and every row carries
+    /// its full body, so an unbounded `SELECT` grows without limit. The
+    /// `ORDER BY` is what makes an offset meaningful at all — `updated_at`
+    /// alone is not unique, so the primary key breaks ties and keeps the
+    /// sequence total.
+    ///
+    /// `limit: None` is the whole scope, for the callers that judge the set as
+    /// a whole (stage readiness, analysis lookup) and never put it in a
+    /// response body.
     pub async fn list_docs(
         &self,
         workspace_id: Uuid,
         scope: DocScope,
-    ) -> Result<Vec<document::Model>> {
+        offset: u64,
+        limit: Option<u64>,
+    ) -> Result<(Vec<document::Model>, u64)> {
         let conn = self.db.conn()?;
         let filter = match scope {
             DocScope::WorkspaceLevel => Condition::all().add(document::Column::ProjectId.is_null()),
@@ -316,13 +330,22 @@ impl DocumentsRepo {
                 .add(document::Column::ProjectId.is_null())
                 .add(document::Column::ProjectId.eq(project_id)),
         };
-        let rows = document::Entity::find()
-            .secure()
-            .scope_with(&AccessScope::for_tenant(workspace_id))
-            .filter(filter)
-            .all(&conn)
-            .await?;
-        Ok(rows)
+        let scoped = || {
+            document::Entity::find()
+                .secure()
+                .scope_with(&AccessScope::for_tenant(workspace_id))
+                .filter(filter.clone())
+        };
+        let total = scoped().count(&conn).await?;
+        let mut query = scoped()
+            .order_by(document::Column::UpdatedAt, Order::Desc)
+            .order_by(document::Column::Id, Order::Asc)
+            .offset(offset);
+        if let Some(limit) = limit {
+            query = query.limit(limit);
+        }
+        let rows = query.all(&conn).await?;
+        Ok((rows, total))
     }
 
     /// Create (fresh id → plain insert) or update (existing id → conflict

@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::Query;
 use axum::{Extension, Router, extract::Path};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
@@ -23,6 +24,7 @@ use super::model::{
 };
 use super::service::DocumentsService;
 use super::validate::{SectionStatus, ValidationReport};
+use crate::pagination::PageQuery;
 
 #[resource_error(gts_id!("cf.studio._.documents.v1~"))]
 pub struct DocumentsError;
@@ -256,6 +258,10 @@ pub struct DocumentDto {
 #[toolkit_macros::api_dto(response)]
 pub struct DocumentListDto {
     pub items: Vec<DocumentDto>,
+    /// Documents in this workspace/project scope across every page, so a
+    /// caller can show "N of M" and knows a next page exists exactly when
+    /// `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -1113,17 +1119,19 @@ async fn list_workspace_documents(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
     Path(workspace_id): Path<Uuid>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<DocumentListDto>> {
     service
         .authorize(&ctx, workspace_id)
         .await
         .map_err(no_tenant)?;
-    let items = service
-        .list_documents(workspace_id, None)
+    let (items, total) = service
+        .list_documents(workspace_id, None, page)
         .await
         .map_err(internal)?;
     Ok(Json(DocumentListDto {
         items: items.into_iter().map(|d| document_dto(d, false)).collect(),
+        total,
     }))
 }
 
@@ -1131,6 +1139,7 @@ async fn list_project_documents(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<DocumentListDto>> {
     service
         .authorize(&ctx, workspace_id)
@@ -1140,8 +1149,8 @@ async fn list_project_documents(
         .authorize(&ctx, project_id)
         .await
         .map_err(no_tenant)?;
-    let items = service
-        .list_documents(workspace_id, Some(project_id))
+    let (items, total) = service
+        .list_documents(workspace_id, Some(project_id), page)
         .await
         .map_err(internal)?;
     Ok(Json(DocumentListDto {
@@ -1152,6 +1161,7 @@ async fn list_project_documents(
                 document_dto(d, inherited)
             })
             .collect(),
+        total,
     }))
 }
 
@@ -1723,6 +1733,13 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("workspace_id", "Workspace tenant id")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first document",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_workspace_documents)
         .json_response_with_schema::<DocumentListDto>(openapi, StatusCode::OK, "Documents")
         .error_401(openapi)
@@ -1745,6 +1762,13 @@ pub fn register_routes(
     .require_license_features::<License>([])
     .path_param("workspace_id", "Workspace tenant id")
     .path_param("project_id", "Project tenant id")
+    .query_param_typed(
+        "offset",
+        false,
+        "Zero-based index of the first document",
+        "integer",
+    )
+    .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
     .handler(list_project_documents)
     .json_response_with_schema::<DocumentListDto>(openapi, StatusCode::OK, "Effective documents")
     .error_401(openapi)

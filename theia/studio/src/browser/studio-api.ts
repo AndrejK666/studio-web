@@ -20,6 +20,9 @@ export function studioApiUrl(path: string, location: Endpoint.Location = self.lo
     return endpoint + query;
 }
 
+/** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
+const MAX_PAGE = 200;
+
 /** Latest portal-issued API context, kept in memory and shared by the Studio
  * browser widgets that call backend gears through the session gate. */
 export const StudioApi = {
@@ -42,5 +45,34 @@ export const StudioApi = {
                 'Content-Type': 'application/json',
             },
         });
+    },
+    /**
+     * Walk a paged list endpoint to completion and return every item.
+     *
+     * The backend list contract is `?offset=&limit=` -> `{ [key]: [...], total }`
+     * and defaults to 50 per page, so a widget that lays out a whole graph has
+     * to ask for the rest — a plain `fetch` of the collection silently renders
+     * the first page only. `total` is the count before paging, so the walk
+     * stops as soon as it has that many.
+     */
+    async fetchAllPages<T>(path: string, key: string): Promise<T[]> {
+        const separator = path.includes('?') ? '&' : '?';
+        const items: T[] = [];
+        for (let offset = 0; ; offset += MAX_PAGE) {
+            const res = await StudioApi.fetch(`${path}${separator}offset=${offset}&limit=${MAX_PAGE}`);
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const body = await res.json() as Record<string, unknown>;
+            const page = (body[key] as T[] | undefined) ?? [];
+            items.push(...page);
+            const total = typeof body.total === 'number' ? body.total : items.length;
+            // An empty page also terminates: a server that ignores the
+            // parameters, or a collection shrinking under a concurrent write,
+            // must not spin forever.
+            if (page.length === 0 || items.length >= total) {
+                return items;
+            }
+        }
     },
 };
