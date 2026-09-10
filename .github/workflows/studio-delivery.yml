@@ -75,7 +75,7 @@ env:
 
 jobs:
   test-changes:
-    name: 1. Test changed components / Detect affected components
+    name: Detect changed components
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.operation == 'Build and publish'
     runs-on: ubuntu-latest
     outputs:
@@ -304,7 +304,7 @@ jobs:
       - name: Lint test chart
         run: helm lint deploy/helm/studio-web -f deploy/helm/values-test.example.yaml
   test-complete:
-    name: 1. Test changed components / complete
+    name: 1. Test
     needs: [test-changes, test-backend, test-frontend, test-prototype, test-theia-session-gate, test-infra, test-deployment-config]
     if: >-
       always() &&
@@ -319,7 +319,7 @@ jobs:
     steps:
       - run: echo "Test stage completed successfully."
   build-require-ci:
-    name: 2. Build & Publish / require-ci
+    name: Prepare build
     # test-complete proves the complete matrix; test-changes is also listed so
     # this job can consume the selected-component outputs directly.
     needs: [test-complete, test-changes]
@@ -921,7 +921,7 @@ jobs:
           generate_release_notes: true
 
   build-complete:
-    name: 2. Build & Publish / complete
+    name: 2. Build & Publish
     # The publish jobs are intentionally skipped for a manual deployment: it
     # consumes an already immutable image. Treat skipped as a completed stage
     # so the graph stays linear without rebuilding the artifact.
