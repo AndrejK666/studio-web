@@ -521,8 +521,18 @@ gears:
   # block above; it cannot run on SQLite.
   studio-user:
     database:
-      server: "sqlite_main"
-      file: "studio_users.db"
+      # PostgreSQL, like every other profile, even though the platform gears in
+      # this one still sit on SQLite. Carrying a second dialect for a gear that
+      # only ever runs on PostgreSQL meant shipping migration SQL that no
+      # deployment executes and no test covered — the same shape of code that
+      # had already cost studio-documents a real bug.
+      #
+      # The database is `studio_users` on the compose server, created by
+      # `backend-bootstrap` from docker.yaml. Running this profile without that
+      # container up gets a connection error on the first request, exactly as
+      # postgres.yaml documents for itself.
+      server: "pg_main"
+      dbname: "studio_users"
 
   graph-storage:
     database:

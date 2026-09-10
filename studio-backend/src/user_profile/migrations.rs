@@ -1,9 +1,16 @@
 //! SeaORM migrations for the identity gear's four tables.
 //!
-//! Raw per-backend SQL (Postgres + SQLite), the same approach credstore_pg
-//! takes. Primary keys are deterministic v5 UUIDs of the natural key, so the PK
-//! itself enforces uniqueness of (provider, subject) / (user_id, org_id) /
-//! (kind, external_id); secondary indexes cover the by-user and by-org reads.
+//! Raw SQL, the same approach credstore_pg takes. Primary keys are
+//! deterministic v5 UUIDs of the natural key, so the PK itself enforces
+//! uniqueness of (provider, subject) / (user_id, org_id) / (kind,
+//! external_id); secondary indexes cover the by-user and by-org reads.
+//!
+//! **PostgreSQL only.** A parallel SQLite dialect used to sit beside this one
+//! so `dev.yaml` could run the gear without a server. Nothing executed it in
+//! production and no test covered it, and it had already drifted: `verified`
+//! defaulted `FALSE` in one spelling and `0` in the other. That is the drift
+//! that cost studio-documents a migration, found there and not here only
+//! because there it was tested.
 
 use toolkit_db::sea_orm_migration::prelude::*;
 
@@ -21,7 +28,7 @@ mod m0001 {
     use toolkit_db::sea_orm_migration::sea_orm;
     use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
 
-    const UNSUPPORTED: &str = "studio-user migrations: only PostgreSQL and SQLite are supported";
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
 
     pub struct Migration;
 
@@ -78,53 +85,6 @@ CREATE TABLE IF NOT EXISTS identity_alias (
     user_id UUID NOT NULL,
     confidence TEXT NOT NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_identity_alias_user ON identity_alias (user_id);
-                    "
-                }
-                sea_orm::DatabaseBackend::Sqlite => {
-                    r"
-CREATE TABLE IF NOT EXISTS identity_user (
-    id BLOB PRIMARY KEY NOT NULL,
-    tenant_id BLOB NOT NULL,
-    display_name TEXT,
-    email TEXT,
-    avatar_url TEXT,
-    locale TEXT,
-    merged_into BLOB,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS identity_login (
-    id BLOB PRIMARY KEY NOT NULL,
-    tenant_id BLOB NOT NULL,
-    provider TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    user_id BLOB NOT NULL,
-    verified BOOLEAN NOT NULL DEFAULT 0,
-    linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_identity_login_user ON identity_login (user_id);
-CREATE TABLE IF NOT EXISTS identity_membership (
-    id BLOB PRIMARY KEY NOT NULL,
-    tenant_id BLOB NOT NULL,
-    user_id BLOB NOT NULL,
-    org_id BLOB NOT NULL,
-    role TEXT NOT NULL,
-    source TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_identity_membership_user ON identity_membership (user_id);
-CREATE INDEX IF NOT EXISTS idx_identity_membership_org ON identity_membership (org_id);
-CREATE TABLE IF NOT EXISTS identity_alias (
-    id BLOB PRIMARY KEY NOT NULL,
-    tenant_id BLOB NOT NULL,
-    kind TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    user_id BLOB NOT NULL,
-    confidence TEXT NOT NULL,
-    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_identity_alias_user ON identity_alias (user_id);
                     "
