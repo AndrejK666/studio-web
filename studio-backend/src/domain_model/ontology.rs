@@ -579,6 +579,148 @@ impl Ontology {
         }));
         Ok(entity.clone())
     }
+
+    /// Change a field a type already declares: rename it, retype it, make it
+    /// required or not.
+    ///
+    /// Only the entity's **own** fields can be edited. A field it inherits
+    /// belongs to the base that declares it, and editing it there is a
+    /// different change with a much wider blast radius, so it is refused and
+    /// says where the field actually lives.
+    ///
+    /// Relation properties are refused too: they are materialized as `declares`
+    /// edges in the model graph, and the store has no way to remove an edge —
+    /// an edge key is a hash the gear derives and never hands back — so editing
+    /// one would leave the old edge behind.
+    pub fn edit_field(
+        &mut self,
+        entity_id: &str,
+        name: &str,
+        edit: &FieldEdit,
+    ) -> Result<FieldChange, OntologyError> {
+        // A rename that has already landed: the old name is gone and the new
+        // one is there. That is what a retried migration looks like, and it has
+        // to be told apart from a mistyped field name, which is an error.
+        if let Some(new_name) = &edit.rename_to
+            && new_name != name
+        {
+            let source = self.own_property(entity_id, name).is_some();
+            let target = self.own_property(entity_id, new_name).is_some();
+            match (source, target) {
+                (false, true) => return Err(OntologyError::AlreadyApplied),
+                (true, true) => return Err(OntologyError::DuplicateField(new_name.clone())),
+                _ => {}
+            }
+        }
+        let index = self.own_property_index(entity_id, name)?;
+        let entity = self.entity_mut(entity_id)?;
+        let property = entity["properties"][index]
+            .as_object_mut()
+            .ok_or(OntologyError::Malformed)?;
+        let before = Value::Object(property.clone());
+
+        if let Some(new_name) = &edit.rename_to {
+            property.insert("name".to_string(), json!(new_name));
+        }
+        if let Some(type_name) = &edit.type_name {
+            property.insert("type".to_string(), json!(type_name));
+        }
+        if let Some(required) = edit.required {
+            property.insert("required".to_string(), json!(required));
+        }
+        if let Some(description) = &edit.description {
+            property.insert("description".to_string(), json!(description));
+        }
+        let after = Value::Object(property.clone());
+        let entity = entity.clone();
+        Ok(FieldChange {
+            index,
+            before,
+            after,
+            entity,
+        })
+    }
+
+    /// Drop a field from a type. The stored objects keep whatever they hold
+    /// under that key — removing a field from the model is not permission to
+    /// delete data — so it starts being reported as undeclared instead.
+    ///
+    /// Same two refusals as [`Self::edit_field`]: inherited fields and relation
+    /// properties.
+    pub fn remove_field(
+        &mut self,
+        entity_id: &str,
+        name: &str,
+    ) -> Result<FieldChange, OntologyError> {
+        let index = self.own_property_index(entity_id, name)?;
+        let entity = self.entity_mut(entity_id)?;
+        let before = entity["properties"]
+            .as_array_mut()
+            .ok_or(OntologyError::Malformed)?
+            .remove(index);
+        let entity = entity.clone();
+        Ok(FieldChange {
+            index,
+            before,
+            after: Value::Null,
+            entity,
+        })
+    }
+
+    /// A property the entity declares itself, ignoring what it inherits.
+    fn own_property(&self, entity_id: &str, name: &str) -> Option<&Value> {
+        self.entity(entity_id)?
+            .get("properties")?
+            .as_array()?
+            .iter()
+            .find(|p| p.get("name").and_then(Value::as_str) == Some(name))
+    }
+
+    /// Where an editable own property sits, or why it cannot be edited.
+    fn own_property_index(&self, entity_id: &str, name: &str) -> Result<usize, OntologyError> {
+        let entity = self
+            .entity(entity_id)
+            .ok_or_else(|| OntologyError::UnknownEntity(entity_id.to_string()))?;
+        let properties = entity
+            .get("properties")
+            .and_then(Value::as_array)
+            .ok_or(OntologyError::Malformed)?;
+        let index = properties
+            .iter()
+            .position(|p| p.get("name").and_then(Value::as_str) == Some(name))
+            .ok_or_else(|| {
+                // Not its own — say whether a base has it, which is the usual
+                // reason and not otherwise visible from the entity document.
+                match self
+                    .effective_properties(entity_id)
+                    .into_iter()
+                    .find(|p| p.name == name)
+                {
+                    Some(inherited) => OntologyError::InheritedField {
+                        name: name.to_string(),
+                        declared_by: inherited.declared_by,
+                    },
+                    None => OntologyError::UnknownField(name.to_string()),
+                }
+            })?;
+        if matches!(
+            properties[index].get("extends").and_then(Value::as_str),
+            Some("edge") | Some("link")
+        ) {
+            return Err(OntologyError::RelationProperty(name.to_string()));
+        }
+        Ok(index)
+    }
+
+    fn entity_mut(&mut self, entity_id: &str) -> Result<&mut Value, OntologyError> {
+        self.doc
+            .get_mut("entities")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?
+            .iter_mut()
+            .find(|e| e.get("id").and_then(Value::as_str) == Some(entity_id))
+            .ok_or_else(|| OntologyError::UnknownEntity(entity_id.to_string()))
+    }
 }
 
 /// The relation-properties of an entity — those carrying an `extends`
@@ -725,11 +867,54 @@ pub struct FieldSpec {
     pub required: bool,
 }
 
+/// What to change about a field that already exists. Every part is optional;
+/// `None` leaves it as it was.
+#[derive(Debug, Clone, Default)]
+pub struct FieldEdit {
+    /// Rename the field. The stored objects still carry the old key, so the
+    /// caller is expected to migrate them — see
+    /// [`super::service::DomainModelService::edit_field`].
+    pub rename_to: Option<String>,
+    pub type_name: Option<String>,
+    pub required: Option<bool>,
+    pub description: Option<String>,
+}
+
+impl FieldEdit {
+    pub fn is_empty(&self) -> bool {
+        self.rename_to.is_none()
+            && self.type_name.is_none()
+            && self.required.is_none()
+            && self.description.is_none()
+    }
+}
+
+/// One field before and after an edit, so the caller can record the change and
+/// its inverse.
+#[derive(Debug, Clone)]
+pub struct FieldChange {
+    /// Where the field sits in the entity's `properties` array.
+    pub index: usize,
+    pub before: Value,
+    pub after: Value,
+    pub entity: Value,
+}
+
 /// Why an ontology edit was refused.
 #[derive(Debug)]
 pub enum OntologyError {
     UnknownEntity(String),
     DuplicateField(String),
+    UnknownField(String),
+    /// The edit is already in the model — a retried rename, not a fault.
+    AlreadyApplied,
+    /// The field belongs to a base, not to this type.
+    InheritedField {
+        name: String,
+        declared_by: String,
+    },
+    /// The field is a relation, which becomes an edge rather than payload.
+    RelationProperty(String),
     Malformed,
 }
 
@@ -738,6 +923,18 @@ impl std::fmt::Display for OntologyError {
         match self {
             Self::UnknownEntity(id) => write!(f, "unknown domain entity: {id}"),
             Self::DuplicateField(name) => write!(f, "field already exists: {name}"),
+            Self::UnknownField(name) => write!(f, "no such field: {name}"),
+            Self::AlreadyApplied => write!(f, "the edit is already in the model"),
+            Self::InheritedField { name, declared_by } => write!(
+                f,
+                "`{name}` is declared by `{declared_by}`, not by this type — edit it there, \
+                 which changes it for everything that extends it"
+            ),
+            Self::RelationProperty(name) => write!(
+                f,
+                "`{name}` is a relation, not a payload field: it is stored as a `declares` edge \
+                 in the model graph, and an edge cannot be removed through this API"
+            ),
             Self::Malformed => write!(f, "ontology document is malformed"),
         }
     }

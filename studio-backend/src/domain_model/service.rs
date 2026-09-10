@@ -16,9 +16,46 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::gts;
-use super::ontology::{DeclaredRelation, EffectiveProperty, FieldSpec, ModelEdgeKind, Ontology};
+use super::ontology::{
+    DeclaredRelation, EffectiveProperty, FieldChange, FieldEdit, FieldSpec, ModelEdgeKind, Ontology,
+};
 use super::store::{DomainStore, EdgeUpsert, EdgeView, NodeUpsert, ObjectNode};
 use super::validate::{Report, ValidateMode};
+
+/// The outcome of changing a field of a type.
+#[derive(Debug, Clone)]
+pub struct FieldEdited {
+    /// The type definition after the change.
+    pub entity: Value,
+    pub version: u64,
+    /// How many stored objects were rewritten to follow a rename. `None` when
+    /// the edit was not a rename, or when migration was not asked for.
+    pub migrated: Option<u64>,
+}
+
+/// How the objects of one type measure up against the type as it is now.
+#[derive(Debug, Clone, Default)]
+pub struct Conformance {
+    pub entity_id: String,
+    pub checked: u64,
+    pub conforming: u64,
+    /// More objects exist than were read — the answer covers `checked` of them.
+    pub truncated: bool,
+    /// `(field, kind, count)`, most frequent first.
+    pub violations: Vec<(String, String, u64)>,
+    /// `(field, count)` for fields the objects carry and the type does not
+    /// declare, most frequent first.
+    pub undeclared: Vec<(String, u64)>,
+    /// A few offending objects, so the numbers can be traced to something.
+    pub sample: Vec<(String, Vec<String>)>,
+}
+
+/// Objects read in one conformance pass unless the caller says otherwise. The
+/// instance layer has no natural ceiling, and the answer is a count, not a
+/// listing — so this bounds the read rather than the response.
+pub const CONFORMANCE_LIMIT: usize = 5_000;
+/// Offending objects named in the sample.
+const CONFORMANCE_SAMPLE: usize = 5;
 
 /// Everything about one object write except the object: where it is scoped,
 /// whether it may replace what is there, and how hard it is checked.
@@ -143,6 +180,10 @@ pub struct ImportSummary {
 /// How many times an edit recomputes itself against another writer's before
 /// giving up.
 const EDIT_ATTEMPTS: usize = 4;
+
+/// Objects rewritten per ingest batch during a migration. Well under the
+/// gear's per-batch ceilings, and small enough that a failure re-runs cheaply.
+const MIGRATE_BATCH: usize = 100;
 
 /// What a revert did.
 #[derive(Debug, Clone)]
@@ -1425,6 +1466,309 @@ impl DomainModelService {
         ))
     }
 
+    /// Change a field a type declares — rename, retype, require — and, for a
+    /// rename, move the stored objects onto the new key.
+    ///
+    /// The model edit lands first and the migration follows, in that order and
+    /// both idempotent, so a run that dies half way through is fixed by running
+    /// it again: the model edit sees the field already renamed and does
+    /// nothing, and the migration picks up the objects that were not reached.
+    /// The alternative — migrate first — leaves objects on a key the model does
+    /// not know, which reads as data loss.
+    pub async fn edit_field(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        name: &str,
+        edit: FieldEdit,
+        migrate: bool,
+    ) -> anyhow::Result<FieldEdited> {
+        if edit.is_empty() {
+            return Err(anyhow::anyhow!("nothing to change"));
+        }
+        let (entity, entity_id, version, already) = self
+            .apply_to_type(
+                ctx,
+                entity_ref,
+                |o, id| o.edit_field(id, name, &edit),
+                "edit_field",
+                &format!("edit field {name}"),
+            )
+            .await?;
+
+        // A rename leaves every stored object holding the old key. Nothing else
+        // touches the objects: retyping or requiring a field changes what they
+        // are measured against, not what they hold.
+        let migrated = match (&edit.rename_to, migrate) {
+            (Some(to), true) if to != name => {
+                Some(self.migrate_key(ctx, &entity_id, name, to).await?)
+            }
+            _ => None,
+        };
+        let _ = already;
+        Ok(FieldEdited {
+            entity,
+            version,
+            migrated,
+        })
+    }
+
+    /// Drop a field from a type. The stored objects keep what they hold under
+    /// that key — a model edit is not permission to delete data — so it starts
+    /// being reported as undeclared instead.
+    pub async fn remove_field(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        name: &str,
+    ) -> anyhow::Result<FieldEdited> {
+        let (entity, _, version, _) = self
+            .apply_to_type(
+                ctx,
+                entity_ref,
+                |o, id| o.remove_field(id, name),
+                "remove_field",
+                &format!("remove field {name}"),
+            )
+            .await?;
+        Ok(FieldEdited {
+            entity,
+            version,
+            migrated: None,
+        })
+    }
+
+    /// The shared body of every field-level edit: reload, apply, claim a
+    /// version with the patch the change makes, store the one type it touched.
+    ///
+    /// Returns `(entity, entity id, version, already applied)`. "Already
+    /// applied" is not an error: it is what a retried rename looks like, and
+    /// the caller goes on to finish the migration.
+    async fn apply_to_type<F>(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        change: F,
+        op: &str,
+        summary: &str,
+    ) -> anyhow::Result<(Value, String, u64, bool)>
+    where
+        F: Fn(&mut Ontology, &str) -> Result<FieldChange, super::ontology::OntologyError>,
+    {
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            let entity_id = current
+                .resolve_entity_id(entity_ref)
+                .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+
+            let mut next = (*current).clone();
+            let changed = match change(&mut next, &entity_id) {
+                Ok(changed) => changed,
+                // Already in the model. A retried rename lands here, and its
+                // migration may still have work to do — unlike a mistyped
+                // field name, which falls through as an error.
+                Err(super::ontology::OntologyError::AlreadyApplied) => {
+                    let entity = current.entity(&entity_id).cloned().unwrap_or(Value::Null);
+                    return Ok((entity, entity_id, self.cached_version(ctx)?, true));
+                }
+                Err(e) => return Err(anyhow::anyhow!("{e}")),
+            };
+
+            let index = next
+                .entity_index(&entity_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+            let path = format!("/entities/{index}/properties/{}", changed.index);
+            let (patch, undo) = if changed.after.is_null() {
+                (
+                    json!([{ "op": "remove", "path": path }]),
+                    json!([{ "op": "add", "path": path, "value": changed.before }]),
+                )
+            } else {
+                (
+                    json!([{ "op": "replace", "path": path, "value": changed.after }]),
+                    json!([{ "op": "replace", "path": path, "value": changed.before }]),
+                )
+            };
+
+            let version = self.cached_version(ctx)? + 1;
+            let rev = Revision::new(
+                version,
+                ctx,
+                op,
+                &entity_id,
+                format!("{entity_id}: {summary}"),
+            )
+            .with_patches(patch, undo);
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version, "studio-domain-model: model version taken, retrying the edit"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+
+            let node = next
+                .object_type_node(&entity_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+            self.store
+                .upsert_nodes(
+                    ctx,
+                    &[
+                        NodeUpsert {
+                            type_id: gts::META_OBJECT_TYPE.to_string(),
+                            node_key: gts::instance_id(gts::META_OBJECT_TYPE, &entity_id),
+                            name: Some(node.name.clone()),
+                            payload: node.payload.clone(),
+                            expected_version: None,
+                        },
+                        self.model_node(&next, version),
+                    ],
+                )
+                .await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version;
+            }
+            return Ok((changed.entity, entity_id, version, false));
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in \
+             {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
+    /// Move one payload key on every stored object of a type.
+    ///
+    /// Idempotent: an object that has already moved carries no `from` key and
+    /// is left alone, so a partial run is finished by running it again. The
+    /// rewrite keeps the stored vectors — a key rename touches none of the
+    /// paths that are embedded, and re-embedding ten thousand objects for it
+    /// would be the expensive way to change nothing.
+    async fn migrate_key(
+        &self,
+        ctx: &SecurityContext,
+        entity_id: &str,
+        from: &str,
+        to: &str,
+    ) -> anyhow::Result<u64> {
+        let type_id = gts::node_type_id(entity_id);
+        let objects = self
+            .store
+            .list_objects(ctx, std::slice::from_ref(&type_id), None, None)
+            .await?;
+        let mut batch: Vec<NodeUpsert> = Vec::new();
+        for object in objects {
+            let Some(map) = object.value.as_object() else {
+                continue;
+            };
+            if !map.contains_key(from) {
+                continue;
+            }
+            let mut payload = object.value.clone();
+            let holder = payload.as_object_mut().expect("object by construction");
+            if let Some(value) = holder.remove(from) {
+                holder.insert(to.to_string(), value);
+            }
+            batch.push(NodeUpsert {
+                type_id: type_id.clone(),
+                node_key: object.instance_id,
+                name: payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                payload,
+                expected_version: None,
+            });
+        }
+        if batch.is_empty() {
+            return Ok(0);
+        }
+        let mut moved = 0u64;
+        for chunk in batch.chunks(MIGRATE_BATCH) {
+            self.store.upsert_nodes_keeping_vectors(ctx, chunk).await?;
+            moved += chunk.len() as u64;
+        }
+        info!(%entity_id, from, to, moved, "studio-domain-model: payload key migrated");
+        Ok(moved)
+    }
+
+    /// How the stored objects of one type measure up against the type as it is
+    /// now — the question a model edit otherwise leaves unanswerable.
+    ///
+    /// Validation runs on the way in, so before this the only way to know what
+    /// an edit had broken was to rewrite every object and watch.
+    pub async fn conformance(
+        &self,
+        ctx: &SecurityContext,
+        type_ref: &str,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Conformance> {
+        let ontology = self.model_current(ctx).await?;
+        let entity_id = ontology
+            .resolve_entity_id(type_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
+        let properties = ontology.effective_properties(&entity_id);
+
+        // One over the bound: if it comes back, there was more to check.
+        let mut objects = self
+            .store
+            .list_objects(
+                ctx,
+                &[gts::node_type_id(&entity_id)],
+                scope,
+                Some(limit + 1),
+            )
+            .await?;
+        let truncated = objects.len() > limit;
+        objects.truncate(limit);
+
+        let mut report = Conformance {
+            checked: objects.len() as u64,
+            truncated,
+            entity_id,
+            ..Default::default()
+        };
+        let mut violations: HashMap<(String, String), u64> = HashMap::new();
+        let mut undeclared: HashMap<String, u64> = HashMap::new();
+        for object in &objects {
+            let found = super::validate::check(&properties, &object.value);
+            if found.is_clean() {
+                report.conforming += 1;
+            } else if report.sample.len() < CONFORMANCE_SAMPLE {
+                report.sample.push((
+                    object.instance_id.clone(),
+                    found
+                        .violations
+                        .iter()
+                        .map(|v| format!("{}: {}", v.field, v.detail))
+                        .collect(),
+                ));
+            }
+            for v in found.violations {
+                *violations.entry((v.field, v.kind.to_string())).or_default() += 1;
+            }
+            for u in found.undeclared {
+                *undeclared.entry(u).or_default() += 1;
+            }
+        }
+        report.violations = violations
+            .into_iter()
+            .map(|((field, kind), count)| (field, kind, count))
+            .collect();
+        // Most frequent first, then by name, so the answer is stable.
+        report
+            .violations
+            .sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        report.undeclared = undeclared.into_iter().collect();
+        report
+            .undeclared
+            .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Ok(report)
+    }
+
     /// Undo every change back to version `to`, recorded as a new version of its
     /// own. History is appended to, never rewritten: reverting to v3 from v7
     /// produces v8 whose content is v3's.
@@ -1600,6 +1944,14 @@ mod tests {
                 .filter(|((t, _), n)| *t == tenant && type_ids.iter().any(|w| w == &n.type_id))
                 .map(|(_, n)| n.clone())
                 .collect())
+        }
+
+        async fn upsert_nodes_keeping_vectors(
+            &self,
+            ctx: &SecurityContext,
+            nodes: &[NodeUpsert],
+        ) -> anyhow::Result<u64> {
+            self.upsert_nodes(ctx, nodes).await
         }
 
         async fn upsert_nodes(
@@ -2102,6 +2454,320 @@ mod tests {
             .await
             .unwrap();
         assert!(after.report.undeclared.is_empty());
+    }
+
+    /// The four edits a model owner actually makes, on a type that has stored
+    /// objects. `project` stands in for the scenario's `Requirement`: it has
+    /// an enum (`status`) and takes a field of our own.
+    async fn with_priorities(
+        store: Arc<TenantScopedStore>,
+        ctx: &SecurityContext,
+    ) -> DomainModelService {
+        let service = DomainModelService::new(store);
+        service
+            .add_field(ctx, "project", field("priority"))
+            .await
+            .unwrap();
+        for key in ["apollo", "gemini", "mercury"] {
+            service
+                .create_object(
+                    ctx,
+                    "project",
+                    key,
+                    WriteOptions::default(),
+                    json!({ "name": key, "priority": "high" }),
+                )
+                .await
+                .unwrap();
+        }
+        service
+    }
+
+    #[tokio::test]
+    async fn renaming_a_field_moves_the_stored_objects() {
+        let ctx = ctx_for(1);
+        let service = with_priorities(Arc::new(TenantScopedStore::default()), &ctx).await;
+
+        let edited = service
+            .edit_field(
+                &ctx,
+                "project",
+                "priority",
+                FieldEdit {
+                    rename_to: Some("urgency".into()),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.migrated, Some(3));
+
+        // The model knows the new name…
+        let props = service
+            .effective_type(&ctx, "project")
+            .await
+            .unwrap()
+            .properties;
+        assert!(props.iter().any(|p| p.name == "urgency"));
+        assert!(!props.iter().any(|p| p.name == "priority"));
+        // …and so do the objects, which is the half a model edit does not do
+        // by itself.
+        for object in service
+            .list_objects(&ctx, Some("project"), None)
+            .await
+            .unwrap()
+        {
+            assert_eq!(object.value["urgency"], "high");
+            assert!(object.value.get("priority").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_half_finished_rename_is_fixed_by_running_it_again() {
+        let ctx = ctx_for(1);
+        let service = with_priorities(Arc::new(TenantScopedStore::default()), &ctx).await;
+        service
+            .edit_field(
+                &ctx,
+                "project",
+                "priority",
+                FieldEdit {
+                    rename_to: Some("urgency".into()),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await
+            .unwrap();
+
+        // The model edit is already applied, so the second run does not fail on
+        // it — it just finds nothing left to migrate.
+        let again = service
+            .edit_field(
+                &ctx,
+                "project",
+                "priority",
+                FieldEdit {
+                    rename_to: Some("urgency".into()),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await
+            .expect("a retry is not an error");
+        assert_eq!(again.migrated, Some(0));
+    }
+
+    #[tokio::test]
+    async fn widening_an_enum_is_a_patch_that_can_be_reverted() {
+        let ctx = ctx_for(1);
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let before = service.effective_type(&ctx, "project").await.unwrap();
+        let status = before
+            .properties
+            .iter()
+            .find(|p| p.name == "status")
+            .unwrap();
+        let widened = format!("{} | blocked", status.type_expr);
+
+        let edited = service
+            .edit_field(
+                &ctx,
+                "project",
+                "status",
+                FieldEdit {
+                    type_name: Some(widened.clone()),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.migrated, None, "retyping moves no data");
+
+        // `blocked` now validates where it did not before.
+        let created = service
+            .create_object(
+                &ctx,
+                "project",
+                "apollo",
+                WriteOptions::default(),
+                json!({ "name": "Apollo", "status": "blocked" }),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !created
+                .report
+                .violations
+                .iter()
+                .any(|v| v.field == "status")
+        );
+
+        // And unlike an import, it records an inverse.
+        service.revert(&ctx, edited.version - 1).await.unwrap();
+        let after = service.effective_type(&ctx, "project").await.unwrap();
+        let status = after
+            .properties
+            .iter()
+            .find(|p| p.name == "status")
+            .unwrap();
+        assert_eq!(
+            status.type_expr,
+            before
+                .properties
+                .iter()
+                .find(|p| p.name == "status")
+                .unwrap()
+                .type_expr
+        );
+    }
+
+    #[tokio::test]
+    async fn requiring_a_field_shows_the_objects_it_leaves_behind() {
+        let ctx = ctx_for(1);
+        let service = with_priorities(Arc::new(TenantScopedStore::default()), &ctx).await;
+        service
+            .add_field(&ctx, "project", field("owner"))
+            .await
+            .unwrap();
+
+        // Optional: nothing to say about it.
+        let before = service
+            .conformance(&ctx, "project", None, 100)
+            .await
+            .unwrap();
+        assert_eq!(before.checked, 3);
+        assert!(!before.violations.iter().any(|(f, _, _)| f == "owner"));
+
+        service
+            .edit_field(
+                &ctx,
+                "project",
+                "owner",
+                FieldEdit {
+                    required: Some(true),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap();
+
+        // Required: every stored object is now short of it, and the count says
+        // so without anyone rewriting an object to find out.
+        let after = service
+            .conformance(&ctx, "project", None, 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            after
+                .violations
+                .iter()
+                .find(|(f, k, _)| f == "owner" && k == "missing")
+                .map(|(_, _, n)| *n),
+            Some(3)
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_a_field_keeps_the_data_and_reports_it() {
+        let ctx = ctx_for(1);
+        let service = with_priorities(Arc::new(TenantScopedStore::default()), &ctx).await;
+        service
+            .remove_field(&ctx, "project", "priority")
+            .await
+            .unwrap();
+
+        let report = service
+            .conformance(&ctx, "project", None, 100)
+            .await
+            .unwrap();
+        // The model dropped it; the objects did not.
+        assert_eq!(
+            report
+                .undeclared
+                .iter()
+                .find(|(f, _)| f == "priority")
+                .map(|(_, n)| *n),
+            Some(3)
+        );
+        assert!(!report.sample.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_mistyped_field_name_is_an_error_not_a_no_op() {
+        let ctx = ctx_for(1);
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let e = service
+            .edit_field(
+                &ctx,
+                "project",
+                "priorty",
+                FieldEdit {
+                    rename_to: Some("urgency".into()),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .expect_err("no such field");
+        assert!(e.to_string().contains("no such field: priorty"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_field_that_is_not_the_types_own_is_refused_where_it_is_not_declared() {
+        let ctx = ctx_for(1);
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+
+        // `tenant_id` comes from `system-object`; editing it on `project` would
+        // change it for everything that extends the root.
+        let e = service
+            .edit_field(
+                &ctx,
+                "project",
+                "tenant_id",
+                FieldEdit {
+                    required: Some(false),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .expect_err("inherited");
+        assert!(e.to_string().contains("declared by `system-object`"), "{e}");
+
+        // A relation is an edge, and an edge cannot be removed through this API.
+        let e = service
+            .edit_field(
+                &ctx,
+                "project",
+                "uses",
+                FieldEdit {
+                    rename_to: Some("consumes".into()),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .expect_err("relation");
+        assert!(e.to_string().contains("is a relation"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn conformance_bounds_what_it_reads_and_says_so() {
+        let ctx = ctx_for(1);
+        let service = with_priorities(Arc::new(TenantScopedStore::default()), &ctx).await;
+        let bounded = service.conformance(&ctx, "project", None, 2).await.unwrap();
+        assert_eq!(bounded.checked, 2);
+        assert!(bounded.truncated);
+        let whole = service
+            .conformance(&ctx, "project", None, 100)
+            .await
+            .unwrap();
+        assert_eq!(whole.checked, 3);
+        assert!(!whole.truncated);
     }
 
     #[tokio::test]
