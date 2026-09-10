@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use super::ingest_task::{IngestPayload, TASK_TYPE};
 use super::service::{IngestService, ProjectArtifact, SyncSummary};
+use crate::pagination::{PageQuery, page_of};
 
 /// Errors attributable to an artifact-ingest resource (e.g. an unknown task).
 /// Five tokens in the segment (`vendor.package.namespace.type.vN`); `_` is the
@@ -194,6 +195,10 @@ pub struct EdgesQuery {
     /// endpoints are in-scope nodes. Omitted = every relation.
     #[serde(default)]
     pub scope: Option<String>,
+    /// `?offset=&limit=` — see [`crate::pagination`]. A client that lays the
+    /// whole graph out (the portal, the IDE graph widget) walks the pages.
+    #[serde(flatten)]
+    pub page: PageQuery,
 }
 
 /// True when a node's `value` is inside `scope` — i.e. its `workspace_id` or
@@ -252,6 +257,10 @@ pub struct ArtifactEdgeDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ArtifactEdgeListResponse {
     pub edges: Vec<ArtifactEdgeDto>,
+    /// Relations matching the scope filter across every page, so a caller
+    /// laying out the whole graph knows how many pages to walk: another page
+    /// exists exactly when `offset + edges.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -660,22 +669,32 @@ async fn list_edges(
         .list_relations(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    Ok(Json(ArtifactEdgeListResponse {
-        edges: edges
-            .into_iter()
-            .filter(|e| {
-                in_scope
-                    .as_ref()
-                    .map(|set| set.contains(&e.from) && set.contains(&e.to))
-                    .unwrap_or(true)
-            })
-            .map(|e| ArtifactEdgeDto {
-                type_id: e.type_id,
-                from: e.from,
-                to: e.to,
-            })
-            .collect(),
-    }))
+    let mut edges: Vec<ArtifactEdgeDto> = edges
+        .into_iter()
+        .filter(|e| {
+            in_scope
+                .as_ref()
+                .map(|set| set.contains(&e.from) && set.contains(&e.to))
+                .unwrap_or(true)
+        })
+        .map(|e| ArtifactEdgeDto {
+            type_id: e.type_id,
+            from: e.from,
+            to: e.to,
+        })
+        .collect();
+    // Same reason `/nodes` sorts: the graph adapters return storage pages in no
+    // particular order, and paging an unordered sequence would let one page
+    // repeat an edge the previous page already carried. Endpoints plus type
+    // make a total order — a pair can be joined by more than one relation.
+    edges.sort_by(|a, b| {
+        a.from
+            .cmp(&b.from)
+            .then_with(|| a.to.cmp(&b.to))
+            .then_with(|| a.type_id.cmp(&b.type_id))
+    });
+    let (edges, total) = page_of(edges, q.page);
+    Ok(Json(ArtifactEdgeListResponse { edges, total }))
 }
 
 async fn repo_files(
@@ -903,6 +922,30 @@ pub fn register_routes(
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "type",
+            false,
+            "GTS type id, or its bare leaf (issue, repo, ...)",
+        )
+        .query_param("scope", false, "Workspace or project tenant to scope to")
+        .query_param("repo", false, "Instance id of the repo node to filter by")
+        .query_param(
+            "sort",
+            false,
+            "`updated` for newest first; default is by instance id",
+        )
+        .query_param(
+            "q",
+            false,
+            "Case-insensitive substring over title/author/path/number",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first node",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_nodes)
         .json_response_with_schema::<ArtifactNodeListResponse>(
             openapi,
@@ -924,6 +967,14 @@ pub fn register_routes(
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param("scope", false, "Workspace or project tenant to scope to")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first edge",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_edges)
         .json_response_with_schema::<ArtifactEdgeListResponse>(
             openapi,

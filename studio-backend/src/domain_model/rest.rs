@@ -21,6 +21,7 @@ use toolkit_security::SecurityContext;
 use super::ontology::{FieldEdit, FieldSpec};
 use super::service::{CONFORMANCE_LIMIT, DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
+use crate::pagination::{PageQuery, page_of};
 
 /// Errors attributable to a domain-model resource (e.g. an unknown type).
 #[resource_error(gts_id!("cf.studio._.domain_model.v1~"))]
@@ -148,6 +149,9 @@ pub struct ObjectsQuery {
     /// Filter to one workspace/project scope. Omitted = every scope.
     #[serde(default)]
     pub scope: Option<String>,
+    /// `?offset=&limit=` — see [`crate::pagination`].
+    #[serde(flatten)]
+    pub page: PageQuery,
 }
 
 /// One stored object.
@@ -164,6 +168,9 @@ pub struct ObjectDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ObjectListResponse {
     pub objects: Vec<ObjectDto>,
+    /// Objects matching the type/scope filter across every page, so a caller
+    /// can show "N of M" and knows a next page exists exactly when
+    /// `offset + objects.len() < total`.
     pub total: u32,
 }
 
@@ -645,7 +652,7 @@ async fn list_objects(
         .list_objects(&ctx, filter, scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let objects: Vec<ObjectDto> = objects
+    let mut objects: Vec<ObjectDto> = objects
         .into_iter()
         .map(|n| ObjectDto {
             type_id: n.type_id,
@@ -653,7 +660,11 @@ async fn list_objects(
             value: n.value,
         })
         .collect();
-    let total = objects.len() as u32;
+    // Page over a stable order: the graph adapters return storage pages in no
+    // particular order, and an unordered sequence would let one page repeat a
+    // row the previous page already carried.
+    objects.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
+    let (objects, total) = page_of(objects, q.page);
     Ok(Json(ObjectListResponse { objects, total }))
 }
 
@@ -1093,10 +1104,14 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-domain-model/v1/objects")
         .operation_id("studio_domain_model.list_objects")
         .summary("List stored domain objects")
-        .description("Reads back the objects created via POST /objects, optionally of one type.")
+        .description(
+            "Reads back the objects created via POST /objects, optionally of              one type. Paged: `total` counts every match, a next page exists              when `offset + objects.len() < total`.",
+        )
         .tag("StudioDomainModel")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed("offset", false, "Zero-based index of the first object", "integer")
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_objects)
         .json_response_with_schema::<ObjectListResponse>(openapi, StatusCode::OK, "Stored objects")
         .error_401(openapi)

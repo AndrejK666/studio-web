@@ -24,6 +24,7 @@ use super::repo::{
     DocScope, DocumentsRepo, analysis_row_id, capability_row_id, stage_row_id, type_row_id,
 };
 use super::validate::{ValidationReport, validate};
+use crate::pagination::PageQuery;
 
 pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
@@ -382,7 +383,7 @@ impl DocumentsService {
         workspace_id: Uuid,
         project_id: Option<Uuid>,
     ) -> Result<Vec<Analysis>> {
-        let docs = self.list_documents(workspace_id, project_id).await?;
+        let docs = self.all_documents(workspace_id, project_id).await?;
         let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         self.repo
             .list_analyses(workspace_id, &ids)
@@ -405,7 +406,7 @@ impl DocumentsService {
         project_id: Uuid,
     ) -> Result<Vec<StageStatus>> {
         let stages = self.list_stages(ctx, workspace_id).await?;
-        let docs = self.list_documents(workspace_id, Some(project_id)).await?;
+        let docs = self.all_documents(workspace_id, Some(project_id)).await?;
         let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let analyses = self.repo.list_analyses(workspace_id, &ids).await?;
 
@@ -485,24 +486,64 @@ impl DocumentsService {
         doc_from_row(model)
     }
 
-    /// Effective documents. For a project: its own plus the workspace-level
-    /// ones it inherits. For a workspace (`project_id = None`): the
+    /// One page of the effective documents, plus how many the scope holds.
+    ///
+    /// Effective documents: for a project, its own plus the workspace-level
+    /// ones it inherits; for a workspace (`project_id = None`), the
     /// workspace-level ones only.
     pub async fn list_documents(
         &self,
         workspace_id: Uuid,
         project_id: Option<Uuid>,
+        page: PageQuery,
+    ) -> Result<(Vec<Document>, u32)> {
+        let (documents, total) = self
+            .read_documents(
+                workspace_id,
+                project_id,
+                page.offset() as u64,
+                Some(page.limit() as u64),
+            )
+            .await?;
+        Ok((documents, u32::try_from(total).unwrap_or(u32::MAX)))
+    }
+
+    /// Every effective document in scope.
+    ///
+    /// For the readiness computations that judge the set as a whole — a page
+    /// of it would silently answer a different question. Nothing here reaches
+    /// a response body, so the bound is the workspace rather than a page.
+    async fn all_documents(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
     ) -> Result<Vec<Document>> {
+        Ok(self
+            .read_documents(workspace_id, project_id, 0, None)
+            .await?
+            .0)
+    }
+
+    async fn read_documents(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        offset: u64,
+        limit: Option<u64>,
+    ) -> Result<(Vec<Document>, u64)> {
         let scope = match project_id {
             Some(pid) => DocScope::Effective(pid),
             None => DocScope::WorkspaceLevel,
         };
-        self.repo
-            .list_docs(workspace_id, scope)
-            .await?
+        let (rows, total) = self
+            .repo
+            .list_docs(workspace_id, scope, offset, limit)
+            .await?;
+        let documents = rows
             .into_iter()
             .map(doc_from_row)
-            .collect()
+            .collect::<Result<Vec<Document>>>()?;
+        Ok((documents, total))
     }
 
     pub async fn get_document(&self, workspace_id: Uuid, id: Uuid) -> Result<Option<Document>> {
