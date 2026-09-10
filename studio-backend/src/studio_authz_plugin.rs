@@ -203,31 +203,105 @@ impl Service {
     }
 }
 
+/// The account-management type families whose authorization must never depend
+/// on reading the access config, because that read is one of them.
+///
+/// All three, not just the metadata one: the previous spelling of this guard
+/// matched `am.tenant` as a substring, which caught tenants, tenant metadata
+/// and tenant types alike, and the breadth is deliberate — an AM resource is
+/// never a Studio Work resource, so clamping it costs nothing.
+const RECURSION_GUARDED_FAMILIES: [&str; 3] = [
+    "gts.cf.core.am.tenant.v1",
+    "gts.cf.core.am.tenant_metadata.v1",
+    "gts.cf.core.am.tenant_type.v1",
+];
+
+/// The family a GTS type id belongs to: everything before the first `~`.
+///
+/// A GTS id is a `~`-terminated chain in which the first segment names the base
+/// type and each later one narrows it, so
+/// `gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~` *is* a
+/// tenant-metadata type and comparing families is how you say so.
+fn family_of(type_id: &str) -> &str {
+    type_id.split_once('~').map_or(type_id, |(base, _)| base)
+}
+
+/// Is this the read that would recurse?
+///
+/// It compares the family rather than looking for a substring. The two are the
+/// same for every id in use today and diverge on the ones that matter: a
+/// substring search exempts anything whose id merely *contains* the words —
+/// another vendor's `gts.acme.am.tenant.v1~`, or a Studio type that grows a
+/// `tenant_metadata` segment of its own — from a role gate it was never meant
+/// to escape. Nothing is role-gated yet, so that is latent rather than live,
+/// which is exactly the kind of thing to fix while it still costs nothing.
+fn is_recursion_guarded(type_id: &str) -> bool {
+    RECURSION_GUARDED_FAMILIES.contains(&family_of(type_id))
+}
+
+/// What a request can be answered with before anything is read.
+///
+/// Reading the org access config is a call into account-management, and the
+/// only thing that consumes it is the role path. Deciding the shape of the
+/// answer first means a request that cannot reach that path never pays for it
+/// — which is every request until [`privilege_for`] maps a resource type.
+///
+/// It is a type rather than an early return so the property is structural: a
+/// future edit that wants the config a little sooner has to move it into a
+/// branch that says it needs one.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    /// Nothing identifies the caller's tenant, so nothing can be allowed.
+    Deny,
+    /// Answerable from the request alone: scope the caller to their tenant.
+    Clamp(Uuid),
+    /// A resource this deployment role-gates. Only this needs the config.
+    Roles { tid: Uuid, privilege: &'static str },
+}
+
+impl Plan {
+    fn for_request(request: &EvaluationRequest) -> Self {
+        let Some(tid) = Service::tenant_of(request) else {
+            return Self::Deny;
+        };
+        if tid == Uuid::default() {
+            return Self::Deny;
+        }
+
+        // First-party / unrestricted token (`token_scopes` contains "*"): a
+        // platform / service caller is never role-gated — anti-lockout backstop.
+        if request.context.token_scopes.iter().any(|s| s == "*") {
+            return Self::Clamp(tid);
+        }
+
+        // RECURSION GUARD: authorizing a read of AM tenant-metadata must not
+        // read the config to decide (that read is itself PEP-gated → would
+        // recurse).
+        let rt = request.resource.resource_type.as_str();
+        if is_recursion_guarded(rt) {
+            return Self::Clamp(tid);
+        }
+
+        // Only Studio resources we map are role-gated; everything else keeps
+        // tenant scoping, so the platform is never denied.
+        match privilege_for(rt, &request.action.name) {
+            Some(privilege) => Self::Roles { tid, privilege },
+            None => Self::Clamp(tid),
+        }
+    }
+}
+
 #[async_trait]
 impl AuthZResolverPluginClient for Service {
     async fn evaluate(
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationResponse, AuthZResolverError> {
-        let Some(tid) = Service::tenant_of(&request) else {
-            return Ok(deny());
+        let (tid, privilege) = match Plan::for_request(&request) {
+            Plan::Deny => return Ok(deny()),
+            Plan::Clamp(tid) => return Ok(tenant_clamp(&request, tid)),
+            Plan::Roles { tid, privilege } => (tid, privilege),
         };
-        if tid == Uuid::default() {
-            return Ok(deny());
-        }
-
-        // First-party / unrestricted token (`token_scopes` contains "*"): a
-        // platform / service caller is never role-gated — anti-lockout backstop.
-        if request.context.token_scopes.iter().any(|s| s == "*") {
-            return Ok(tenant_clamp(&request, tid));
-        }
-
-        // RECURSION GUARD: authorizing a read of AM tenant-metadata must not read
-        // the config to decide (that read is itself PEP-gated → would recurse).
-        let rt = request.resource.resource_type.as_str();
-        if rt.contains("tenant_metadata") || rt.contains("am.tenant") {
-            return Ok(tenant_clamp(&request, tid));
-        }
 
         // Read the org access config. Missing/unreadable OR non-roles model →
         // tenant clamp (behaviour == today, fail-safe).
@@ -238,12 +312,6 @@ impl AuthZResolverPluginClient for Service {
         if cfg.model != "roles" {
             return Ok(tenant_clamp(&request, tid));
         }
-
-        // ── Role-based path ── only for Studio resources we map; everything
-        // else keeps tenant scoping so the platform is never denied.
-        let Some(privilege) = privilege_for(rt, &request.action.name) else {
-            return Ok(tenant_clamp(&request, tid));
-        };
 
         let subject_id = request.subject.id.to_string();
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
@@ -375,10 +443,196 @@ fn deny() -> EvaluationResponse {
 /// Map a platform request `(resource_type, action)` to a Studio privilege id
 /// (the portal's `access.ts` catalogue). TODO(step 4): complete the table and
 /// key off the real Studio GTS resource-type ids.
+/// The privilege a resource type and action need, when this deployment
+/// role-gates them.
+///
+/// **Returns `None` for everything today**, which is worth knowing before
+/// reading further: `studio-project` (the portal's "Work") has been retired —
+/// projects are AM tenants now, and their access is governed by tenant
+/// membership rather than by a Studio privilege grant. Nothing is role-mapped,
+/// so every request is answered by the tenant clamp and the grant evaluation in
+/// [`AuthZResolverPluginClient::evaluate`] is unreachable.
+///
+/// That is a stage, not a leftover: the roles, grants and scopes it walks are
+/// the model the access config already carries. Mapping the first resource type
+/// here is what turns it on — and, through [`Plan`], what makes the config
+/// worth reading.
 fn privilege_for(_resource_type: &str, _action: &str) -> Option<&'static str> {
-    // studio-project (the portal's "Work") has been retired — projects are now
-    // AM tenants and their access is governed by tenant membership, not by a
-    // Studio privilege grant. No Studio resource type is role-mapped yet, so
-    // every request falls through to the caller's tenant-scoping branch.
     None
+}
+
+#[cfg(test)]
+mod tests {
+    //! What the PDP can answer before it reads anything.
+    //!
+    //! Every request through the gateway reaches this plugin, and the org
+    //! access config it may need is a call into account-management. So the
+    //! question worth pinning is not only what the answer is, but whether
+    //! arriving at it costs a round trip.
+
+    use std::collections::HashMap;
+
+    use authz_resolver_sdk::{Action, EvaluationRequestContext, Resource, Subject, TenantContext};
+
+    use super::*;
+
+    const TENANT: Uuid = Uuid::from_u128(0x7e1a);
+    const SUBJECT: Uuid = Uuid::from_u128(0x5ab1);
+
+    fn request(resource_type: &str) -> EvaluationRequest {
+        EvaluationRequest {
+            subject: Subject {
+                id: SUBJECT,
+                subject_type: Some("user".to_string()),
+                properties: HashMap::new(),
+            },
+            action: Action {
+                name: "list".to_string(),
+            },
+            resource: Resource {
+                resource_type: resource_type.to_string(),
+                id: None,
+                properties: HashMap::new(),
+            },
+            context: EvaluationRequestContext {
+                tenant_context: Some(TenantContext {
+                    root_id: Some(TENANT),
+                    ..TenantContext::default()
+                }),
+                token_scopes: Vec::new(),
+                require_constraints: true,
+                capabilities: Vec::new(),
+                supported_properties: Vec::new(),
+                bearer_token: None,
+            },
+        }
+    }
+
+    /// Every resource type this deployment actually serves, near enough: one
+    /// per gear that has a REST surface worth authorizing.
+    const STUDIO_RESOURCES: [&str; 6] = [
+        "gts.cf.studio.doc.document.v1~",
+        "gts.cf.studio.session.session.v1~",
+        "gts.cf.studio.connector.connection.v1~",
+        "gts.cf.studio.artifact.issue.v1~",
+        "gts.cf.core.rg.group.v1~",
+        "gts.cf.core.users.user.v1~",
+    ];
+
+    /// The read that would recurse must be guarded, or the PDP asks itself
+    /// whether it may ask itself.
+    #[test]
+    fn the_access_config_read_is_guarded() {
+        assert!(
+            is_recursion_guarded(ACCESS_METADATA_TYPE),
+            "authorizing the config read must not require the config"
+        );
+        for family in RECURSION_GUARDED_FAMILIES {
+            assert!(is_recursion_guarded(&format!("{family}~")));
+        }
+    }
+
+    /// The point of comparing families rather than searching for a substring.
+    /// Each of these contains the words the old guard looked for, and none of
+    /// them is an account-management type — so each would have been exempted
+    /// from a role gate it was never meant to escape.
+    #[test]
+    fn a_type_that_merely_contains_the_words_is_not_guarded() {
+        for impostor in [
+            // Another vendor's tenant type.
+            "gts.acme.am.tenant.v1~",
+            // A Studio type that grows a metadata segment of its own.
+            "gts.cf.studio.doc.tenant_metadata.v1~",
+            // A near-miss on the family name itself.
+            "gts.cf.core.am.tenanted.v1~",
+        ] {
+            assert!(
+                !is_recursion_guarded(impostor),
+                "{impostor} is not an account-management type and must stay gateable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_derived_type_belongs_to_its_base_family() {
+        assert_eq!(
+            family_of("gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"),
+            "gts.cf.core.am.tenant_metadata.v1"
+        );
+        // An id with no chain at all is its own family.
+        assert_eq!(
+            family_of("gts.cf.studio.doc.document.v1"),
+            "gts.cf.studio.doc.document.v1"
+        );
+    }
+
+    #[test]
+    fn a_request_with_no_tenant_is_denied() {
+        let mut req = request(STUDIO_RESOURCES[0]);
+        req.context.tenant_context = None;
+        assert_eq!(Plan::for_request(&req), Plan::Deny);
+    }
+
+    /// The nil uuid is what an unset tenant deserialises to, and it addresses
+    /// nothing — treating it as a tenant would clamp to a scope that matches
+    /// every row whose tenant was never set.
+    #[test]
+    fn the_nil_tenant_is_denied() {
+        let mut req = request(STUDIO_RESOURCES[0]);
+        req.context.tenant_context = Some(TenantContext {
+            root_id: Some(Uuid::nil()),
+            ..TenantContext::default()
+        });
+        assert_eq!(Plan::for_request(&req), Plan::Deny);
+    }
+
+    /// The anti-lockout backstop: a first-party caller is never role-gated, so
+    /// a broken access config can never lock the platform out of itself.
+    #[test]
+    fn an_unrestricted_token_is_clamped_without_a_config_read() {
+        let mut req = request(STUDIO_RESOURCES[0]);
+        req.context.token_scopes = vec!["*".to_string()];
+        assert_eq!(Plan::for_request(&req), Plan::Clamp(TENANT));
+    }
+
+    /// The recursion guard. Reading the access config is itself an
+    /// account-management metadata read, which this plugin authorizes — so
+    /// deciding that read by reading the config would not terminate.
+    #[test]
+    fn a_tenant_metadata_read_is_answered_without_reading_the_config() {
+        for resource_type in [
+            "gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~",
+            "gts.cf.core.am.tenant.v1~",
+        ] {
+            assert_eq!(
+                Plan::for_request(&request(resource_type)),
+                Plan::Clamp(TENANT),
+                "{resource_type} must not need the config to be authorized"
+            );
+        }
+    }
+
+    /// The property this restructure exists for. `privilege_for` maps nothing
+    /// today, so no request can reach the role path — and therefore none pays
+    /// for the config read that only the role path consumes.
+    ///
+    /// When the first resource type is mapped this test fails, which is the
+    /// point: it is the reminder that the config read has just become live,
+    /// and that a cache in front of it is then worth having.
+    #[test]
+    fn nothing_is_role_gated_yet_so_no_request_reaches_the_config() {
+        for resource_type in STUDIO_RESOURCES {
+            for action in ["list", "get", "create", "update", "delete"] {
+                let mut req = request(resource_type);
+                req.action.name = action.to_string();
+                assert_eq!(
+                    Plan::for_request(&req),
+                    Plan::Clamp(TENANT),
+                    "{action} on {resource_type} reached the role path — `privilege_for` now \
+                     maps something, so revisit the config read in `evaluate` (it happens on \
+                     every one of these requests) before deleting this test"
+                );
+            }
+        }
+    }
 }
