@@ -130,6 +130,66 @@ Three things are deliberate:
   `T[]`, `T?` and `a | b | c` are checked. The model's ~100 one-off domain names
   (`Money`, `RetryPolicy`, `WorkflowGraph`) are carried, not guessed at.
 
+### Changing a field, and the data that already exists
+
+Adding a field was the only edit the model supported; everything else meant
+re-importing the whole document, which records no inverse and takes the history
+with it. A field a type declares itself can now be changed in place:
+
+| | |
+|---|---|
+| `POST /types/{id}/fields` | add |
+| `PATCH /types/{id}/fields/{name}` | rename, retype, require / stop requiring |
+| `DELETE /types/{id}/fields/{name}` | drop |
+
+Each is a model version carrying the patch that made it and its inverse, so
+each can be reverted — widening an enum is a `PATCH` on the type expression,
+not an import.
+
+**A rename moves the stored objects.** The model changing does not move them:
+rename `priority` to `urgency` and ten thousand objects still hold `priority`,
+which reads as data loss dressed as a model edit. `PATCH` with `rename_to`
+rewrites their payloads and reports how many moved (`migrate: false` to take
+that on yourself). The model edit lands first and the migration follows, both
+idempotent — a run that dies half way is fixed by running it again, because the
+model edit sees the rename already applied and the migration picks up whatever
+was not reached. A retried rename is distinguished from a mistyped field name,
+which is still an error.
+
+The rewrite keeps the stored vectors: a key rename touches none of the paths
+that are embedded, and re-embedding every object for it would be an expensive
+way to change nothing. The lexical index is rebuilt either way — that one is
+composed from the payload on every write.
+
+Two edits are refused, with the reason:
+
+- **an inherited field** — it belongs to the base that declares it, and editing
+  it there changes it for everything that extends the base
+- **a relation property** — it is stored as a `declares` edge, and an edge key
+  is a hash the gear derives and never hands back, so the old edge could not be
+  removed
+
+**Dropping a field does not drop data.** The objects keep what they hold under
+that key; it starts being reported as undeclared instead.
+
+### Seeing what an edit did to what is already stored
+
+Validation runs on the way in, so until now the effect of a model edit on the
+objects already in the graph was invisible — the only way to find out was to
+rewrite one and watch. `GET /types/{id}/conformance` checks them:
+
+```jsonc
+// after making `owner` required, over 301 stored projects
+{ "checked": 301, "conforming": 0, "truncated": false,
+  "violations": [ { "field": "owner", "kind": "missing", "count": 301 }, … ],
+  "undeclared": [],
+  "sample": [ { "instance_id": "0074390c-…", "violations": ["owner: required by project (string)"] } ] }
+```
+
+Counts by field, most frequent first, plus a handful of offending objects so
+the numbers lead somewhere. The read is bounded (`limit`, 5 000 by default) and
+says whether it saw everything.
+
 ## Mapping to GTS
 
 | Domain concept | GTS |
@@ -194,6 +254,9 @@ the fixed traits from the start.
 | `POST /model/revert` | — | restore the model to an earlier version |
 | `GET  /model/graph` | — | read that model graph back out of Graph Storage (nodes + edges) |
 | `GET  /types/{id}` | — | one type with everything it inherits, and its relations |
+| `GET  /types/{id}/conformance` | — | how the stored objects measure up against the type |
+| `PATCH  /types/{id}/fields/{name}` | 2 | rename (with migration), retype, require |
+| `DELETE /types/{id}/fields/{name}` | 2 | drop a field; the data stays |
 | `POST /objects` | 1 | create/upsert an object (`validate` checks it, `if_absent` refuses to replace) |
 | `GET  /objects?type=` | — | read objects back |
 | `POST /relations` | — | relate two objects (member/owns/references/composes) |

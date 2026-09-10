@@ -18,8 +18,8 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
-use super::ontology::FieldSpec;
-use super::service::{DomainModelService, WriteOptions};
+use super::ontology::{FieldEdit, FieldSpec};
+use super::service::{CONFORMANCE_LIMIT, DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
 
 /// Errors attributable to a domain-model resource (e.g. an unknown type).
@@ -378,6 +378,90 @@ pub struct AddFieldRequest {
     /// Whether the field is required.
     #[serde(default)]
     pub required: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct EditFieldRequest {
+    /// Rename the field. The stored objects are moved onto the new key unless
+    /// `migrate` says otherwise.
+    #[serde(default)]
+    pub rename_to: Option<String>,
+    /// Change the declared type expression.
+    #[serde(default, rename = "type")]
+    pub type_name: Option<String>,
+    /// Make the field required, or stop requiring it.
+    #[serde(default)]
+    pub required: Option<bool>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Move the stored objects onto the new key when renaming. Default true —
+    /// a rename without it leaves every stored object holding a key the model
+    /// no longer knows.
+    #[serde(default = "migrate_default")]
+    pub migrate: bool,
+}
+
+fn migrate_default() -> bool {
+    true
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct EditFieldResponse {
+    /// The updated type definition.
+    #[schema(value_type = Object)]
+    pub entity: Value,
+    /// The model version this edit produced.
+    pub version: u64,
+    /// Stored objects rewritten to follow a rename. Absent when the edit was
+    /// not a rename, or when migration was declined.
+    pub migrated: Option<u64>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConformanceCountDto {
+    pub field: String,
+    /// `missing` | `type` | `enum`. Absent for an undeclared field, which is
+    /// not a violation.
+    pub kind: Option<String>,
+    pub count: u64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConformanceSampleDto {
+    pub instance_id: String,
+    pub violations: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConformanceResponse {
+    #[serde(rename = "type")]
+    pub type_id: String,
+    /// Objects read. Bounded — see `truncated`.
+    pub checked: u64,
+    /// Of those, how many satisfy the type as it is now.
+    pub conforming: u64,
+    /// There were more objects than were read; the counts cover `checked`.
+    pub truncated: bool,
+    /// Violations by field, most frequent first.
+    pub violations: Vec<ConformanceCountDto>,
+    /// Fields the objects carry that the type does not declare, most frequent
+    /// first. Legal, and usually what a rename or a removal leaves behind.
+    pub undeclared: Vec<ConformanceCountDto>,
+    /// A few offending objects, so the counts can be traced to something.
+    pub sample: Vec<ConformanceSampleDto>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ConformanceQuery {
+    /// Narrow to one workspace/project scope.
+    pub scope: Option<String>,
+    /// Cap how many objects are read.
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -785,6 +869,111 @@ async fn add_field(
     Ok(Json(AddFieldResponse { entity, version }))
 }
 
+async fn edit_field(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Path((id, name)): Path<(String, String)>,
+    Json(req): Json<EditFieldRequest>,
+) -> ApiResult<JsonBody<EditFieldResponse>> {
+    let edited = handle
+        .0
+        .edit_field(
+            &ctx,
+            id.trim(),
+            name.trim(),
+            FieldEdit {
+                rename_to: req.rename_to.map(|s| s.trim().to_string()),
+                type_name: req.type_name.map(|s| s.trim().to_string()),
+                required: req.required,
+                description: req.description,
+            },
+            req.migrate,
+        )
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(EditFieldResponse {
+        entity: edited.entity,
+        version: edited.version,
+        migrated: edited.migrated,
+    }))
+}
+
+async fn remove_field(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Path((id, name)): Path<(String, String)>,
+) -> ApiResult<JsonBody<EditFieldResponse>> {
+    let edited = handle
+        .0
+        .remove_field(&ctx, id.trim(), name.trim())
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(EditFieldResponse {
+        entity: edited.entity,
+        version: edited.version,
+        migrated: None,
+    }))
+}
+
+async fn conformance(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Path(id): Path<String>,
+    Query(q): Query<ConformanceQuery>,
+) -> ApiResult<JsonBody<ConformanceResponse>> {
+    let limit = q.limit.unwrap_or(CONFORMANCE_LIMIT).clamp(1, 50_000);
+    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let r = handle
+        .0
+        .conformance(&ctx, id.trim(), scope, limit)
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(ConformanceResponse {
+        type_id: r.entity_id,
+        checked: r.checked,
+        conforming: r.conforming,
+        truncated: r.truncated,
+        violations: r
+            .violations
+            .into_iter()
+            .map(|(field, kind, count)| ConformanceCountDto {
+                field,
+                kind: Some(kind),
+                count,
+            })
+            .collect(),
+        undeclared: r
+            .undeclared
+            .into_iter()
+            .map(|(field, count)| ConformanceCountDto {
+                field,
+                kind: None,
+                count,
+            })
+            .collect(),
+        sample: r
+            .sample
+            .into_iter()
+            .map(|(instance_id, violations)| ConformanceSampleDto {
+                instance_id,
+                violations,
+            })
+            .collect(),
+    }))
+}
+
 async fn list_revisions(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
@@ -1062,6 +1251,87 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The updated type definition",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::patch("/studio-domain-model/v1/types/{id}/fields/{name}")
+        .operation_id("studio_domain_model.edit_field")
+        .summary("Change a field a type declares")
+        .description(
+            "Renames a field, changes its declared type, or makes it required. \
+             Recorded as a model version with the patch that made it and its \
+             inverse, so it can be reverted. A rename also moves the stored \
+             objects onto the new key, because the model changing does not move \
+             them — pass `migrate: false` to take that on yourself. Only a \
+             type's own fields can be edited: an inherited one belongs to the \
+             base that declares it, and a relation is an edge rather than a \
+             payload field.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Domain type id (ontology id or node type id)")
+        .path_param("name", "The field to change")
+        .json_request::<EditFieldRequest>(openapi, "What to change")
+        .handler(edit_field)
+        .json_response_with_schema::<EditFieldResponse>(
+            openapi,
+            StatusCode::OK,
+            "The updated type, the version, and how many objects moved",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::delete("/studio-domain-model/v1/types/{id}/fields/{name}")
+        .operation_id("studio_domain_model.remove_field")
+        .summary("Drop a field from a type")
+        .description(
+            "Removes the field from the type definition. The stored objects \
+             keep whatever they hold under that key — a model edit is not \
+             permission to delete data — so it starts being reported as \
+             undeclared by `GET /types/{id}/conformance` instead.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Domain type id (ontology id or node type id)")
+        .path_param("name", "The field to remove")
+        .handler(remove_field)
+        .json_response_with_schema::<EditFieldResponse>(
+            openapi,
+            StatusCode::OK,
+            "The updated type and the version",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-domain-model/v1/types/{id}/conformance")
+        .operation_id("studio_domain_model.conformance")
+        .summary("How the stored objects measure up against the type")
+        .description(
+            "Checks the objects already in the graph against the type as it is \
+             now, and answers with counts: how many conform, which fields are \
+             missing or wrongly shaped, and which fields the objects carry that \
+             the type no longer declares. Validation otherwise runs only on the \
+             way in, so without this the effect of a model edit on what is \
+             already stored is invisible.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("id", "Domain type id (ontology id or node type id)")
+        .handler(conformance)
+        .json_response_with_schema::<ConformanceResponse>(
+            openapi,
+            StatusCode::OK,
+            "The conformance counts",
         )
         .error_400(openapi)
         .error_401(openapi)

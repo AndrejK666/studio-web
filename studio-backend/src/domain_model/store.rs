@@ -159,6 +159,19 @@ pub trait DomainStore: Send + Sync {
         nodes: &[NodeUpsert],
     ) -> anyhow::Result<u64>;
 
+    /// [`Self::upsert_nodes`] for a rewrite that changes no prose: the stored
+    /// vectors are kept rather than recomputed.
+    ///
+    /// Renaming a payload key across ten thousand objects would otherwise
+    /// re-embed every one of them, for a change that touches none of the paths
+    /// that are embedded. The lexical index is rebuilt either way — that one is
+    /// composed from the payload on every write.
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64>;
+
     /// Upsert a batch of edges (any registered type), returning the count.
     async fn upsert_edges(
         &self,
@@ -270,6 +283,14 @@ impl DomainStore for InMemoryDomainStore {
         })
     }
 
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.upsert_nodes(ctx, nodes).await
+    }
+
     async fn upsert_nodes(
         &self,
         _ctx: &SecurityContext,
@@ -371,6 +392,44 @@ mod graph_backend {
         pub fn new(client: Arc<dyn GraphStorageClientV1>) -> Self {
             Self { client }
         }
+
+        /// One node batch. `embed` false keeps the stored vectors, for a
+        /// rewrite that changes nothing they are computed from.
+        async fn write_nodes(
+            &self,
+            ctx: &SecurityContext,
+            nodes: &[NodeUpsert],
+            embed: bool,
+        ) -> anyhow::Result<u64> {
+            if nodes.is_empty() {
+                return Ok(0);
+            }
+            let specs: Vec<NodeSpec> = nodes
+                .iter()
+                .map(|n| NodeSpec {
+                    node_key: n.node_key.clone(),
+                    type_id: gts::graph_type_id(&n.type_id),
+                    name: n.name.clone().filter(|s| !s.is_empty()),
+                    payload: Some(n.payload.clone()),
+                    expected_version: n.expected_version,
+                })
+                .collect();
+            let res = self
+                .client
+                .ingest(ctx, ingest_with(specs, Vec::new(), embed))
+                .await
+                .map_err(|e| {
+                    // A compare-and-set refusal is a race, not a fault: the
+                    // caller retries against the new state. Everything else is
+                    // reported as itself.
+                    if e.to_string().contains("expected version") {
+                        anyhow::anyhow!("{}: {e}", super::VERSION_TAKEN)
+                    } else {
+                        anyhow::anyhow!("graph-storage node batch ingest: {e}")
+                    }
+                })?;
+            Ok(res.counts.nodes_inserted + res.counts.nodes_updated)
+        }
     }
 
     /// True for graph-storage's refusal to re-register a type id under a
@@ -383,6 +442,10 @@ mod graph_backend {
     }
 
     fn ingest_one(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>) -> IngestRequest {
+        ingest_with(nodes, edges, true)
+    }
+
+    fn ingest_with(nodes: Vec<NodeSpec>, edges: Vec<EdgeSpec>, embed: bool) -> IngestRequest {
         IngestRequest {
             nodes,
             edges,
@@ -393,7 +456,8 @@ mod graph_backend {
                 report_per_item: false,
                 // Domain objects are small structured records; the graph can
                 // still embed them for search, but it is not the point here.
-                embed: Some(true),
+                // `false` keeps the stored vectors rather than clearing them.
+                embed: Some(embed),
             },
             replace_scope: None,
             idempotency_key: None,
@@ -592,39 +656,20 @@ mod graph_backend {
             Ok(out)
         }
 
+        async fn upsert_nodes_keeping_vectors(
+            &self,
+            ctx: &SecurityContext,
+            nodes: &[NodeUpsert],
+        ) -> anyhow::Result<u64> {
+            self.write_nodes(ctx, nodes, false).await
+        }
+
         async fn upsert_nodes(
             &self,
             ctx: &SecurityContext,
             nodes: &[NodeUpsert],
         ) -> anyhow::Result<u64> {
-            if nodes.is_empty() {
-                return Ok(0);
-            }
-            let specs: Vec<NodeSpec> = nodes
-                .iter()
-                .map(|n| NodeSpec {
-                    node_key: n.node_key.clone(),
-                    type_id: gts::graph_type_id(&n.type_id),
-                    name: n.name.clone().filter(|s| !s.is_empty()),
-                    payload: Some(n.payload.clone()),
-                    expected_version: n.expected_version,
-                })
-                .collect();
-            let res = self
-                .client
-                .ingest(ctx, ingest_one(specs, Vec::new()))
-                .await
-                .map_err(|e| {
-                    // A compare-and-set refusal is a race, not a fault: the
-                    // caller retries against the new state. Everything else is
-                    // reported as itself.
-                    if e.to_string().contains("expected version") {
-                        anyhow::anyhow!("{}: {e}", super::VERSION_TAKEN)
-                    } else {
-                        anyhow::anyhow!("graph-storage node batch ingest: {e}")
-                    }
-                })?;
-            Ok(res.counts.nodes_inserted + res.counts.nodes_updated)
+            self.write_nodes(ctx, nodes, true).await
         }
 
         async fn upsert_edges(
