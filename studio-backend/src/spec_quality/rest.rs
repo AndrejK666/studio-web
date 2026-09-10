@@ -307,6 +307,10 @@ pub fn register_routes(
     router = OperationBuilder::get("/spec-quality/v1/tasks")
         .operation_id("spec_quality.list_tasks")
         .summary("List recent spec-quality tasks")
+        .description(
+            "Forwards to the upstream detector service and returns its recent \
+             tasks. Pass `limit` to shorten the list.",
+        )
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])
@@ -322,6 +326,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/spec-quality/v1/health")
         .operation_id("spec_quality.health")
         .summary("Upstream liveness (maps to the service's /healthz)")
+        .description(
+            "Reports whether the upstream detector service is answering; maps to \
+             its `/healthz`. A 200 here says the wrapper reached it, not that a \
+             detector will succeed.",
+        )
         .tag("SpecQuality")
         .authenticated()
         .require_license_features::<License>([])

@@ -217,6 +217,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-theia/v1/workspaces/{workspace_id}/status")
         .operation_id("studio_theia.get_runtime_status")
         .summary("IDE runtime status for a workspace's live session")
+        .description(
+            "Asks the workspace's live IDE session what state its runtime is in, \
+             over the backend-to-backend bridge. 404 when the workspace has no \
+             live session.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -231,6 +236,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-theia/v1/workspaces/{workspace_id}/session")
         .operation_id("studio_theia.get_session_info")
         .summary("Session identity + feature flags for a workspace's IDE")
+        .description(
+            "Returns which session serves this workspace and which IDE features \
+             it has, so the portal renders the controls the session actually \
+             supports.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -245,6 +255,10 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-theia/v1/workspaces/{workspace_id}/repositories")
         .operation_id("studio_theia.get_repositories")
         .summary("Repositories the IDE has mounted for a workspace")
+        .description(
+            "Returns the repositories the IDE has mounted in this workspace, as \
+             the session itself reports them.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -259,6 +273,11 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-theia/v1/workspaces/{workspace_id}/operations")
         .operation_id("studio_theia.enqueue_operation")
         .summary("Queue a save/commit/push through the IDE operation journal")
+        .description(
+            "Queues a save, commit or push into the IDE's operation journal and \
+             returns the operation's first snapshot. The IDE performs it; this \
+             answers as soon as it is journalled.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -274,6 +293,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-theia/v1/workspaces/{workspace_id}/operations")
         .operation_id("studio_theia.get_operation_deltas")
         .summary("Cursor backfill of operation events after a sequence")
+        .description(
+            "Returns the operation events after a sequence number, so a client \
+             that was disconnected catches up instead of re-reading the whole \
+             journal.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -291,6 +315,11 @@ pub fn register_routes(
     )
     .operation_id("studio_theia.retry_operation")
     .summary("Retry a failed operation by id")
+    .description(
+        "Runs a failed operation from the IDE's journal again, keeping its id, so \
+         the history shows one operation that was retried rather than two that \
+         were attempted.",
+    )
     .tag("StudioTheia")
     .authenticated()
     .require_license_features::<License>([])
@@ -306,6 +335,10 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-theia/v1/workspaces/{workspace_id}/open")
         .operation_id("studio_theia.open_in_editor")
         .summary("Reveal/open a file in the running IDE")
+        .description(
+            "Reveals and opens a file in the running IDE, so a link from the \
+             portal lands on the right file rather than in the workspace root.",
+        )
         .tag("StudioTheia")
         .authenticated()
         .require_license_features::<License>([])
@@ -329,6 +362,12 @@ pub fn register_routes(
     router = OperationBuilder::post(event_ingress_path)
         .operation_id("studio_theia.ingest_events")
         .summary("Theia->studio S2S event ingress")
+        .description(
+            "The Theia node's way back in: a session posts its events here, \
+             authenticated by the per-session S2S token rather than by a user's \
+             token, since no user is present when a background operation \
+             finishes.",
+        )
         .tag("StudioTheia")
         .anonymous()
         .exposed()

@@ -310,6 +310,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-kits/v1/catalog")
         .operation_id("studio_kits.list_catalog")
         .summary("List kits available to Constructor Studio")
+        .description(
+            "Returns the kits this deployment knows about — name, slug and where \
+             the canonical repository is. The kit's files stay in Git; this is \
+             the metadata about them.",
+        )
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])
@@ -322,6 +327,10 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-kits/v1/projects/{project_id}/installations")
         .operation_id("studio_kits.list_project_installations")
         .summary("List desired kit installations for a project")
+        .description(
+            "Returns the kits a project wants installed. Desired state only: \
+             materializing the files into a checkout is `cfs`'s job.",
+        )
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])
@@ -407,6 +416,10 @@ pub fn register_routes(
     OperationBuilder::delete("/studio-kits/v1/projects/{project_id}/installations/{kit_slug}")
         .operation_id("studio_kits.remove_installation")
         .summary("Remove a project's desired kit installation")
+        .description(
+            "Stops a project wanting a kit. Files already materialized into a \
+             checkout are left alone.",
+        )
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])

@@ -626,6 +626,12 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/me")
         .operation_id("studio_user.get_me")
         .summary("Resolve the caller to their canonical Studio user and profile")
+        .description(
+            "Resolves the caller's token subject to their canonical Studio user \
+             and returns the profile, provisioning the user on first sight: an \
+             authenticated subject nobody has seen before is a new person, not an \
+             error.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -643,6 +649,10 @@ pub fn register_routes(
     let router = OperationBuilder::post("/studio-user/v1/me")
         .operation_id("studio_user.update_me")
         .summary("Update the caller's own profile")
+        .description(
+            "Updates the caller's own profile. Roles are not here — a role is \
+             held in an organization and lives on the membership.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -658,6 +668,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/me/logins")
         .operation_id("studio_user.get_my_logins")
         .summary("List the caller's linked sign-in methods")
+        .description(
+            "Returns the sign-in methods that resolve to the caller. One person \
+             reached through different providers is one user with several logins.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -675,6 +689,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/me/memberships")
         .operation_id("studio_user.get_my_memberships")
         .summary("List the caller's organization memberships and roles")
+        .description(
+            "Returns the organizations the caller belongs to, and the role held \
+             in each.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -692,6 +710,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/users/{user_id}")
         .operation_id("studio_user.get_user")
         .summary("Read any user's profile (platform admin)")
+        .description(
+            "Returns any user's profile. Platform-admin view of what `/me` \
+             returns to the user themselves.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -708,6 +730,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/users/{user_id}/memberships")
         .operation_id("studio_user.get_user_memberships")
         .summary("List a user's organization memberships (platform admin)")
+        .description(
+            "Returns any user's organization memberships and roles. Platform- \
+             admin view.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -753,6 +779,11 @@ pub fn register_routes(
     let router = OperationBuilder::delete("/studio-user/v1/users/{user_id}/memberships/{org_id}")
         .operation_id("studio_user.delete_membership")
         .summary("Remove a user's membership in an organization (organization owner)")
+        .description(
+            "Removes a user's membership in an organization, and the role that \
+             came with it. The user record and their other memberships are \
+             untouched. Organization owners only.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
@@ -804,6 +835,11 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-user/v1/me/aliases")
         .operation_id("studio_user.list_my_aliases")
         .summary("List the external identities attributed to the caller")
+        .description(
+            "Returns the external identities attributed to the caller — emails \
+             and handles they have claimed — and whether each is confirmed. An \
+             unconfirmed alias cannot be used to absorb another account.",
+        )
         .tag("StudioUser")
         .authenticated()
         .require_license_features::<License>([])
