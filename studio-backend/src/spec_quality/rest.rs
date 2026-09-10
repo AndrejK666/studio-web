@@ -16,6 +16,22 @@ impl AsRef<str> for License {
 }
 impl LicenseFeature for License {}
 
+/// Where a forwarded request goes: `{base_url}{path}` plus the caller's query
+/// string when there is one.
+///
+/// The caller's query is passed through as the caller wrote it, not re-encoded
+/// — the upstream's `?limit=` and any filter it grows are its own vocabulary,
+/// and a wrapper that parsed them would have to be taught each one. An empty
+/// query string is the same as none: `GET /tasks?` and `GET /tasks` ask the
+/// upstream the same question, and the trailing `?` only ever came from a
+/// client that built the URL by concatenation.
+fn upstream_url(base_url: &str, path: &str, query: Option<&str>) -> String {
+    match query {
+        Some(q) if !q.is_empty() => format!("{base_url}{path}?{q}"),
+        _ => format!("{base_url}{path}"),
+    }
+}
+
 /// Shared proxy state: one upstream, one server-held key.
 pub struct ProxyState {
     pub client: reqwest::Client,
@@ -62,13 +78,9 @@ impl ProxyState {
             .create());
         };
 
-        let url = match query {
-            Some(q) if !q.is_empty() => format!("{}{}?{}", self.base_url, path, q),
-            _ => format!("{}{}", self.base_url, path),
-        };
         let mut req = self
             .client
-            .request(method, url)
+            .request(method, upstream_url(&self.base_url, path, query))
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
         if let Some(bytes) = body {
             req = req
@@ -362,4 +374,59 @@ pub fn register_routes(
     router
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(Extension(state))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Where a forwarded request lands.
+    //!
+    //! This wrapper's whole job is to put the Studio gateway and a server-held
+    //! key in front of somebody else's API, so the only thing it can get wrong
+    //! on its own is the address.
+
+    use super::upstream_url;
+
+    const BASE: &str = "https://spec-quality.example";
+
+    #[test]
+    fn a_path_is_appended_to_the_base() {
+        assert_eq!(
+            upstream_url(BASE, "/v1/analyze/bloat", None),
+            "https://spec-quality.example/v1/analyze/bloat"
+        );
+    }
+
+    #[test]
+    fn a_query_is_carried_through_as_written() {
+        assert_eq!(
+            upstream_url(BASE, "/v1/tasks", Some("limit=20")),
+            "https://spec-quality.example/v1/tasks?limit=20"
+        );
+        // Several parameters, and a value the wrapper has no opinion about.
+        assert_eq!(
+            upstream_url(BASE, "/v1/tasks", Some("limit=20&state=failed")),
+            "https://spec-quality.example/v1/tasks?limit=20&state=failed"
+        );
+    }
+
+    /// A client that builds its URL by concatenation sends `?` with nothing
+    /// after it. That is not a query, and forwarding it as one would put a
+    /// bare `?` in front of the upstream for no reason.
+    #[test]
+    fn an_empty_query_is_the_same_as_none() {
+        assert_eq!(
+            upstream_url(BASE, "/v1/tasks", Some("")),
+            upstream_url(BASE, "/v1/tasks", None)
+        );
+    }
+
+    /// The config trims the trailing slash so this concatenation is safe. If
+    /// that ever stops being true the doubled slash shows up here rather than
+    /// as a 404 from somebody else's server.
+    #[test]
+    fn a_trimmed_base_and_a_rooted_path_join_with_one_slash() {
+        let joined = upstream_url(BASE, "/healthz", None);
+        assert_eq!(joined, "https://spec-quality.example/healthz");
+        assert!(!joined.contains("//healthz"));
+    }
 }
