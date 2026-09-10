@@ -794,6 +794,12 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/tasks/{id}")
         .operation_id("studio_components_catalog.task_status")
         .summary("Poll a background catalog sync task")
+        .description(
+            "Reports the state of a `catalog.sync` run — queued, running, \
+             succeeded or failed — with the gear, version and stored counts as \
+             they tick up. The id is a studio-tasks run id, so the same run can \
+             be cancelled or retried there.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -812,6 +818,11 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/components")
         .operation_id("studio_components_catalog.list_gears")
         .summary("List every node of every type this organization marks as a component")
+        .description(
+            "Returns every node whose type this organization marks as a \
+             component, rather than a fixed type: what counts as a component is a \
+             judgement about the organization's model, made on the Objects page.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -824,6 +835,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/versions")
         .operation_id("studio_components_catalog.list_versions")
         .summary("List ingested crate versions, optionally filtered to one crate")
+        .description(
+            "Returns the crate versions ingested from crates.io. Narrow it to one \
+             gear's history by naming the crate.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -836,6 +851,11 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/profiles")
         .operation_id("studio_components_catalog.list_profiles")
         .summary("List Studio-managed, editable Gear profiles")
+        .description(
+            "Returns the Studio-managed profiles: the editable metadata this \
+             tenant keeps beside a gear, as opposed to what crates.io publishes \
+             about it.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -852,6 +872,11 @@ pub fn register_routes(
     let router = OperationBuilder::post("/studio-components-catalog/v1/components/{name}/profile")
         .operation_id("studio_components_catalog.save_profile")
         .summary("Create or replace Studio-managed metadata for one Gear")
+        .description(
+            "Creates the profile for one gear or replaces it wholesale. The crate \
+             name in the path identifies the gear; a body that does not fit the \
+             profile schema is refused with a constraint violation.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -867,6 +892,11 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/types")
         .operation_id("studio_components_catalog.list_types")
         .summary("Every node type the graph holds, and which are components here")
+        .description(
+            "Returns every node type the graph holds, each with whether this \
+             organization marks it as a component and which field schema renders \
+             it — the built-in one or this tenant's own.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -883,6 +913,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/types/counts")
         .operation_id("studio_components_catalog.count_types")
         .summary("How many nodes of each type the graph holds")
+        .description(
+            "Returns how many nodes the graph holds of each type, so the Objects \
+             page can show sizes without fetching the nodes themselves.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -899,6 +933,10 @@ pub fn register_routes(
     let router = OperationBuilder::put("/studio-components-catalog/v1/types/{type_id}/component")
         .operation_id("studio_components_catalog.set_type_component")
         .summary("Mark a type as one of this organization's components, or unmark it")
+        .description(
+            "Marks a node type as one of this organization's components, or \
+             unmarks it. This is what `GET /components` then lists.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -918,6 +956,10 @@ pub fn register_routes(
     let router = OperationBuilder::get("/studio-components-catalog/v1/field-schemas")
         .operation_id("studio_components_catalog.list_field_schemas")
         .summary("The field schema each component type is rendered against")
+        .description(
+            "Returns the field schema each component type is rendered against, \
+             whether it is the built-in default or one this tenant has replaced.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -934,6 +976,11 @@ pub fn register_routes(
     let router = OperationBuilder::put("/studio-components-catalog/v1/field-schemas/{describes}")
         .operation_id("studio_components_catalog.save_field_schema")
         .summary("Replace the field schema this tenant renders one component type against")
+        .description(
+            "Replaces the field schema this tenant renders one component type \
+             against. It applies to this tenant only; the built-in schema stays \
+             the default elsewhere.",
+        )
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
@@ -950,6 +997,11 @@ pub fn register_routes(
         OperationBuilder::delete("/studio-components-catalog/v1/field-schemas/{describes}")
             .operation_id("studio_components_catalog.delete_field_schema")
             .summary("Revert one component type to the built-in field schema")
+            .description(
+                "Drops this tenant's field schema for a component type, so it \
+                 renders against the built-in one again. Reverting a type that \
+                 was never overridden is not an error.",
+            )
             .tag("StudioComponentsCatalog")
             .authenticated()
             .require_license_features::<License>([])
@@ -965,6 +1017,11 @@ pub fn register_routes(
         OperationBuilder::get("/studio-components-catalog/v1/projects/{project_id}/gear-repo")
             .operation_id("studio_components_catalog.get_project_repo")
             .summary("The gear repository connected to a project (0 or 1 node)")
+            .description(
+                "Returns the repository a project's gears are scaffolded into, as \
+                 zero or one node — a project with none has simply not connected \
+                 one yet.",
+            )
             .tag("StudioComponentsCatalog")
             .authenticated()
             .require_license_features::<License>([])
@@ -983,6 +1040,12 @@ pub fn register_routes(
         OperationBuilder::post("/studio-components-catalog/v1/projects/{project_id}/gear-repo")
             .operation_id("studio_components_catalog.set_project_repo")
             .summary("Connect (or update) the gear repository for a project")
+            .description(
+                "Connects a project to the repository its gears are scaffolded \
+                 into, or replaces that connection. The branch defaults to \
+                 `main`. The repository is reached through a studio-connector \
+                 connection, so its credential stays in credstore.",
+            )
             .tag("StudioComponentsCatalog")
             .authenticated()
             .require_license_features::<License>([])
@@ -1003,6 +1066,11 @@ pub fn register_routes(
         OperationBuilder::post("/studio-components-catalog/v1/projects/{project_id}/scaffold")
             .operation_id("studio_components_catalog.scaffold_gear")
             .summary("Write a scaffolded gear skeleton into the project's connected gear repo")
+            .description(
+                "Writes a gear skeleton into the project's connected repository, \
+                 on a branch named after the slug, and opens a pull request when \
+                 asked to. Returns what was written and where.",
+            )
             .tag("StudioComponentsCatalog")
             .authenticated()
             .require_license_features::<License>([])
@@ -1024,6 +1092,11 @@ pub fn register_routes(
             .operation_id("studio_components_catalog.create_repo")
             .summary(
                 "Create a new repository via the connector and set it as the project's gear repo",
+            )
+            .description(
+                "Creates a repository through the project's connector and records \
+                 it as that project's gear repository in one step, so a new \
+                 project does not need the repository to exist first.",
             )
             .tag("StudioComponentsCatalog")
             .authenticated()

@@ -759,6 +759,11 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-connector/v1/connections/{id}/test")
         .operation_id("studio_connector.test_connection")
         .summary("Re-verify a stored credential")
+        .description(
+            "Calls the provider with the stored credential and reports whether it \
+             still works. A token that has been revoked or has expired fails here \
+             rather than in the middle of a session launch.",
+        )
         .tag("StudioConnectors")
         .authenticated()
         .require_license_features::<License>([])
@@ -778,6 +783,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-connector/v1/connections/{id}/repositories")
         .operation_id("studio_connector.list_repositories")
         .summary("List repositories reachable through a connection")
+        .description(
+            "Returns the repositories this connection can reach, so a workspace \
+             picks one from a list instead of being handed a clone URL and a \
+             token reference.",
+        )
         .tag("StudioConnectors")
         .authenticated()
         .require_license_features::<License>([])
@@ -870,6 +880,11 @@ pub fn register_routes(
     router = OperationBuilder::delete("/studio-connector/v1/connections/{id}")
         .operation_id("studio_connector.delete_connection")
         .summary("Remove a connection and its stored token")
+        .description(
+            "Removes the connection and the token it stored in credstore. \
+             Repositories already cloned into a workspace are untouched; what \
+             ends is Studio's ability to reach the provider as this connection.",
+        )
         .tag("StudioConnectors")
         .authenticated()
         .require_license_features::<License>([])

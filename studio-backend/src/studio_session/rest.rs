@@ -313,6 +313,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-session/v1/sessions")
         .operation_id("studio_session.list_sessions")
         .summary("List IDE sessions of the caller's tenant")
+        .description(
+            "Returns the IDE sessions of the caller's tenant as the runtime \
+             currently has them, so a session another replica launched is listed \
+             too.",
+        )
         .tag("StudioSessions")
         .authenticated()
         .require_license_features::<License>([])
@@ -325,6 +330,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-session/v1/sessions/{id}")
         .operation_id("studio_session.get_session")
         .summary("Get one IDE session (state refreshes to running when ready)")
+        .description(
+            "Returns one session. A session still starting is promoted to \
+             `running` here, once its port accepts a connection — the runtime \
+             reports a container as up well before the IDE answers.",
+        )
         .tag("StudioSessions")
         .authenticated()
         .require_license_features::<License>([])
@@ -339,6 +349,11 @@ pub fn register_routes(
     router = OperationBuilder::delete("/studio-session/v1/sessions/{id}")
         .operation_id("studio_session.delete_session")
         .summary("Stop and remove an IDE session")
+        .description(
+            "Stops the session's container and removes it. The workspace's files \
+             are unaffected; a later launch starts a fresh session for the same \
+             workspace.",
+        )
         .tag("StudioSessions")
         .authenticated()
         .require_license_features::<License>([])
@@ -377,6 +392,12 @@ pub fn register_routes(
                 tag
             ))
             .summary("Reverse proxy to a Kubernetes IDE session")
+            .description(
+                "Proxies the browser to a Kubernetes session's Service, HTTP and \
+                 the WebSocket upgrade alike. A session Pod has no ingress of its \
+                 own; the session container's own gate token is the credential, \
+                 which is why this route is anonymous to the platform.",
+            )
             .tag("StudioSessions")
             .anonymous()
             .exposed();

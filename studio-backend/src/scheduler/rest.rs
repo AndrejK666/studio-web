@@ -352,6 +352,10 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-scheduler/v1/schedules/{id}")
         .operation_id("studio_scheduler.get")
         .summary("One schedule, and when it is next due")
+        .description(
+            "Returns one schedule with its expression, timezone, concurrency and \
+             missed-schedule policies, and the time it is next due.",
+        )
         .tag("StudioScheduler")
         .authenticated()
         .require_license_features::<License>([])

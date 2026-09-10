@@ -159,6 +159,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-llm/v1/models")
         .operation_id("studio_llm.list_models")
         .summary("OpenAI-compatible model list (proxied)")
+        .description(
+            "Forwards to the configured OpenAI-compatible upstream and returns \
+             its model list verbatim, so an IDE session can populate its model \
+             picker without a provider key of its own.",
+        )
         .tag("StudioLlm")
         .authenticated()
         .require_license_features::<License>([])

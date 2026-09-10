@@ -333,3 +333,172 @@ mod config_expansion_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod operation_docs_tests {
+    //! Every REST operation this assembly registers must arrive at `/cf/docs`
+    //! describing itself.
+    //!
+    //! A `summary` is a label; a `description` is the sentence that says what
+    //! comes back and what it means. Fifty-five operations shipped without one
+    //! because nothing asked for it — the omission is invisible in review, and
+    //! only shows up as an empty panel in the API browser months later.
+    //!
+    //! The scan is textual, like the profile scan in [`crate::gts_inventory`]:
+    //! building the real OpenAPI document offline would mean constructing every
+    //! gear's service first. It reads the `OperationBuilder` chains in the
+    //! sources, which is the same place a reviewer would look.
+
+    /// Every `rest.rs` in the crate, embedded so the test needs no cwd.
+    ///
+    /// A module missing from this list is simply not checked, so add the entry
+    /// with the module: [`every_rest_module_is_listed`] catches the common way
+    /// of forgetting, but it cannot see a module nobody mentioned anywhere.
+    const REST_MODULES: [(&str, &str); 16] = [
+        ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
+        (
+            "components_catalog",
+            include_str!("components_catalog/rest.rs"),
+        ),
+        ("connectors", include_str!("connectors/rest.rs")),
+        ("documents", include_str!("documents/rest.rs")),
+        ("domain_model", include_str!("domain_model/rest.rs")),
+        (
+            "identity_directory",
+            include_str!("identity_directory/rest.rs"),
+        ),
+        ("insight", include_str!("insight/rest.rs")),
+        ("kit_registry", include_str!("kit_registry/rest.rs")),
+        ("llm_proxy", include_str!("llm_proxy/rest.rs")),
+        ("notify", include_str!("notify/rest.rs")),
+        ("scheduler", include_str!("scheduler/rest.rs")),
+        ("spec_quality", include_str!("spec_quality/rest.rs")),
+        ("studio_session", include_str!("studio_session/rest.rs")),
+        ("studio_theia", include_str!("studio_theia/rest.rs")),
+        ("tasks", include_str!("tasks/rest.rs")),
+        ("user_profile", include_str!("user_profile/rest.rs")),
+    ];
+
+    /// One `OperationBuilder::…().register(…)` chain, as text.
+    struct Chain<'a> {
+        operation_id: String,
+        body: &'a str,
+    }
+
+    /// Split a source file into the operation chains it registers.
+    ///
+    /// A chain starts at `OperationBuilder::` and ends at the `.register(` that
+    /// closes it — the same shape every one of these files is written in. A
+    /// file that stops following it reads as zero chains, which
+    /// [`every_rest_module_registers_something`] refuses.
+    fn chains(source: &str) -> Vec<Chain<'_>> {
+        let mut out = Vec::new();
+        let mut rest = source;
+        while let Some(start) = rest.find("OperationBuilder::") {
+            let tail = &rest[start..];
+            let Some(end) = tail.find(".register(") else {
+                break;
+            };
+            let body = &tail[..end];
+            out.push(Chain {
+                operation_id: operation_id_of(body),
+                body,
+            });
+            rest = &tail[end + ".register(".len()..];
+        }
+        out
+    }
+
+    /// The chain's `operation_id`, or the route when it is built at runtime
+    /// (studio-theia formats one) — either way something a failure can name.
+    fn operation_id_of(body: &str) -> String {
+        let quoted = |after: &str| -> Option<String> {
+            let at = body.find(after)? + after.len();
+            let tail = &body[at..];
+            let open = tail.find('"')? + 1;
+            let close = tail[open..].find('"')?;
+            Some(tail[open..open + close].to_string())
+        };
+        quoted(".operation_id(")
+            .or_else(|| quoted("OperationBuilder::"))
+            .unwrap_or_else(|| "<unnamed operation>".to_string())
+    }
+
+    #[test]
+    fn every_operation_describes_itself() {
+        let mut undocumented = Vec::new();
+        for (module, source) in REST_MODULES {
+            for chain in chains(source) {
+                if !chain.body.contains(".description(") {
+                    undocumented.push(format!("{module}: {}", chain.operation_id));
+                }
+            }
+        }
+        assert!(
+            undocumented.is_empty(),
+            "these operations reach /cf/docs with no description — add one \
+             between .summary() and .tag(), saying what comes back and what it \
+             means:\n  {}",
+            undocumented.join("\n  ")
+        );
+    }
+
+    /// A summary is not a description restated. Both exist because they answer
+    /// different questions, and a `description` that only repeats the summary
+    /// leaves the panel as empty as before.
+    #[test]
+    fn a_description_says_more_than_its_summary() {
+        for (module, source) in REST_MODULES {
+            for chain in chains(source) {
+                let (Some(summary), Some(description)) = (
+                    chain.body.find(".summary("),
+                    chain.body.find(".description("),
+                ) else {
+                    continue;
+                };
+                let summary_text = &chain.body[summary..description];
+                let description_text = &chain.body[description..];
+                assert!(
+                    description_text.len() > summary_text.len(),
+                    "{module}: {} has a description no longer than its summary",
+                    chain.operation_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_rest_module_registers_something() {
+        for (module, source) in REST_MODULES {
+            assert!(
+                !chains(source).is_empty(),
+                "{module}/rest.rs parsed as zero operations — if these files no \
+                 longer end a chain with `.register(`, teach `chains` the new \
+                 shape, or this gate silently passes everything"
+            );
+        }
+    }
+
+    /// The list above is hand-written. `include_str!` already refuses a path
+    /// that does not exist, so what is left to check is the other direction:
+    /// that every name in it is still a module of this crate, and that none is
+    /// listed twice.
+    ///
+    /// It cannot prove nothing is *missing* — a new gear whose `rest.rs` nobody
+    /// added here goes unchecked, the same trade-off `PROFILES` makes in
+    /// [`crate::gts_inventory`]. Adding the entry is part of adding the gear.
+    #[test]
+    fn every_listed_module_is_a_module_of_this_crate() {
+        let source = include_str!("main.rs");
+        let mut seen = std::collections::BTreeSet::new();
+        for (module, _) in REST_MODULES {
+            assert!(
+                source
+                    .lines()
+                    .any(|l| l.trim_start().starts_with(&format!("mod {module};"))),
+                "REST_MODULES names `{module}`, which main.rs does not declare"
+            );
+            assert!(seen.insert(module), "REST_MODULES lists `{module}` twice");
+        }
+    }
+}

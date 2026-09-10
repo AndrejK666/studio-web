@@ -1299,6 +1299,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/types")
         .operation_id("studio_documents.list_types")
         .summary("List effective document types for a workspace")
+        .description(
+            "Returns the document types this workspace actually sees: the \
+             organization's, plus the workspace's own definitions and overrides, \
+             minus the ones it hides.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1313,6 +1318,12 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/workspaces/{workspace_id}/types")
         .operation_id("studio_documents.upsert_type")
         .summary("Define, replace or hide a document type in one workspace")
+        .description(
+            "Defines a document type for this workspace, replaces its definition, \
+             or hides an inherited one with a tombstone. The level is the route's \
+             and never the payload's, so a workspace member cannot reach the \
+             organization level by setting a field.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1346,6 +1357,11 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/organizations/{organization_id}/types")
         .operation_id("studio_documents.upsert_organization_type")
         .summary("Define, replace or hide a document type for every workspace in an organization")
+        .description(
+            "Defines or replaces a document type for every workspace in the \
+             organization; a workspace can still override or hide it. Authorized \
+             against the organization tenant, because the level is the route's.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1389,6 +1405,11 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.list_project_analyses")
     .summary("Every recorded verdict for a project's effective documents")
+    .description(
+        "Returns every quality verdict recorded against the documents this \
+         project sees, its own and the ones inherited from the workspace, so a \
+         stage gate can be answered without re-running the detectors.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1443,6 +1464,11 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/workspaces/{workspace_id}/stages")
         .operation_id("studio_documents.upsert_stage")
         .summary("Define, replace or hide a journey stage in one workspace")
+        .description(
+            "Defines a journey stage for this workspace, replaces it, or hides an \
+             inherited one. Order is part of the definition, so rewriting a stage \
+             moves it in place.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1459,6 +1485,10 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-documents/v1/organizations/{organization_id}/stages")
         .operation_id("studio_documents.list_organization_stages")
         .summary("List the journey stages an organization publishes")
+        .description(
+            "Returns the journey stages the organization publishes to its \
+             workspaces, before any workspace override.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1473,6 +1503,10 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/organizations/{organization_id}/stages")
         .operation_id("studio_documents.upsert_organization_stage")
         .summary("Define, replace or hide a journey stage for every workspace in an organization")
+        .description(
+            "Defines or replaces a journey stage for every workspace in the \
+             organization; a workspace can override or hide it.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1523,6 +1557,10 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/workspaces/{workspace_id}/capabilities")
         .operation_id("studio_documents.upsert_capability")
         .summary("Define, replace or hide a capability in one workspace")
+        .description(
+            "Defines what a document may claim at a stage in this workspace, \
+             replaces it, or hides an inherited capability.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1540,6 +1578,10 @@ pub fn register_routes(
         OperationBuilder::post("/studio-documents/v1/organizations/{organization_id}/capabilities")
             .operation_id("studio_documents.upsert_organization_capability")
             .summary("Define, replace or hide a capability for every workspace in an organization")
+            .description(
+                "The same for every workspace in the organization. A capability \
+                 and a stage may share a key: they are separate namespaces.",
+            )
             .tag("StudioDocuments")
             .authenticated()
             .require_license_features::<License>([])
@@ -1558,6 +1600,11 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.delete_capability")
     .summary("Revert a workspace's own capability, falling back to what it inherits")
+    .description(
+        "Drops this workspace's own definition of a capability, so it falls back \
+         to what the organization publishes. Reverting a key the workspace never \
+         overrode is not an error.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1575,6 +1622,11 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.delete_organization_capability")
     .summary("Revert an organization's own capability, falling back to the platform catalogue")
+    .description(
+        "Drops the organization's own definition of a capability, so it falls \
+         back to the platform catalogue. Workspaces that override it keep their \
+         own.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1662,6 +1714,11 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/documents")
         .operation_id("studio_documents.list_workspace_documents")
         .summary("List workspace-level documents")
+        .description(
+            "Returns the workspace-level documents — the ones every project in \
+             the workspace inherits. A project's own documents are under the \
+             project route.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1678,6 +1735,11 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.list_project_documents")
     .summary("List a project's effective documents (own + inherited)")
+    .description(
+        "Returns the documents this project effectively has: its own, plus the \
+         workspace-level ones it inherits. Inheritance is a column filter, not a \
+         cross-tenant read.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1693,6 +1755,10 @@ pub fn register_routes(
     router = OperationBuilder::post("/studio-documents/v1/workspaces/{workspace_id}/documents")
         .operation_id("studio_documents.create_workspace_document")
         .summary("Create a workspace-level document from a type")
+        .description(
+            "Creates a workspace-level document from a type, seeded with that \
+             type's markdown template and section checklist.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1711,6 +1777,10 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.create_project_document")
     .summary("Create a project-level document from a type")
+    .description(
+        "Creates a document owned by this project rather than by the workspace, \
+         seeded from its type's template and section checklist.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1728,6 +1798,7 @@ pub fn register_routes(
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/documents/{id}")
         .operation_id("studio_documents.get_document")
         .summary("Get one document")
+        .description("Returns one document with its content, type, stage and status.")
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1744,6 +1815,10 @@ pub fn register_routes(
     router = OperationBuilder::put("/studio-documents/v1/workspaces/{workspace_id}/documents/{id}")
         .operation_id("studio_documents.update_document")
         .summary("Update a document's content, title or status")
+        .description(
+            "Updates a document's content, title or status. Fields left out of \
+             the body are left as they are.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
@@ -1763,6 +1838,11 @@ pub fn register_routes(
     )
     .operation_id("studio_documents.validate_document")
     .summary("Re-run the structural conformance check")
+    .description(
+        "Re-runs the type's structural rules and section checklist against the \
+         document as it stands now, and records the verdict. Nothing about the \
+         document changes.",
+    )
     .tag("StudioDocuments")
     .authenticated()
     .require_license_features::<License>([])
@@ -1778,6 +1858,10 @@ pub fn register_routes(
     OperationBuilder::delete("/studio-documents/v1/workspaces/{workspace_id}/documents/{id}")
         .operation_id("studio_documents.delete_document")
         .summary("Delete a document")
+        .description(
+            "Deletes the document, and the quality verdicts recorded against it \
+             with it.",
+        )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
