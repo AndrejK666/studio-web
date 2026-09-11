@@ -44,6 +44,13 @@ const SOURCE_CREATION: &str = "creation";
 /// and last way in, and the one an owner most wants to be able to tell apart.
 const SOURCE_INVITATION: &str = "invitation";
 
+/// What emptying an organization removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Eviction {
+    pub people: usize,
+    pub connections: usize,
+}
+
 /// `membership.source` for a row the installation seeded from configuration.
 const SOURCE_BOOTSTRAP: &str = "bootstrap";
 
@@ -1024,6 +1031,42 @@ impl IdentityService {
     }
 
     /// Remove a person's membership in an organization.
+    /// End every membership of one organization, and take the personal
+    /// connections with them.
+    ///
+    /// Not `leave_organization` in a loop: the last-owner rule exists to keep an
+    /// organization administrable, and an organization that is being deleted has
+    /// nothing left to administer. Refusing here would make the rule the reason
+    /// an organization can never be disposed of.
+    ///
+    /// Ordered the way leaving is, and for the same reason: each person's
+    /// credentials go after their membership, so a failure part-way leaves
+    /// people out rather than leaving people in with their credentials gone.
+    pub async fn evict_everybody(&self, ctx: &SecurityContext, org_id: Uuid) -> Result<Eviction> {
+        let org = org_id.to_string();
+        let mut evicted = Eviction::default();
+        for member in self.store.memberships_in_org(&org).await? {
+            self.store.delete_membership(&member.user_id, &org).await?;
+            evicted.people += 1;
+            if let Some(connectors) = self.connectors.get().and_then(Option::as_ref) {
+                match connectors
+                    .delete_personal_of(ctx, org_id, self, &member.user_id)
+                    .await
+                {
+                    Ok(n) => evicted.connections += n,
+                    Err(error) => tracing::warn!(
+                        user = %member.user_id,
+                        organization = %org_id,
+                        "studio-user: could not remove a member's personal connections while \
+                         emptying the organization: {error:#}"
+                    ),
+                }
+            }
+        }
+        memberships_changed();
+        Ok(evicted)
+    }
+
     /// Merge `from_user` into `into_user`: repoint every login, alias and
     /// membership, then tombstone the source with a `merged_into` pointer.
     pub async fn merge(&self, from_user: &str, into_user: &str) -> Result<MergeResult> {
