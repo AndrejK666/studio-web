@@ -622,6 +622,37 @@ export interface ComponentMetrics {
   truncated: boolean;
 }
 
+export interface ComponentPullRequestsQuery {
+  repository: string;
+  /** Inclusive `YYYY-MM-DD` on when a PR was **opened**; defaults to 30 days. */
+  from?: string;
+  to?: string;
+  depth?: number;
+  components?: ComponentSpecInput[];
+  include_other?: boolean;
+  limit?: number;
+}
+
+export interface ComponentPullRequestsRow {
+  component: string;
+  open: number;
+  merged: number;
+  closed: number;
+  /** Not a share of the repository's PRs: one touching three gears is in all three. */
+  total: number;
+  /** Absent when nothing merged in the window — not the same as zero hours. */
+  merged_cycle_hours?: number | null;
+  authors: number;
+}
+
+export interface ComponentPullRequests {
+  repository: string;
+  from: string;
+  to: string;
+  components: ComponentPullRequestsRow[];
+  truncated: boolean;
+}
+
 /** A relation between two artifact nodes (endpoints by instance id). Types:
  *  `…rel.authored_by…`, `…rel.modifies…`, `…rel.artifact_of…`, `…rel.contains…`. */
 export interface ArtifactEdge {
@@ -2245,6 +2276,12 @@ export const api = {
       token,
     ),
 
+  /** Pull requests for one repository, sliced by component (studio-insight). */
+  insightComponentPullRequests: (token: string, body: ComponentPullRequestsQuery) =>
+    request<ComponentPullRequests>("/studio-insight/v1/components/pull-requests", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /** Delivery metrics for one repository, sliced by component (studio-insight). */
   insightComponentMetrics: (token: string, body: ComponentMetricsQuery) =>
     request<ComponentMetrics>("/studio-insight/v1/components/metrics", token, {
