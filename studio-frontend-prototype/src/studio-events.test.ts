@@ -1,22 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   currentCursor,
-  followTask,
+  followRun,
   subscribeStudioEvents,
+  type RunEventPayload,
   type StudioEvent,
-  type TaskEventPayload,
 } from "./studio-events";
 
-/** A task event as the backend serialises it. */
-function taskEvent(seq: number, status: TaskEventPayload["status"], taskId = "task-1") {
+/** One run transition as studio-tasks serialises it. */
+function taskEvent(seq: number, state: RunEventPayload["state"], runId = "run-1") {
   return {
     seq,
     at_ms: 1_700_000_000_000 + seq,
-    kind: `task.${status}`,
-    subject_type: "task",
-    subject_id: taskId,
-    source: "studio-artifact-ingest",
-    payload: { task_id: taskId, status, message: null, stored: seq },
+    kind: `task.${state}`,
+    subject_type: "task_run",
+    subject_id: runId,
+    source: "studio-tasks",
+    payload: { run_id: runId, task_type: "artifact.ingest", state, phase: null },
   };
 }
 
@@ -118,16 +118,16 @@ describe("studio-events subscriber", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("follows one task to its terminal event and ignores other subjects", async () => {
+  it("follows one run to its terminal event and ignores other subjects", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
       const url = String(input);
       if (url.startsWith("/cf/studio-events/v1/stream")) {
         return Promise.resolve(
           sseBody([
-            taskEvent(1, "running", "other-task"),
+            taskEvent(1, "running", "other-run"),
             taskEvent(2, "running"),
             taskEvent(3, "succeeded"),
-            taskEvent(4, "running", "other-task"),
+            taskEvent(4, "running", "other-run"),
           ]),
         );
       }
@@ -135,11 +135,11 @@ describe("studio-events subscriber", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const progress: TaskEventPayload[] = [];
-    const done = await followTask("t", "task-1", (p) => progress.push(p));
+    const progress: RunEventPayload[] = [];
+    const done = await followRun("t", "run-1", (p: RunEventPayload) => progress.push(p));
 
-    expect(done.status).toBe("succeeded");
-    expect(progress.map((p) => p.task_id)).toEqual(["task-1"]);
+    expect(done.state).toBe("succeeded");
+    expect(progress.map((p) => p.run_id)).toEqual(["run-1"]);
   });
 
   it("reads the current cursor so a fast job can still be replayed", async () => {

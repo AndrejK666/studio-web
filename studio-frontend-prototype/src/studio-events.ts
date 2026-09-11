@@ -35,18 +35,27 @@ export interface StudioEvent<P = unknown> {
   payload: P;
 }
 
-/** What a `task.*` event carries — the shape the poll endpoint also returns. */
-export interface TaskEventPayload {
-  task_id: string;
-  status: "queued" | "running" | "succeeded" | "failed";
-  repo_full_path: string;
-  message: string | null;
-  issues: number;
-  pull_requests: number;
-  files: number;
-  comments: number;
-  commits: number;
-  stored: number;
+/**
+ * What a `task.*` event carries: one transition of a `studio-tasks` run.
+ *
+ * The same fields `GET /studio-tasks/v1/runs/{id}` answers with, so a view can
+ * be fed by either without a second mapping. `phase` arrives on
+ * `task.progress`; `summary` / `error` / `result` on the terminal ones.
+ */
+export interface RunEventPayload {
+  run_id: string;
+  /** `<gear>.<verb>` — `artifact.ingest`, `connector.graph_sync`, … */
+  task_type?: string;
+  state: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  /** The phase the handler last reported. */
+  phase?: string | null;
+  /** One line about what it did, once it succeeded. */
+  summary?: string | null;
+  /** Why it stopped, once it failed. */
+  error?: string | null;
+  /** The handler's structured result — counts, ids, whatever it reports. */
+  result?: Record<string, unknown> | null;
+  attempts?: number | null;
 }
 
 export type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
@@ -64,6 +73,9 @@ export interface SubscribeOptions {
    */
   fromSeq?: number;
 }
+
+/** States a run never leaves. Polling past one is how a UI hangs. */
+const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
 
 /** Reconnect backoff in ms; the last value repeats. */
 const BACKOFF = [500, 1_000, 2_000, 5_000, 10_000];
@@ -212,18 +224,18 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Follow one background task to its end over the event channel.
+ * Follow one `studio-tasks` run to its end over the event channel.
  *
- * Resolves on `task.succeeded` / `task.failed`; `onProgress` fires for every
- * event before that. Rejects only on timeout — the task then keeps running
- * server-side, which is what the message says.
+ * Resolves on the terminal transition (`succeeded` / `failed` / `cancelled`);
+ * `onProgress` fires for every event before that. Rejects only on timeout —
+ * the run then keeps going server-side, which is what the message says.
  */
-export function followTask(
+export function followRun(
   token: string,
-  taskId: string,
-  onProgress: (payload: TaskEventPayload) => void,
-  { fromSeq, timeoutMs = 5 * 60 * 1000 }: { fromSeq?: number; timeoutMs?: number } = {},
-): Promise<TaskEventPayload> {
+  runId: string,
+  onProgress: (payload: RunEventPayload) => void,
+  { fromSeq, timeoutMs = 10 * 60 * 1000 }: { fromSeq?: number; timeoutMs?: number } = {},
+): Promise<RunEventPayload> {
   return new Promise((resolve, reject) => {
     const finish = (settle: () => void) => {
       clearTimeout(timer);
@@ -233,9 +245,9 @@ export function followTask(
     const unsubscribe = subscribeStudioEvents(token, {
       fromSeq,
       onEvent: (event) => {
-        if (event.subject_type !== "task" || event.subject_id !== taskId) return;
-        const payload = event.payload as TaskEventPayload;
-        if (payload.status === "succeeded" || payload.status === "failed") {
+        if (event.subject_type !== "task_run" || event.subject_id !== runId) return;
+        const payload = event.payload as RunEventPayload;
+        if (TERMINAL.has(payload.state)) {
           finish(() => resolve(payload));
           return;
         }

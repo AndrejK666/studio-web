@@ -2,8 +2,8 @@
  * Studio Events Domain - API Service
  *
  * The backend's push channel: one stream per tenant carrying everything the
- * assembly publishes — long-running task progress and completion first among
- * them. Replaces polling a `/tasks/{id}` endpoint every second.
+ * assembly publishes — every `studio-tasks` run transition first among them.
+ * Replaces polling `GET /studio-tasks/v1/runs/{id}` every second.
  *
  * Two surfaces, and they work together:
  *   * `events` — the live SSE stream, consumed with `useApiStream`;
@@ -31,29 +31,38 @@ export interface StudioEvent<P = unknown> {
   seq: number;
   /** Milliseconds since the Unix epoch. */
   at_ms: number;
-  /** `task.queued` | `task.running` | `task.progress` | `task.succeeded` | `task.failed` | … */
+  /** `task.queued` | `task.running` | `task.progress` | `task.succeeded` | `task.failed` | `task.cancelled` | … */
   kind: string;
-  /** What the event is about: `task`, … */
+  /** What the event is about: `task_run`, `workspace`, … */
   subject_type: string;
-  /** The subject's id — for a task, its `task_id`. */
+  /** The subject's id — for a background run, its run id. */
   subject_id: string;
   /** The gear that published it. */
   source: string;
   payload: P;
 }
 
-/** What a `task.*` event carries — the shape the poll endpoint also returns. */
-export interface StudioTaskEvent {
-  task_id: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
-  repo_full_path: string;
-  message: string | null;
-  issues: number;
-  pull_requests: number;
-  files: number;
-  comments: number;
-  commits: number;
-  stored: number;
+/**
+ * What a `task.*` event carries: one transition of a `studio-tasks` run.
+ *
+ * The same fields `GET /studio-tasks/v1/runs/{id}` answers with, so a view can
+ * be fed by either without a second mapping. `phase` arrives on
+ * `task.progress`; `summary` / `error` / `result` on the terminal ones.
+ */
+export interface StudioRunEvent {
+  run_id: string;
+  /** `<gear>.<verb>` — `artifact.ingest`, `connector.graph_sync`, … */
+  task_type?: string;
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  /** The phase the handler last reported. */
+  phase?: string | null;
+  /** One line about what it did, once it succeeded. */
+  summary?: string | null;
+  /** Why it stopped, once it failed. */
+  error?: string | null;
+  /** The handler's structured result — counts, ids, whatever it reports. */
+  result?: Record<string, unknown> | null;
+  attempts?: number | null;
 }
 
 /** A page of replayed events, oldest first. */
