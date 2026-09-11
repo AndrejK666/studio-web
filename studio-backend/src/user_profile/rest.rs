@@ -24,9 +24,6 @@ use super::service::{
     UserProfile,
 };
 
-/// The platform root tenant; a caller acting here is a platform admin.
-const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
-
 #[resource_error(gts_id!("cf.studio.user.profile.v1~"))]
 pub struct UserProfileError;
 
@@ -317,23 +314,18 @@ fn configured(service: Option<Arc<IdentityService>>) -> ApiResult<Arc<IdentitySe
 
 /// Is the caller a platform administrator?
 ///
-/// Two signals while the migration in ADR-0018 §3 runs, and they are not
-/// equivalent:
+/// One signal: **a membership of the platform root**. That is an answer about
+/// the *person*, so it holds however they signed in.
 ///
-/// - **a membership of the platform root** — the answer about the *person*, and
-///   the one that will remain;
-/// - **the token's tenant** — the answer about the *login*, which is what made
-///   somebody an administrator through one sign-in method and not another.
-///
-/// Accepting either widens nothing: an installation seeds its administrators
-/// (`platform_admins`), the backfill wrote the rows for the identities that
-/// already carried the attribute, and until both are true everywhere removing
-/// the second would lock somebody out. The removal is the third step, not this
-/// one.
+/// The token's tenant used to be accepted as well. It was an answer about one
+/// *login*, which made somebody an administrator through one sign-in method and
+/// an ordinary member through another — the thing ADR-0018 §3 set out to end.
+/// This is that migration's third step: the installation seeds its
+/// administrators (`platform_admins`), the backfill wrote the rows for the
+/// identities that already carried the `tenant_id` attribute, and with the
+/// reading gone the attribute has no organizational purpose left — which is
+/// what ADR-0016's follow-up was waiting for.
 async fn is_platform_admin(ctx: &SecurityContext, service: &Arc<IdentityService>) -> bool {
-    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID {
-        return true;
-    }
     service
         .is_platform_admin(&ctx.subject_id().to_string())
         .await

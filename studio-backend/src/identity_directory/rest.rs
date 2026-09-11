@@ -8,7 +8,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::service::{DirectoryIdentity, IdentityDirectoryService, PLATFORM_ROOT_TENANT_ID};
+use super::service::{DirectoryIdentity, IdentityDirectoryService};
 
 #[resource_error(gts_id!("cf.studio.identity.directory.v1~"))]
 pub struct IdentityDirectoryError;
@@ -102,12 +102,14 @@ fn to_dto(identity: DirectoryIdentity) -> PlatformIdentityDto {
 
 /// Is the caller a platform administrator?
 ///
-/// A membership of the platform root, or — while ADR-0018 §3's migration runs —
-/// the token's tenant. The membership is the answer about the person; the token
-/// is the answer about one of their logins, and it is the one being retired.
+/// A membership of the platform root, and nothing else (ADR-0018 §3). The
+/// token's tenant was accepted here too while that migration ran; it is an
+/// answer about one login rather than about the person, and this is the step
+/// that removes it.
 ///
-/// Without studio-user there is only the token, which is what this gate has
-/// always used.
+/// Without studio-user there is nobody to ask, and every route behind this gate
+/// is administrative — so it refuses rather than falling back to the signal
+/// just retired.
 async fn require_platform_admin(ctx: &SecurityContext, people: &People) -> ApiResult<()> {
     let by_membership = match people.0.as_deref() {
         Some(reader) => reader
@@ -116,7 +118,7 @@ async fn require_platform_admin(ctx: &SecurityContext, people: &People) -> ApiRe
             .unwrap_or(false),
         None => false,
     };
-    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID || by_membership {
+    if by_membership {
         Ok(())
     } else {
         Err(IdentityDirectoryError::permission_denied()
