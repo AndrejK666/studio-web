@@ -1298,8 +1298,8 @@ function ActivityPanel({
         <>
           <p className="act-note">
             Commits touching a <code>{name}</code> directory, {index.from} → {index.to}, from
-            Constructor Insight. Pull-request cycle time and CI outcomes are not shown: those belong
-            to the repository, not to one gear inside it.
+            Constructor Insight. Pull requests and CI runs are not shown here — both belong to the
+            repository rather than to one gear inside it.
           </p>
           <ActivityTiles activity={activity} />
           <ChurnChart points={activity.points} label={`Weekly change in ${name}`} />
