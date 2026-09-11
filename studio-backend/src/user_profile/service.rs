@@ -46,6 +46,10 @@ const SOURCE_INVITATION: &str = "invitation";
 /// `membership.source` for a row the installation seeded from configuration.
 const SOURCE_BOOTSTRAP: &str = "bootstrap";
 
+/// `membership.source` for a row written because somebody signed in for the
+/// first time into a deployment that says its IdP's users are its members.
+const SOURCE_FIRST_LOGIN: &str = "first_login";
+
 /// The tenant every organization hangs under, and the one whose membership
 /// makes somebody a platform administrator.
 pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
@@ -180,6 +184,9 @@ pub struct IdentityService {
     /// The IdP proof channel, attached in the same phase and for the same
     /// reason. `Some(None)` means Keycloak admin is unconfigured.
     federated: OnceLock<Option<Arc<dyn IdpDirectoryReader>>>,
+    /// The organization a person joins the first time they are seen, if the
+    /// installation says there is one.
+    first_login_join: OnceLock<Option<(Uuid, String)>>,
 }
 
 impl IdentityService {
@@ -189,6 +196,7 @@ impl IdentityService {
             am,
             connectors: OnceLock::new(),
             federated: OnceLock::new(),
+            first_login_join: OnceLock::new(),
         }
     }
 
@@ -199,6 +207,11 @@ impl IdentityService {
     /// registered. Calling it twice is ignored: the second view is equivalent.
     pub fn attach_connectors(&self, connectors: Option<Arc<ConnectorService>>) {
         let _ = self.connectors.set(connectors);
+    }
+
+    /// Tell the service which organization a new person joins, if any.
+    pub fn set_first_login_join(&self, join: Option<(Uuid, String)>) {
+        let _ = self.first_login_join.set(join);
     }
 
     /// Hand the service its view of the IdP's brokered logins.
@@ -291,6 +304,27 @@ impl IdentityService {
             linked_at_epoch_ms: now,
         };
         self.store.upsert_login(&login).await?;
+
+        // The deployment's statement that its identity provider's users are the
+        // members of one organization (ADR-0018 §4), made true here — at the one
+        // moment a person begins to exist. Recorded as a row, so it can be
+        // revoked later without touching the corporate directory, and so it
+        // remembers how it came about.
+        //
+        // Not fatal: a person who exists but has not joined yet is a person the
+        // next request can still join, whereas failing here would leave them
+        // unable to sign in at all.
+        if let Some(Some((org_id, role))) = self.first_login_join.get()
+            && let Err(error) = self
+                .record_membership(&user_id, &org_id.to_string(), role, SOURCE_FIRST_LOGIN)
+                .await
+        {
+            tracing::warn!(
+                user = %user_id,
+                organization = %org_id,
+                "studio-user: could not join the new person to the configured organization:                  {error:#}"
+            );
+        }
         Ok(user_id)
     }
 
