@@ -4,14 +4,25 @@
 //    edit markdown, and see the live section checklist + conformance.
 //  • Types — the workspace's effective document types (built-in ∪
 //    workspace-defined); define or override a type (template, sections, rules).
-import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 import {
   api,
+  ArtifactNode,
   CatalogNode,
   Connection,
   ConnectorProvider,
   Doc,
+  DocBinding,
+  DocBindingState,
   DocQuestion,
   DocRules,
   DocSection,
@@ -20,6 +31,7 @@ import {
   RemoteRepo,
   WrittenFile,
 } from "./api";
+import { detectDocType, isDetectorCancel } from "./spec-quality";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -29,22 +41,29 @@ function errText(e: unknown): string {
 
 const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
+const basename = (p: string) => p.split(/[\\/]/).pop() || p;
 const slug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "section";
 
-/** Project-level: work with the project's documents (own + inherited from the
- *  workspace). Document types are defined at the workspace level — see
- *  [`DocumentTypesTab`] — so this view only reads them for the create picker. */
+/** Project-level: what the project's repository actually contains.
+ *
+ *  Authoring lives at the workspace, next to the types — see
+ *  [`WorkspaceDocumentsTab`]. A document reaches a project by being written
+ *  into its repository, and reaches this view by being ingested and identified.
+ *  That is the whole of it: this tab reports, it does not author. */
 export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
+  onOpenStudio,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
   workspaceId: string;
   /** The open project tenant. */
   projectTenantId: string;
+  /** Open this project in the IDE — where a document is actually edited. */
+  onOpenStudio: () => void;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -67,12 +86,52 @@ export function DocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      <DocumentsView
+      <IngestedDocumentsView
         token={token}
         workspaceId={workspaceId}
         projectTenantId={projectTenantId}
         types={types}
+        onOpenStudio={onOpenStudio}
       />
+    </div>
+  );
+}
+
+/** Workspace-level: the documents the workspace itself keeps, written from its
+ *  own types and published into a repository from here.
+ *
+ *  It sits beside the type catalogue on purpose. A type, its template and its
+ *  questionnaire are workspace property, and so is a document written from one
+ *  before any project has claimed it. */
+export function WorkspaceDocumentsTab({
+  token,
+  workspaceId,
+}: {
+  token: string;
+  workspaceId: string;
+}) {
+  const [types, setTypes] = useState<DocType[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .docTypes(token, workspaceId)
+      .then((r) => {
+        if (alive) setTypes(r.items);
+      })
+      .catch((e) => {
+        if (alive) setErr(errText(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, workspaceId]);
+
+  return (
+    <div className="documents">
+      {err && <div className="error">{err}</div>}
+      <DocumentsView token={token} workspaceId={workspaceId} types={types} />
     </div>
   );
 }
@@ -152,12 +211,10 @@ function DocTypesFlow() {
 function DocumentsView({
   token,
   workspaceId,
-  projectTenantId,
   types,
 }: {
   token: string;
   workspaceId: string;
-  projectTenantId: string;
   types: DocType[];
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -184,11 +241,11 @@ function DocumentsView({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      setDocs((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
+      setDocs((await api.workspaceDocuments(token, workspaceId)).items);
     } catch (e) {
       setErr(errText(e));
     }
-  }, [token, workspaceId, projectTenantId]);
+  }, [token, workspaceId]);
 
   useEffect(() => {
     void reload();
@@ -228,7 +285,7 @@ function DocumentsView({
         title: title.trim(),
       };
       if (answers) body.answers = answers;
-      const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, body);
+      const doc = await api.createWorkspaceDocument(token, workspaceId, body);
       setNewTitle("");
       setShowQ(false);
       await reload();
@@ -457,7 +514,7 @@ function DocumentsView({
         <PublishModal
           token={token}
           doc={publishing}
-          tenantId={projectTenantId}
+          tenantId={workspaceId}
           onClose={() => setPublishing(null)}
         />
       )}
@@ -465,7 +522,7 @@ function DocumentsView({
         <ScaffoldModal
           scaffold={scaffold}
           token={token}
-          projectTenantId={projectTenantId}
+          projectTenantId={workspaceId}
           onBack={() => setScaffold(null)}
           onClose={() => setScaffold(null)}
         />
@@ -473,6 +530,526 @@ function DocumentsView({
     </>
   );
 }
+
+// ── From the repository ──────────────────────────────────────────────────────
+// Scenario B: the repository already had documents in it when we connected to
+// it. Their content stays in the artifact graph — this view only decides what
+// each file IS, so the same templates that govern documents written in Studio
+// can be applied to documents that were not.
+
+/** How many files go into one classify request. The whole repository in one
+ *  body would blow the gateway's request-size limit. */
+const CLASSIFY_BATCH = 25;
+
+/** Page size when walking the artifact graph's file nodes. */
+const NODE_PAGE = 200;
+
+/** Only these need a person: everything else is either settled or not a doc. */
+const NEEDS_REVIEW: DocBindingState[] = ["detected", "unknown"];
+
+const STATE_LABEL: Record<DocBindingState, string> = {
+  detected: "proposed",
+  confirmed: "confirmed",
+  manual: "set by hand",
+  unknown: "undetermined",
+  not_a_document: "not a document",
+};
+
+/** The product's own status colours, not ours: a proposal reads as information,
+ *  a settled type as success, an undecided file as something still wanting
+ *  attention, and a file we were told is not a document recedes. */
+const STATE_TONE: Record<DocBindingState, { bg: string; fg: string }> = {
+  detected: { bg: "var(--info-soft)", fg: "var(--info)" },
+  confirmed: { bg: "var(--success-soft)", fg: "var(--success)" },
+  manual: { bg: "var(--success-soft)", fg: "var(--success)" },
+  unknown: { bg: "var(--warning-soft)", fg: "var(--warning)" },
+  not_a_document: { bg: "var(--muted)", fg: "var(--muted-foreground)" },
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  front_matter: "declared in the file",
+  heuristic: "matched the template",
+  spec_quality: "Spec Quality",
+  manual: "chosen by hand",
+};
+
+type BindingFilter = "review" | "bound" | "ignored" | "all";
+
+/** The files Studio pulled out of the repository, and what we think each is. */
+function IngestedDocumentsView({
+  token,
+  workspaceId,
+  projectTenantId,
+  types,
+  onOpenStudio,
+}: {
+  token: string;
+  workspaceId: string;
+  projectTenantId: string;
+  types: DocType[];
+  /** Editing a document is the IDE's job — this hands the project over to it. */
+  onOpenStudio: () => void;
+}) {
+  const [bindings, setBindings] = useState<DocBinding[]>([]);
+  const [filter, setFilter] = useState<BindingFilter>("review");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  /** Content from the last scan, keyed by graph node id. Held only so a
+   *  decision can re-check conformance without re-reading the graph; the
+   *  server never stores it. */
+  const [contentByNode, setContentByNode] = useState<Record<string, string>>({});
+  const abortRef = useRef<AbortController | null>(null);
+
+  const typeName = useCallback(
+    (key?: string | null) => (key ? (types.find((t) => t.key === key)?.name ?? key) : "—"),
+    [types],
+  );
+
+  const reload = useCallback(async () => {
+    setErr(null);
+    try {
+      setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
+    } catch (e) {
+      setErr(errText(e));
+    }
+  }, [token, workspaceId, projectTenantId]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+    },
+    [],
+  );
+
+  /** Walk the artifact graph's file nodes and classify everything that has
+   *  text. A node without text was ingested from the connector's tree API
+   *  (metadata only) — there is nothing to read, so it is reported, not
+   *  silently dropped. */
+  const scan = async () => {
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    setProgress("Reading the repository's files…");
+    try {
+      const nodes: ArtifactNode[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await api.listArtifactNodes(
+          token,
+          "file",
+          projectTenantId,
+          cursor,
+          NODE_PAGE,
+        );
+        nodes.push(...(page.nodes ?? []));
+        cursor = page.next_cursor;
+        setProgress(`Read ${nodes.length} file${nodes.length === 1 ? "" : "s"}…`);
+      } while (cursor);
+
+      if (nodes.length === 0) {
+        setNote(
+          "No files ingested yet — run Sync on a repository in the Artifacts tab first.",
+        );
+        return;
+      }
+
+      const files: { node_id: string; path: string; content: string }[] = [];
+      let withoutText = 0;
+      const seen: Record<string, string> = {};
+      for (const n of nodes) {
+        const path = typeof n.value.path === "string" ? n.value.path : "";
+        const text = typeof n.value.text === "string" ? n.value.text : "";
+        if (!path || n.value.is_dir) continue;
+        if (!text) {
+          withoutText += 1;
+          continue;
+        }
+        files.push({ node_id: n.instance_id, path, content: text });
+        seen[n.instance_id] = text;
+      }
+
+      if (files.length === 0) {
+        setNote(
+          `None of the ${nodes.length} ingested files carry their text. Open the project in the ` +
+            "IDE so the repository is cloned, then run Sync again — the clone is what gives files content.",
+        );
+        return;
+      }
+
+      let classified = 0;
+      let skipped = 0;
+      for (let i = 0; i < files.length; i += CLASSIFY_BATCH) {
+        const batch = files.slice(i, i + CLASSIFY_BATCH);
+        setProgress(`Classifying ${i + 1}–${i + batch.length} of ${files.length}…`);
+        const res = await api.classifyDocFiles(token, workspaceId, projectTenantId, batch);
+        classified += res.items.length;
+        skipped += res.skipped;
+      }
+      setContentByNode((prev) => ({ ...prev, ...seen }));
+      await reload();
+      setNote(
+        `Classified ${classified} document${classified === 1 ? "" : "s"}` +
+          (skipped ? `, skipped ${skipped} non-prose file${skipped === 1 ? "" : "s"}` : "") +
+          (withoutText ? `, ${withoutText} file${withoutText === 1 ? "" : "s"} had no text` : "") +
+          ".",
+      );
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
+  /** Ask Spec Quality about everything the offline scoring could not decide.
+   *  One LLM round-trip per document, so it runs only on the leftovers and
+   *  only when asked. Its answer is a proposal, not a decision — it lands as
+   *  `detected` and still waits for a person. */
+  const refineWithSpecQuality = async () => {
+    const targets = bindings.filter(
+      (b) => b.state === "unknown" && contentByNode[b.node_id],
+    );
+    if (targets.length === 0) {
+      setNote(
+        bindings.some((b) => b.state === "unknown")
+          ? "Run Scan first — Spec Quality needs each document's text, which the scan loads."
+          : "Nothing undetermined to refine.",
+      );
+      return;
+    }
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    let named = 0;
+    let declined = 0;
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const b = targets[i];
+        setProgress(`Spec Quality ${i + 1}/${targets.length} · ${basename(b.path)}`);
+        const { docType, confidence } = await detectDocType(
+          token,
+          b.path,
+          contentByNode[b.node_id],
+          ctrl.signal,
+        );
+        // The detector has its own vocabulary; only a name this workspace
+        // actually has a template for can be bound.
+        if (docType && types.some((t) => t.key === docType)) {
+          await api.decideDocBinding(token, workspaceId, b.id, {
+            action: "set",
+            type_key: docType,
+            source: "spec_quality",
+            confidence: confidence ?? undefined,
+            content: contentByNode[b.node_id],
+          });
+          named += 1;
+        } else {
+          declined += 1;
+        }
+      }
+      await reload();
+      setNote(
+        `Spec Quality named ${named} document${named === 1 ? "" : "s"}` +
+          (declined ? `, and had no answer for ${declined}` : "") +
+          ".",
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote(`Stopped after ${named} document${named === 1 ? "" : "s"}.`);
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
+  /** Apply one person's decision to one binding, re-validating when we still
+   *  hold the file's text. */
+  const decide = async (
+    b: DocBinding,
+    body: Parameters<typeof api.decideDocBinding>[3],
+  ) => {
+    setErr(null);
+    try {
+      const content = contentByNode[b.node_id];
+      const updated = await api.decideDocBinding(token, workspaceId, b.id, {
+        ...body,
+        ...(content ? { content } : {}),
+      });
+      setBindings((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
+
+  const counts = useMemo(() => {
+    const review = bindings.filter((b) => NEEDS_REVIEW.includes(b.state)).length;
+    const bound = bindings.filter((b) => b.state === "confirmed" || b.state === "manual").length;
+    const ignored = bindings.filter((b) => b.state === "not_a_document").length;
+    return { review, bound, ignored, all: bindings.length };
+  }, [bindings]);
+
+  const shown = useMemo(() => {
+    const list = bindings.filter((b) => {
+      switch (filter) {
+        case "review":
+          return NEEDS_REVIEW.includes(b.state);
+        case "bound":
+          return b.state === "confirmed" || b.state === "manual";
+        case "ignored":
+          return b.state === "not_a_document";
+        default:
+          return true;
+      }
+    });
+    return [...list].sort((a, b) => a.path.localeCompare(b.path));
+  }, [bindings, filter]);
+
+  const selected = useMemo(
+    () => shown.find((b) => b.id === selectedId) ?? null,
+    [shown, selectedId],
+  );
+
+  const FILTERS: { id: BindingFilter; label: string; count: number }[] = [
+    { id: "review", label: "Needs review", count: counts.review },
+    { id: "bound", label: "Bound", count: counts.bound },
+    { id: "ignored", label: "Not documents", count: counts.ignored },
+    { id: "all", label: "All", count: counts.all },
+  ];
+
+  return (
+    <div className="ingested">
+      <style>{INGESTED_CSS}</style>
+      <div className="ing-head">
+        <h2>Documents already in the repository</h2>
+        <p>
+          Studio reads the files the repository sync pulled in and works out which template each
+          one was written against — from a type declared in its front matter, or by matching its
+          sections, path and title. Anything it cannot decide waits here for you.
+        </p>
+      </div>
+
+      <div className="ing-bar">
+        <button className="primary" onClick={scan} disabled={busy}>
+          {busy ? "Working…" : "Scan repository"}
+        </button>
+        <button
+          onClick={refineWithSpecQuality}
+          disabled={busy || counts.review === 0}
+          title="Ask the Spec Quality purpose detector about the documents scoring could not place"
+        >
+          Refine undetermined with Spec Quality
+        </button>
+        {busy && abortRef.current && (
+          <button onClick={() => abortRef.current?.abort()}>Stop</button>
+        )}
+        {progress && <span className="ing-progress">{progress}</span>}
+        {note && !progress && <span className="ing-note">{note}</span>}
+      </div>
+
+      {err && <div className="error">{err}</div>}
+
+      <div className="ing-filters">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            className={filter === f.id ? "ing-filter on" : "ing-filter"}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label} <span className="ing-count">{f.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {shown.length === 0 ? (
+        <p className="empty">
+          {counts.all === 0
+            ? "Nothing scanned yet. Run Scan repository to see what is in there."
+            : "Nothing in this view."}
+        </p>
+      ) : (
+        <div className="ing-split">
+          <div className="ing-table">
+            <div className="ing-row ing-row-head">
+              <span>File</span>
+              <span>Document type</span>
+              <span>Why</span>
+              <span>Conforms</span>
+              <span />
+            </div>
+            {shown.map((b) => (
+              <div
+                key={b.id}
+                className={selectedId === b.id ? "ing-row on" : "ing-row"}
+                onClick={() => setSelectedId(b.id)}
+              >
+                <span className="ing-path" title={b.path}>
+                  {b.path}
+                </span>
+                <span onClick={(e) => e.stopPropagation()}>
+                  <select
+                    value={b.type_key ?? ""}
+                    disabled={busy}
+                    onChange={(e) =>
+                      e.target.value
+                        ? void decide(b, { action: "set", type_key: e.target.value })
+                        : void decide(b, { action: "reset" })
+                    }
+                  >
+                    <option value="">— undetermined —</option>
+                    {types.map((t) => (
+                      <option key={t.key} value={t.key}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+                <span className="ing-why">
+                  <span
+                    className="ing-state"
+                    style={{
+                      background: STATE_TONE[b.state].bg,
+                      color: STATE_TONE[b.state].fg,
+                    }}
+                  >
+                    {STATE_LABEL[b.state]}
+                  </span>
+                  {b.confidence != null && b.state === "detected" && (
+                    <span className="ing-conf">{Math.round(b.confidence * 100)}%</span>
+                  )}
+                  {b.source && <span className="ing-src">{SOURCE_LABEL[b.source] ?? b.source}</span>}
+                </span>
+                <span>
+                  {b.conforms == null ? (
+                    <span className="ing-dash">—</span>
+                  ) : (
+                    <span className={b.conforms ? "ing-ok" : "ing-bad"}>
+                      {b.conforms ? "✓" : `${b.validation?.issues.length ?? 0} issue(s)`}
+                    </span>
+                  )}
+                </span>
+                <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
+                  {b.state === "detected" && (
+                    <button onClick={() => void decide(b, { action: "confirm" })} disabled={busy}>
+                      Confirm
+                    </button>
+                  )}
+                  {b.state === "not_a_document" ? (
+                    <button onClick={() => void decide(b, { action: "reset" })} disabled={busy}>
+                      Reconsider
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void decide(b, { action: "reject" })}
+                      disabled={busy}
+                      title="This file is not a document — stop proposing types for it"
+                    >
+                      Not a doc
+                    </button>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="ing-side">
+            {!selected ? (
+              <p className="empty" style={{ fontSize: 12 }}>
+                Pick a file to see what the type expects of it.
+              </p>
+            ) : (
+              <>
+                <div style={card}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                    {basename(selected.path)}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
+                    {typeName(selected.type_key)}
+                  </div>
+                  {/* The file lives in the repository, so the repository's
+                      editor is where it is changed. Studio reports on it. */}
+                  <button
+                    onClick={onOpenStudio}
+                    style={{ marginTop: 10, width: "100%" }}
+                    title="Open this project in the IDE to edit the file"
+                  >
+                    Edit in the IDE →
+                  </button>
+                  {selected.candidates.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>
+                        What it looked like
+                      </div>
+                      <ul
+                        style={{
+                          margin: 0,
+                          paddingLeft: 16,
+                          fontSize: 12,
+                          color: "var(--muted-foreground)",
+                        }}
+                      >
+                        {selected.candidates.map((c) => (
+                          <li key={c.type_key}>
+                            <b>{typeName(c.type_key)}</b> {Math.round(c.confidence * 100)}% — {c.why}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <Checklist report={selected.validation ?? null} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const INGESTED_CSS = `
+.ingested { display: flex; flex-direction: column; gap: 12px; }
+.ing-head h2 { margin: 0 0 4px; font-size: 16px; }
+.ing-head p { margin: 0; font-size: 13px; color: var(--muted-foreground); max-width: 70ch; }
+.ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ing-progress, .ing-note { font-size: 12px; color: var(--muted-foreground); }
+.ing-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.ing-filter { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); background: transparent; cursor: pointer; }
+.ing-filter.on { background: var(--accent); border-color: var(--accent-foreground); }
+.ing-count { opacity: 0.6; margin-left: 4px; }
+.ing-split { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 12px; align-items: start; }
+.ing-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.4fr) 110px 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.ing-row:first-child { border-top: none; }
+.ing-row.on { background: var(--accent); }
+.ing-row-head { font-weight: 600; cursor: default; background: var(--surface-raised); }
+.ing-row select { width: 100%; font-size: 12px; }
+.ing-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.ing-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ing-state { padding: 1px 7px; border-radius: 20px; font-size: 11px; white-space: nowrap; }
+.ing-conf { opacity: 0.7; }
+.ing-src { opacity: 0.6; font-size: 11px; }
+.ing-ok { color: var(--success); }
+.ing-bad { color: var(--warning); }
+.ing-dash { opacity: 0.4; }
+.ing-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.ing-actions button { font-size: 11px; padding: 2px 8px; }
+.ing-side { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 8px; }
+@media (max-width: 900px) {
+  .ing-split { grid-template-columns: 1fr; }
+  .ing-row { grid-template-columns: 1fr; gap: 4px; }
+  .ing-side { position: static; }
+}
+`;
 
 // ── Publishing back to the source ────────────────────────────────────────────
 // The other half of scenario A: a document written here is only half-delivered
