@@ -2,8 +2,9 @@
 
 `studio-insight` is the seam to [Constructor Insight](https://insight.cfabric.org),
 the decision-intelligence platform. This page records what its API actually is
-(discovered against the live deployment on 2026-09-11), how to wire the gear,
-and how to check the wiring end to end.
+(discovered against the live deployment on 2026-09-11), **what can be got out of
+it** — with worked queries and their real answers — how the gear serves a
+request, how to wire it, and how to check the wiring end to end.
 
 ## The upstream contract
 
@@ -48,9 +49,217 @@ so a query against them returns an empty page rather than an error.
 The `insight` database holds both the fact tables (`git_metric_observations`,
 `ci_metric_evidence`, `task_status_spans`, …) and the gold **views**
 (`exec_summary`, `people`, `ic_kpis`, `commits_daily`, `ai_person_period`, …).
-The views read empty for a token whose tenant has no resolved identities — the
-fact tables underneath still answer, keyed by `tenant_id` / `metric_date` /
-`measure_key`.
+Most of the views read empty and the facts underneath do not — the next two
+sections are what a row actually holds, and why that split exists.
+
+## The data model — what one row means
+
+Almost everything useful sits in three shapes, repeated per domain (`git_`,
+`ci_`, `task_`, and the still-empty `ai_`, `collab_`, `wiki_`):
+
+**`*_metric_observations` — the measured facts.** One row is *one person, one
+day, one measure, one set of dimensions*:
+
+| column | what it holds |
+| --- | --- |
+| `tenant_id` | the Insight tenant; every table is keyed by it |
+| `entity_type` / `entity_id` | **always `person`** in the git domain, and the id is the raw source handle (a GitHub noreply address), not a resolved person |
+| `metric_date` | the day the measure belongs to |
+| `measure_key` | *what* was measured — `commit_count`, `pr_cycle_hours`, … |
+| `value` | the number |
+| `dimensions` | `Array(Tuple(key, value, label))` — the slice: `repository`, `project`, `source`, `branch_scope`, `file_extension`, `change_type`, `category`, `hour_block`, `destination_branch` |
+
+The consequence is worth stating plainly: **the entity is the person and the
+repository is a dimension.** Any "per repository" number is an aggregate over
+people, reached with `ARRAY JOIN dimensions`, and there is no dimension below
+the repository — which is the gap `/components/metrics` fills.
+
+**`*_metric_evidence` — what backs an observation.** Same keys plus
+`record_id`, `record_kind`, `record_label`, `contribution` and a `details` map.
+Use it to answer "which commits made this number", not to aggregate: a single
+observation fans out into many evidence rows.
+
+**Raw records** — `git_commit_file_changes` (commit, path, extension, lines,
+`committer_date`), `git_authored_commits` (author, message, dates),
+`git_review_events`, `task_status_spans`, `ci_metric_evidence`. These carry the
+detail the observations have already rolled up, and they are the only place a
+*file path* exists.
+
+`insight.task_issue_current_state` is a materialized view, and the gold views
+(`exec_summary`, `people`, `ic_kpis`, `commits_daily`, `ai_person_period`, …)
+are views over all of the above — see below for why most of them read empty.
+
+### The measures that exist
+
+Discovered from the live warehouse (2026-09-11); `SELECT DISTINCT measure_key`
+re-derives any of these lists.
+
+**git (37)** — volume: `commit_count`, `commit_day`, `commit_change_size`,
+`lines_added`, `lines_removed`, `code_lines_added`, `test_lines_added`,
+`test_and_code_lines_added`; the same four again as `default_*` and
+`non_default_*` (default branch vs everything else). Pull requests:
+`pr_created`, `pr_merged`, `pr_created_merged`, `pr_abandoned`,
+`pr_change_size`, `pr_commit_count`, `pr_cycle_hours`,
+`pr_first_review_hours`, `pr_review_to_merge_hours`,
+`pr_approval_to_merge_hours`, `pr_review_wait_share`, `pr_reviewer_count`,
+`pr_multi_reviewed`, `pr_merged_without_approval`, `pr_reviewed`, `pr_comment`,
+`review_submitted`.
+
+**ci (10)** — `runs`, `run_duration_min`, `run_hours`, `gate_runs`,
+`gate_passed`, `gate_first_try_passed`, `gate_retried`, `runs_matched_commit`,
+`commits_observed`, `deployments`.
+
+**task (8)** — `tasks_closed`, `close_events`, `closed_non_bug`, `bugs_fixed`,
+`pickup_days`, `resolution_days`, `stale_in_progress`, `reopened_within_14d`.
+
+`ai_*`, `ai_cost_*`, `collab_*` and `wiki_*` exist with the same shape and zero
+rows: the connectors behind them (Claude, ChatGPT, Cursor, Slack, Zoom,
+Confluence, Outline) have not been ingested for this tenant.
+
+## What you can get — a cookbook
+
+Every query below was run against the live deployment on 2026-09-11 through
+`POST /cf/studio-insight/v1/query`; the numbers are the real answers, kept so a
+reader can tell a working query from a plausible-looking one.
+
+### Delivery per repository
+
+```sql
+SELECT d.label AS repository,
+       sumIf(value, measure_key = 'commit_count')  AS commits,
+       sumIf(value, measure_key = 'lines_added')   AS lines_added,
+       sumIf(value, measure_key = 'pr_created')    AS prs_opened,
+       round(avgIf(value, measure_key = 'pr_cycle_hours'), 1) AS pr_cycle_h
+FROM insight.git_metric_observations
+ARRAY JOIN dimensions AS d
+WHERE d.key = 'repository' AND metric_date >= today() - 89
+GROUP BY repository ORDER BY commits DESC LIMIT 10
+```
+
+```text
+repository                      commits  lines_added  prs_opened  pr_cycle_h
+constructorfabric/insight       3510      879593       939          20.8
+constructorfabric/Kitsoki       1070      302174         3         149.4
+constructorfabric/gears-rust     915     1229721       297         124.4
+constructorfabric/gears-frontx   564      229398        96         112.8
+constructorfabric/studio-web     514      695190       105           4.8
+constructorfabric/fabric-pass    430       37420        98           1.1
+constructorfabric/studio         389      145493        76          60.4
+```
+
+`ARRAY JOIN dimensions AS d` + `WHERE d.key = …` is the idiom for every slice:
+without the `WHERE` each observation is counted once per dimension it carries.
+
+### CI health
+
+```sql
+SELECT d.label AS repository,
+       sumIf(value, measure_key = 'gate_runs') AS gate_runs,
+       round(100 * sumIf(value, measure_key = 'gate_passed')
+                 / nullIf(sumIf(value, measure_key = 'gate_runs'), 0), 1) AS pass_pct,
+       round(100 * sumIf(value, measure_key = 'gate_first_try_passed')
+                 / nullIf(sumIf(value, measure_key = 'gate_runs'), 0), 1) AS first_try_pct,
+       round(avgIf(value, measure_key = 'run_duration_min'), 1) AS avg_run_min
+FROM insight.ci_metric_observations
+ARRAY JOIN dimensions AS d
+WHERE d.key = 'repository' AND metric_date >= today() - 89
+GROUP BY repository HAVING gate_runs > 0 ORDER BY gate_runs DESC LIMIT 8
+```
+
+```text
+repository                      gate_runs  pass_pct  first_try_pct  avg_run_min
+constructorfabric/insight           18280      94.0           93.8          7.4
+constructorfabric/gears-rust        13125      93.2           91.3         11.3
+constructorfabric/gears-frontx       1400      69.8           69.6          9.9
+constructorfabric/studio              839      91.2           89.5          7.5
+constructorfabric/studio-web          639      79.8           78.4         10.9
+constructorfabric/cargo-gears         251      89.2           82.5          5.5
+```
+
+The gap between `pass_pct` and `first_try_pct` is retries — a green pipeline
+that needed a second run. `nullIf(…, 0)` keeps a repository with no gate runs
+out of the percentage instead of dividing by zero.
+
+### Review latency, week by week
+
+```sql
+SELECT toMonday(metric_date) AS week,
+       round(avgIf(value, measure_key = 'pr_first_review_hours'), 1)    AS first_review_h,
+       round(avgIf(value, measure_key = 'pr_review_to_merge_hours'), 1) AS review_to_merge_h,
+       round(avgIf(value, measure_key = 'pr_reviewer_count'), 2)        AS reviewers
+FROM insight.git_metric_observations
+ARRAY JOIN dimensions AS d
+WHERE d.key = 'repository' AND d.label = 'constructorfabric/studio-web'
+  AND metric_date >= today() - 55
+GROUP BY week ORDER BY week
+```
+
+```text
+week        first_review_h  review_to_merge_h  reviewers
+2026-07-27             0.2                8.9       0.50
+2026-08-03             0.2               23.6       2.00
+2026-08-10            NULL               NULL       0.00
+2026-08-17             2.7                5.8       0.67
+2026-08-24            11.2                8.8       2.25
+2026-08-31            40.5               24.2       1.00
+2026-09-07             3.4               58.7       0.25
+```
+
+A `NULL` week is a week with no reviewed PR, not a zero-hour review — an
+average over no rows. Worth keeping distinct in anything that charts this.
+
+### Language mix
+
+```sql
+SELECT ext.value AS extension, sum(value) AS lines_added
+FROM insight.git_metric_observations
+ARRAY JOIN dimensions AS ext
+WHERE measure_key = 'lines_added' AND ext.key = 'file_extension'
+  AND metric_date >= today() - 89
+GROUP BY extension ORDER BY lines_added DESC LIMIT 10
+```
+
+```text
+rs 2414338 · md 534102 · py 387343 · json 356863 · ts 280338
+tsx 255880 · js 223559 · yaml 196383 · go 82550 · mjs 72902
+```
+
+Churn counts generated files and lockfiles exactly like hand-written code, so
+read this as "where the bytes went", not as effort.
+
+### Everything a component did
+
+That one is a typed operation rather than a statement — see
+[Metrics per component](#metrics-per-component-gear) below.
+
+## Why the gold views read empty
+
+`exec_summary`, `people`, `ic_kpis` and the other person-level views answer with
+zero rows for this token, while the facts underneath answer fine. That is not a
+broken deployment; it is two missing joins:
+
+**Identity resolution is thin.** Git observations are keyed by the raw author
+handle. Turning that into a person goes through `identity.account_assignment`
+(178 rows) and `identity.person_map` (146), and of the **179 distinct git
+authors only 27 are assigned to a person** — `identity.aliases` is empty
+altogether. So anything grouped by `person_id` loses ~85% of the activity, and
+the views that start from `people` return nothing at all.
+
+```sql
+SELECT count() AS git_authors,
+       countIf(entity_id IN (SELECT account_id FROM identity.account_assignment)) AS assigned
+FROM (SELECT DISTINCT entity_id FROM insight.git_metric_observations)
+-- → 179, 27
+```
+
+**There is no HR source.** `exec_summary` and `ic_kpis` group by `org_unit_id`,
+which comes from BambooHR / Workday / Active Directory — all present as empty
+`bronze_*` databases.
+
+The practical rule: **repository- and component-level analytics need no identity
+and work today; person- and org-level analytics wait on identity resolution and
+an HR feed.** Everything this gear exposes deliberately sits on the first side
+of that line.
 
 ## Configuring the gear
 
@@ -135,6 +344,85 @@ let insight = ctx
     .get_scoped::<dyn InsightClient>(&ClientScope::gts_id(INSIGHT_INSTANCE_ID))?;
 let page = insight.query("SELECT count() FROM insight.git_metric_observations").await?;
 ```
+
+### How a request is served
+
+```text
+portal
+  │  POST /cf/studio-insight/v1/query
+  │  POST /cf/studio-insight/v1/components/metrics
+  ▼
+api-gateway              strips /cf, authenticates the caller
+  ▼
+rest.rs                  DTO in, arguments validated, error mapped on the way out
+  │
+  ├─ components.rs       builds ONE read-only statement: validate → escape → render
+  ▼
+client.rs                InsightClient::query(sql)
+  │  POST {base}{api_path}/{sql_resource}
+  │  Authorization: Bearer <instance token>    ← attached here, never sent to the browser
+  ▼
+Insight                  {columns, rows, row_count, truncated}
+  │
+  └─ InsightError        400 the caller's · 503 the upstream's · 500 ours
+```
+
+Three things about that path are deliberate:
+
+**The token never reaches the browser.** The portal calls our gateway with its
+own session token; the Insight credential is attached server-side, in
+`client.rs`. Nothing in the response carries it — `health` reports `configured`
+and `base_url`, never the key.
+
+**A trend costs a second query, and only when asked.** `components/metrics`
+runs the totals first, takes the component keys the ranking kept, and only then
+runs the bucketed statement restricted to those keys. Asking for a chart over a
+large repository therefore cannot quietly become a query over all of it, and a
+caller that wants numbers without a chart pays for one round trip.
+
+**The failure is attributed before it is reported.** `InsightError` has three
+shapes — `NotConfigured`, `Transport`, `Upstream { status, body }` — and only
+the third can be the caller's fault. `to_canonical` maps an upstream 400/422 to
+our 400 with Insight's own `detail` in a field violation, and everything else to
+503 or 500. Without that, a typo in a statement and a dead upstream look
+identical to whoever is reading the portal.
+
+### Reaching it from another gear
+
+The client is published to the ClientHub at `init`, before any REST phase, so a
+consumer resolving it in its own REST phase cannot lose a race:
+
+```rust
+use crate::insight::{InsightClient, INSIGHT_INSTANCE_ID};
+use toolkit::client_hub::ClientScope;
+
+let insight = ctx
+    .client_hub()
+    .get_scoped::<dyn InsightClient>(&ClientScope::gts_id(INSIGHT_INSTANCE_ID))?;
+
+let page = insight
+    .query("SELECT count() AS n FROM insight.git_metric_observations")
+    .await?;
+let n = page.rows.first().and_then(|r| r.get("n")).and_then(|v| v.as_u64());
+```
+
+`SqlPage` is `{columns, rows, row_count, truncated}` with `rows` as JSON objects
+keyed by column name — a warehouse row has no shape this gear could usefully
+impose on it, so it is passed through and the caller names its own columns.
+
+### Writing a statement that Insight will accept
+
+* **One `SELECT` or `WITH`.** No second statement, no `SHOW`, no DDL. Schema
+  discovery is `system.tables` / `system.columns`.
+* **Aggregate in SQL, not in the caller.** `truncated: true` means the rows are
+  a prefix; an average computed over a truncated page is not the average.
+* **Name the dimension you slice by.** `ARRAY JOIN dimensions AS d` without a
+  `WHERE d.key = …` multiplies every observation by its dimension count, and the
+  result looks plausible.
+* **Guard the divisions.** `nullIf(x, 0)` rather than a rate that becomes `inf`
+  the first week a repository is quiet.
+* **Say `today() - N`, not a literal date**, unless the window is the point —
+  the warehouse's idea of today is the one the data is keyed by.
 
 ## Metrics per component (gear)
 
@@ -254,6 +542,18 @@ STUDIO_INSIGHT_API_KEY=<token> scripts/insight-smoke.sh
 STUDIO_INSIGHT_API_KEY=<token> STUDIO_TOKEN=<portal jwt> scripts/insight-smoke.sh
 ```
 
-It asserts the four behaviours that actually break: `SELECT 1` succeeds, a
-missing token is a 401, a non-`SELECT` is a 400, and the catalog query returns
-the databases.
+Four checks on the upstream contract — `SELECT 1` succeeds, a missing token is
+a 401, a non-`SELECT` is a 400, the catalog is readable — and, with a portal
+token, seven on the gear: the health probe, a statement passed through, a
+rejected statement mapped to 400, components derived by depth, components
+resolved by name with a weekly series, and two malformed requests refused.
+
+It then **re-runs every ```sql block on this page** through the gear. Not to
+check the figures — the warehouse moves, and they are a snapshot of
+2026-09-11 — but to catch a documented statement that stopped being valid: a
+renamed table, a dropped measure, a tightened upstream. A doc that prints
+answers has to be executable, or it rots without saying so.
+
+```text
+16 passed, 0 failed
+```

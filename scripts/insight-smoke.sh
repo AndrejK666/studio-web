@@ -138,6 +138,40 @@ else
   [[ "$code" == 400 ]] \
     && ok "an unknown bucket is refused with 400" \
     || bad "bad bucket -> $code $body (expected 400)"
+
+  # The quickstart prints worked queries WITH their answers. Numbers in a doc
+  # rot silently, so every ```sql block in it is run here: not to check the
+  # figures (the warehouse moves) but to catch a statement that stopped being
+  # valid — a renamed table, a dropped measure, a tightened upstream.
+  doc=studio-backend/docs/insight-quickstart.md
+  if ! command -v python3 >/dev/null && ! command -v python >/dev/null; then
+    note "no python — the documented queries were not re-run"
+  elif [[ ! -f "$root/$doc" ]]; then
+    note "$doc not found — the documented queries were not re-run"
+  else
+    py=$(command -v python3 || command -v python)
+    dir=$(mktemp -d); trap 'rm -f "$env_clean"; rm -rf "$dir"' EXIT
+    blocks=$("$py" - "$root/$doc" "$dir" <<'EXTRACT'
+import io, re, sys
+doc, out = sys.argv[1], sys.argv[2]
+blocks = re.findall(r'```sql\n(.*?)```', io.open(doc, encoding='utf-8').read(), re.S)
+for i, b in enumerate(blocks):
+    io.open(f'{out}/{i}.sql', 'w', encoding='utf-8').write(b.strip())
+print(len(blocks))
+EXTRACT
+    )
+    note "re-running $blocks documented queries from $doc"
+    for f in "$dir"/*.sql; do
+      [[ -e "$f" ]] || { note "no sql blocks in $doc"; break; }
+      payload=$("$py" -c 'import json,sys; print(json.dumps({"sql": open(sys.argv[1], encoding="utf-8").read()}))' "$f")
+      body=$(curl -sS "${CURL_OPTS[@]}" --max-time 120 -w '\n%{http_code}' "${auth[@]}" \
+        -d "$payload" "$BACKEND/cf/studio-insight/v1/query")
+      code=${body##*$'\n'}; body=${body%$'\n'*}
+      [[ "$code" == 200 ]] \
+        && ok "documented query $(basename "$f" .sql) still runs" \
+        || bad "documented query $(basename "$f" .sql) -> $code $body"
+    done
+  fi
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
