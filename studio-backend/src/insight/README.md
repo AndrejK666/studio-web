@@ -33,7 +33,30 @@ no OpenAPI document, so discovery goes through ClickHouse's own catalog
 (`system.tables`, `system.columns`).
 
 `docs/insight-quickstart.md` records the whole contract, the shape of the
-warehouse, and how to check the wiring.
+warehouse, worked queries with their real answers, and how to check the wiring.
+
+## What is actually in there
+
+Three shapes per domain, and the grain matters: `*_metric_observations` is one
+**person**, one day, one measure, one set of dimensions — the repository is a
+*dimension*, not the entity, and there is no dimension below it.
+`*_metric_evidence` says which records made a number. The raw tables
+(`git_commit_file_changes`, `git_authored_commits`, `git_review_events`,
+`task_status_spans`) carry the detail, and are the only place a **file path**
+exists — which is why `components/metrics` reads them rather than the
+observations.
+
+Populated today: git (37 measures — commits, lines, PR cycle/first-review/
+review-to-merge hours, reviewer counts), CI (10 — gate runs, pass and first-try
+rates, durations, deployments), task (8 — closed, reopened, pickup and
+resolution days). The `ai_*`, `collab_*` and `wiki_*` families exist with the
+same shape and zero rows: those connectors are not ingested for this tenant.
+
+The person-level gold views (`exec_summary`, `people`, `ic_kpis`) read empty,
+and that is a data-coverage fact rather than a bug: only 27 of the 179 git
+author handles are assigned to a person, and no HR source feeds `org_unit_id`.
+Repository- and component-level questions need neither, which is why everything
+this gear exposes sits on that side of the line.
 
 ## Two ways in
 
