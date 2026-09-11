@@ -110,6 +110,7 @@ fn membership_to_view(m: entity::membership::Model) -> MembershipView {
         user_id: m.user_id.to_string(),
         org_id: m.org_id.to_string(),
         role: m.role,
+        status: m.status,
         source: m.source,
         created_at_epoch_ms: to_ms(m.created_at),
         updated_at_epoch_ms: to_ms(m.updated_at),
@@ -287,6 +288,7 @@ impl IdentityStore for PgStore {
             user_id: ActiveValue::Set(uid),
             org_id: ActiveValue::Set(org),
             role: ActiveValue::Set(m.role.clone()),
+            status: ActiveValue::Set(m.status.clone()),
             source: ActiveValue::Set(m.source.clone()),
             created_at: ActiveValue::Set(from_ms(m.created_at_epoch_ms)),
             updated_at: ActiveValue::Set(from_ms(m.updated_at_epoch_ms)),
@@ -296,6 +298,7 @@ impl IdentityStore for PgStore {
         ])
         .update_columns([
             entity::membership::Column::Role,
+            entity::membership::Column::Status,
             entity::membership::Column::Source,
             entity::membership::Column::UpdatedAt,
         ])

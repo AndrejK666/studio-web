@@ -129,6 +129,9 @@ pub struct MembershipView {
     pub user_id: String,
     pub org_id: String,
     pub role: String,
+    /// `active` or `suspended`. A suspended membership grants nothing while it
+    /// stands and is still a record of where somebody belongs (ADR-0011 §2).
+    pub status: String,
     pub source: String,
     pub created_at_epoch_ms: i64,
     pub updated_at_epoch_ms: i64,
@@ -702,11 +705,27 @@ impl IdentityService {
 
     /// Record (upsert) a person's membership in an organization with the role
     /// held there. Role lives on the membership, never on the profile.
+    ///
+    /// Active: every path that records a membership is recording one that
+    /// applies. Suspension is a later, deliberate edit through
+    /// `set_membership_standing`, never something a write arrives already in.
     pub async fn record_membership(
         &self,
         user_id: &str,
         org_id: &str,
         role: &str,
+        source: &str,
+    ) -> Result<MembershipView> {
+        self.write_membership(user_id, org_id, &leaving::Standing::active(role), source)
+            .await
+    }
+
+    /// Record a membership in a given standing — role and status together.
+    async fn write_membership(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        standing: &leaving::Standing,
         source: &str,
     ) -> Result<MembershipView> {
         if self.store.get_user(user_id).await?.is_none() {
@@ -716,7 +735,8 @@ impl IdentityService {
         let view = MembershipView {
             user_id: user_id.to_owned(),
             org_id: org_id.to_owned(),
-            role: role.to_owned(),
+            role: standing.role.clone(),
+            status: standing.status.clone(),
             source: source.to_owned(),
             // On an update the stored created_at is preserved (the store's
             // conflict update excludes it); this value seeds a first insert.
@@ -827,6 +847,10 @@ impl IdentityService {
             .memberships_of(&user_id)
             .await?
             .into_iter()
+            // A suspended membership records where somebody belongs and grants
+            // nothing while it stands, so it must not appear here: this answer
+            // is what the PDP clamps on and what decides administrative rights.
+            .filter(|m| m.status == leaving::STATUS_ACTIVE)
             .filter_map(|m| Uuid::parse_str(&m.org_id).ok())
             .collect())
     }
@@ -959,16 +983,16 @@ impl IdentityService {
         self.store.memberships_in_org(org_id).await
     }
 
-    /// May this membership end, or change to `new_role`?
+    /// May this membership end, or become `after`?
     ///
-    /// One gate for leaving, for being removed, and for being demoted —
-    /// otherwise the rule would hold on one route and be walked around on
-    /// another.
+    /// One gate for leaving, for being removed, for being demoted and for being
+    /// suspended — otherwise the rule would hold on one route and be walked
+    /// around on another.
     pub async fn may_change_membership(
         &self,
         user_id: &str,
         org_id: &str,
-        new_role: Option<&str>,
+        after: Option<&leaving::Standing>,
     ) -> Result<Result<(), leaving::Refusal>> {
         let members: Vec<leaving::Member> = self
             .members_of(org_id)
@@ -977,9 +1001,37 @@ impl IdentityService {
             .map(|m| leaving::Member {
                 user_id: m.user_id,
                 role: m.role,
+                status: m.status,
             })
             .collect();
-        Ok(leaving::may_change(&members, user_id, new_role))
+        Ok(leaving::may_change(&members, user_id, after))
+    }
+
+    /// Set somebody's role and status in one organization, subject to the rule.
+    ///
+    /// The one write behind both "change their role" and "suspend them": they
+    /// are the same edit to the same row, and splitting them would be two ways
+    /// to reach a state only one of them checked.
+    pub async fn set_membership_standing(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        after: &leaving::Standing,
+        source: &str,
+    ) -> Result<Result<MembershipView, leaving::Refusal>> {
+        // Somebody being added is not a member yet, and that is not a reason to
+        // refuse adding them — every other refusal is about the room they would
+        // leave behind and applies.
+        if let Err(refusal) = self
+            .may_change_membership(user_id, org_id, Some(after))
+            .await?
+            && refusal != leaving::Refusal::NotAMember
+        {
+            return Ok(Err(refusal));
+        }
+        Ok(Ok(self
+            .write_membership(user_id, org_id, after, source)
+            .await?))
     }
 
     /// Leave an organization: the membership ends, and the leaver's own
