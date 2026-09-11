@@ -86,6 +86,10 @@ pub struct OrgMembershipDto {
     pub user_id: String,
     pub org_id: String,
     pub role: String,
+    /// `active` or `suspended`. A suspended membership grants nothing while it
+    /// stands — the organization does not appear in what this person may reach
+    /// — and still records that they belong here and in what role.
+    pub status: String,
     pub source: String,
     pub created_at_epoch_ms: i64,
     pub updated_at_epoch_ms: i64,
@@ -102,6 +106,14 @@ pub struct MembershipListDto {
 pub struct PutMembershipRequest {
     /// The role this person holds in THIS organization.
     pub role: String,
+    /// `active` (the default) or `suspended`.
+    ///
+    /// Suspending is not removing: the row stays, with the role it would come
+    /// back to. It is the same edit to the same row as changing a role, so it
+    /// arrives on the same request and passes the same rule — an organization
+    /// cannot be left with no owner who can act, whichever of the two did it.
+    #[serde(default)]
+    pub status: Option<String>,
     /// How the membership was established: "assignment", "grant", "manual".
     pub source: Option<String>,
 }
@@ -283,6 +295,7 @@ fn membership_to_dto(m: MembershipView) -> OrgMembershipDto {
         user_id: m.user_id,
         org_id: m.org_id,
         role: m.role,
+        status: m.status,
         source: m.source,
         created_at_epoch_ms: m.created_at_epoch_ms,
         updated_at_epoch_ms: m.updated_at_epoch_ms,
@@ -526,24 +539,30 @@ async fn put_membership(
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org).await?;
-    // A role change can remove the last owner just as surely as a removal can,
-    // so it passes the same gate. Somebody joining is not a member yet, and
-    // that is not a reason to refuse adding them.
-    let gate = service
-        .may_change_membership(&user_id, &org_id, Some(&req.role))
-        .await
-        .map_err(internal)?;
-    if let Err(refusal) = gate
-        && refusal != leaving::Refusal::NotAMember
-    {
-        return Err(refused(refusal, &user_id, &org_id));
+    let status = req.status.as_deref().unwrap_or(leaving::STATUS_ACTIVE);
+    if !leaving::STATUSES.contains(&status) {
+        return Err(UserProfileError::invalid_argument()
+            .with_constraint(format!(
+                "status must be one of {}",
+                leaving::STATUSES.join(", ")
+            ))
+            .create());
     }
+    let after = leaving::Standing {
+        role: req.role.clone(),
+        status: status.to_owned(),
+    };
     let source = req.source.unwrap_or_else(|| "manual".to_string());
-    let membership = service
-        .record_membership(&user_id, &org_id, &req.role, &source)
+    // A role change or a suspension can remove the last owner who can act just
+    // as surely as a removal can, so both go through the one gate.
+    match service
+        .set_membership_standing(&user_id, &org_id, &after, &source)
         .await
-        .map_err(internal)?;
-    Ok(Json(membership_to_dto(membership)))
+        .map_err(internal)?
+    {
+        Ok(membership) => Ok(Json(membership_to_dto(membership))),
+        Err(refusal) => Err(refused(refusal, &user_id, &org_id)),
+    }
 }
 
 async fn delete_membership(
@@ -1004,10 +1023,15 @@ pub fn register_routes(
 
     let router = OperationBuilder::put("/studio-user/v1/users/{user_id}/memberships/{org_id}")
         .operation_id("studio_user.put_membership")
-        .summary("Set a user's role in an organization (organization owner)")
+        .summary("Set a user's role or standing in an organization (organization owner)")
         .description(
-            "Records the role a person holds in one organization. Gated on being an OWNER of that \
-             organization; role lives on the membership, never on the profile.",
+            "Records the role a person holds in one organization, and whether that membership \
+             currently applies. Gated on being an OWNER of that organization; role lives on the \
+             membership, never on the profile. `status: suspended` stops the membership granting \
+             anything — the organization disappears from what that person may reach — while \
+             keeping the record of where they belong and what they would come back to; leaving \
+             and removal delete the row instead. Refused where it would leave the organization \
+             with no owner able to act, whether by demotion or by suspension.",
         )
         .tag("StudioUser")
         .authenticated()
