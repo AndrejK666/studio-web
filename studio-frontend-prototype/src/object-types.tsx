@@ -306,20 +306,20 @@ const OBJT_CSS = `
 .objt-note code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
 .objt-lenses { display: flex; gap: 6px; margin: 14px 0 10px; flex-wrap: wrap; }
 .objt-lenses button {
-  background: transparent; border: 1px solid var(--studio-border); color: inherit;
-  border-radius: 999px; padding: 5px 12px; font-size: 12px; cursor: pointer;
+  background: transparent; border: 1px solid var(--studio-line); color: inherit;
+  border-radius: var(--radius-full); padding: 5px 12px; font-size: 12px; cursor: pointer;
 }
 .objt-lenses button[aria-pressed="true"] { border-color: var(--studio-accent); color: var(--studio-accent); }
 .objt-count { opacity: .6; margin-left: 4px; }
-.objt-err { color: var(--studio-danger, #f87171); font-size: 13px; }
+.objt-err { color: var(--studio-danger); font-size: 13px; }
 .objt-empty { color: var(--studio-muted); font-size: 13px; padding: 18px 0; }
 .objt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .objt-table th {
   text-align: left; font-weight: 500; color: var(--studio-muted); font-size: 11px;
   text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px;
-  border-bottom: 1px solid var(--studio-border);
+  border-bottom: 1px solid var(--studio-line);
 }
-.objt-table td { padding: 8px 10px; border-bottom: 1px solid var(--studio-border); vertical-align: middle; }
+.objt-table td { padding: 8px 10px; border-bottom: 1px solid var(--studio-line); vertical-align: middle; }
 .objt-table tr.is-component .objt-name { color: var(--studio-accent); }
 .objt-tick { width: 92px; }
 .objt-num { width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -329,8 +329,8 @@ const OBJT_CSS = `
 .objt-dim { color: var(--studio-muted); }
 .objt-id { color: var(--studio-muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
 .objt-pill {
-  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
-  border: 1px solid var(--studio-border); color: var(--studio-muted); font-size: 11px;
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: var(--radius-full);
+  border: 1px solid var(--studio-line); color: var(--studio-muted); font-size: 11px;
 }
 .objt-schema-tenant { border-color: var(--studio-accent); color: var(--studio-accent); }
 .objt-schema-none { opacity: .65; }

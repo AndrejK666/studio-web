@@ -30,21 +30,21 @@ const CSS = `
 .pcat { display: flex; flex-direction: column; gap: 20px; }
 .pcat-head h2 { margin: 0 0 4px; font-size: 16px; }
 .pcat-head p { margin: 0; font-size: 12px; opacity: .75; max-width: 78ch; line-height: 1.5; }
-.pcat-card { border: 1px solid var(--border,#e2e4e9); border-radius: 10px; padding: 14px 16px; }
+.pcat-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .pcat-card h3 { margin: 0 0 2px; font-size: 13px; }
 .pcat-card .sub { margin: 0 0 12px; font-size: 11px; opacity: .7; }
 .pcat-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 12px; align-items: center;
-  padding: 8px 0; border-top: 1px solid var(--border,#eef0f3); }
+  padding: 8px 0; border-top: 1px solid var(--border); }
 .pcat-row:first-of-type { border-top: 0; }
 .pcat-key { font-family: ui-monospace, monospace; font-size: 12px; }
 .pcat-meta { font-size: 12px; opacity: .8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pcat-owner { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
-  border: 1px solid var(--border,#e2e4e9); border-radius: 999px; padding: 1px 7px; opacity: .8; }
-.pcat-owner.own { border-color: var(--accent,#4f46e5); color: var(--accent,#4f46e5); opacity: 1; }
+  border: 1px solid var(--border); border-radius: var(--radius-full); padding: 1px 7px; opacity: .8; }
+.pcat-owner.own { border-color: var(--primary); color: var(--primary); opacity: 1; }
 .pcat-actions { display: flex; gap: 6px; }
 .pcat-actions button { font-size: 11px; padding: 3px 9px; }
 .pcat-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-top: 12px;
-  padding-top: 12px; border-top: 1px dashed var(--border,#e2e4e9); }
+  padding-top: 12px; border-top: 1px dashed var(--border); }
 .pcat-add label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; opacity: .8; }
 .pcat-add input { font-size: 12px; padding: 4px 6px; }
 .pcat-empty { font-size: 12px; opacity: .7; padding: 8px 0; }

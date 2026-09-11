@@ -1896,13 +1896,15 @@ function loadMermaid(): Promise<MermaidApi> {
         reject(new Error("mermaid unavailable"));
         return;
       }
-      const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
       try {
+        // No `theme` here on purpose. Every render re-initializes with the one
+        // `surfaceIsDark` measured off the panel the diagram actually lands on,
+        // and seeding this from the OS preference only gave the first diagram a
+        // chance to flash the wrong one.
         m.initialize({
           startOnLoad: false,
           securityLevel: "loose",
-          theme: dark ? "dark" : "default",
-          fontFamily: "var(--studio-sans, Inter, system-ui, sans-serif)",
+          fontFamily: "var(--studio-sans, 'Inter Variable', system-ui, sans-serif)",
         });
       } catch {
         /* keep going with defaults */
@@ -1920,7 +1922,9 @@ let mermaidSeq = 0;
 /** Is the surface this element sits on dark? Walks up to the first ancestor
  *  with a real (non-transparent) background and measures its luminance, so the
  *  mermaid theme follows the actual panel colour rather than the OS setting.
- *  Falls back to the OS preference when nothing opaque is found. */
+ *  Falls back to the portal's own theme flag when nothing opaque is found —
+ *  the OS preference is a different switch and answering with it was how a
+ *  dark diagram used to land in a light page. */
 function surfaceIsDark(el: HTMLElement | null): boolean {
   let node: HTMLElement | null = el;
   while (node) {
@@ -1931,7 +1935,7 @@ function surfaceIsDark(el: HTMLElement | null): boolean {
     }
     node = node.parentElement;
   }
-  return !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  return document.documentElement.dataset.theme === "dark";
 }
 
 /** Work around mermaid quirks in prose-heavy diagrams lifted from docs: `;` is
@@ -1965,7 +1969,7 @@ function Mermaid({ code }: { code: string }) {
             startOnLoad: false,
             securityLevel: "loose",
             theme: surfaceIsDark(ref.current) ? "dark" : "default",
-            fontFamily: "var(--studio-sans, Inter, system-ui, sans-serif)",
+            fontFamily: "var(--studio-sans, 'Inter Variable', system-ui, sans-serif)",
           });
           const { svg } = await m.render(id, sanitizeMermaid(code));
           // Mermaid may return an error diagram (the "bomb") instead of throwing.
@@ -2034,6 +2038,19 @@ interface GraphModel {
   isolated: number;
 }
 
+/** One hue per component kind, taken from the product's categorical set
+ *  (--avatar-*). This map is the only place the association is written: the
+ *  mermaid diagram, the legend beside it and the chip rules in the stylesheet
+ *  all read it, so a kind cannot come out three different colours. */
+const KIND_COLOR: Record<string, string> = {
+  gear: "var(--avatar-mint)",
+  sdk: "var(--avatar-blue)",
+  plugin: "var(--avatar-purple)",
+  toolkit: "var(--avatar-yellow)",
+  frontx: "var(--avatar-red)",
+  other: "var(--avatar-grey)",
+};
+
 /** Build a mermaid `graph LR` from components and their inter-dependencies.
  *  Only *connected* components are drawn — a wall of isolated boxes is noise,
  *  not a graph — and the caller reports how many were left out. Intentionally
@@ -2070,12 +2087,12 @@ function buildComponentGraph(
     lines.push(`  c${i}["${label}"]:::${kindClass(String(g.value.kind ?? "gear"))}`);
   });
   for (const [i, j] of edges) lines.push(`  c${i} --> c${j}`);
-  lines.push("classDef gear stroke:#1a7f4b,stroke-width:2px");
-  lines.push("classDef sdk stroke:#0065e3,stroke-width:2px");
-  lines.push("classDef plugin stroke:#7147d2,stroke-width:2px");
-  lines.push("classDef toolkit stroke:#9a6700,stroke-width:2px");
-  lines.push("classDef frontx stroke:#b3261e,stroke-width:2px");
-  lines.push("classDef other stroke:#8b90a3,stroke-width:1px");
+  // classDef values are templated straight into each node's style attribute, so
+  // a var() reference survives into the SVG and resolves against .gcat — the
+  // diagram follows the theme without mermaid knowing there is one.
+  for (const [kind, color] of Object.entries(KIND_COLOR)) {
+    lines.push(`classDef ${kind} stroke:${color},stroke-width:${kind === "other" ? 1 : 2}px`);
+  }
 
   return {
     code: edges.length ? lines.join("\n") : "",
@@ -2084,13 +2101,10 @@ function buildComponentGraph(
   };
 }
 
-const GRAPH_LEGEND: [string, string][] = [
-  ["gear", "#1a7f4b"],
-  ["sdk", "#0065e3"],
-  ["plugin", "#7147d2"],
-  ["toolkit", "#9a6700"],
-  ["frontx", "#b3261e"],
-];
+/** The legend names every kind except `other`, which is the absence of one. */
+const GRAPH_LEGEND: [string, string][] = (
+  ["gear", "sdk", "plugin", "toolkit", "frontx"] as const
+).map((kind) => [kind, KIND_COLOR[kind]]);
 
 function ComponentGraph({ graph, nodes }: { graph: GraphModel; nodes: CatalogNode[] }) {
   const hasEdges = graph.edgeCount > 0;
@@ -2343,38 +2357,50 @@ function defaultProfile(name: string): Record<string, unknown> {
 // ── styles (scoped under .gcat) ──────────────────────────────────────────────
 
 const GCAT_CSS = `
+/* The --studio-* names stay — some 150 rules below read them — but they are an
+ * ALIAS LAYER now, not a palette: each one points at the product token that
+ * holds the same role. Two consequences worth stating. The catalogue can no
+ * longer drift from the portal around it, and the theme switch is a single
+ * switch again: the block that used to redefine all of this under
+ * prefers-color-scheme is gone, because these tokens already flip with
+ * data-theme on <html>. On an OS in dark mode that block painted a dark
+ * catalogue inside a light portal, which is the bug it hid. */
 .gcat {
-  --studio-bg:#ffffff; --studio-chrome:#f0f2f5; --studio-surface:#ffffff;
-  --studio-surface-raised:#f6f7f9; --studio-surface-sunken:#f0f2f5;
-  --studio-text:#1f2328; --studio-muted:#616973; --studio-line:#e1e4e8;
-  --studio-edge:#c8cfd9; --studio-accent:#0065e3; --studio-on-accent:#ffffff;
-  --studio-verified:#1a7f4b; --studio-warning:#9a6700; --studio-danger:#b3261e;
-  --studio-shadow:rgba(31,35,40,.14); --studio-radius:8px;
-  --studio-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-  --studio-accent-soft:color-mix(in srgb,var(--studio-accent) 10%,var(--studio-bg));
-  --dg-backend-fill:#e8f7ee; --dg-backend-stroke:#1a7f4b;
-  --dg-db-fill:#f1ecfd; --dg-db-stroke:#7147d2;
-  --dg-ext-fill:#f0f2f5; --dg-ext-stroke:#a8b0bc;
-  --dg-sec-fill:#fdeceb; --dg-sec-stroke:#b3261e;
-  --dg-bus-fill:#fdf3e0; --dg-bus-stroke:#9a6700;
-  --dg-arrow:#616973; --dg-arrow-dash:#7147d2;
-  color:var(--studio-text); font-size:13px; line-height:1.5;
-}
-@media (prefers-color-scheme: dark) {
-  .gcat:not([data-theme="light"]) {
-    --studio-bg:#14161c; --studio-chrome:#1a1c23; --studio-surface:#1a1c23;
-    --studio-surface-raised:#23262f; --studio-surface-sunken:#0f1014;
-    --studio-text:#e7e9ee; --studio-muted:#8b90a3; --studio-line:#2d303c;
-    --studio-edge:#343a48; --studio-accent:#64a6f7; --studio-on-accent:#14161c;
-    --studio-verified:#4bb96a; --studio-warning:#d8a63c; --studio-danger:#e5534b;
-    --studio-shadow:rgba(0,0,0,.5);
-    --dg-backend-fill:#16302a; --dg-backend-stroke:#4bb96a;
-    --dg-db-fill:#241f38; --dg-db-stroke:#b092e6;
-    --dg-ext-fill:#23262f; --dg-ext-stroke:#4c516a;
-    --dg-sec-fill:#33211f; --dg-sec-stroke:#e5534b;
-    --dg-bus-fill:#332a1a; --dg-bus-stroke:#d8a63c;
-    --dg-arrow:#8b90a3; --dg-arrow-dash:#b092e6;
-  }
+  --studio-bg:var(--card);
+  --studio-chrome:var(--muted);
+  --studio-surface:var(--card);
+  --studio-surface-raised:var(--muted);
+  --studio-surface-sunken:var(--secondary);
+  --studio-text:var(--foreground);
+  --studio-muted:var(--muted-foreground);
+  --studio-line:var(--border);
+  --studio-edge:var(--input);
+  --studio-accent:var(--primary);
+  --studio-on-accent:var(--primary-foreground);
+  --studio-verified:var(--success);
+  --studio-warning:var(--warning);
+  --studio-danger:var(--destructive);
+  --studio-shadow:color-mix(in oklab,var(--foreground) 14%,transparent);
+  --studio-radius:var(--radius-lg);
+  --studio-sans:var(--font-sans);
+  --studio-mono:var(--font-mono);
+  --studio-accent-soft:var(--accent);
+  /* Architecture diagram: one hue per node kind, taken from the product's
+   * categorical set, with each fill mixed from its own stroke over the card so
+   * the pair stays a pair in either theme. */
+  --dg-backend-fill:color-mix(in oklab,var(--avatar-mint) 12%,var(--card));
+  --dg-backend-stroke:var(--avatar-mint);
+  --dg-db-fill:color-mix(in oklab,var(--avatar-purple) 12%,var(--card));
+  --dg-db-stroke:var(--avatar-purple);
+  --dg-ext-fill:color-mix(in oklab,var(--avatar-grey) 12%,var(--card));
+  --dg-ext-stroke:var(--avatar-grey);
+  --dg-sec-fill:color-mix(in oklab,var(--avatar-red) 12%,var(--card));
+  --dg-sec-stroke:var(--avatar-red);
+  --dg-bus-fill:color-mix(in oklab,var(--avatar-yellow) 12%,var(--card));
+  --dg-bus-stroke:var(--avatar-yellow);
+  --dg-arrow:var(--muted-foreground);
+  --dg-arrow-dash:var(--avatar-purple);
+  color:var(--studio-text); font-size:var(--text-body-size); line-height:1.5;
 }
 .gcat * { box-sizing:border-box; }
 
@@ -2386,12 +2412,12 @@ const GCAT_CSS = `
 .gcat .tools { display:flex; gap:8px; align-items:center; margin-left:auto; flex-wrap:wrap; }
 .gcat input, .gcat textarea {
   font:inherit; color:var(--studio-text); background:var(--studio-surface);
-  border:1px solid var(--studio-edge); border-radius:6px; padding:6px 10px;
+  border:1px solid var(--studio-edge); border-radius:var(--radius-md); padding:6px 10px;
 }
 .gcat input { min-width:200px; }
 .gcat .iconbtn {
   border:1px solid var(--studio-edge); background:var(--studio-surface); color:var(--studio-text);
-  border-radius:6px; padding:6px 12px; cursor:pointer; font:inherit; font-size:12.5px;
+  border-radius:var(--radius-md); padding:6px 12px; cursor:pointer; font:inherit; font-size:12.5px;
 }
 .gcat .iconbtn:hover { border-color:var(--studio-accent); }
 .gcat .iconbtn.primary { background:var(--studio-accent); color:var(--studio-on-accent); border-color:var(--studio-accent); font-weight:600; }
@@ -2410,7 +2436,7 @@ const GCAT_CSS = `
 .gcat .src-row input:disabled, .gcat .src-row select:disabled { opacity:.5; }
 .gcat .src-note { font-size:10.5px; color:var(--studio-muted); margin:2px 0 0; }
 
-.gcat .seg { display:inline-flex; border:1px solid var(--studio-edge); border-radius:6px; overflow:hidden; background:var(--studio-surface); }
+.gcat .seg { display:inline-flex; border:1px solid var(--studio-edge); border-radius:var(--radius-md); overflow:hidden; background:var(--studio-surface); }
 .gcat .seg button { font:inherit; font-size:12px; background:none; border:0; cursor:pointer; color:var(--studio-muted); padding:5px 13px; border-right:1px solid var(--studio-line); }
 .gcat .seg button:last-child { border-right:0; }
 .gcat .seg button[aria-pressed="true"] { background:var(--studio-accent); color:var(--studio-on-accent); font-weight:600; }
@@ -2424,9 +2450,9 @@ const GCAT_CSS = `
 
 .gcat .gcat-types { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
 .gcat .gcat-types-label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--studio-muted); margin-right:2px; }
-.gcat .gcat-type { font-size:12px; padding:3px 10px; border:1px solid var(--border,#e2e4e9); border-radius:999px; background:transparent; cursor:pointer; color:inherit; }
-.gcat .gcat-type:hover { border-color:var(--accent,#4f46e5); }
-.gcat .gcat-type.on { border-color:var(--accent,#4f46e5); background:var(--accent-soft,#eef2ff); font-weight:600; }
+.gcat .gcat-type { font-size:12px; padding:3px 10px; border:1px solid var(--border); border-radius:var(--radius-full); background:transparent; cursor:pointer; color:inherit; }
+.gcat .gcat-type:hover { border-color:var(--primary); }
+.gcat .gcat-type.on { border-color:var(--primary); background:var(--accent); font-weight:600; }
 .gcat .gcat-type-n { opacity:.55; font-variant-numeric:tabular-nums; margin-left:2px; }
 .gcat .gcat-sub { font-size:14px; line-height:1.5; color:var(--studio-muted); max-width:82ch; margin:0 0 14px; }
 .gcat .gcat-hint { font-size:11.5px; color:var(--studio-muted); margin:6px 0; }
@@ -2502,7 +2528,7 @@ const GCAT_CSS = `
 .gcat .row .k { font-size:12px; color:var(--studio-muted); line-height:1.35; }
 .gcat .row .val { font-size:12px; text-align:right; line-height:1.4; word-break:break-word; }
 .gcat .wrap { display:inline-flex; align-items:center; gap:7px; justify-content:flex-end; }
-.gcat .q { display:inline-block; min-width:18px; text-align:center; font-family:var(--studio-mono); font-size:11px; color:var(--studio-muted); border:1px dashed var(--studio-edge); border-radius:999px; padding:0 6px; }
+.gcat .q { display:inline-block; min-width:18px; text-align:center; font-family:var(--studio-mono); font-size:11px; color:var(--studio-muted); border:1px dashed var(--studio-edge); border-radius:var(--radius-full); padding:0 6px; }
 .gcat .novalue { color:var(--studio-muted); font-style:italic; font-size:11.5px; }
 .gcat .num { font-family:var(--studio-mono); font-size:12.5px; font-weight:600; }
 .gcat .bstrong { font-family:var(--studio-mono); font-size:11.5px; }
@@ -2514,14 +2540,14 @@ const GCAT_CSS = `
 .gcat .row a::after { content:"\\2197"; font-size:.75em; opacity:.5; margin-left:2px; vertical-align:super; }
 
 /* pills */
-.gcat .pill { font-size:10.5px; padding:1px 8px; border-radius:999px; background:var(--studio-surface-sunken); border:1px solid var(--studio-line); color:var(--studio-text); white-space:nowrap; }
+.gcat .pill { font-size:10.5px; padding:1px 8px; border-radius:var(--radius-full); background:var(--studio-surface-sunken); border:1px solid var(--studio-line); color:var(--studio-text); white-space:nowrap; }
 .gcat .pill.unset { border-style:dashed; color:var(--studio-muted); background:none; font-style:italic; }
 .gcat .pill.ds-done { background:color-mix(in srgb,var(--studio-verified) 14%,var(--studio-bg)); border-color:color-mix(in srgb,var(--studio-verified) 40%,transparent); color:var(--studio-verified); }
 .gcat .pill.ds-wip { background:color-mix(in srgb,var(--studio-warning) 16%,var(--studio-bg)); border-color:color-mix(in srgb,var(--studio-warning) 42%,transparent); color:var(--studio-warning); }
 .gcat .pill.ds-na { background:none; border-style:dashed; color:var(--studio-muted); }
 
 /* source chips */
-.gcat .src { display:inline-block; font-family:var(--studio-mono); font-size:10.5px; padding:1px 7px; border-radius:999px; }
+.gcat .src { display:inline-block; font-family:var(--studio-mono); font-size:10.5px; padding:1px 7px; border-radius:var(--radius-full); }
 .gcat .src.repo, .gcat .src.api { background:var(--studio-accent-soft); color:var(--studio-accent); }
 .gcat .src.manual { background:color-mix(in srgb,var(--studio-warning) 14%,var(--studio-bg)); color:var(--studio-warning); }
 .gcat .src.none { border:1px dashed var(--studio-edge); color:var(--studio-muted); }
@@ -2547,8 +2573,8 @@ const GCAT_CSS = `
 .gcat .umlwrap { padding:12px 13px; display:flex; flex-direction:column; gap:12px; }
 .gcat .umlhead { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
 .gcat .umlhead a { color:var(--studio-accent); text-decoration:none; font-size:11px; margin-left:auto; }
-.gcat .mermaid-src { margin:0; padding:10px 12px; background:var(--studio-surface-sunken); border:1px solid var(--studio-line); border-radius:6px; font-family:var(--studio-mono); font-size:11px; overflow-x:auto; white-space:pre; }
-.gcat .mermaid-empty { padding:14px 16px; background:var(--studio-surface-sunken); border:1px dashed var(--studio-line); border-radius:6px; color:var(--studio-muted); font-size:12px; line-height:1.5; }
+.gcat .mermaid-src { margin:0; padding:10px 12px; background:var(--studio-surface-sunken); border:1px solid var(--studio-line); border-radius:var(--radius-md); font-family:var(--studio-mono); font-size:11px; overflow-x:auto; white-space:pre; }
+.gcat .mermaid-empty { padding:14px 16px; background:var(--studio-surface-sunken); border:1px dashed var(--studio-line); border-radius:var(--radius-md); color:var(--studio-muted); font-size:12px; line-height:1.5; }
 .gcat .mermaid-empty code { font-family:var(--studio-mono); font-size:11px; }
 .gcat .uml { border:1px solid var(--studio-line); border-radius:var(--studio-radius); padding:10px 12px; background:var(--studio-surface); }
 .gcat .mermaid-view { overflow-x:auto; padding:6px 2px 2px; display:flex; justify-content:center; min-height:40px; }
@@ -2563,13 +2589,13 @@ const GCAT_CSS = `
 .gcat .cgraph-empty { padding:14px 16px; }
 .gcat .cgraph-empty .gcat-hint { margin:0 0 12px; }
 .gcat .cgraph-chips { display:flex; flex-wrap:wrap; gap:8px; }
-.gcat .cgraph-chip { font-size:11.5px; padding:4px 10px; border-radius:999px; border:1px solid var(--studio-line); border-left-width:3px; background:var(--studio-surface-raised); color:var(--studio-text); white-space:nowrap; }
-.gcat .cgraph-chip.gear { border-left-color:#1a7f4b; }
-.gcat .cgraph-chip.sdk { border-left-color:#0065e3; }
-.gcat .cgraph-chip.plugin { border-left-color:#7147d2; }
-.gcat .cgraph-chip.toolkit { border-left-color:#9a6700; }
-.gcat .cgraph-chip.frontx { border-left-color:#b3261e; }
-.gcat .cgraph-chip.other { border-left-color:#8b90a3; }
+.gcat .cgraph-chip { font-size:11.5px; padding:4px 10px; border-radius:var(--radius-full); border:1px solid var(--studio-line); border-left-width:3px; background:var(--studio-surface-raised); color:var(--studio-text); white-space:nowrap; }
+.gcat .cgraph-chip.gear { border-left-color:var(--avatar-mint); }
+.gcat .cgraph-chip.sdk { border-left-color:var(--avatar-blue); }
+.gcat .cgraph-chip.plugin { border-left-color:var(--avatar-purple); }
+.gcat .cgraph-chip.toolkit { border-left-color:var(--avatar-yellow); }
+.gcat .cgraph-chip.frontx { border-left-color:var(--avatar-red); }
+.gcat .cgraph-chip.other { border-left-color:var(--avatar-grey); }
 .gcat .uml-src { margin-top:8px; }
 .gcat .uml-src summary { cursor:pointer; font-size:10.5px; color:var(--studio-muted); font-family:var(--studio-mono); }
 .gcat .uml-src[open] summary { margin-bottom:6px; }

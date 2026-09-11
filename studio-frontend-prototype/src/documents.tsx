@@ -28,7 +28,7 @@ function errText(e: unknown): string {
 }
 
 const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
-const card = { border: "1px solid var(--border,#e2e4e9)", borderRadius: 10, padding: 12 } as const;
+const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
 const slug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "section";
 
@@ -356,8 +356,8 @@ function DocumentsView({
                   textAlign: "left",
                   padding: "8px 10px",
                   borderRadius: 8,
-                  border: "1px solid var(--border,#e2e4e9)",
-                  background: d.id === selectedId ? "var(--accent-soft,#eef2ff)" : "transparent",
+                  border: "1px solid var(--border)",
+                  background: d.id === selectedId ? "var(--accent)" : "transparent",
                   cursor: "pointer",
                   display: "flex",
                   flexDirection: "column",
@@ -375,7 +375,7 @@ function DocumentsView({
                 <span style={{ fontSize: 11, opacity: 0.7, display: "flex", gap: 6 }}>
                   <code>{typeName(d.type_key)}</code>
                   <span>· {d.status}</span>
-                  {d.inherited && <span style={{ color: "var(--muted,#6b7280)" }}>· inherited</span>}
+                  {d.inherited && <span style={{ color: "var(--muted-foreground)" }}>· inherited</span>}
                 </span>
               </button>
             ))}
@@ -403,7 +403,7 @@ function DocumentsView({
                   onChange={(e) => setDraftBody(e.target.value)}
                   disabled={!editable}
                   spellCheck={false}
-                  style={{ width: "100%", minHeight: 420, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, lineHeight: 1.5, padding: 10, borderRadius: 8, border: "1px solid var(--border,#e2e4e9)", resize: "vertical" }}
+                  style={{ width: "100%", minHeight: 420, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, lineHeight: 1.5, padding: 10, borderRadius: 8, border: "1px solid var(--border)", resize: "vertical" }}
                 />
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button className="primary" onClick={save} disabled={!editable || busy}>
@@ -656,8 +656,8 @@ function PublishModal({
               fontSize: 12,
               padding: "6px 10px",
               borderRadius: 8,
-              background: "#fef3c7",
-              color: "#92400e",
+              background: "var(--warning-soft)",
+              color: "var(--warning)",
               marginBottom: 12,
             }}
           >
@@ -924,7 +924,7 @@ function QuestionnaireModal({
             <div key={q.id}>
               <label style={qLabel}>
                 {q.prompt}
-                {q.required && <span style={{ color: "#dc2626" }}> *</span>}
+                {q.required && <span style={{ color: "var(--destructive)" }}> *</span>}
                 {q.capability && <code style={qTag}>{q.capability}</code>}
               </label>
               {q.help && <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>{q.help}</div>}
@@ -969,7 +969,7 @@ function QuestionInput({
       <textarea
         value={typeof value === "string" ? value : ""}
         onChange={(e) => onChange(e.target.value)}
-        style={{ width: "100%", minHeight: 72, padding: 8, borderRadius: 6, border: "1px solid var(--border,#e2e4e9)", fontSize: 13, resize: "vertical" }}
+        style={{ width: "100%", minHeight: 72, padding: 8, borderRadius: 6, border: "1px solid var(--border)", fontSize: 13, resize: "vertical" }}
       />
     );
   }
@@ -1031,9 +1031,9 @@ const modalBackdrop: CSSProperties = {
   overflowY: "auto",
 };
 const modalCard: CSSProperties = {
-  background: "var(--surface,#fff)",
-  color: "var(--text,#111)",
-  border: "1px solid var(--border,#e2e4e9)",
+  background: "var(--card)",
+  color: "var(--foreground)",
+  border: "1px solid var(--border)",
   borderRadius: 12,
   padding: 20,
   width: "min(640px, 100%)",
@@ -1119,13 +1119,13 @@ function shortName(name: string): string {
 }
 function kindColor(kind: string): string {
   const m: Record<string, string> = {
-    gear: "#1a7f4b",
-    sdk: "#0065e3",
-    plugin: "#7147d2",
-    toolkit: "#9a6700",
-    frontx: "#b3261e",
+    gear: "var(--avatar-mint)",
+    sdk: "var(--avatar-blue)",
+    plugin: "var(--avatar-purple)",
+    toolkit: "var(--avatar-yellow)",
+    frontx: "var(--avatar-red)",
   };
-  return m[kind] ?? "#8b90a3";
+  return m[kind] ?? "var(--avatar-grey)";
 }
 
 // ── Scaffolding: generate a starter gear for a capability gap ─────────────────
@@ -1246,8 +1246,8 @@ function ScaffoldModal({
             marginBottom: 12,
             padding: "8px 10px",
             borderRadius: 8,
-            background: "var(--surface-raised,#f6f7f9)",
-            border: "1px solid var(--border,#e2e4e9)",
+            background: "var(--surface-raised)",
+            border: "1px solid var(--border)",
           }}
         >
           {result ? (
@@ -1292,8 +1292,8 @@ function ScaffoldModal({
                   textAlign: "left",
                   padding: "6px 8px",
                   borderRadius: 6,
-                  border: "1px solid var(--border,#e2e4e9)",
-                  background: i === active ? "var(--accent-soft,#eef2ff)" : "transparent",
+                  border: "1px solid var(--border)",
+                  background: i === active ? "var(--accent)" : "transparent",
                   cursor: "pointer",
                   fontSize: 11.5,
                   fontFamily: "ui-monospace, Menlo, monospace",
@@ -1315,8 +1315,8 @@ function ScaffoldModal({
                 margin: 0,
                 padding: 12,
                 borderRadius: 8,
-                border: "1px solid var(--border,#e2e4e9)",
-                background: "var(--surface-raised,#f6f7f9)",
+                border: "1px solid var(--border)",
+                background: "var(--surface-raised)",
                 fontSize: 12,
                 lineHeight: 1.5,
                 overflow: "auto",
@@ -1369,7 +1369,7 @@ function ComposePlanModal({
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {plan.map((r) => (
-                <div key={r.capability} style={{ border: "1px solid var(--border,#e2e4e9)", borderRadius: 8, padding: "10px 12px" }}>
+                <div key={r.capability} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: r.gap ? 0 : 8 }}>
                     <code style={{ fontSize: 12, fontWeight: 700 }}>{r.capability}</code>
                     {r.gap ? (
@@ -1417,9 +1417,9 @@ const composeChip: CSSProperties = {
   fontSize: 11.5,
   padding: "4px 10px",
   borderRadius: 999,
-  border: "1px solid var(--border,#e2e4e9)",
+  border: "1px solid var(--border)",
   borderLeftWidth: 3,
-  background: "var(--surface-raised,#f6f7f9)",
+  background: "var(--surface-raised)",
   whiteSpace: "nowrap",
 };
 const gapBadge: CSSProperties = {
@@ -1427,8 +1427,8 @@ const gapBadge: CSSProperties = {
   fontWeight: 600,
   padding: "2px 8px",
   borderRadius: 20,
-  background: "#fef3c7",
-  color: "#92400e",
+  background: "var(--warning-soft)",
+  color: "var(--warning)",
 };
 
 function Checklist({ report }: { report: DocValidation | null }) {
@@ -1442,8 +1442,8 @@ function Checklist({ report }: { report: DocValidation | null }) {
             fontSize: 11,
             padding: "2px 8px",
             borderRadius: 20,
-            background: report?.conforms ? "#dcfce7" : "#fef3c7",
-            color: report?.conforms ? "#166534" : "#92400e",
+            background: report?.conforms ? "var(--success-soft)" : "var(--warning-soft)",
+            color: report?.conforms ? "var(--success)" : "var(--warning)",
           }}
         >
           {report ? (report.conforms ? "conforms" : "incomplete") : "—"}
@@ -1458,7 +1458,7 @@ function Checklist({ report }: { report: DocValidation | null }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {report.sections.map((s) => (
               <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-                <span style={{ width: 14, color: s.ok ? "#16a34a" : s.required ? "#dc2626" : "#9ca3af" }}>
+                <span style={{ width: 14, color: s.ok ? "var(--success)" : s.required ? "var(--destructive)" : "var(--muted-foreground)" }}>
                   {s.ok ? "✓" : s.required ? "✕" : "○"}
                 </span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
@@ -1468,8 +1468,8 @@ function Checklist({ report }: { report: DocValidation | null }) {
           </div>
           {report.issues.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "#92400e" }}>Issues</div>
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--muted,#6b7280)" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, color: "var(--warning)" }}>Issues</div>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--muted-foreground)" }}>
                 {report.issues.map((i, k) => (
                   <li key={k}>{i}</li>
                 ))}
@@ -1788,23 +1788,23 @@ function TypesView({
 
 const DOCTYPES_CSS = `
 .doctypes {
-  --dtb: var(--border, #2b2f3a);
-  --dtsf: var(--surface, #1c1f27);
-  --dtsf2: var(--panel, #232733);
-  --dttx: var(--text, #e7e9ee);
-  --dtmu: var(--muted, #8b90a3);
-  --dtac: var(--accent, #3b82f6);
-  --dtacs: var(--accent-soft, rgba(59,130,246,.16));
-  --dtok: #1a7f4b;
+  --dtb: var(--border);
+  --dtsf: var(--card);
+  --dtsf2: var(--muted);
+  --dttx: var(--foreground);
+  --dtmu: var(--muted-foreground);
+  --dtac: var(--primary);
+  --dtacs: var(--accent, rgba(59,130,246,.16));
+  --dtok: var(--success);
   color: var(--dttx);
 }
 .doctypes .dt-head h2 { font-size: 18px; font-weight: 700; margin: 0 0 4px; letter-spacing: -.01em; }
 .doctypes .dt-head p { margin: 0 0 14px; color: var(--dtmu); font-size: 13px; line-height: 1.5; max-width: 92ch; }
 
 .doctypes .dt-flow { display: flex; align-items: stretch; flex-wrap: wrap; gap: 8px; padding: 12px; margin: 0 0 16px; border: 1px solid var(--dtb); border-radius: 12px; background: var(--dtsf2); }
-.doctypes .dt-flow-step { display: flex; align-items: center; gap: 9px; padding: 8px 12px; background: var(--dtsf); border: 1px solid var(--dtb); border-radius: 9px; min-width: 0; }
+.doctypes .dt-flow-step { display: flex; align-items: center; gap: 9px; padding: 8px 12px; background: var(--dtsf); border: 1px solid var(--dtb); border-radius: var(--radius-lg); min-width: 0; }
 .doctypes .dt-flow-step.outcome { background: var(--dtacs); border-color: color-mix(in srgb, var(--dtac) 45%, transparent); }
-.doctypes .dt-flow-n { width: 20px; height: 20px; flex: none; border-radius: 50%; background: var(--dtac); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.doctypes .dt-flow-n { width: 20px; height: 20px; flex: none; border-radius: 50%; background: var(--dtac); color: var(--primary-foreground); display: grid; place-items: center; font-size: 11px; font-weight: 700; }
 .doctypes .dt-flow-body { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .doctypes .dt-flow-t { font-weight: 600; font-size: 12.5px; }
 .doctypes .dt-flow-d { font-size: 10.5px; color: var(--dtmu); }
@@ -1813,14 +1813,14 @@ const DOCTYPES_CSS = `
 
 .doctypes .dt-grid { display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 16px; align-items: start; }
 .doctypes .dt-list { display: flex; flex-direction: column; gap: 6px; }
-.doctypes .dt-new { padding: 9px 12px; border-radius: 9px; border: 0; cursor: pointer; background: var(--dtac); color: #fff; font: inherit; font-weight: 600; margin-bottom: 4px; }
-.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border: 1px solid var(--dtb); border-radius: 9px; background: var(--dtsf); transition: border-color .12s, background .12s; }
+.doctypes .dt-new { padding: 9px 12px; border-radius: var(--radius-lg); border: 0; cursor: pointer; background: var(--dtac); color: var(--primary-foreground); font: inherit; font-weight: 600; margin-bottom: 4px; }
+.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border: 1px solid var(--dtb); border-radius: var(--radius-lg); background: var(--dtsf); transition: border-color .12s, background .12s; }
 .doctypes .dt-type:hover { border-color: var(--dtac); }
 .doctypes .dt-type.active { border-color: var(--dtac); background: var(--dtacs); }
 .doctypes .dt-type-name { font-weight: 600; font-size: 13px; }
 .doctypes .dt-type-meta { display: flex; align-items: center; gap: 7px; }
 .doctypes .dt-type-meta code { font-size: 11px; color: var(--dtmu); }
-.doctypes .dt-owner { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; }
+.doctypes .dt-owner { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: var(--radius-full); }
 .doctypes .dt-owner.bi { background: var(--dtsf2); color: var(--dtmu); border: 1px solid var(--dtb); }
 .doctypes .dt-owner.ws { background: var(--dtacs); color: var(--dtac); }
 .doctypes .dt-type-sub { font-size: 10.5px; color: var(--dtmu); }
@@ -1833,7 +1833,7 @@ const DOCTYPES_CSS = `
 
 .doctypes .dt-panel { border: 1px solid var(--dtb); border-radius: 12px; background: var(--dtsf); padding: 13px 15px; }
 .doctypes .dt-panel h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 0 0 11px; }
-.doctypes .dt-step { width: 20px; height: 20px; flex: none; border-radius: 6px; background: var(--dtacs); color: var(--dtac); display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+.doctypes .dt-step { width: 20px; height: 20px; flex: none; border-radius: var(--radius-md); background: var(--dtacs); color: var(--dtac); display: grid; place-items: center; font-size: 11px; font-weight: 700; }
 .doctypes .dt-h-sub { font-weight: 400; font-size: 11px; color: var(--dtmu); margin-left: auto; }
 
 .doctypes .dt-field { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--dtmu); margin-bottom: 9px; }
@@ -1849,11 +1849,11 @@ const DOCTYPES_CSS = `
 .doctypes .dt-sec-head { font-size: 10.5px; color: var(--dtmu); text-transform: uppercase; letter-spacing: .03em; padding: 0 2px 6px; }
 .doctypes .dt-sec-row { margin-bottom: 6px; }
 .doctypes .dt-sec-row input[type=number] { width: 100%; }
-.doctypes .dt-toggle { font: inherit; font-size: 11.5px; cursor: pointer; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--dtb); background: var(--dtsf2); color: var(--dtmu); }
+.doctypes .dt-toggle { font: inherit; font-size: 11.5px; cursor: pointer; padding: 6px 10px; border-radius: var(--radius-full); border: 1px solid var(--dtb); background: var(--dtsf2); color: var(--dtmu); }
 .doctypes .dt-toggle.on { background: var(--dtacs); color: var(--dtac); border-color: color-mix(in srgb, var(--dtac) 45%, transparent); font-weight: 600; }
 .doctypes .dt-del { font: inherit; cursor: pointer; border: 1px solid var(--dtb); background: var(--dtsf2); color: var(--dtmu); border-radius: 7px; width: 30px; height: 30px; }
 .doctypes .dt-del:hover { color: var(--dtac); border-color: var(--dtac); }
-.doctypes .dt-add { margin-top: 8px; font: inherit; font-size: 12px; cursor: pointer; background: none; border: 1px dashed var(--dtb); color: var(--dtmu); border-radius: 8px; padding: 6px 12px; }
+.doctypes .dt-add { margin-top: 8px; font: inherit; font-size: 12px; cursor: pointer; background: none; border: 1px dashed var(--dtb); color: var(--dtmu); border-radius: var(--radius-lg); padding: 6px 12px; }
 .doctypes .dt-add:hover { border-color: var(--dtac); color: var(--dtac); }
 .doctypes .dt-rules { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
 
@@ -1864,7 +1864,7 @@ const DOCTYPES_CSS = `
 .doctypes .dt-checks li::marker { color: var(--dtok); }
 
 .doctypes .dt-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.doctypes .dt-save { font: inherit; font-weight: 600; cursor: pointer; background: var(--dtac); color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; }
+.doctypes .dt-save { font: inherit; font-weight: 600; cursor: pointer; background: var(--dtac); color: var(--primary-foreground); border: 0; border-radius: var(--radius-lg); padding: 9px 16px; }
 .doctypes .dt-save:disabled { opacity: .6; cursor: default; }
 
 @media (max-width: 720px) { .doctypes .dt-grid { grid-template-columns: 1fr; } }

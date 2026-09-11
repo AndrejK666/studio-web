@@ -83,7 +83,7 @@ export function StudioAI({ token }: { token: string }) {
               fontSize: 13.5,
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
-              color: err ? "var(--danger)" : "var(--text)",
+              color: err ? "var(--destructive)" : "var(--foreground)",
             }}
           >
             {err ?? (answer || (busy ? "…" : ""))}
