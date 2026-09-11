@@ -414,6 +414,14 @@ impl RestApiCapability for StudioUserGear {
                 }
             }
             let admins = cfg.platform_admins;
+            if admins.is_empty() {
+                warn!(
+                    "studio-user: no platform_admins configured. Being a platform administrator \
+                     is a membership of the platform root now, and nothing seeds one here \
+                     (ADR-0018 §3) — conflict resolution and the directory's administrative \
+                     routes have nobody to answer to until such a membership exists."
+                );
+            }
             if !admins.is_empty() {
                 let svc = svc.clone();
                 tokio::spawn(async move {
