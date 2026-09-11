@@ -170,6 +170,41 @@ impl AssignmentRecorder for IdentityService {
     }
 }
 
+/// The organizations a sign-in method's person belongs to.
+///
+/// Published for the Studio PDP, which has a token subject and needs to know
+/// what that person may reach. Deliberately not `PersonResolver`: that one
+/// provisions, and an authorization decision must not create a person as a side
+/// effect of somebody knocking.
+///
+/// Read-only and one subject at a time, like every other interface this gear
+/// publishes.
+#[async_trait]
+pub trait OrganizationReader: Send + Sync + 'static {
+    /// The organizations the person behind `subject` is a member of. A subject
+    /// no login knows has none.
+    async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>>;
+
+    /// Changes whenever any membership is written anywhere.
+    ///
+    /// A caller that caches an answer from `organizations_of` keeps this beside
+    /// it and throws the answer away when it moves. Without it a cache outlives
+    /// the write that invalidates it — which is how a person briefly could not
+    /// finish creating their own organization.
+    fn membership_generation(&self) -> u64;
+}
+
+#[async_trait]
+impl OrganizationReader for IdentityService {
+    async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>> {
+        IdentityService::organizations_of(self, subject).await
+    }
+
+    fn membership_generation(&self) -> u64 {
+        service::membership_generation()
+    }
+}
+
 #[toolkit::gear(
     name = "studio-user",
     deps = [account_management],
@@ -219,10 +254,15 @@ impl Gear for StudioUserGear {
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 people,
             );
-            let assignments: Arc<dyn AssignmentRecorder> = svc;
+            let assignments: Arc<dyn AssignmentRecorder> = svc.clone();
             ctx.client_hub().register_scoped::<dyn AssignmentRecorder>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 assignments,
+            );
+            let organizations: Arc<dyn OrganizationReader> = svc;
+            ctx.client_hub().register_scoped::<dyn OrganizationReader>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                organizations,
             );
         }
 

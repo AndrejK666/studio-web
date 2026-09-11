@@ -9,6 +9,7 @@
 //! platform action.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,6 +37,29 @@ const SOURCE_ASSIGNMENT: &str = "assignment";
 /// organization. The third way in, beside being assigned and being added by
 /// hand — and the one an owner's member list should be able to tell apart.
 const SOURCE_CREATION: &str = "creation";
+
+/// Bumped by every write that changes who belongs where.
+///
+/// Consumers that cache a person's organizations — the Studio PDP does, because
+/// it is asked on every request — read this to know their copy is stale. A
+/// counter rather than a per-person signal on purpose: memberships change
+/// rarely, the whole cache is small, and one atomic load is cheaper than
+/// keeping per-subject invalidation correct.
+///
+/// It exists because of a bug this found: creating an organization writes the
+/// membership and then the owner grant, and the grant write is authorized by a
+/// clamp that had already cached "this person belongs to nothing". The creator
+/// could not finish creating their own organization until the cache expired.
+static MEMBERSHIP_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The current membership generation. See [`MEMBERSHIP_GENERATION`].
+pub fn membership_generation() -> u64 {
+    MEMBERSHIP_GENERATION.load(Ordering::Acquire)
+}
+
+fn memberships_changed() {
+    MEMBERSHIP_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
 
 /// Provider tag for a sign-in method minted through Studio's own Keycloak
 /// realm. Every bearer the platform authenticates carries a subject from there,
@@ -628,6 +652,7 @@ impl IdentityService {
             updated_at_epoch_ms: now,
         };
         self.store.upsert_membership(&view).await?;
+        memberships_changed();
         Ok(view)
     }
 
@@ -667,9 +692,29 @@ impl IdentityService {
         Ok(())
     }
 
+    /// The organizations the person behind `subject` is a member of.
+    ///
+    /// Never provisions: a subject nobody has seen is a subject with no
+    /// memberships, and minting a person for one during an authorization
+    /// decision would create people out of traffic.
+    pub async fn organizations_of(&self, subject: &str) -> Result<Vec<Uuid>> {
+        let Some(user_id) = self.resolve_subject(PROVIDER_KEYCLOAK, subject).await? else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .store
+            .memberships_of(&user_id)
+            .await?
+            .into_iter()
+            .filter_map(|m| Uuid::parse_str(&m.org_id).ok())
+            .collect())
+    }
+
     /// Remove a person's membership in an organization.
     pub async fn remove_membership(&self, user_id: &str, org_id: &str) -> Result<()> {
-        self.store.delete_membership(user_id, org_id).await
+        self.store.delete_membership(user_id, org_id).await?;
+        memberships_changed();
+        Ok(())
     }
 
     /// Merge `from_user` into `into_user`: repoint every login, alias and
@@ -716,6 +761,9 @@ impl IdentityService {
         source.merged_into = Some(into_user.to_owned());
         source.updated_at_epoch_ms = now_ms();
         self.store.upsert_user(&source).await?;
+        // A merge repoints memberships, so anything caching where this person
+        // may go is now wrong.
+        memberships_changed();
         Ok(result)
     }
 }
