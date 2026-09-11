@@ -227,6 +227,39 @@ impl AssignmentRecorder for IdentityService {
     }
 }
 
+/// Emptying an organization that is being deleted.
+///
+/// Separate from [`AssignmentRecorder`] because it is the opposite act with the
+/// opposite risk: recording an assignment can be wrong and corrected, while this
+/// removes every membership of an organization at once and takes credentials
+/// with it. A gear asks for this one deliberately.
+///
+/// It does not check the last-owner rule, and that is the point: the rule keeps
+/// an organization administrable, and an organization being deleted has nothing
+/// left to administer. The authority to delete is checked where deletion is
+/// decided — this is the consequence, not the decision.
+#[async_trait]
+pub trait MembershipEvictor: Send + Sync + 'static {
+    /// End every membership of `org_id`, removing each person's personal
+    /// connections in it as they go.
+    async fn evict_everybody(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<service::Eviction>;
+}
+
+#[async_trait]
+impl MembershipEvictor for IdentityService {
+    async fn evict_everybody(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<service::Eviction> {
+        IdentityService::evict_everybody(self, ctx, org_id).await
+    }
+}
+
 /// The organizations a sign-in method's person belongs to.
 ///
 /// Published for the Studio PDP, which has a token subject and needs to know
@@ -325,6 +358,11 @@ impl Gear for StudioUserGear {
             ctx.client_hub().register_scoped::<dyn AssignmentRecorder>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 assignments,
+            );
+            let evictor: Arc<dyn MembershipEvictor> = svc.clone();
+            ctx.client_hub().register_scoped::<dyn MembershipEvictor>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                evictor,
             );
             let organizations: Arc<dyn OrganizationReader> = svc;
             ctx.client_hub().register_scoped::<dyn OrganizationReader>(

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::{Extension, Router};
+use axum::{Extension, Router, extract::Path};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
@@ -52,6 +52,15 @@ pub struct OrganizationCapabilitiesDto {
 pub struct OrganizationDto {
     pub id: String,
     pub name: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationDeletionDto {
+    /// Memberships ended. The caller's own is one of them.
+    pub people_removed: u32,
+    /// Personal connections removed with them, and their tokens in credstore.
+    pub connections_removed: u32,
 }
 
 fn configured(service: Option<Arc<OrganizationService>>) -> ApiResult<Arc<OrganizationService>> {
@@ -120,6 +129,36 @@ async fn create_organization(
     }
 }
 
+async fn delete_organization(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    Path(org_id): Path<String>,
+) -> ApiResult<JsonBody<OrganizationDeletionDto>> {
+    let service = configured(service)?;
+    let org = Uuid::parse_str(&org_id).map_err(|_| {
+        OrganizationError::invalid_argument()
+            .with_constraint("organization id must be a uuid")
+            .create()
+    })?;
+    if !service.may_delete(&ctx, org).await {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("ORG_OWNER_REQUIRED")
+            .create());
+    }
+    match service.delete(&ctx, org).await {
+        Ok(gone) => Ok(Json(OrganizationDeletionDto {
+            people_removed: gone.people as u32,
+            connections_removed: gone.connections as u32,
+        })),
+        // Account-management refuses a tenant that still has children, and that
+        // refusal is the caller's to act on: an organization with a workspace or
+        // a project in it is not disposed of by answering one prompt.
+        Err(error) => Err(OrganizationError::invalid_argument()
+            .with_constraint(format!("{error:#}"))
+            .create()),
+    }
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -145,6 +184,36 @@ pub fn register_routes(
             "Capabilities",
         )
         .error_401(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::delete("/studio-organizations/v1/organizations/{org_id}")
+        .operation_id("studio_organizations.delete_organization")
+        .summary("Delete an organization")
+        .description(
+            "The other end of creating one, and what the last person in an organization is \
+             pointed at when they try to leave: leaving an organization nobody else is in would \
+             abandon it rather than hand it over, so it is deletion that is being asked for, \
+             and deletion is a separate, deliberate act (ADR-0018 §6). Its owner may, and so \
+             may a platform administrator. Every membership ends and every member's personal \
+             connections go with it — the tenant is removed last, because the catalogue holding \
+             those connections lives inside it. Refused while the organization still has a \
+             workspace or a project: work is not disposed of by answering a prompt.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("org_id", "Organization (tenant) id")
+        .handler(delete_organization)
+        .json_response_with_schema::<OrganizationDeletionDto>(
+            openapi,
+            StatusCode::OK,
+            "Deleted, and what went with it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     OperationBuilder::post("/studio-organizations/v1/organizations")

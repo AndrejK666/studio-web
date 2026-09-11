@@ -135,9 +135,29 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
             );
         })
         .ok()?;
+    let evictions = ctx
+        .client_hub()
+        .get_scoped::<dyn crate::user_profile::MembershipEvictor>(&ClientScope::gts_id(
+            crate::user_profile::IDENTITY_INSTANCE_ID,
+        ))
+        .inspect_err(|_| {
+            warn!(
+                "studio-organizations: studio-user is not available — organization deletion \
+                 answers 503 rather than leaving memberships behind a deleted tenant"
+            );
+        })
+        .ok()?;
+    let people = ctx
+        .client_hub()
+        .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+            crate::user_profile::IDENTITY_INSTANCE_ID,
+        ))
+        .ok()?;
     Some(Arc::new(OrganizationService::new(
         am,
         memberships,
+        evictions,
+        people,
         PLATFORM_ROOT_TENANT_ID,
     )))
 }
