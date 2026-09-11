@@ -3,19 +3,19 @@
 import { useMemo, useState } from "react";
 
 const TBL_CSS = `
-.systbl-search { width: 100%; max-width: 340px; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); outline: none; margin-bottom: 10px; }
-.systbl-search:focus { border-color: var(--accent, #2563eb); }
+.systbl-search { width: 100%; max-width: 340px; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); color: var(--foreground); outline: none; margin-bottom: 10px; }
+.systbl-search:focus { border-color: var(--primary); }
 .systbl-scroll { max-height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
-.systbl thead th { position: sticky; top: 0; z-index: 1; background: var(--card, var(--bg)); }
+.systbl thead th { position: sticky; top: 0; z-index: 1; background: var(--card, var(--background)); }
 .systbl tbody td { font-size: 13px; vertical-align: top; }
 .systbl-name { font-weight: 550; }
 .systbl-pills { display: flex; flex-wrap: wrap; gap: 4px; }
-.systbl-pill { font-size: 11px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); white-space: nowrap; }
-.systbl-mono { font-size: 11.5px; color: var(--muted); word-break: break-all; }
-.systbl-desc { color: var(--muted); max-width: 520px; }
-.systbl-muted { color: var(--muted); }
-.systbl-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
-.systbl-foot { margin-top: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.systbl-pill { font-size: 11px; padding: 1px 7px; border: 1px solid var(--border); border-radius: var(--radius-full); color: var(--muted-foreground); white-space: nowrap; }
+.systbl-mono { font-size: 11.5px; color: var(--muted-foreground); word-break: break-all; }
+.systbl-desc { color: var(--muted-foreground); max-width: 520px; }
+.systbl-muted { color: var(--muted-foreground); }
+.systbl-badge { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-full); border: 1px solid var(--border); color: var(--muted-foreground); white-space: nowrap; }
+.systbl-foot { margin-top: 8px; font-size: 12px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 `;
 
 // ── Gears ──────────────────────────────────────────────────────────────────

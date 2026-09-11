@@ -399,14 +399,22 @@ export function ActivityTiles({ activity }: { activity: GearActivity }) {
  * palette validator rather than by eye, once per theme.
  */
 export const ACTIVITY_CSS = `
+/* The one pair in this file that stays a literal colour rather than pointing at
+ * a product token: added/removed are diverging poles whose exact values were
+ * validated (lightness band, chroma floor, contrast, protanopia ΔE) as a pair,
+ * per the note above. --avatar-blue / --avatar-red are picked to be
+ * distinguishable among twelve, which is a different job, and swapping them in
+ * would silently discard that check.
+ *
+ * The theme switch, though, is the portal's: data-theme on <html>. Keying the
+ * dark pair off prefers-color-scheme meant an OS in dark mode repainted these
+ * two inside an otherwise light page. */
 .gcat {
   --act-added:#2a78d6; --act-removed:#e34948;
   --act-added-soft:color-mix(in srgb,var(--act-added) 30%,var(--studio-surface));
 }
-@media (prefers-color-scheme: dark) {
-  .gcat:not([data-theme="light"]) {
-    --act-added:#3987e5; --act-removed:#e66767;
-  }
+:root[data-theme="dark"] .gcat {
+  --act-added:#3987e5; --act-removed:#e66767;
 }
 
 .gcat .act-panel { min-width:0; border:1px solid var(--studio-line); border-radius:var(--studio-radius);
@@ -419,7 +427,7 @@ export const ACTIVITY_CSS = `
 
 .gcat .act-tiles { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
 .gcat .act-tile { flex:1 1 84px; min-width:0; background:var(--studio-surface-raised);
-  border-radius:6px; padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
+  border-radius:var(--radius-md); padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
 .gcat .act-label { font-size:10.5px; color:var(--studio-muted); }
 .gcat .act-value { font-size:17px; font-weight:600; letter-spacing:-.01em; }
 .gcat .ink-added { color:var(--act-added); }

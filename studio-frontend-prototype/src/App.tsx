@@ -2696,9 +2696,9 @@ function WorkspaceProjects({
                       gap: 8,
                       alignItems: "flex-start",
                       padding: "8px 10px",
-                      border: "1px solid var(--border,#e2e4e9)",
+                      border: "1px solid var(--border)",
                       borderRadius: 8,
-                      background: newKind === k ? "var(--accent-soft,#eef2ff)" : "transparent",
+                      background: newKind === k ? "var(--accent)" : "transparent",
                       cursor: "pointer",
                     }}
                   >
@@ -2744,9 +2744,9 @@ function WorkspaceProjects({
                           gap: 8,
                           alignItems: "flex-start",
                           padding: "6px 10px",
-                          border: "1px solid var(--border,#e2e4e9)",
+                          border: "1px solid var(--border)",
                           borderRadius: 8,
-                          background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                          background: on ? "var(--accent)" : "transparent",
                           cursor: prov !== null ? "default" : "pointer",
                           opacity: prov !== null && !on ? 0.5 : 1,
                         }}
@@ -2807,10 +2807,10 @@ function WorkspaceProjects({
                         gap: 6,
                         alignItems: "center",
                         padding: "4px 10px",
-                        border: "1px solid var(--border,#e2e4e9)",
+                        border: "1px solid var(--border)",
                         borderRadius: 999,
                         fontSize: 12,
-                        background: on ? "var(--accent-soft,#eef2ff)" : "transparent",
+                        background: on ? "var(--accent)" : "transparent",
                         cursor: s.required || prov !== null ? "default" : "pointer",
                         opacity: prov !== null && !on ? 0.5 : 1,
                       }}
@@ -2844,7 +2844,7 @@ function WorkspaceProjects({
             ) : (
               <div
                 style={{
-                  border: "1px solid var(--border,#e2e4e9)",
+                  border: "1px solid var(--border)",
                   borderRadius: 8,
                   padding: "12px 14px",
                   display: "flex",
@@ -2866,16 +2866,16 @@ function WorkspaceProjects({
                           : "○";
                   const color =
                     st.status === "done"
-                      ? "var(--ok,#15803d)"
+                      ? "var(--success)"
                       : st.status === "failed"
-                        ? "var(--danger,#b91c1c)"
+                        ? "var(--destructive)"
                         : "inherit";
                   return (
                     <div key={st.key} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
                       <span style={{ width: 14, color, fontWeight: 700 }}>{mark}</span>
                       <span style={{ fontSize: 13 }}>{st.label}</span>
                       {st.error && (
-                        <span style={{ fontSize: 12, color: "var(--danger,#b91c1c)" }}>
+                        <span style={{ fontSize: 12, color: "var(--destructive)" }}>
                           — {st.error}
                         </span>
                       )}

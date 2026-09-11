@@ -5,14 +5,24 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { api } from "./api";
 import { errText } from "./format";
 
-// Disambiguated 11-hue bucket palette (the model's own bucket colours collide
-// on a few pairs), spread across the wheel and legible on both grounds.
+// One bucket, one hue, taken from the product's categorical set (--avatar-*)
+// rather than from eleven hand-picked hexes: the same twelve colours the portal
+// gives avatars and kind badges, so a bucket dot here and a badge elsewhere
+// cannot disagree, and both flip with the theme.
+//
+// These are `var()` references, which is what the legend and the detail panel
+// want — they paint through the DOM. The canvas cannot read a variable, so it
+// resolves them once per theme; see `resolve` in the render effect below.
 const PALETTE: Record<string, string> = {
-  identity: "#34d399", graph: "#f472b6", governance: "#f59e0b", connectors: "#a78bfa",
-  content: "#22d3ee", planning: "#60a5fa", collaboration: "#fb7185", automation: "#fb923c",
-  ai: "#6366f1", "kit-management": "#a3e635", "system-primitives": "#94a3b8",
+  identity: "var(--avatar-mint)", graph: "var(--avatar-pink)",
+  governance: "var(--avatar-yellow)", connectors: "var(--avatar-purple)",
+  content: "var(--avatar-turquoise)", planning: "var(--avatar-blue)",
+  collaboration: "var(--avatar-red)", automation: "var(--avatar-orange)",
+  ai: "var(--avatar-magenta)", "kit-management": "var(--avatar-green)",
+  "system-primitives": "var(--avatar-grey)",
 };
-const colorOf = (b: string) => PALETTE[b] ?? "#94a3b8";
+const FALLBACK_BUCKET = "var(--avatar-grey)";
+const colorOf = (b: string) => PALETTE[b] ?? FALLBACK_BUCKET;
 
 interface GNode {
   key: string; id: string; name: string; bucket: string; ext: string | null;
@@ -120,18 +130,54 @@ export function DomainModelGraph({ token }: { token: string }) {
       ro.observe(wrapRef.current!);
       cleanup.push(() => ro.disconnect());
 
-      // theme tokens read from the wrapper's computed style
+      /* Canvas paints with colour strings, not with CSS variables, so every
+       * token the drawing uses has to be resolved to a concrete value first.
+       * getComputedStyle on a custom property is not enough — it hands back the
+       * property's *unresolved* text, so a `color-mix(...)` token would reach
+       * fillStyle verbatim. A probe element inside the graph resolves anything:
+       * assign the expression to its `color` and read the computed value back,
+       * which the engine has already reduced to rgb()/rgba(). */
+      const probe = document.createElement("span");
+      probe.style.display = "none";
+      wrapRef.current!.appendChild(probe);
+      const resolve = (value: string) => {
+        probe.style.color = value;
+        return getComputedStyle(probe).color;
+      };
+
       let TOK = { edge: "", edgeI: "", hi: "", text: "", bg: "" };
+      /** Bucket colours with their var() references already resolved. */
+      let PAINT: Record<string, string> = {};
+      let paintFallback = "";
+      const paintOf = (b: string) => PAINT[b] ?? paintFallback;
       const readTokens = () => {
-        const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-        TOK = dark
-          ? { edge: "rgba(205,220,245,0.10)", edgeI: "rgba(205,220,245,0.30)", hi: "rgba(122,167,255,0.95)", text: "#e7edf6", bg: "#0d1017" }
-          : { edge: "rgba(24,32,49,0.10)", edgeI: "rgba(24,32,49,0.28)", hi: "rgba(37,99,235,0.9)", text: "#182031", bg: "#ffffff" };
+        TOK = {
+          // The two edge weights are the foreground at two strengths — the
+          // graph has no edge colour of its own in either theme.
+          edge: resolve("color-mix(in oklab, var(--foreground) 10%, transparent)"),
+          edgeI: resolve("color-mix(in oklab, var(--foreground) 28%, transparent)"),
+          hi: resolve("var(--primary)"),
+          text: resolve("var(--foreground)"),
+          bg: resolve("var(--card)"),
+        };
+        PAINT = Object.fromEntries(
+          Object.entries(PALETTE).map(([bucket, value]) => [bucket, resolve(value)])
+        );
+        paintFallback = resolve(FALLBACK_BUCKET);
       };
       readTokens();
-      const mq = matchMedia("(prefers-color-scheme: dark)");
-      mq.addEventListener("change", readTokens);
-      cleanup.push(() => mq.removeEventListener("change", readTokens));
+      /* The portal's theme switch is `data-theme` on <html>; the OS preference
+       * is a different switch entirely. Watching the latter drew a dark graph
+       * inside a light portal whenever the machine was in dark mode. */
+      const themeObserver = new MutationObserver(readTokens);
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+      cleanup.push(() => {
+        themeObserver.disconnect();
+        probe.remove();
+      });
 
       const F = filterRef.current;
       let hover: GNode | null = null, selected: GNode | null = null, selectedEdge: GLink | null = null;
@@ -203,8 +249,8 @@ export function DomainModelGraph({ token }: { token: string }) {
           const r = radius(n) * (n === hl ? 1.35 : 1) * view.k * 0.9 + 0.5;
           ctx.globalAlpha = dim ? 0.14 : 1;
           ctx.beginPath(); ctx.arc(sx(n), sy(n), r, 0, Math.PI * 2);
-          ctx.fillStyle = colorOf(n.bucket); ctx.fill();
-          if (n.abstract) { ctx.setLineDash([2, 2]); ctx.lineWidth = 1.4; ctx.strokeStyle = colorOf(n.bucket); ctx.stroke(); ctx.setLineDash([]); }
+          ctx.fillStyle = paintOf(n.bucket); ctx.fill();
+          if (n.abstract) { ctx.setLineDash([2, 2]); ctx.lineWidth = 1.4; ctx.strokeStyle = paintOf(n.bucket); ctx.stroke(); ctx.setLineDash([]); }
           else if (n === hl) { ctx.lineWidth = 2; ctx.strokeStyle = TOK.text; ctx.stroke(); }
           if ((hl != null && near != null && near.has(n)) || (selectedEdge != null && (n === selectedEdge.s || n === selectedEdge.t)) || view.k > 1.7 || (q !== "" && !dim)) {
             ctx.globalAlpha = dim ? 0.2 : 1; ctx.fillStyle = TOK.text;
@@ -432,40 +478,37 @@ function RelList({ title, items, ctrl }: { title: string; items: GNode[]; ctrl: 
 }
 
 const DMG_CSS = `
-.dmg { position: relative; width: 100%; height: 70vh; min-height: 420px; border: 1px solid var(--dmg-border, #e3e8ef); border-radius: 12px; overflow: hidden; background: var(--dmg-bg, #f5f7fa); }
+/* Every colour here is a product token. The block that used to follow
+ * prefers-color-scheme is gone on purpose: the portal's theme is data-theme on
+ * <html>, and the tokens below already flip with it — keying off the OS meant a
+ * dark graph sitting inside a light portal on any machine set to dark. The
+ * floating panels are translucent over the canvas, so they mix --card with a
+ * little transparency rather than naming a second surface. */
+.dmg { position: relative; width: 100%; height: 70vh; min-height: 420px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--muted); }
 .dmg-canvas { display: block; width: 100%; height: 100%; }
-.dmg-bar { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font: 12px/1.4 system-ui, sans-serif; }
-.dmg-mode { display: inline-flex; border: 1px solid #d7deea; border-radius: 8px; overflow: hidden; }
-.dmg-mode button { font: inherit; border: none; background: rgba(255,255,255,.7); color: #64748b; padding: 5px 11px; cursor: pointer; }
-.dmg-mode button + button { border-left: 1px solid #d7deea; }
-.dmg-mode button.on { background: #2563eb; color: #fff; }
-.dmg-counts { color: #64748b; font-variant-numeric: tabular-nums; } .dmg-counts b { color: inherit; }
-.dmg-search { font: inherit; padding: 5px 9px; border: 1px solid #d7deea; border-radius: 8px; background: rgba(255,255,255,.8); outline: none; margin-left: auto; }
-.dmg-tog { display: inline-flex; gap: 5px; align-items: center; color: #64748b; user-select: none; cursor: pointer; }
-.dmg-legend { position: absolute; left: 10px; bottom: 10px; background: rgba(255,255,255,.9); border: 1px solid #e3e8ef; border-radius: 10px; padding: 7px; font: 12px/1.3 system-ui, sans-serif; max-height: 46%; overflow: auto; }
-.dmg-lrow { display: flex; gap: 7px; align-items: center; padding: 2px 4px; border-radius: 6px; cursor: pointer; } .dmg-lrow:hover { background: rgba(0,0,0,.04); } .dmg-lrow.off { opacity: .38; }
-.dmg-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; } .dmg-n { margin-left: auto; color: #94a3b8; font-variant-numeric: tabular-nums; }
-.dmg-detail { position: absolute; right: 10px; top: 44px; width: 270px; max-height: calc(100% - 60px); overflow: auto; background: #fff; border: 1px solid #e3e8ef; border-radius: 12px; padding: 14px; box-shadow: 0 8px 30px rgba(20,30,55,.12); font: 13px/1.5 system-ui, sans-serif; }
-.dmg-close { float: right; border: none; background: none; font-size: 18px; line-height: 1; color: #94a3b8; cursor: pointer; }
-.dmg-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; display: inline-flex; gap: 6px; align-items: center; }
-.dmg-detail h3 { margin: 5px 0 2px; font-size: 17px; } .dmg-id { font: 11.5px var(--mono, monospace); color: #94a3b8; word-break: break-all; }
-.dmg-arrow { color: #94a3b8; }
-.dmg-focus { margin-top: 10px; width: 100%; font: 12px system-ui, sans-serif; padding: 6px 10px; border: 1px solid #d7deea; border-radius: 8px; background: #f5f7fa; color: #334155; cursor: pointer; }
-.dmg-focus:hover { border-color: #2563eb; color: #2563eb; } .dmg-focus.on { background: #2563eb; border-color: #2563eb; color: #fff; }
-.dmg-stats { display: flex; gap: 7px; margin: 12px 0; } .dmg-stats > div { flex: 1; background: #f5f7fa; border: 1px solid #e3e8ef; border-radius: 9px; padding: 7px 9px; } .dmg-stats b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; } .dmg-stats span { font-size: 10px; text-transform: uppercase; color: #94a3b8; letter-spacing: .04em; }
-.dmg-sec { margin-top: 12px; } .dmg-sec h4 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
-.dmg-rel { padding: 2px 0; display: flex; gap: 6px; } .dmg-rel a { color: #2563eb; cursor: pointer; } .dmg-rel a:hover { text-decoration: underline; } .dmg-muted { color: #94a3b8; font-size: 11.5px; }
+.dmg-bar { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font: var(--text-meta-size)/1.4 var(--font-sans); }
+.dmg-mode { display: inline-flex; border: 1px solid var(--input); border-radius: var(--radius-lg); overflow: hidden; }
+.dmg-mode button { font: inherit; border: none; background: color-mix(in oklab, var(--card) 70%, transparent); color: var(--muted-foreground); padding: 5px 11px; cursor: pointer; }
+.dmg-mode button + button { border-left: 1px solid var(--input); }
+.dmg-mode button.on { background: var(--primary); color: var(--primary-foreground); }
+.dmg-counts { color: var(--muted-foreground); font-variant-numeric: tabular-nums; } .dmg-counts b { color: inherit; }
+.dmg-search { font: inherit; padding: 5px 9px; border: 1px solid var(--input); border-radius: var(--radius-lg); background: color-mix(in oklab, var(--card) 80%, transparent); color: var(--foreground); outline: none; margin-left: auto; }
+.dmg-tog { display: inline-flex; gap: 5px; align-items: center; color: var(--muted-foreground); user-select: none; cursor: pointer; }
+.dmg-legend { position: absolute; left: 10px; bottom: 10px; background: color-mix(in oklab, var(--card) 92%, transparent); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 7px; font: var(--text-meta-size)/1.3 var(--font-sans); color: var(--foreground); max-height: 46%; overflow: auto; }
+.dmg-lrow { display: flex; gap: 7px; align-items: center; padding: 2px 4px; border-radius: var(--radius-md); cursor: pointer; } .dmg-lrow:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); } .dmg-lrow.off { opacity: .38; }
+.dmg-dot { width: 10px; height: 10px; border-radius: var(--radius-sm); flex: none; } .dmg-n { margin-left: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.dmg-detail { position: absolute; right: 10px; top: 44px; width: 270px; max-height: calc(100% - 60px); overflow: auto; background: color-mix(in oklab, var(--card) 95%, transparent); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px; box-shadow: var(--shadow-lg); color: var(--foreground); font: var(--text-body-size)/1.5 var(--font-sans); }
+.dmg-close { float: right; border: none; background: none; font-size: 18px; line-height: 1; color: var(--muted-foreground); cursor: pointer; }
+.dmg-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); display: inline-flex; gap: 6px; align-items: center; }
+.dmg-detail h3 { margin: 5px 0 2px; font-size: 17px; } .dmg-id { font: 11.5px var(--font-mono); color: var(--muted-foreground); word-break: break-all; }
+.dmg-arrow { color: var(--muted-foreground); }
+.dmg-focus { margin-top: 10px; width: 100%; font: var(--text-meta-size) var(--font-sans); padding: 6px 10px; border: 1px solid var(--input); border-radius: var(--radius-lg); background: var(--muted); color: var(--foreground); cursor: pointer; }
+.dmg-focus:hover { border-color: var(--primary); color: var(--primary); } .dmg-focus.on { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.dmg-stats { display: flex; gap: 7px; margin: 12px 0; } .dmg-stats > div { flex: 1; background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 7px 9px; } .dmg-stats b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; } .dmg-stats span { font-size: 10px; text-transform: uppercase; color: var(--muted-foreground); letter-spacing: .04em; }
+.dmg-sec { margin-top: 12px; } .dmg-sec h4 { margin: 0 0 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-foreground); }
+.dmg-rel { padding: 2px 0; display: flex; gap: 6px; } .dmg-rel a { color: var(--link-foreground); cursor: pointer; } .dmg-rel a:hover { text-decoration: underline; } .dmg-muted { color: var(--muted-foreground); font-size: 11.5px; }
 .dmg-prop { display: grid; grid-template-columns: 88px 1fr; gap: 8px; padding: 2px 0; align-items: baseline; }
-.dmg-pk { color: #64748b; font: 11px var(--mono, monospace); overflow: hidden; text-overflow: ellipsis; }
-.dmg-pv { font: 12px var(--mono, monospace); word-break: break-word; }
-.dmg-msg { position: absolute; inset: 0; display: grid; place-items: center; color: #64748b; font: 13px system-ui, sans-serif; } .dmg-err { color: #dc2626; }
-@media (prefers-color-scheme: dark) {
-  .dmg { --dmg-border: #263040; --dmg-bg: #0d1017; }
-  .dmg-search { background: rgba(30,38,50,.8); border-color: #2b3646; color: #e7edf6; }
-  .dmg-legend, .dmg-detail { background: rgba(21,27,36,.95); border-color: #263040; color: #e7edf6; }
-  .dmg-lrow:hover { background: rgba(255,255,255,.06); }
-  .dmg-stats > div { background: #10151d; border-color: #263040; }
-  .dmg-focus { background: #10151d; border-color: #2b3646; color: #cdd7e5; }
-  .dmg-mode { border-color: #2b3646; } .dmg-mode button { background: rgba(30,38,50,.7); color: #93a1b5; } .dmg-mode button + button { border-color: #2b3646; }
-}
+.dmg-pk { color: var(--muted-foreground); font: 11px var(--font-mono); overflow: hidden; text-overflow: ellipsis; }
+.dmg-pv { font: var(--text-meta-size) var(--font-mono); word-break: break-word; }
+.dmg-msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font: var(--text-body-size) var(--font-sans); } .dmg-err { color: var(--destructive); }
 `;
