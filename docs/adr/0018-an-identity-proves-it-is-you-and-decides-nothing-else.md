@@ -298,6 +298,11 @@ piece of work, gated with the rest of membership management by §7.
 
 ## Follow-ups
 
+Numbered in the order they were built, which is the order each one unblocked the
+next. Eight of the nine have shipped; what each note says is what it turned out
+to mean once it was built, because several of them meant more than they looked
+like from here.
+
 1. **The tenant clamp comes from membership, not from the token.** Moved to the
    front by what building §2's create operation found: the PDP clamps every
    request to the subtree of `subject_tenant_id`, the home tenant of the
@@ -305,19 +310,72 @@ piece of work, gated with the rest of membership management by §7.
    cannot then read or administer it — the tenant and the membership are
    written and the owner grant fails with "tenant not found". Administrative
    rights were the visible half of the rule; the clamp is the other half, and
-   nothing self-service works until it moves.
+   nothing self-service works until it moves. **Shipped.**
 2. **One server-side "create my organization" operation**, idempotent, writing
    the tenant, the owner membership and the owner grant together. Built and
-   verified; it cannot be released to ordinary people before (1).
+   verified; it cannot be released to ordinary people before (1). **Shipped**,
+   and since reached from the portal: the no-organization screen offers creating
+   one and accepting an invitation waiting for you, and asks this installation
+   which of the two it allows before offering either. Accepting from that screen
+   needed one change the backend had not anticipated — the token is never
+   stored, so the portal had nothing to send, and an acceptance now takes the
+   invitation's id as well. It is no weaker: that listing exists because the
+   server matched the invitation to an address the person has proven.
 3. **Invitations** (ADR-0011 §6), shipped with it — and, like it, gated on (1).
+   **Shipped.**
 4. **Platform administrator as a root membership**, in the three migration steps
-   of §3 above.
-5. **`on_first_login` provisioning** for the single-company profile.
+   of §3 above. **Shipped.**
+5. **`on_first_login` provisioning** for the single-company profile. **Shipped.**
 6. **Leaving**, with the credential cleanup of §6 in the same operation, and
-   owner-to-owner transfer so the last owner can hand over.
+   owner-to-owner transfer so the last owner can hand over. **Shipped.** The
+   last-owner rule turned out to belong in one place rather than on the leaving
+   route: removal, demotion and later suspension can each end the last
+   ownership, so all of them ask one question about the room as it would be
+   afterwards. `remove_membership` was deleted rather than left beside it — a
+   second door that skipped the rule and left the credentials behind is what the
+   piece existed to close. The other end of §6.4 followed: deleting an
+   organization undoes creating one in reverse — every membership and every
+   member's personal connections first, the tenant last, because the catalogue
+   holding those connections lives inside it.
 7. **Retire the `tenant_id` attribute** once §3 lands — the last thing keeping
-   ADR-0016's follow-up open.
+   ADR-0016's follow-up open. **Shipped.** Two gates read the token, and with
+   both readings gone the compiler found that the platform-root constant in each
+   file had no other user, which is the cleanest evidence the step was complete.
+   Removing a signal can lock people out, so every profile now names its
+   administrator: an installation that names nobody has none, and says so at
+   boot. The token's tenant still bounds what a request may *reach* — that is
+   context, not authority, and it is what a service account has instead of a
+   membership.
 8. **`membership.status`** for suspension (ADR-0011 §2), when membership
-   management ships.
+   management ships. **Shipped.** `active | suspended`; the other two states
+   ADR-0011 listed are covered elsewhere — `invited` is a row in the invitation
+   table, and `revoked` is the absence of the membership. A suspended membership
+   grants nothing while it stands and still records where somebody belongs and
+   in what role, so a suspended owner is not an owner who can act, and the rule
+   from (6) refuses a suspension exactly where it would refuse a removal.
 9. **Enforcement** — ADR-0011 §7 is still unmet, and the membership-management
-   UI this ADR describes is exactly what it gates.
+   UI this ADR describes is exactly what it gates. **Open, and deliberately
+   not attempted with the rest.** Everything above is enforced today by the
+   gears themselves: an organization write needs an owner or a platform
+   administrator, membership decides the tenant clamp, and a suspended
+   membership reaches nothing. What is still missing is the *policy* half —
+   `privilege_for` maps no resource type, so the Studio PDP answers every
+   request with the tenant clamp and the grant evaluation beside it is
+   unreachable. Turning that on means naming the privileges, the roles that
+   carry them and the grants that hold them, and getting any of it wrong denies
+   requests that work today. It is a piece of work with its own risk and its own
+   ADR, not a coda to this one.
+
+## What is left after all of this
+
+Two things, both named above and neither blocking what shipped:
+
+- **(9)**, the policy half of enforcement.
+- **The clamp still admits the platform root from a token.** A service account
+  has a tenant and no memberships, and creating an organization happens under
+  the root before any membership exists, so the root cannot simply be dropped
+  from what a token may reach. It grants nothing administrative any more — (7)
+  saw to that — but somebody whose identity provider puts them in the root can
+  still *see* the tenant tree. Closing it means telling a person from a service
+  apart, which is a question about the platform's subject model rather than
+  about Studio's.
