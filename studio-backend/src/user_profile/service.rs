@@ -51,6 +51,16 @@ pub struct Eviction {
     pub connections: usize,
 }
 
+/// How an acceptance names the invitation it is taking.
+#[derive(Debug, Clone, Copy)]
+pub enum Offered<'a> {
+    /// The token from the invitation message. Proof in itself.
+    Token(&'a str),
+    /// The id from this person's own waiting list, which the server built by
+    /// matching invitations to addresses they have proven.
+    Id(&'a str),
+}
+
 /// `membership.source` for a row the installation seeded from configuration.
 const SOURCE_BOOTSTRAP: &str = "bootstrap";
 
@@ -953,11 +963,21 @@ impl IdentityService {
     pub async fn accept_invitation(
         &self,
         user_id: &str,
-        token: &str,
+        offered: &Offered<'_>,
         verified_emails: &[String],
     ) -> Result<Result<MembershipView, invitations::Refusal>> {
-        let digest = invitations::digest_of(token);
-        let found = self.store.find_invitation_by_digest(&digest).await?;
+        let found = match offered {
+            Offered::Token(token) => {
+                let digest = invitations::digest_of(token);
+                self.store.find_invitation_by_digest(&digest).await?
+            }
+            // No weaker: the same verified-address check decides both, and the
+            // id was only ever learned from a listing that had already applied
+            // it. What the token adds is a way in for somebody the listing
+            // cannot reach — an address the provider vouches for but this
+            // person has not signed in with yet.
+            Offered::Id(id) => self.store.find_invitation_by_id(id).await?,
+        };
         let pending = found.as_ref().map(|r| invitations::Pending {
             email: r.email.clone(),
             expired: r.expires_at_epoch_ms <= now_ms(),
@@ -1386,6 +1406,9 @@ mod idp_channel_tests {
             unimplemented!("not on the ceremony's path")
         }
         async fn insert_invitation(&self, _i: &InvitationRecord) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn find_invitation_by_id(&self, _id: &str) -> Result<Option<InvitationRecord>> {
             unimplemented!("not on the ceremony's path")
         }
         async fn find_invitation_by_digest(&self, _d: &str) -> Result<Option<InvitationRecord>> {

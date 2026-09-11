@@ -70,6 +70,12 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// and "used" mean to a caller, and a store that hid them would make those
     /// two indistinguishable from "no such invitation".
     async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>>;
+    /// The invitation with this id, whatever state it is in.
+    ///
+    /// The other way in, for a person the server has already matched to an
+    /// invitation by a verified address — they never saw the token, and the
+    /// listing that showed it to them proved as much as the token would.
+    async fn find_invitation_by_id(&self, id: &str) -> Result<Option<InvitationRecord>>;
     async fn invitations_of_org(&self, org_id: &str) -> Result<Vec<InvitationRecord>>;
     /// Pending, unexpired invitations for one address.
     async fn invitations_for_email(&self, email: &str) -> Result<Vec<InvitationRecord>>;
@@ -501,6 +507,20 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn find_invitation_by_id(&self, id: &str) -> Result<Option<InvitationRecord>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::invitation::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::invitation::Column::Id.eq(parse_uuid(id)?)))
+            .one(&conn)
+            .await?
+            .map(invitation_to_view))
     }
 
     async fn find_invitation_by_digest(&self, digest: &str) -> Result<Option<InvitationRecord>> {

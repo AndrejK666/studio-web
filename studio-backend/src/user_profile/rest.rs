@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::alias_policy::Confidence;
 use super::leaving;
 use super::service::{
-    AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, ProfilePatch,
+    AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, Offered, ProfilePatch,
     UserProfile,
 };
 
@@ -230,7 +230,17 @@ pub struct InvitationListDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct AcceptInvitationRequest {
-    pub token: String,
+    /// The token from the invitation message. Send this or `invitation_id`.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// The id of one of the invitations `GET /me/invitations` listed for you.
+    ///
+    /// That listing is built by matching invitations to addresses this person
+    /// has proven, so an id from it carries the same proof the token does —
+    /// which is what makes accepting from the portal possible at all, since the
+    /// token is never stored and cannot be shown again.
+    #[serde(default)]
+    pub invitation_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -841,8 +851,17 @@ async fn accept_invitation(
     let service = configured(service)?;
     let user_id = caller_user_id(&ctx, &service).await?;
     let emails = service.verified_emails(&user_id).await.map_err(internal)?;
+    let offered = match (req.token.as_deref(), req.invitation_id.as_deref()) {
+        (Some(token), None) => Offered::Token(token),
+        (None, Some(id)) => Offered::Id(id),
+        _ => {
+            return Err(UserProfileError::invalid_argument()
+                .with_constraint("send exactly one of token or invitation_id")
+                .create());
+        }
+    };
     match service
-        .accept_invitation(&user_id, &req.token, &emails)
+        .accept_invitation(&user_id, &offered, &emails)
         .await
         .map_err(internal)?
     {
