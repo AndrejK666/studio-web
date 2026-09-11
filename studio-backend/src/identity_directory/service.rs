@@ -105,6 +105,10 @@ struct KeycloakUser {
     #[serde(default)]
     username: String,
     email: Option<String>,
+    /// Whether the realm has verified that address. An unverified address is
+    /// a claim by whoever typed it, and nothing may be decided from it.
+    #[serde(default)]
+    email_verified: bool,
     first_name: Option<String>,
     last_name: Option<String>,
     created_timestamp: Option<i64>,
@@ -365,6 +369,41 @@ impl IdentityDirectoryService {
                 user_name: identity.user_name,
             })
             .collect())
+    }
+
+    /// The address the realm has verified for `subject`, if any.
+    ///
+    /// `None` when the user has no address, when the realm has not verified it,
+    /// or when the user cannot be read. All three mean the same thing to a
+    /// caller: there is nothing here that may be decided from.
+    ///
+    /// This exists because the profile e-mail cannot serve: it is self-service
+    /// (`POST /studio-user/v1/me`), so deciding anything from it would let
+    /// somebody claim an address by typing it. An invitation matched on a
+    /// self-declared address is an invitation anybody can take.
+    pub async fn verified_email(&self, subject: &str) -> Result<Option<String>> {
+        let token = self.admin_token().await?;
+        let url = format!(
+            "{}/admin/realms/{}/users/{}",
+            self.admin_base_url, self.realm, subject
+        );
+        let user = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("read the realm user for its verified address")?
+            .error_for_status()
+            .context("Keycloak rejected the user read")?
+            .json::<KeycloakUser>()
+            .await
+            .context("decode the realm user")?;
+        Ok(user
+            .email
+            .filter(|_| user.email_verified)
+            .map(|e| e.trim().to_lowercase())
+            .filter(|e| !e.is_empty()))
     }
 
     /// The external accounts brokered onto `subject`, for a caller that already

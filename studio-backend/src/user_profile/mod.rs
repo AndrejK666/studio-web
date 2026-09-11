@@ -14,6 +14,7 @@
 
 mod alias_policy;
 mod entity;
+mod invitations;
 mod migrations;
 mod rest;
 mod service;
@@ -311,7 +312,7 @@ impl RestApiCapability for StudioUserGear {
             // answers 400 only if neither channel is there.
             let federated = ctx
                 .client_hub()
-                .get_scoped::<dyn crate::identity_directory::FederatedIdentityReader>(
+                .get_scoped::<dyn crate::identity_directory::IdpDirectoryReader>(
                     &ClientScope::gts_id(crate::identity_directory::IDP_DIRECTORY_INSTANCE_ID),
                 )
                 .ok();
