@@ -227,6 +227,167 @@ tsx 255880 · js 223559 · yaml 196383 · go 82550 · mjs 72902
 Churn counts generated files and lockfiles exactly like hand-written code, so
 read this as "where the bytes went", not as effort.
 
+### Pull requests, by state and by gear
+
+A PR belongs to a repository, so there is no `component` dimension to group it
+by. But a PR touches files, and files have paths — so a PR can be **attributed**
+to every gear it touched. The chain is:
+
+```text
+silver.class_git_pull_requests          state, author, branches, timestamps
+  └─ pr_id ─► class_git_pull_requests_commits ─► commit_hash
+                                                    └─► insight.git_commit_file_changes ─► file_path
+```
+
+Three things have to be right or the answer is quietly wrong.
+
+**Deduplicate by `_version`.** The PR table keeps every ingested version of a
+row — 2 702 rows for 2 111 distinct PRs — and a row carries the state it had
+when it was ingested. So a PR that was opened and later merged appears both as
+OPEN and as MERGED, and a bare `GROUP BY state` reports it twice. Collapsing to
+the current state first (`argMax(col, _version) … GROUP BY pr_id`) is what makes
+the three counts add up to the PR count instead of exceeding it by a quarter.
+
+**Join on the merge commit *and* the PR's commits.** Which one carries the files
+depends on how the repository merges, and getting this wrong silently drops most
+of a repo:
+
+| repository | merges via | `merge_commit_hash` has files | PR commits have files |
+| --- | --- | --- | --- |
+| `gears-frontx` | squash | 70 of 75 merged | 4 of 75 |
+| `gears-rust` | merge commit | 0 of 314 | 309 of 314 |
+
+A squash leaves one new commit that the PR's own commits never became; a merge
+commit has an empty diff of its own. `UNION DISTINCT` of the two covers both.
+
+**Unmerged PRs are only partly attributable**, and that is structural rather
+than a gap to fix. `git_commit_file_changes` is built from the repository's
+history; a closed-without-merge PR's commits usually never entered it:
+
+| current state | PRs | attributable to files | |
+| --- | --- | --- | --- |
+| MERGED | 1 428 | 1 391 | **97%** |
+| CLOSED | 560 | 164 | 29% |
+| OPEN | 123 | 57 | 46% |
+
+So: PR-per-gear is dependable for what shipped, indicative for what was
+abandoned. Say which one a dashboard means.
+
+#### The query
+
+```sql
+WITH prs AS (
+  SELECT pr_id,
+         argMax(state, _version)             AS state,
+         argMax(merge_commit_hash, _version)  AS merge_sha,
+         argMax(created_on, _version)         AS created_on,
+         argMax(closed_on, _version)          AS closed_on
+  FROM silver.class_git_pull_requests
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  GROUP BY pr_id
+),
+pr_commit AS (
+  SELECT pr_id, commit_hash FROM silver.class_git_pull_requests_commits
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  UNION DISTINCT
+  SELECT pr_id, merge_sha FROM prs WHERE merge_sha != ''
+),
+touched AS (
+  SELECT DISTINCT pc.pr_id AS pr_id,
+         arrayJoin(arrayFilter(g -> has(splitByChar('/', f.file_path), g),
+           ['api-gateway','credstore','chat-engine','mini-chat','file-storage',
+            'types-registry','account-management','graph-storage'])) AS gear
+  FROM pr_commit AS pc
+  INNER JOIN insight.git_commit_file_changes AS f ON f.commit_hash = pc.commit_hash
+  WHERE f.project_key = 'constructorfabric' AND f.repo_slug = 'gears-rust'
+)
+SELECT t.gear AS gear,
+       countIf(p.state = 'OPEN')   AS open,
+       countIf(p.state = 'MERGED') AS merged,
+       countIf(p.state = 'CLOSED') AS closed,
+       count() AS total,
+       round(avgIf(dateDiff('hour', p.created_on, p.closed_on), p.state = 'MERGED'), 1) AS merged_cycle_h
+FROM touched AS t INNER JOIN prs AS p ON p.pr_id = t.pr_id
+GROUP BY gear ORDER BY total DESC
+```
+
+```text
+gear                open  merged  closed  total  merged_cycle_h
+account-management     1      53       4     58           110.9
+api-gateway            1      36      15     52           149.7
+mini-chat              1      37      13     51           140.1
+credstore              1      35      13     49           168.0
+types-registry         1      33      10     44            96.2
+chat-engine            1      35       2     38           100.2
+file-storage           1      23       0     24           121.0
+graph-storage          0       2       0      2           274.5
+```
+
+`has(splitByChar('/', file_path), g)` is the same whole-segment match
+`/components/metrics` uses, so a gear is found without anybody maintaining a
+crate → directory map, and `credstore` does not swallow `credstore-sdk`.
+
+**A PR that touches three gears counts in all three.** The column does not sum
+to the repository's PR count, and it should not: the question is "how much pull
+request traffic passes through this gear", not "how were the PRs divided up".
+
+Grouping by path depth instead — `arrayStringConcat(arraySlice(splitByChar('/',
+f.file_path), 1, 3), '/')` — works too, but on a Rust workspace the top of that
+ranking is `Cargo.lock`, `Cargo.toml` and `CHANGELOG.md`: the root files nearly
+every PR touches. Naming the gears avoids it.
+
+#### Review load, the same way
+
+`insight.git_review_events` carries `pr_id`, so the same `touched` CTE answers
+who reviewed what:
+
+```sql
+WITH prs AS (
+  SELECT pr_id, argMax(merge_commit_hash, _version) AS merge_sha
+  FROM silver.class_git_pull_requests
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  GROUP BY pr_id
+),
+pr_commit AS (
+  SELECT pr_id, commit_hash FROM silver.class_git_pull_requests_commits
+  WHERE project_key = 'constructorfabric' AND repo_slug = 'gears-rust'
+  UNION DISTINCT
+  SELECT pr_id, merge_sha FROM prs WHERE merge_sha != ''
+),
+touched AS (
+  SELECT DISTINCT pc.pr_id AS pr_id,
+         arrayJoin(arrayFilter(g -> has(splitByChar('/', f.file_path), g),
+           ['api-gateway','credstore','chat-engine','mini-chat','file-storage',
+            'types-registry','account-management'])) AS gear
+  FROM pr_commit AS pc
+  INNER JOIN insight.git_commit_file_changes AS f ON f.commit_hash = pc.commit_hash
+  WHERE f.project_key = 'constructorfabric' AND f.repo_slug = 'gears-rust'
+)
+SELECT t.gear AS gear,
+       countIf(e.event_kind = 'review')  AS reviews,
+       countIf(e.event_kind = 'comment') AS comments,
+       countDistinct(e.actor_person_id)  AS reviewers
+FROM touched AS t
+INNER JOIN insight.git_review_events AS e ON e.pr_id = t.pr_id
+GROUP BY gear ORDER BY reviews DESC
+```
+
+```text
+gear                reviews  comments  reviewers
+mini-chat               595       804         18
+account-management      583       831         22
+credstore               555       711         19
+chat-engine             507       684         12
+file-storage            467       648         13
+types-registry          333       511         13
+api-gateway             304       550         14
+```
+
+**The PR window is shorter than the git window.** Pull requests start
+2026-05-26 in this warehouse while commits go back to 2025-12, so a 12-month
+PR chart is mostly empty by construction. Check `min(created_on)` before
+choosing a range.
+
 ### Everything a component did
 
 That one is a typed operation rather than a statement — see
@@ -498,10 +659,13 @@ query upstream, so omit it when no chart is being drawn.
 
 Two limits worth knowing before building a dashboard on this:
 
-* **No PR or CI metrics at this granularity.** Cycle time, review latency and
-  pipeline outcomes exist only per repository, because that is the entity a PR
-  and a pipeline run belong to. Read those from `git_metric_observations` /
-  `ci_metric_observations` through `/query` with a `repository` dimension filter.
+* **This operation returns no PR or CI metrics.** Neither exists as a
+  dimension below the repository, because that is the entity a PR and a
+  pipeline run belong to. A PR can still be *attributed* to the gears it
+  touched — see [Pull requests, by state and by gear](#pull-requests-by-state-and-by-gear)
+  for the join and its coverage — but that is a statement through `/query`,
+  not this endpoint. CI has no equivalent: a pipeline run names a commit, not a
+  file, so there is nothing to attribute it with.
 * **Churn is not delivery.** `lines_added` counts generated files, vendored
   code and lockfiles exactly like hand-written logic. Declare components with
   prefixes that exclude what you do not mean, rather than reading the raw
@@ -555,5 +719,5 @@ renamed table, a dropped measure, a tightened upstream. A doc that prints
 answers has to be executable, or it rots without saying so.
 
 ```text
-16 passed, 0 failed
+18 passed, 0 failed
 ```

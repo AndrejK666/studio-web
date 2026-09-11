@@ -13,10 +13,12 @@ import { errText } from "./format";
  * crate to directory. One request per repository answers the whole list.
  *
  * What arrives is deliberately narrow — commits, files, lines, authors, and a
- * weekly series. Cycle time, review latency and CI outcomes are not here: those
- * belong to a pull request and a pipeline run, which are repository-level
- * entities, and inventing a per-gear number for them would be a lie with a
- * chart around it.
+ * weekly series. Pull requests are not in it: a PR belongs to a repository, and
+ * attributing one to the gears it touched is a different question with its own
+ * coverage caveats (it works for ~98% of merged PRs and ~28% of closed ones —
+ * see `docs/insight-quickstart.md`). CI is not in it either, and cannot be: a
+ * pipeline run names a commit, not a file, so there is nothing to attribute it
+ * with.
  * ==========================================================================*/
 
 /** One gear's numbers over the selected window. */
