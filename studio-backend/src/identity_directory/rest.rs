@@ -60,6 +60,24 @@ pub struct PlatformIdentityListDto {
     pub truncated: bool,
 }
 
+/// The membership recorder, or `None` when studio-user is inert (no database).
+///
+/// Assignment still works without it — the Keycloak attribute, the group and the
+/// owner grant are all written — but the Studio membership record is skipped and
+/// the backfill route reports that instead of pretending to run.
+#[derive(Clone)]
+pub struct Memberships(pub Option<Arc<dyn crate::user_profile::AssignmentRecorder>>);
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BackfillReportDto {
+    /// Identities whose membership was written or refreshed.
+    pub recorded: i64,
+    /// Identities the IdP calls assigned but whose record could not be written;
+    /// each one is logged with its cause.
+    pub failed: i64,
+}
+
 fn to_dto(identity: DirectoryIdentity) -> PlatformIdentityDto {
     PlatformIdentityDto {
         id: identity.id,
@@ -114,6 +132,7 @@ async fn list_identities(
 async fn assign_identity(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityDirectoryService>>>,
+    Extension(memberships): Extension<Memberships>,
     Path(identity_id): Path<String>,
     Json(req): Json<AssignIdentityRequest>,
 ) -> ApiResult<StatusCode> {
@@ -125,7 +144,13 @@ async fn assign_identity(
             .create());
     }
     configured_service(service)?
-        .assign(&ctx, &identity_id, req.tenant_id, &role)
+        .assign(
+            &ctx,
+            &identity_id,
+            req.tenant_id,
+            &role,
+            memberships.0.as_deref(),
+        )
         .await
         .map_err(|error| {
             CanonicalError::internal(format!("identity assignment failed: {error:#}")).create()
@@ -133,10 +158,39 @@ async fn assign_identity(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn backfill_memberships(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityDirectoryService>>>,
+    Extension(memberships): Extension<Memberships>,
+) -> ApiResult<JsonBody<BackfillReportDto>> {
+    require_platform_admin(&ctx)?;
+    let service = configured_service(service)?;
+    let Some(recorder) = memberships.0.as_deref() else {
+        return Err(CanonicalError::service_unavailable()
+            .with_detail(
+                "studio-user has no database configured, so there is nowhere to record \
+                 memberships",
+            )
+            .create());
+    };
+    let (recorded, failed) =
+        service
+            .backfill_memberships(&ctx, recorder)
+            .await
+            .map_err(|error| {
+                CanonicalError::internal(format!("membership backfill failed: {error:#}")).create()
+            })?;
+    Ok(Json(BackfillReportDto {
+        recorded: recorded as i64,
+        failed: failed as i64,
+    }))
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<IdentityDirectoryService>>,
+    memberships: Memberships,
 ) -> Router {
     let router = OperationBuilder::get("/studio-identity/v1/users")
         .operation_id("studio_identity.list_users")
@@ -160,10 +214,9 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_500(openapi)
-        .register(router, openapi)
-        .layer(Extension(service.clone()));
+        .register(router, openapi);
 
-    OperationBuilder::post("/studio-identity/v1/users/{identity_id}/assignment")
+    let router = OperationBuilder::post("/studio-identity/v1/users/{identity_id}/assignment")
         .operation_id("studio_identity.assign_user")
         .summary("Assign an identity to an organization")
         .description(
@@ -180,6 +233,29 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::post("/studio-identity/v1/memberships/backfill")
+        .operation_id("studio_identity.backfill_memberships")
+        .summary("Record Studio memberships for identities the IdP already calls assigned")
+        .description(
+            "Platform-admin-only migration action (ADR-0011 Phase 4). Every identity carrying a \
+             home-tenant attribute that names an existing organization gets a Studio membership \
+             recorded for it, so organization access can be read from membership rather than \
+             from the attribute. Idempotent: re-running refreshes the rows it already wrote.",
+        )
+        .tag("StudioIdentity")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(backfill_memberships)
+        .json_response_with_schema::<BackfillReportDto>(openapi, StatusCode::OK, "Backfill report")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
         .register(router, openapi)
+        // Applied once at the end: `Router::layer` covers every route added
+        // before the call, which is how the service extension above already
+        // reaches both of the earlier routes.
         .layer(Extension(service))
+        .layer(Extension(memberships))
 }

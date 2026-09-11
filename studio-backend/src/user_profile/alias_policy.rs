@@ -176,6 +176,44 @@ pub fn displaced_a_proof(held: Option<&Held>, writer: &str) -> bool {
     held.is_some_and(|h| h.user_id != writer && h.confidence == Confidence::Confirmed)
 }
 
+/// Whose proof of control a personal connection carries.
+///
+/// The confirmation ceremony reads `(created_by, account)` off a connection as
+/// standing proof that its creator controls that account. `created_by` records
+/// the *sign-in method* that wrote the row, so the comparison that matters is
+/// between people, not between subjects: a person who signed up with e-mail and
+/// later added GitHub is one person with two logins, and a proof they left
+/// behind under either one is still theirs (ADR-0014).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofOwner {
+    /// The caller's own proof — record it.
+    Caller,
+    /// Somebody else's. Theirs to record, not the caller's to take.
+    AnotherPerson,
+    /// There is a proof, but nothing says whose. Guessing is the failure this
+    /// whole flow exists to avoid, so it is skipped.
+    Unknown,
+}
+
+/// Whose proof is the connection written by `created_by`?
+///
+/// `creator` is the person behind that sign-in method — `None` when no `login`
+/// row knows it, which is the case for a row written before the record named
+/// its creator, and for a subject that has never reached Studio.
+#[must_use]
+pub fn proof_owner(created_by: &str, creator: Option<&str>, caller: &str) -> ProofOwner {
+    if created_by.trim().is_empty() {
+        return ProofOwner::Unknown;
+    }
+    match creator {
+        Some(person) if person == caller => ProofOwner::Caller,
+        Some(_) => ProofOwner::AnotherPerson,
+        // A sign-in method no `login` row knows cannot be the caller's: the
+        // caller resolved to a person to get here, so their own login exists.
+        None => ProofOwner::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +226,37 @@ mod tests {
             user_id: user.to_owned(),
             confidence,
         }
+    }
+
+    const SUBJECT_A: &str = "kc-subject-a";
+    const SUBJECT_B: &str = "kc-subject-b";
+
+    #[test]
+    fn a_proof_left_under_another_of_your_own_logins_is_still_yours() {
+        // The point of the whole design: ALICE created the connection while
+        // signed in as SUBJECT_A and is now signed in as SUBJECT_B. Both
+        // logins resolve to ALICE, so the proof is hers under either.
+        assert_eq!(
+            proof_owner(SUBJECT_A, Some(ALICE), ALICE),
+            ProofOwner::Caller
+        );
+    }
+
+    #[test]
+    fn somebody_elses_proof_is_theirs_to_record() {
+        assert_eq!(
+            proof_owner(SUBJECT_B, Some(BOB), ALICE),
+            ProofOwner::AnotherPerson
+        );
+    }
+
+    #[test]
+    fn a_proof_with_nobody_behind_it_is_skipped_rather_than_guessed_at() {
+        // No creator recorded at all, and a creator no `login` row knows: both
+        // are proofs nothing attributes, and neither may fall to the caller.
+        assert_eq!(proof_owner("", None, ALICE), ProofOwner::Unknown);
+        assert_eq!(proof_owner("   ", Some(ALICE), ALICE), ProofOwner::Unknown);
+        assert_eq!(proof_owner(SUBJECT_A, None, ALICE), ProofOwner::Unknown);
     }
 
     #[test]

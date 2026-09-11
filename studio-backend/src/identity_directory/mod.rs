@@ -9,16 +9,47 @@
 mod rest;
 mod service;
 
+pub use service::FederatedAccount;
+
 use std::sync::{Arc, OnceLock};
 
 use account_management_sdk::AccountManagementClient;
 use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
+use toolkit::client_hub::ClientScope;
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
 use service::IdentityDirectoryService;
+
+/// ClientHub key under which the federated-identity reader is published.
+pub const IDP_DIRECTORY_INSTANCE_ID: &str = "cf.studio._.idp_directory.v1~";
+
+/// Read the external accounts the IdP has brokered onto one of its users.
+///
+/// A second proof-of-control channel for identity attribution (ADR-0012
+/// follow-up 2): a person who signed in through GitHub has already completed
+/// that provider's authorization flow, and the provider named the account. The
+/// identity gear turns that into a `confirmed` alias without the person having
+/// to produce a personal access token.
+///
+/// Deliberately one subject at a time and read-only. The identity gear calls it
+/// about the person signed in right now; a bulk or arbitrary-subject read would
+/// make it an account-enumeration surface, and nothing needs one.
+#[async_trait]
+pub trait FederatedIdentityReader: Send + Sync + 'static {
+    /// The external accounts brokered onto `subject`, or an empty list when the
+    /// realm user has no brokered login.
+    async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>>;
+}
+
+#[async_trait]
+impl FederatedIdentityReader for IdentityDirectoryService {
+    async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>> {
+        IdentityDirectoryService::federated_accounts(self, subject).await
+    }
+}
 
 #[toolkit::gear(
     name = "studio-identity-directory",
@@ -53,6 +84,20 @@ impl Gear for IdentityDirectoryGear {
             info!("studio-identity-directory: Keycloak-backed directory configured");
             Some(Arc::new(service))
         };
+        // Published in `init` so a consumer resolving it in its own REST phase
+        // cannot lose a race: every gear's `init` runs before any gear's
+        // `register_rest`. Absent when Keycloak admin is unconfigured, which
+        // leaves the identity gear's IdP proof channel unavailable and its
+        // connector channel untouched.
+        if let Some(svc) = service.clone() {
+            let reader: Arc<dyn FederatedIdentityReader> = svc;
+            ctx.client_hub()
+                .register_scoped::<dyn FederatedIdentityReader>(
+                    ClientScope::gts_id(IDP_DIRECTORY_INSTANCE_ID),
+                    reader,
+                );
+        }
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-identity-directory already initialized"))?;
@@ -64,7 +109,7 @@ impl Gear for IdentityDirectoryGear {
 impl toolkit::contracts::RestApiCapability for IdentityDirectoryGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
@@ -73,6 +118,25 @@ impl toolkit::contracts::RestApiCapability for IdentityDirectoryGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-identity-directory not initialized"))?
             .clone();
-        Ok(rest::register_routes(router, openapi, service))
+
+        // Where an assignment gets recorded as Studio membership. Resolved in
+        // the REST phase, which runs after every gear's `init`, so studio-user
+        // has certainly published it by now — and absent when that gear is
+        // inert, in which case assignment still writes the IdP representations
+        // and the backfill route answers 503.
+        let memberships = rest::Memberships(
+            ctx.client_hub()
+                .get_scoped::<dyn crate::user_profile::AssignmentRecorder>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ))
+                .inspect_err(|_| {
+                    warn!(
+                        "studio-identity-directory: studio-user assignment recorder not \
+                         registered — assignments will not be recorded as Studio memberships"
+                    );
+                })
+                .ok(),
+        );
+        Ok(rest::register_routes(router, openapi, service, memberships))
     }
 }

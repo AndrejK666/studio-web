@@ -42,3 +42,29 @@ export const TENANT_TYPES = {
   organization: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~',
   workspace: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~',
 } as const;
+
+/**
+ * The platform root tenant. Its type is `cf.core.am.platform.v1~`, not
+ * organization, so it never appears in the context switcher itself — but a
+ * person whose home tenant IS the root is a platform administrator, and that is
+ * what the shell uses it for.
+ */
+export const PLATFORM_ROOT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
+/**
+ * One organization membership of the signed-in person
+ * (GET /cf/studio-user/v1/me/memberships).
+ *
+ * `role` is the role held in THAT organization — role is a property of
+ * membership, never of the person (ADR-0006).
+ */
+export interface Membership {
+  user_id: string;
+  org_id: string;
+  role: string;
+  source: string;
+}
+
+export interface MembershipList {
+  items: Membership[];
+}

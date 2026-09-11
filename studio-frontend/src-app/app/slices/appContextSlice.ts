@@ -37,6 +37,15 @@ export interface ContextEntity {
 export type ContextScope = 'org' | 'project';
 export type WorkspacesStatus = 'pending' | 'ready' | 'failed';
 
+/**
+ * Whether this person may act in an organization at all.
+ *
+ * `unassigned` is a supported, expected state, not an error: an authenticated
+ * person with no organization membership has to see an onboarding message rather
+ * than an empty switcher or a missing-tenant failure (ADR-0011 §3).
+ */
+export type AccessState = 'loading' | 'ready' | 'unassigned';
+
 export interface AppContextState {
   scope: ContextScope;
   org: ContextEntity | null;
@@ -48,6 +57,7 @@ export interface AppContextState {
   project: ContextEntity | null;
   projects: ContextEntity[];
   loading: boolean;
+  access: AccessState;
 }
 
 const SLICE_KEY = 'app/context' as const;
@@ -63,10 +73,12 @@ const initialState: AppContextState = {
   project: null,
   projects: [],
   loading: false,
+  access: 'loading',
 };
 
 const {
   slice,
+  setContextAccess,
   setContextLoading,
   setContextOrganizations,
   setContextOrg,
@@ -84,6 +96,10 @@ const {
   reducers: {
     setContextLoading: (state: AppContextState, action: ReducerPayload<boolean>) => {
       state.loading = action.payload;
+    },
+
+    setContextAccess: (state: AppContextState, action: ReducerPayload<AccessState>) => {
+      state.access = action.payload;
     },
 
     /** The resolved organization list and which of them is current. */
@@ -181,6 +197,7 @@ const {
 
 export const appContextSlice = slice;
 export {
+  setContextAccess,
   setContextLoading,
   setContextOrganizations,
   setContextOrg,

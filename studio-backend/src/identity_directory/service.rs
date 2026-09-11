@@ -4,12 +4,15 @@ use std::time::Duration;
 
 use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
 use anyhow::{Context, Result, bail};
+use futures_util::stream::{self, StreamExt};
 use gts::GtsTypeId;
 use reqwest::Client;
 use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use tracing::warn;
 use uuid::Uuid;
+
+use crate::user_profile::AssignmentRecorder;
 
 pub const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 const HOME_TENANT_ATTRIBUTE: &str = "tenant_id";
@@ -36,6 +39,11 @@ pub struct Directory {
     pub truncated: bool,
 }
 
+/// How many federated-identity lookups the directory listing runs at once.
+/// Small on purpose: the listing is capped at 200 users, and the admin API is
+/// shared with every other gear that talks to Keycloak.
+const FEDERATION_LOOKUP_WINDOW: usize = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryIdentity {
     pub id: String,
@@ -55,10 +63,41 @@ struct TokenResponse {
     access_token: String,
 }
 
+/// One external account Keycloak has brokered onto a realm user, as the admin
+/// API returns it.
+///
+/// Keycloak does **not** ship this on `UserRepresentation`: neither
+/// `GET /users?briefRepresentation=false` nor `GET /users/{id}` carries a
+/// `federatedIdentities` key (checked against Keycloak 26.7, the pinned image).
+/// It is only available from the dedicated
+/// `GET /users/{id}/federated-identity` — which is why this is read one user at
+/// a time, and why the field used to be silently absent.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FederatedIdentity {
     identity_provider: String,
+    #[serde(default)]
+    user_id: String,
+    #[serde(default)]
+    user_name: String,
+}
+
+/// An external account the IdP has confirmed a realm user controls.
+///
+/// The confirmation is real: the person completed the provider's own
+/// authorization flow and the provider named the account it resolved to. That is
+/// the same class of proof as a personal access token passing
+/// `ConnectorDriver::test()` (ADR-0012 §2) — from a channel that costs the
+/// person nothing beyond signing in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FederatedAccount {
+    /// The realm's identity-provider alias — `github`, `google`, `microsoft`.
+    /// Aligned with the connector provider keys on purpose.
+    pub provider: String,
+    /// The provider's own stable id for the account.
+    pub user_id: String,
+    /// The handle at the provider. Empty for a provider that reports none.
+    pub user_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,8 +113,6 @@ struct KeycloakUser {
     service_account_client_id: Option<String>,
     #[serde(default)]
     attributes: HashMap<String, Vec<String>>,
-    #[serde(default)]
-    federated_identities: Vec<FederatedIdentity>,
 }
 
 /// Does this Keycloak user belong in the directory at all?
@@ -130,10 +167,9 @@ impl DirectoryIdentity {
             username: user.username,
             email: user.email,
             display_name: (!display_name.is_empty()).then_some(display_name),
-            identity_provider: user
-                .federated_identities
-                .first()
-                .map(|identity| identity.identity_provider.clone()),
+            // Not available on a user representation at all — `list` fills it
+            // from the dedicated per-user endpoint.
+            identity_provider: None,
             first_seen_at_epoch_ms: user.created_timestamp,
             status,
             home_tenant_id,
@@ -297,6 +333,53 @@ impl IdentityDirectoryService {
         self.paged(token, &url, "users").await
     }
 
+    /// The external accounts brokered onto one realm user.
+    ///
+    /// One request per user, because that is the only endpoint that answers it
+    /// (see [`FederatedIdentity`]). A realm user with no brokered login gets an
+    /// empty list, not an error.
+    async fn federated_identities(
+        &self,
+        token: &str,
+        user_id: &str,
+    ) -> Result<Vec<FederatedAccount>> {
+        let url = format!(
+            "{}/admin/realms/{}/users/{}/federated-identity",
+            self.admin_base_url, self.realm, user_id
+        );
+        let identities = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("list Keycloak federated identities")?
+            .error_for_status()
+            .context("Keycloak rejected the federated-identity request")?
+            .json::<Vec<FederatedIdentity>>()
+            .await
+            .context("decode Keycloak federated identities response")?;
+        Ok(identities
+            .into_iter()
+            .map(|identity| FederatedAccount {
+                provider: identity.identity_provider,
+                user_id: identity.user_id,
+                user_name: identity.user_name,
+            })
+            .collect())
+    }
+
+    /// The external accounts brokered onto `subject`, for a caller that already
+    /// knows the subject is its own.
+    ///
+    /// This is the whole surface behind `FederatedIdentityReader`: one subject,
+    /// read-only. The identity gear asks it about the person signed in right
+    /// now, so it must not become a way to enumerate anybody else's accounts.
+    pub async fn federated_accounts(&self, subject: &str) -> Result<Vec<FederatedAccount>> {
+        let token = self.admin_token().await?;
+        self.federated_identities(&token, subject).await
+    }
+
     async fn tenant_group(&self, token: &str, tenant_id: Uuid) -> Result<KeycloakGroup> {
         let groups_url = format!("{}/admin/realms/{}/groups", self.admin_base_url, self.realm);
         let parent = self
@@ -439,6 +522,35 @@ impl IdentityDirectoryService {
             identities.push(DirectoryIdentity::project(user, home_tenant_name));
         }
 
+        // Which broker each identity came in through. Keycloak ships no
+        // `federatedIdentities` on a user representation, so this is a separate
+        // request per user — the only endpoint that answers it — run
+        // concurrently with a small window rather than page-deep sequentially.
+        // A failure for one user leaves that label empty instead of failing the
+        // whole directory: the label is informational, the listing is not.
+        //
+        // Owned ids, so the futures borrow nothing from `identities`: a closure
+        // that borrows it cannot be proven general enough over the lifetimes
+        // the stream combinator needs.
+        let ids: Vec<String> = identities.iter().map(|i| i.id.clone()).collect();
+        let labels = stream::iter(ids.into_iter().map(|id| {
+            let token = token.clone();
+            async move {
+                self.federated_identities(&token, &id)
+                    .await
+                    .ok()
+                    .and_then(|accounts| {
+                        accounts.into_iter().next().map(|account| account.provider)
+                    })
+            }
+        }))
+        .buffered(FEDERATION_LOOKUP_WINDOW)
+        .collect::<Vec<_>>()
+        .await;
+        for (identity, label) in identities.iter_mut().zip(labels) {
+            identity.identity_provider = label;
+        }
+
         sort_identities(&mut identities);
         Ok(Directory {
             identities,
@@ -457,6 +569,12 @@ impl IdentityDirectoryService {
         identity_id: &str,
         tenant_id: Uuid,
         organization_role: &str,
+        // Where the assignment is *recorded* as Studio membership. Borrowed
+        // rather than held on the service, for the same reason the connector
+        // guard borrows its resolver: the identity gear already reads this one
+        // for its own proof channel, and owning each other would leave the pair
+        // unconstructible in either order.
+        memberships: Option<&dyn AssignmentRecorder>,
     ) -> Result<()> {
         let identity_id = Uuid::parse_str(identity_id).context("identity id is not a UUID")?;
         let identity_id_string = identity_id.to_string();
@@ -529,7 +647,72 @@ impl IdentityDirectoryService {
         // appear in the organization's People screen.
         self.sync_tenant_group_membership(&token, identity_id, tenant_id)
             .await?;
+
+        // The membership record — the authority for organization access under
+        // ADR-0011 §2, and what the portal now reads to build a person's
+        // organization list. Written last (the IdP representations come first,
+        // and there is no transaction across the two systems) but NOT optional:
+        // without this row the person is assigned as far as Keycloak is
+        // concerned and has no organization as far as Studio is concerned, and
+        // reporting that as success would hide it from the only person who
+        // could fix it. Every write here is idempotent, so the repair is to
+        // call the assignment again.
+        if let Some(memberships) = memberships {
+            memberships
+                .record_assignment(&identity_id_string, tenant_id, organization_role)
+                .await
+                .with_context(|| {
+                    format!(
+                        "identity {identity_id_string} was assigned in the IdP but recording the                          Studio membership of {tenant_id} failed; re-run the assignment"
+                    )
+                })?;
+        }
         Ok(())
+    }
+
+    /// Record a Studio membership for every identity the IdP already calls
+    /// assigned.
+    ///
+    /// The migration ADR-0011 Phase 4 item 3 asks for. Until now `tenant_id` on
+    /// the Keycloak user *was* the assignment, so every identity assigned before
+    /// this change has no membership row and would read as having no
+    /// organization at all once the portal starts asking `membership` instead.
+    ///
+    /// Idempotent: `record_assignment` upserts, so re-running only refreshes.
+    /// Returns `(recorded, failed)` — one identity's failure does not abandon
+    /// the rest, because a partial backfill that names its casualties is more
+    /// useful than an all-or-nothing one that leaves nothing behind.
+    pub async fn backfill_memberships(
+        &self,
+        ctx: &SecurityContext,
+        memberships: &dyn AssignmentRecorder,
+    ) -> Result<(usize, usize)> {
+        let mut recorded = 0usize;
+        let mut failed = 0usize;
+        for identity in self.list(ctx).await?.identities {
+            // `home_tenant_id` is `Some` only when the attribute names a tenant
+            // that still exists, so an identity pointing at a deleted tenant is
+            // already excluded here rather than recorded as a member of nothing.
+            let Some(tenant_id) = identity.home_tenant_id else {
+                continue;
+            };
+            let role = identity.organization_role.as_deref().unwrap_or("member");
+            match memberships
+                .record_assignment(&identity.id, tenant_id, role)
+                .await
+            {
+                Ok(()) => recorded += 1,
+                Err(error) => {
+                    failed += 1;
+                    warn!(
+                        identity = %identity.id,
+                        tenant = %tenant_id,
+                        "membership backfill failed for one identity: {error:#}"
+                    );
+                }
+            }
+        }
+        Ok((recorded, failed))
     }
 
     async fn set_owner_grant(
@@ -751,15 +934,30 @@ mod tests {
         );
     }
 
+    /// The projection cannot name the broker, and must not pretend to.
+    ///
+    /// This test used to assert the opposite: that `project` reads
+    /// `federatedIdentities` off the user representation and names the first
+    /// entry. Keycloak sends no such key — not from
+    /// `GET /users?briefRepresentation=false` and not from `GET /users/{id}`
+    /// (checked against 26.7, the pinned image) — so that branch was unreachable
+    /// and the column it filled had always been `None` in production.
+    ///
+    /// The label now comes from the dedicated `/users/{id}/federated-identity`
+    /// endpoint, which `list` calls per user. That needs the admin API, so it is
+    /// covered on a stand rather than here; what is left to pin is that a
+    /// projection of a bare representation invents nothing.
     #[test]
-    fn the_first_federated_identity_names_the_provider() {
+    fn the_projection_does_not_invent_a_provider() {
         let mut federated = person();
-        federated["federatedIdentities"] = json!([
-            { "identityProvider": "github" },
-            { "identityProvider": "google" },
-        ]);
-        let identity = DirectoryIdentity::project(user(federated), None);
-        assert_eq!(identity.identity_provider.as_deref(), Some("github"));
+        // Even handed the shape Keycloak never sends, the projection stays
+        // silent: guessing from a field that does not arrive is what produced a
+        // permanently empty column.
+        federated["federatedIdentities"] = json!([{ "identityProvider": "github" }]);
+        assert_eq!(
+            DirectoryIdentity::project(user(federated), None).identity_provider,
+            None
+        );
         assert_eq!(
             DirectoryIdentity::project(user(person()), None).identity_provider,
             None,

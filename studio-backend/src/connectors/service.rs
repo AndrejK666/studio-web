@@ -36,6 +36,7 @@ use super::driver::{
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::url_guard::check_url;
+use crate::user_profile::PersonResolver;
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +140,25 @@ pub struct NewConnection<'a> {
     pub scope: &'a str,
 }
 
+/// One request to change a connection.
+///
+/// The same reasoning as [`NewConnection`], and the same trap: `label`,
+/// `base_url` and `token` are three same-typed optional strings, which is
+/// exactly the argument list a refactor silently reorders.
+///
+/// Every field means "omitted = unchanged".
+#[derive(Debug, Clone, Default)]
+pub struct ConnectionEdit<'a> {
+    /// New label.
+    pub label: Option<&'a str>,
+    /// New installation root; an explicitly empty string means "back to the
+    /// provider's default", the only way to undo a typo'd self-hosted URL.
+    pub base_url: Option<&'a str>,
+    /// Replacement credential. The change is verified against the stored one
+    /// when this is absent.
+    pub token: Option<&'a str>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Catalogue {
     #[serde(default)]
@@ -237,6 +257,38 @@ fn address_change_needs_token(
         ));
     }
     Ok(())
+}
+
+/// Is `recorded_subject` one of the caller's own sign-in methods?
+///
+/// `created_by` stores the *subject* that wrote the row, so comparing it with
+/// the caller's subject asks the wrong question: one human may hold several
+/// logins, and a connection created under one of them is still theirs when they
+/// sign in through another (ADR-0014). Both sides are therefore resolved to a
+/// person.
+///
+/// Without the identity gear (no database configured) there is nothing to
+/// resolve with, and the subject comparison is the honest fallback: it can
+/// refuse an edit the person should have been allowed, never allow one they
+/// should not.
+async fn same_person(
+    ctx: &SecurityContext,
+    recorded_subject: &str,
+    people: Option<&dyn PersonResolver>,
+) -> anyhow::Result<bool> {
+    if recorded_subject == ctx.subject_id().to_string() {
+        // The same sign-in method is the same person, whatever identity knows —
+        // and this is the common case, so it costs no lookup.
+        return Ok(true);
+    }
+    let Some(people) = people else {
+        return Ok(false);
+    };
+    let Some(recorded_person) = people.resolve_recorded_subject(recorded_subject).await? else {
+        // A subject no login row knows cannot be another of the caller's own.
+        return Ok(false);
+    };
+    Ok(recorded_person == people.resolve_caller(ctx).await?)
 }
 
 impl ConnectorService {
@@ -531,18 +583,27 @@ impl ConnectorService {
         ctx: &SecurityContext,
         tenant: Uuid,
         id: Uuid,
-        label: Option<&str>,
-        base_url: Option<&str>,
-        token: Option<&str>,
+        // Resolves a caller and a recorded subject to the person behind them,
+        // for the personal-connection guard below. Borrowed rather than held on
+        // the service: identity already depends on the connection catalogue for
+        // its own confirmation ceremony, and owning each other is how two
+        // services stop being constructible in either order.
+        people: Option<&dyn PersonResolver>,
+        edit: ConnectionEdit<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
+        let ConnectionEdit {
+            label,
+            base_url,
+            token,
+        } = edit;
         let existing = self.find(ctx, tenant, id).await?;
         let driver = self.driver(&existing.provider)?;
 
         // A personal connection is edited only by the person it belongs to.
         //
         // Not a general permission rule — the catalogue is otherwise
-        // tenant-visible — but this row is now evidence: `studio-identity`
-        // reads `(created_by, account)` as proof that the creator controls that
+        // tenant-visible — but this row is now evidence: `studio-user` reads
+        // `(created_by, account)` as proof that the creator controls that
         // account (ADR-0012 §2). Rotating the token re-stamps `account` below
         // while `created_by` stays put, so without this guard a tenant member
         // could point somebody else's personal connection at an account of
@@ -551,7 +612,7 @@ impl ConnectorService {
         // editable as before; the identity fold skips them for the same reason.
         if existing.scope == ConnectionScope::Personal.as_str()
             && !existing.created_by.trim().is_empty()
-            && existing.created_by != ctx.subject_id().to_string()
+            && !same_person(ctx, &existing.created_by, people).await?
         {
             return Err(anyhow!(
                 "connection {id} is personal to another user and cannot be edited"
@@ -917,5 +978,105 @@ mod base_url_rule_tests {
         // Their own hosts, and subdomains of them, stay usable.
         let anthropic: Box<dyn ConnectorDriver> = Box::new(AnthropicDriver::new(http()));
         assert!(resolve_base_url(anthropic.as_ref(), Some("https://api.anthropic.com/v1")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod person_guard_tests {
+    use super::*;
+
+    const CALLER_SUBJECT: u128 = 0xa1;
+    const OTHER_SUBJECT: &str = "00000000-0000-0000-0000-0000000000b2";
+    const ONE_PERSON: &str = "11111111-1111-1111-1111-111111111111";
+    const ANOTHER_PERSON: &str = "22222222-2222-2222-2222-222222222222";
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(CALLER_SUBJECT))
+            .subject_type("user")
+            .subject_tenant_id(Uuid::from_u128(1))
+            .build()
+            .expect("security context")
+    }
+
+    /// Answers as a `login` table would: `known` maps a subject to its person,
+    /// and the caller always resolves to `caller_person`.
+    struct Logins {
+        caller_person: &'static str,
+        known: Option<(&'static str, &'static str)>,
+    }
+
+    #[async_trait::async_trait]
+    impl PersonResolver for Logins {
+        async fn resolve_caller(&self, _ctx: &SecurityContext) -> anyhow::Result<String> {
+            Ok(self.caller_person.to_owned())
+        }
+        async fn resolve_recorded_subject(&self, subject: &str) -> anyhow::Result<Option<String>> {
+            Ok(self
+                .known
+                .filter(|(s, _)| *s == subject)
+                .map(|(_, person)| person.to_owned()))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_creating_sign_in_method_needs_no_lookup() {
+        let caller = ctx().subject_id().to_string();
+        // No resolver at all: the row was written by this very login, so the
+        // guard must pass without asking anybody.
+        assert!(
+            same_person(&ctx(), &caller, None)
+                .await
+                .expect("no lookup performed")
+        );
+    }
+
+    #[tokio::test]
+    async fn another_of_the_callers_own_logins_is_the_caller() {
+        // The case the subject comparison got wrong: a different login, the
+        // same human. This is what ADR-0014 exists for.
+        let people = Logins {
+            caller_person: ONE_PERSON,
+            known: Some((OTHER_SUBJECT, ONE_PERSON)),
+        };
+        assert!(
+            same_person(&ctx(), OTHER_SUBJECT, Some(&people))
+                .await
+                .expect("resolved")
+        );
+    }
+
+    #[tokio::test]
+    async fn somebody_elses_login_is_not_the_caller() {
+        let people = Logins {
+            caller_person: ONE_PERSON,
+            known: Some((OTHER_SUBJECT, ANOTHER_PERSON)),
+        };
+        assert!(
+            !same_person(&ctx(), OTHER_SUBJECT, Some(&people))
+                .await
+                .expect("resolved")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_login_and_an_absent_resolver_both_refuse() {
+        // A subject no login row knows, and the deployment where the identity
+        // gear is inert. Both refuse: the guard may deny an edit it should have
+        // allowed, never allow one it should not.
+        let people = Logins {
+            caller_person: ONE_PERSON,
+            known: None,
+        };
+        assert!(
+            !same_person(&ctx(), OTHER_SUBJECT, Some(&people))
+                .await
+                .expect("resolved")
+        );
+        assert!(
+            !same_person(&ctx(), OTHER_SUBJECT, None)
+                .await
+                .expect("resolved")
+        );
     }
 }

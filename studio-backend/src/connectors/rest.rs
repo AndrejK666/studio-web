@@ -31,7 +31,7 @@ use super::driver::{DriverIdentity, NotifyMessage, NotifyTarget, RemoteRepo};
 use super::graph_sync::SyncOutcome;
 #[cfg(feature = "graph")]
 use super::graph_sync_task::{SyncPayload, TASK_TYPE as GRAPH_SYNC_TASK_TYPE};
-use super::service::{Connection, ConnectorService, NewConnection};
+use super::service::{Connection, ConnectionEdit, ConnectorService, NewConnection};
 #[cfg(feature = "graph")]
 use graph_storage_sdk::GraphStorageClientV1;
 #[cfg(feature = "graph")]
@@ -64,6 +64,13 @@ impl Connectors {
 /// client, so the sync route answers 503 instead of 500 on a missing
 /// dependency.
 ///
+/// The identity gear's person resolver, for the personal-connection edit guard.
+///
+/// `None` when studio-user is inert (no database configured): the guard then
+/// falls back to comparing sign-in methods, which is stricter, never looser.
+#[derive(Clone)]
+pub struct People(pub Option<Arc<dyn crate::user_profile::PersonResolver>>);
+
 /// The type exists in both builds so `register_routes` keeps one signature;
 /// without the `graph` feature it carries nothing and no route reads it.
 #[cfg(feature = "graph")]
@@ -430,6 +437,7 @@ async fn list_connections(
 async fn patch_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
+    Extension(people): Extension<People>,
     Path(id): Path<Uuid>,
     Query(q): Query<ScopeQuery>,
     Json(req): Json<PatchConnectionRequest>,
@@ -441,9 +449,12 @@ async fn patch_connection(
             &ctx,
             tenant,
             id,
-            req.label.as_deref(),
-            req.base_url.as_deref(),
-            req.token.as_deref(),
+            people.0.as_deref(),
+            ConnectionEdit {
+                label: req.label.as_deref(),
+                base_url: req.base_url.as_deref(),
+                token: req.token.as_deref(),
+            },
         )
         .await
         // A rejected credential, an unknown installation or an attempt to edit
@@ -681,6 +692,7 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<ConnectorService>>,
+    people: People,
     graph: GraphSink,
 ) -> Router {
     router = OperationBuilder::get("/studio-connector/v1/providers")
@@ -950,6 +962,7 @@ pub fn register_routes(
 
     router
         .layer(Extension(Connectors(service)))
+        .layer(Extension(people))
         .layer(Extension(graph))
 }
 

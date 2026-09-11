@@ -9,7 +9,7 @@
  */
 
 import type { MockMap } from '@gears-frontx/react';
-import type { Me, Page, Tenant } from './types';
+import type { Me, MembershipList, Page, Tenant } from './types';
 import { TENANT_TYPES } from './types';
 
 const HOME_TENANT_ID = '00000000-0000-0000-0000-0000000000aa';
@@ -52,6 +52,25 @@ export const accountsMockMap: MockMap = {
         id: '00000000-0000-0000-0000-0000000000b3',
         name: 'Platform workspace',
         tenant_type: TENANT_TYPES.workspace,
+      },
+    ],
+  }),
+};
+
+/**
+ * Identity mock map (the /cf/studio-user/v1 baseURL).
+ *
+ * One membership, of the same organization the accounts mock calls home, so the
+ * mocked shell resolves the same context through either source.
+ */
+export const identityMockMap: MockMap = {
+  'GET /cf/studio-user/v1/me/memberships': (): MembershipList => ({
+    items: [
+      {
+        user_id: '00000000-0000-0000-0000-0000000000f1',
+        org_id: HOME_TENANT_ID,
+        role: 'owner',
+        source: 'assignment',
       },
     ],
   }),
