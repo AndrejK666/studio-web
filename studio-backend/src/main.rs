@@ -37,6 +37,7 @@ mod test_env; // one lock for the process environment, shared by every test that
 #[cfg(test)]
 mod test_pg; // one PostgreSQL for the whole test process, shared by the suites that keep tables
 mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
+mod user_settings; // studio-user-settings: per-person preferences (vendored from the platform gear, ADR-0017)
 
 use std::path::{Path, PathBuf};
 

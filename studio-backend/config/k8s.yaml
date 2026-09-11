@@ -328,13 +328,10 @@ gears:
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
-  simple-user-settings:
+  studio-user-settings:
     database:
       server: "pg_main"
-      dbname: "studio_settings"
-    config:
-      max_field_length: 200
-
+      dbname: "studio_user_settings"
   file-storage:
     database:
       server: "pg_main"

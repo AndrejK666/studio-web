@@ -209,7 +209,6 @@ mini_chat = { package = "cf-gears-mini-chat", git = "https://github.com/construc
 api_egress = { package = "cf-gears-oagw", git = "https://github.com/constructorfabric/gears-rust", branch = "main", optional = true }
 credstore = { package = "cf-gears-credstore", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
 static_credstore_plugin = { package = "cf-gears-static-credstore-plugin", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
-simple_user_settings = { package = "cf-gears-simple-user-settings", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
 file_storage = { package = "cf-gears-file-storage", git = "https://github.com/constructorfabric/gears-rust", branch = "main" }
 # File-parser is resolved through its SDK when a compatible parser gear is
 # registered by the runtime. Keep the heavy parser implementation out of this
@@ -277,8 +276,6 @@ cf-gears-oagw-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-g
 cf-gears-oidc-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
 cf-gears-resource-group = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
 cf-gears-resource-group-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
-cf-gears-simple-user-settings = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
-cf-gears-simple-user-settings-sdk = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
 cf-gears-static-authn-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
 cf-gears-static-authz-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
 cf-gears-static-credstore-plugin = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }

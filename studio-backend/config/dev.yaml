@@ -332,13 +332,15 @@ gears:
   # and the document and catalogue endpoints simply are not served. Use
   # postgres.yaml or the compose stack when you need them.
 
-  simple-user-settings:
+  studio-user-settings:
     database:
-      server: "sqlite_main"
-      file: "settings.db"
-    config:
-      max_field_length: 200
-
+      # PostgreSQL even in this SQLite-leaning profile, for the same reason
+      # studio-user above is: the gear's migrations are PostgreSQL-only on
+      # purpose, and a second dialect no deployment executes drifts unnoticed.
+      # The database is `studio_user_settings` on the compose server, created by
+      # `backend-bootstrap` from docker.yaml.
+      server: "pg_main"
+      dbname: "studio_user_settings"
   file-storage:
     database:
       server: "sqlite_main"

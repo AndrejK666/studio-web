@@ -1742,48 +1742,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-gears-simple-user-settings"
-version = "0.1.1"
-source = "git+https://github.com/vasylcf/gears-rust?tag=cf-gears-graph-storage-v0.1.1#719ab4775171519c1521bfbbfd7056dba9addc0b"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "cf-gears-authz-resolver",
- "cf-gears-authz-resolver-sdk",
- "cf-gears-simple-user-settings-sdk",
- "cf-gears-toolkit",
- "cf-gears-toolkit-canonical-errors",
- "cf-gears-toolkit-db",
- "cf-gears-toolkit-db-macros",
- "cf-gears-toolkit-macros",
- "cf-gears-toolkit-security",
- "inventory",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "cf-gears-simple-user-settings-sdk"
-version = "0.1.1"
-source = "git+https://github.com/vasylcf/gears-rust?tag=cf-gears-graph-storage-v0.1.1#719ab4775171519c1521bfbbfd7056dba9addc0b"
-dependencies = [
- "async-trait",
- "cf-gears-toolkit",
- "cf-gears-toolkit-canonical-errors",
- "cf-gears-toolkit-macros",
- "cf-gears-toolkit-security",
- "uuid",
-]
-
-[[package]]
 name = "cf-gears-static-authn-plugin"
 version = "0.3.12"
 source = "git+https://github.com/vasylcf/gears-rust?tag=cf-gears-graph-storage-v0.1.1#719ab4775171519c1521bfbbfd7056dba9addc0b"
@@ -2477,7 +2435,6 @@ dependencies = [
  "cf-gears-oidc-authn-plugin",
  "cf-gears-resource-group",
  "cf-gears-resource-group-sdk",
- "cf-gears-simple-user-settings",
  "cf-gears-static-authn-plugin",
  "cf-gears-static-authz-plugin",
  "cf-gears-static-credstore-plugin",

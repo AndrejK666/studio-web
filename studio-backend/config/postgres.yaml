@@ -314,13 +314,10 @@ gears:
 
   # ── Feature gears: per-user settings, files, AI chat ──
 
-  simple-user-settings:
+  studio-user-settings:
     database:
       server: "pg_main"
-      dbname: "studio_settings"
-    config:
-      max_field_length: 200
-
+      dbname: "studio_user_settings"
   # Document types, journey stages, capabilities and the documents themselves
   # (ADR-0014). Without this section the gear stands down and registers no
   # routes -- not a boot error, just a portal where the catalogue endpoints

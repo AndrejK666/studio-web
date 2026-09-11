@@ -38,10 +38,18 @@ use account_management as _;
 use keycloak_idp_plugin as _;
 use static_idp_plugin as _;
 
-// Feature gears: per-user settings, file storage, credstore.
+// Feature gears: file storage, credstore.
+//
+// `simple_user_settings` is deliberately NOT linked. The platform gear files a
+// person's preferences under the token subject and the subject's tenant, and
+// Studio has several logins and several organizations per person — so under
+// that key a preference vanishes the moment somebody signs in the other way.
+// `studio-user-settings` (in-crate, ADR-0017) serves the same three operations
+// keyed on the canonical person. When gears-rust#4785 lands and the
+// per-organization question is settled, the platform gear comes back and ours
+// goes away.
 use credstore as _;
 use file_storage as _;
-use simple_user_settings as _;
 use static_credstore_plugin as _;
 
 // Workspace AI chat (mini-chat + oagw LLM egress). Behind the `llm` feature:

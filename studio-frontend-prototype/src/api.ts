@@ -573,7 +573,8 @@ export interface ProjectRepository {
   git_mode?: string | null;
 }
 
-// simple-user-settings gear stores exactly these two per-user fields.
+// studio-user-settings stores exactly these two fields, per PERSON — the same
+// answer however that person signed in (ADR-0017).
 export interface UserPrefs {
   theme?: string;
   language?: string;
@@ -1635,12 +1636,12 @@ export const api = {
       body: JSON.stringify(value),
     }),
 
-  /* ── Per-user settings (simple-user-settings gear: fixed theme/language) ── */
+  /* ── Per-person settings (studio-user-settings: theme/language) ── */
 
   userSettings: async (token: string): Promise<UserPrefs> => {
     try {
       const s = await request<{ theme?: string | null; language?: string | null }>(
-        "/simple-user-settings/v1/settings",
+        "/studio-user-settings/v1/settings",
         token,
       );
       return { theme: s.theme ?? undefined, language: s.language ?? undefined };
@@ -1651,13 +1652,15 @@ export const api = {
   },
 
   saveUserSettings: (token: string, prefs: Required<UserPrefs>) =>
-    request<unknown>("/simple-user-settings/v1/settings", token, {
+    request<unknown>("/studio-user-settings/v1/settings", token, {
       method: "PATCH",
       body: JSON.stringify(prefs),
     }).catch(async (e) => {
-      // First write for this user needs POST (create), PATCH 404s.
+      // studio-user-settings creates the row on PATCH, so this never fires.
+      // Kept because it is the one thing that would break if a deployment
+      // pointed the prototype back at the platform gear, where PATCH 404s.
       if (e instanceof ApiError && e.status === 404) {
-        return request<unknown>("/simple-user-settings/v1/settings", token, {
+        return request<unknown>("/studio-user-settings/v1/settings", token, {
           method: "POST",
           body: JSON.stringify(prefs),
         });

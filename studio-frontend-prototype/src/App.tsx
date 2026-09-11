@@ -6938,7 +6938,7 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
 
       <div className="card">
         <h2>Preferences</h2>
-        <p className="hint">Stored server-side per user (simple-user-settings gear).</p>
+        <p className="hint">Stored server-side per person — the same whichever way you sign in.</p>
         <form className="inline" onSubmit={save}>
           <select value={theme} onChange={(e) => setTheme(e.target.value)}>
             <option value="light">light</option>
