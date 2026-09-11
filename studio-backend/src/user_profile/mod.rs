@@ -15,6 +15,7 @@
 mod alias_policy;
 mod entity;
 mod invitations;
+mod leaving;
 mod migrations;
 mod rest;
 mod service;
