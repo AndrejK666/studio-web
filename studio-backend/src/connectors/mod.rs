@@ -275,10 +275,29 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
         #[cfg(not(feature = "graph"))]
         let graph = rest::GraphSink;
 
+        // The person resolver, for the personal-connection edit guard. Same
+        // reasoning as the alias resolver above and safe in either order:
+        // studio-user publishes both in its `init`, which runs before any
+        // gear's REST phase. Absent when that gear is inert (no database), in
+        // which case the guard compares sign-in methods as it did before.
+        let people = rest::People(
+            ctx.client_hub()
+                .get_scoped::<dyn crate::user_profile::PersonResolver>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ))
+                .inspect_err(|_| {
+                    warn!(
+                        "studio-connector: studio-user person resolver not registered — a                          personal connection stays editable only from the sign-in method that                          created it"
+                    );
+                })
+                .ok(),
+        );
+
         Ok(rest::register_routes(
             router,
             openapi,
             self.service.get().cloned(),
+            people,
             graph,
         ))
     }

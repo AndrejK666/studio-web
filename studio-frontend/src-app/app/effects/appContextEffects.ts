@@ -19,13 +19,20 @@ import {
   apiRegistry,
   type FrontXApp,
 } from '@gears-frontx/react';
-import { AccountsApiService, TENANT_TYPES, type Tenant } from '@/app/api';
+import {
+  AccountsApiService,
+  IdentityApiService,
+  PLATFORM_ROOT_TENANT_ID,
+  TENANT_TYPES,
+  type Tenant,
+} from '@/app/api';
 import {
   publishSelectedOrganization,
   publishSelectedProject,
   publishSelectedWorkspace,
 } from '@/app/mfe/sharedContext';
 import {
+  setContextAccess,
   setContextLoading,
   setContextOrganizations,
   setContextOrg,
@@ -116,6 +123,57 @@ export function registerAppContextEffects(app: FrontXApp): void {
     }
   };
 
+  /**
+   * The organizations a platform administrator switches between.
+   *
+   * A platform administrator reaches every organization by virtue of the role,
+   * not by membership, so this stays a walk of the tenant tree: the root's
+   * organization children. Making the root's own membership stand for "member of
+   * everything" would be exactly the conflation ADR-0011 §1 forbids — and the
+   * root is not of the organization type, so it never appears in the switcher
+   * itself.
+   */
+  const platformOrganizations = async (rootId: string): Promise<Tenant[]> => {
+    const accounts = apiRegistry.getService(AccountsApiService);
+    try {
+      const children = (await accounts.tenantChildren({ tenantId: rootId }).fetch())?.items ?? [];
+      return children.filter(isOrganization);
+    } catch (error) {
+      console.warn(
+        'Failed to list organizations under the platform root:',
+        error instanceof Error ? error.message : String(error)
+      );
+      return [];
+    }
+  };
+
+  /**
+   * The organizations an ordinary person is a member of.
+   *
+   * Membership is the authority (ADR-0011 §2), so the list comes from
+   * `studio-user` and the names are resolved per organization — `studio-user`
+   * stores ids and roles, not tenant names. An organization whose tenant cannot
+   * be read is dropped rather than shown nameless: from outside a self-managed
+   * organization's subtree the backend answers 404 by design, and that is
+   * isolation working, not an error.
+   */
+  const memberOrganizations = async (): Promise<Tenant[]> => {
+    if (!apiRegistry.has(IdentityApiService)) return [];
+    const identity = apiRegistry.getService(IdentityApiService);
+    const accounts = apiRegistry.getService(AccountsApiService);
+    const memberships = (await identity.myMemberships.fetch())?.items ?? [];
+    const resolved = await Promise.all(
+      memberships.map(async (membership) => {
+        try {
+          return await accounts.tenant({ tenantId: membership.org_id }).fetch();
+        } catch {
+          return null;
+        }
+      })
+    );
+    return resolved.filter((tenant): tenant is Tenant => tenant !== null).filter(isOrganization);
+  };
+
   eventBus.on('app/context/fetch', async () => {
     if (!apiRegistry.has(AccountsApiService)) return;
 
@@ -124,24 +182,21 @@ export function registerAppContextEffects(app: FrontXApp): void {
     try {
       const me = await accounts.me.fetch();
       const homeTenantId = me?.subject_tenant_id;
-      if (!homeTenantId) return;
 
-      const home = await accounts.tenant({ tenantId: homeTenantId }).fetch();
-      let children: Tenant[] = [];
-      try {
-        children = (await accounts.tenantChildren({ tenantId: homeTenantId }).fetch())?.items ?? [];
-      } catch (error) {
-        console.warn(
-          'Failed to list child tenants:',
-          error instanceof Error ? error.message : String(error)
-        );
-      }
+      // The home tenant no longer decides WHICH organizations are on offer —
+      // only whether this caller is the platform administrator, which is a fact
+      // about the token and not a membership.
+      const organizations =
+        homeTenantId === PLATFORM_ROOT_TENANT_ID
+          ? await platformOrganizations(homeTenantId)
+          : await memberOrganizations();
 
-      const items = [...(isOrganization(home) ? [home] : []), ...children.filter(isOrganization)].map(
-        toEntity
-      );
-      const current = items.find((item) => item.id === home.id) ?? items[0] ?? null;
+      const items = organizations.map(toEntity);
+      const current = items[0] ?? null;
       dispatch(setContextOrganizations({ current, items }));
+      // An authenticated person with no organization is a supported state, and
+      // the shell has to say so rather than render an empty switcher.
+      dispatch(setContextAccess(items.length > 0 ? 'ready' : 'unassigned'));
       publishSelectedOrganization(app);
       await resolveWorkspaces(current?.id ?? null);
     } catch (error) {
@@ -149,6 +204,9 @@ export function registerAppContextEffects(app: FrontXApp): void {
         'Failed to resolve organizations:',
         error instanceof Error ? error.message : String(error)
       );
+      // A failed resolve is not the same as having no access: leave the access
+      // state alone so a transient failure does not show an onboarding screen to
+      // somebody who has an organization.
     } finally {
       dispatch(setContextLoading(false));
     }
