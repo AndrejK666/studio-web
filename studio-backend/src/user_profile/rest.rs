@@ -23,8 +23,6 @@ use super::service::{
     UserProfile,
 };
 
-/// Provider tag for a token minted through Studio's Keycloak realm.
-const PROVIDER_KEYCLOAK: &str = "keycloak";
 /// The platform root tenant; a caller acting here is a platform admin.
 const PLATFORM_ROOT_TENANT_ID: Uuid = Uuid::from_u128(1);
 
@@ -177,6 +175,8 @@ pub struct ConfirmReportDto {
     pub skipped_other_owner: i64,
     /// Personal connections written before the record named its creator.
     pub skipped_unknown_owner: i64,
+    /// Brokered logins whose provider reported no handle to attribute.
+    pub skipped_no_handle: i64,
     pub refused: Vec<String>,
 }
 
@@ -280,12 +280,20 @@ fn require_platform_admin(ctx: &SecurityContext) -> ApiResult<()> {
     Ok(())
 }
 
-async fn require_org_owner(
+/// A membership write needs authority over that organization: its owner has it,
+/// and so does a platform administrator.
+///
+/// The platform arm is not a convenience. Assignment from the identity directory
+/// is a platform act (ADR-0011 §4 — only a platform administrator appoints an
+/// organization's first owner), so an owner-only gate makes the very first
+/// membership of a fresh organization unwritable: there is nobody to write it.
+async fn require_org_authority(
     ctx: &SecurityContext,
     service: &Arc<IdentityService>,
     org_id: Uuid,
 ) -> ApiResult<()> {
-    if service.is_org_owner(ctx, org_id).await {
+    if ctx.subject_tenant_id() == PLATFORM_ROOT_TENANT_ID || service.is_org_owner(ctx, org_id).await
+    {
         Ok(())
     } else {
         Err(UserProfileError::permission_denied()
@@ -302,17 +310,16 @@ fn parse_org(org_id: &str) -> ApiResult<Uuid> {
     })
 }
 
-/// Resolve the caller's canonical user id, provisioning on first sight. The
-/// token subject is an already-authenticated Keycloak identity, so verified.
+/// Resolve the caller's canonical user id, provisioning on first sight.
+///
+/// Thin on purpose: the resolution itself belongs to the service, where every
+/// other gear reaches it through `PersonResolver` (ADR-0014). Two copies of this
+/// rule is how a human ends up keyed two different ways.
 async fn caller_user_id(
     ctx: &SecurityContext,
     service: &Arc<IdentityService>,
 ) -> ApiResult<String> {
-    let subject = ctx.subject_id().to_string();
-    service
-        .resolve_or_provision(PROVIDER_KEYCLOAK, &subject, None, None, true)
-        .await
-        .map_err(internal)
+    service.resolve_caller(ctx).await.map_err(internal)
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -427,7 +434,7 @@ async fn put_membership(
 ) -> ApiResult<JsonBody<OrgMembershipDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_owner(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org).await?;
     let source = req.source.unwrap_or_else(|| "manual".to_string());
     let membership = service
         .record_membership(&user_id, &org_id, &req.role, &source)
@@ -443,7 +450,7 @@ async fn delete_membership(
 ) -> ApiResult<StatusCode> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_owner(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org).await?;
     service
         .remove_membership(&user_id, &org_id)
         .await
@@ -503,6 +510,7 @@ fn confirm_report_dto(report: ConfirmReport) -> ConfirmReportDto {
         skipped_shared: report.skipped_shared as i64,
         skipped_other_owner: report.skipped_other_owner as i64,
         skipped_unknown_owner: report.skipped_unknown_owner as i64,
+        skipped_no_handle: report.skipped_no_handle as i64,
         refused: report.refused,
     }
 }
@@ -578,7 +586,7 @@ async fn confirm_my_aliases(
     // the credentials that prove an identity are the ones they can read.
     let tenant = ctx.subject_tenant_id();
     let report = service
-        .confirm_aliases_from_connections(&ctx, &user_id, tenant)
+        .confirm_aliases(&ctx, &user_id, tenant)
         .await
         .map_err(invalid)?;
     Ok(Json(confirm_report_dto(report)))

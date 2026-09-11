@@ -30,6 +30,7 @@ use toolkit::client_hub::ClientScope;
 use toolkit::contracts::{DatabaseCapability, RestApiCapability};
 use toolkit::{Gear, GearCtx};
 use toolkit_db::DBProvider;
+use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 
 use service::IdentityService;
@@ -78,6 +79,86 @@ impl AliasResolver for IdentityService {
     }
 }
 
+/// Turn the caller of a request into the canonical person behind them.
+///
+/// The one interface a Studio gear uses to answer "whose is this?" (ADR-0014).
+/// Before it existed, every gear that needed to record an actor reached for
+/// `ctx.subject_id()` — the *sign-in method*, not the person — so a human with
+/// two logins was two actors, and anything keyed that way (a personal
+/// connection's `created_by`, a document's author) stopped being theirs the
+/// moment they signed in the other way.
+///
+/// Takes a `SecurityContext` rather than a subject string on purpose: a gear can
+/// resolve **its own caller** and nobody else, so this cannot become a way to
+/// look up arbitrary people. Reading somebody else's records is a platform
+/// action and lives on the REST surface, behind its own authority gate.
+#[async_trait]
+pub trait PersonResolver: Send + Sync + 'static {
+    /// The caller's canonical user id, provisioning a person the first time this
+    /// sign-in method is seen.
+    ///
+    /// Provisioning is safe here because the subject comes off a bearer the
+    /// platform has already authenticated — this is the same act `/me` performs,
+    /// made available to every gear instead of only to the profile screen.
+    async fn resolve_caller(&self, ctx: &SecurityContext) -> anyhow::Result<String>;
+
+    /// The person behind a sign-in method already recorded somewhere, or `None`
+    /// when no login knows it.
+    ///
+    /// The migration seam: a column that stores a token subject (`created_by`,
+    /// `requested_by`, an author id) can be read *as a person* through this
+    /// without being rewritten. Never provisions — nobody has authenticated a
+    /// subject read out of storage.
+    async fn resolve_recorded_subject(&self, subject: &str) -> anyhow::Result<Option<String>>;
+}
+
+#[async_trait]
+impl PersonResolver for IdentityService {
+    async fn resolve_caller(&self, ctx: &SecurityContext) -> anyhow::Result<String> {
+        IdentityService::resolve_caller(self, ctx).await
+    }
+
+    async fn resolve_recorded_subject(&self, subject: &str) -> anyhow::Result<Option<String>> {
+        self.resolve_subject(service::PROVIDER_KEYCLOAK, subject)
+            .await
+    }
+}
+
+/// Record that an IdP identity belongs to an organization.
+///
+/// The seam ADR-0006 follow-up 1 left open: the act of assigning somebody to an
+/// organization happens in the IdP directory, but the membership record — the
+/// thing ADR-0011 §2 makes the authority for organization access — belongs to
+/// this gear. Rather than have the directory learn about person ids, it hands
+/// over the subject it already has and this resolves it.
+///
+/// Narrow on purpose: record an assignment, and nothing else. Removing a
+/// membership, changing a role and reading anybody's memberships all stay on the
+/// REST surface behind their own authority gates.
+#[async_trait]
+pub trait AssignmentRecorder: Send + Sync + 'static {
+    /// Record `subject`'s membership of `org_id` with `role`, provisioning the
+    /// person if this login has not been seen before.
+    async fn record_assignment(
+        &self,
+        subject: &str,
+        org_id: uuid::Uuid,
+        role: &str,
+    ) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+impl AssignmentRecorder for IdentityService {
+    async fn record_assignment(
+        &self,
+        subject: &str,
+        org_id: uuid::Uuid,
+        role: &str,
+    ) -> anyhow::Result<()> {
+        IdentityService::record_assignment(self, subject, org_id, role).await
+    }
+}
+
 #[toolkit::gear(
     name = "studio-user",
     deps = [account_management],
@@ -114,10 +195,23 @@ impl Gear for StudioUserGear {
         // ceremony needs the connector catalogue and is attached later (see
         // `register_rest`).
         if let Some(svc) = service.clone() {
-            let resolver: Arc<dyn AliasResolver> = svc;
+            let resolver: Arc<dyn AliasResolver> = svc.clone();
             ctx.client_hub().register_scoped::<dyn AliasResolver>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 resolver,
+            );
+            // Published under the same scope key: the hub keys an entry by
+            // (interface, scope), so the two interfaces coexist and a consumer
+            // asks for the narrow one it actually needs.
+            let people: Arc<dyn PersonResolver> = svc.clone();
+            ctx.client_hub().register_scoped::<dyn PersonResolver>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                people,
+            );
+            let assignments: Arc<dyn AssignmentRecorder> = svc;
+            ctx.client_hub().register_scoped::<dyn AssignmentRecorder>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                assignments,
             );
         }
 
@@ -154,11 +248,29 @@ impl RestApiCapability for StudioUserGear {
             let connectors = build_connectors(ctx);
             if connectors.is_none() {
                 warn!(
-                    "studio-user: no connector driver plugin registered — identity confirmation \
-                     unavailable, claims and resolution still work"
+                    "studio-user: no connector driver plugin registered — the credential proof \
+                     channel is unavailable"
                 );
             }
             svc.attach_connectors(connectors);
+
+            // The IdP proof channel. Same phase and the same reason: the
+            // directory is a separate gear. Absent when Keycloak admin is
+            // unconfigured — the ceremony then runs on credentials alone, and
+            // answers 400 only if neither channel is there.
+            let federated = ctx
+                .client_hub()
+                .get_scoped::<dyn crate::identity_directory::FederatedIdentityReader>(
+                    &ClientScope::gts_id(crate::identity_directory::IDP_DIRECTORY_INSTANCE_ID),
+                )
+                .ok();
+            if federated.is_none() {
+                warn!(
+                    "studio-user: IdP directory not configured — brokered logins cannot confirm \
+                     an identity"
+                );
+            }
+            svc.attach_federated(federated);
         }
 
         Ok(rest::register_routes(router, openapi, service))

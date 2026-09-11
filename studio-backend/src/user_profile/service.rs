@@ -19,9 +19,12 @@ use serde::Deserialize;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::alias_policy::{Confidence, Decision, Held, decide, displaced_a_proof};
+use super::alias_policy::{
+    Confidence, Decision, Held, ProofOwner, decide, displaced_a_proof, proof_owner,
+};
 use super::store::IdentityStore;
 use crate::connectors::service::ConnectorService;
+use crate::identity_directory::FederatedIdentityReader;
 
 /// AM tenant-metadata type holding an organization's access config (the same
 /// document the Studio PDP reads).
@@ -30,6 +33,15 @@ const ACCESS_METADATA_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.
 /// A connection whose scope makes it a team or bot credential rather than the
 /// caller's own. `ConnectionScope::Personal` serialises as this string.
 const PERSONAL_SCOPE: &str = "personal";
+
+/// `membership.source` for a row written by the assignment path, as opposed to
+/// `manual` (an operator using the REST route directly).
+const SOURCE_ASSIGNMENT: &str = "assignment";
+
+/// Provider tag for a sign-in method minted through Studio's own Keycloak
+/// realm. Every bearer the platform authenticates carries a subject from there,
+/// so this is the provider a caller's `login` row is found under.
+pub const PROVIDER_KEYCLOAK: &str = "keycloak";
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -128,9 +140,12 @@ pub struct IdentityService {
     am: Arc<dyn AccountManagementClient>,
     /// Attached in the gear's REST phase, once every connector driver plugin is
     /// known to have registered. `Some(None)` means no driver at all, which
-    /// makes the confirmation ceremony unavailable while claims and reads keep
+    /// makes that proof channel unavailable while claims and reads keep
     /// working; `None` means the phase has not run yet.
     connectors: OnceLock<Option<Arc<ConnectorService>>>,
+    /// The IdP proof channel, attached in the same phase and for the same
+    /// reason. `Some(None)` means Keycloak admin is unconfigured.
+    federated: OnceLock<Option<Arc<dyn FederatedIdentityReader>>>,
 }
 
 impl IdentityService {
@@ -139,6 +154,7 @@ impl IdentityService {
             store,
             am,
             connectors: OnceLock::new(),
+            federated: OnceLock::new(),
         }
     }
 
@@ -149,6 +165,15 @@ impl IdentityService {
     /// registered. Calling it twice is ignored: the second view is equivalent.
     pub fn attach_connectors(&self, connectors: Option<Arc<ConnectorService>>) {
         let _ = self.connectors.set(connectors);
+    }
+
+    /// Hand the service its view of the IdP's brokered logins.
+    ///
+    /// Separate from `new` for the same reason as `attach_connectors`: the
+    /// directory gear is a separate gear, and the REST phase is the first point
+    /// where it is known to have registered.
+    pub fn attach_federated(&self, federated: Option<Arc<dyn FederatedIdentityReader>>) {
+        let _ = self.federated.set(federated);
     }
 
     /// Is the caller an OWNER of `org_id`? Read from that organization's access
@@ -173,6 +198,36 @@ impl IdentityService {
                 && g.role_key == "owner"
                 && g.scope_type == "org"
         })
+    }
+
+    /// The canonical person behind an authenticated caller, provisioning on
+    /// first sight.
+    ///
+    /// The one way a Studio gear turns "who is calling" into "which person", so
+    /// that no consumer re-derives it from the token and no two consumers key
+    /// the same human differently (ADR-0014). The subject comes off a bearer the
+    /// platform has already authenticated, which is both why provisioning here
+    /// is safe and why the login is recorded as verified.
+    pub async fn resolve_caller(&self, ctx: &SecurityContext) -> Result<String> {
+        let subject = ctx.subject_id().to_string();
+        self.resolve_or_provision(PROVIDER_KEYCLOAK, &subject, None, None, true)
+            .await
+    }
+
+    /// The person behind a sign-in method, or `None` when no `login` row knows
+    /// it.
+    ///
+    /// Deliberately does **not** provision. The caller is asking about a subject
+    /// read off an existing record rather than off a live token — nobody has
+    /// authenticated it here — and minting a person for such a subject would
+    /// invent people out of stale data. This is the read that lets a
+    /// subject-keyed column be interpreted as a person without rewriting it.
+    pub async fn resolve_subject(&self, provider: &str, subject: &str) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .find_login(provider, subject)
+            .await?
+            .map(|login| login.user_id))
     }
 
     /// Resolve `(provider, subject)` to a canonical user id, provisioning a new
@@ -317,39 +372,7 @@ impl IdentityService {
         external_id: &str,
         confidence: Confidence,
     ) -> Result<AliasOutcome> {
-        let (kind, external_id) = normalize_alias(kind, external_id)?;
-        if self.store.get_user(user_id).await?.is_none() {
-            return Err(anyhow!("user {user_id} does not exist"));
-        }
-        let existing = self.store.find_alias(&kind, &external_id).await?;
-        let held = existing.as_ref().and_then(|record| {
-            Confidence::parse(&record.confidence).map(|confidence| Held {
-                user_id: record.user_id.clone(),
-                confidence,
-            })
-        });
-
-        match decide(held.as_ref(), user_id, confidence) {
-            Decision::AlreadyHeld => Ok(AliasOutcome::AlreadyHeld),
-            Decision::Refused(refusal) => Ok(AliasOutcome::Refused(refusal.message())),
-            Decision::Write => {
-                let took_a_proof = displaced_a_proof(held.as_ref(), user_id);
-                self.store
-                    .upsert_alias(&AliasRecord {
-                        kind,
-                        external_id,
-                        user_id: user_id.to_owned(),
-                        confidence: confidence.as_str().to_owned(),
-                        added_at_epoch_ms: now_ms(),
-                    })
-                    .await?;
-                Ok(if took_a_proof {
-                    AliasOutcome::WrittenOverAProof
-                } else {
-                    AliasOutcome::Written
-                })
-            }
-        }
+        attribute_alias_in(self.store.as_ref(), user_id, kind, external_id, confidence).await
     }
 
     /// Every external identity attributed to a user, strongest first.
@@ -407,29 +430,68 @@ impl IdentityService {
         }
     }
 
-    /// Turn the caller's own connector credentials into confirmed aliases.
+    /// Record every proof of control the platform already holds about the
+    /// caller, from whichever channels are available.
     ///
-    /// This is the proof of control (ADR-0012). Every connection in the
-    /// catalogue already passed `ConnectorDriver::test()`, which asked the
-    /// provider "who am I?" with that credential and stored the answer in
-    /// `Connection.account`. A personal connection is therefore standing proof
-    /// that its creator controls that account, and this call only records it:
-    /// nothing is re-probed and no token is read.
-    pub async fn confirm_aliases_from_connections(
+    /// Two channels, and neither costs the person a new step (ADR-0012,
+    /// ADR-0014):
+    ///
+    /// - **their connector credentials.** Every connection in the catalogue
+    ///   passed `ConnectorDriver::test()`, which asked the provider "who am I?"
+    ///   with that credential and stored the answer in `Connection.account`.
+    /// - **their brokered logins.** Signing in through GitHub means the person
+    ///   completed that provider's authorization flow and the provider named
+    ///   the account — the same class of proof, arriving from the IdP.
+    ///
+    /// Nothing is re-probed and no token is read; both channels only *record*
+    /// what already happened. Available if either channel is; an identity
+    /// confirmed through both is written once and reported as already
+    /// confirmed.
+    pub async fn confirm_aliases(
         &self,
         ctx: &SecurityContext,
         user_id: &str,
         tenant: Uuid,
     ) -> Result<ConfirmReport> {
-        let Some(connectors) = self.connectors.get().and_then(Option::as_ref) else {
+        let connectors = self.connectors.get().and_then(Option::as_ref);
+        let federated = self.federated.get().and_then(Option::as_ref);
+        if connectors.is_none() && federated.is_none() {
             return Err(anyhow!(
-                "no connector driver plugin is registered, so there is no credential to confirm \
-                 an identity with"
+                "no proof channel is available: neither a connector driver plugin nor the IdP \
+                 directory is configured, so there is nothing to confirm an identity with"
             ));
-        };
-        let subject = ctx.subject_id().to_string();
-        let mut report = ConfirmReport::default();
+        }
 
+        let mut report = ConfirmReport::default();
+        if let Some(connectors) = connectors {
+            self.confirm_from_connections(ctx, user_id, tenant, connectors, &mut report)
+                .await?;
+        }
+        if let Some(federated) = federated {
+            Self::confirm_from_idp(
+                self.store.as_ref(),
+                user_id,
+                federated.as_ref(),
+                &mut report,
+            )
+            .await?;
+        }
+        Ok(report)
+    }
+
+    /// The connector-credential channel.
+    ///
+    /// Ownership is compared between *people*, not between token subjects, so a
+    /// proof left behind under one of the caller's other logins is still theirs
+    /// (ADR-0014).
+    async fn confirm_from_connections(
+        &self,
+        ctx: &SecurityContext,
+        user_id: &str,
+        tenant: Uuid,
+        connectors: &Arc<ConnectorService>,
+        report: &mut ConfirmReport,
+    ) -> Result<()> {
         for connection in connectors.list(ctx, tenant).await? {
             if connection.account.trim().is_empty() {
                 // A provider that reports no account (an AI model key) has no
@@ -442,17 +504,31 @@ impl IdentityService {
                 report.skipped_shared += 1;
                 continue;
             }
-            if connection.created_by.trim().is_empty() {
-                // Written before the record named its creator. There is a proof
-                // but nothing says whose, and guessing is the failure this whole
-                // flow exists to avoid.
-                report.skipped_unknown_owner += 1;
-                continue;
-            }
-            if connection.created_by != subject {
-                // Somebody else's proof is theirs to record.
-                report.skipped_other_owner += 1;
-                continue;
+            // `created_by` names the sign-in method that wrote the row, so it is
+            // resolved to a person before being compared to one: the caller may
+            // be signed in through a different login than the one that left the
+            // proof, and the proof is theirs under either (ADR-0014).
+            let creator = if connection.created_by.trim().is_empty() {
+                None
+            } else {
+                self.resolve_subject(PROVIDER_KEYCLOAK, &connection.created_by)
+                    .await?
+            };
+            match proof_owner(&connection.created_by, creator.as_deref(), user_id) {
+                ProofOwner::Caller => {}
+                ProofOwner::AnotherPerson => {
+                    // Somebody else's proof is theirs to record.
+                    report.skipped_other_owner += 1;
+                    continue;
+                }
+                ProofOwner::Unknown => {
+                    // A row written before the record named its creator, or one
+                    // naming a subject no login knows. There is a proof but
+                    // nothing says whose, and guessing is the failure this whole
+                    // flow exists to avoid.
+                    report.skipped_unknown_owner += 1;
+                    continue;
+                }
             }
 
             match self
@@ -474,7 +550,61 @@ impl IdentityService {
                 AliasOutcome::Refused(reason) => report.refused.push(reason.to_owned()),
             }
         }
-        Ok(report)
+        Ok(())
+    }
+
+    /// The IdP channel: what the broker already confirmed about this person.
+    ///
+    /// Walks **every** Keycloak login the person holds, not only the one they
+    /// are signed in with. A person who merged two accounts may have brokered a
+    /// different provider onto each, and each of those is a proof they own —
+    /// which is the whole point of one person holding several logins (ADR-0014).
+    ///
+    /// The alias is keyed on the provider handle rather than the provider's
+    /// numeric id, because the handle is what the artefacts being attributed
+    /// carry: a commit names an author, not an account id. A handle renamed at
+    /// the provider is therefore a re-confirmation rather than a silent break —
+    /// the old row keeps pointing at this person until something displaces it.
+    async fn confirm_from_idp(
+        store: &dyn IdentityStore,
+        user_id: &str,
+        federated: &dyn FederatedIdentityReader,
+        report: &mut ConfirmReport,
+    ) -> Result<()> {
+        for login in store.logins_of(user_id).await? {
+            if login.provider != PROVIDER_KEYCLOAK {
+                // Only a realm subject has brokered logins to read.
+                continue;
+            }
+            for account in federated.federated_accounts(&login.subject).await? {
+                if account.user_name.trim().is_empty() {
+                    // A broker reporting no handle proves control of an account
+                    // that nothing else can name, so there is nothing for an
+                    // attribution to match against.
+                    report.skipped_no_handle += 1;
+                    continue;
+                }
+                match attribute_alias_in(
+                    store,
+                    user_id,
+                    &account.provider,
+                    &account.user_name,
+                    Confidence::Confirmed,
+                )
+                .await?
+                {
+                    AliasOutcome::Written | AliasOutcome::WrittenOverAProof => {
+                        report.confirmed.push((
+                            normalize_key(&account.provider),
+                            normalize_key(&account.user_name),
+                        ));
+                    }
+                    AliasOutcome::AlreadyHeld => report.already_confirmed += 1,
+                    AliasOutcome::Refused(reason) => report.refused.push(reason.to_owned()),
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Which of `external_ids` are confirmed, mapped to the user holding them.
@@ -533,6 +663,22 @@ impl IdentityService {
         };
         self.store.upsert_membership(&view).await?;
         Ok(view)
+    }
+
+    /// Record that the identity `subject` belongs to `org_id` holding `role`.
+    ///
+    /// The assignment path's entry point (ADR-0016). It provisions a person if
+    /// this login has never been seen, which is the right call *here* and not in
+    /// `resolve_recorded_subject`: this subject comes from the IdP's own user
+    /// list, so the identity demonstrably exists — where a subject read out of
+    /// some other gear's column demonstrates nothing.
+    pub async fn record_assignment(&self, subject: &str, org_id: Uuid, role: &str) -> Result<()> {
+        let user_id = self
+            .resolve_or_provision(PROVIDER_KEYCLOAK, subject, None, None, true)
+            .await?;
+        self.record_membership(&user_id, &org_id.to_string(), role, SOURCE_ASSIGNMENT)
+            .await?;
+        Ok(())
     }
 
     /// Remove a person's membership in an organization.
@@ -617,8 +763,58 @@ pub struct ConfirmReport {
     pub skipped_other_owner: usize,
     /// Personal connections written before the record named its creator.
     pub skipped_unknown_owner: usize,
+    /// Brokered logins whose provider reported no handle to attribute.
+    pub skipped_no_handle: usize,
     /// Refusals from the write policy, in the policy's own words.
     pub refused: Vec<String>,
+}
+
+/// Attribute an external identity to a user, subject to the write policy.
+///
+/// A free function over the store rather than a method: the policy needs the
+/// alias rows and nothing else about the service. Saying so in the signature is
+/// what lets the ceremony be tested without standing up Account Management or a
+/// connector catalogue.
+async fn attribute_alias_in(
+    store: &dyn IdentityStore,
+    user_id: &str,
+    kind: &str,
+    external_id: &str,
+    confidence: Confidence,
+) -> Result<AliasOutcome> {
+    let (kind, external_id) = normalize_alias(kind, external_id)?;
+    if store.get_user(user_id).await?.is_none() {
+        return Err(anyhow!("user {user_id} does not exist"));
+    }
+    let existing = store.find_alias(&kind, &external_id).await?;
+    let held = existing.as_ref().and_then(|record| {
+        Confidence::parse(&record.confidence).map(|confidence| Held {
+            user_id: record.user_id.clone(),
+            confidence,
+        })
+    });
+
+    match decide(held.as_ref(), user_id, confidence) {
+        Decision::AlreadyHeld => Ok(AliasOutcome::AlreadyHeld),
+        Decision::Refused(refusal) => Ok(AliasOutcome::Refused(refusal.message())),
+        Decision::Write => {
+            let took_a_proof = displaced_a_proof(held.as_ref(), user_id);
+            store
+                .upsert_alias(&AliasRecord {
+                    kind,
+                    external_id,
+                    user_id: user_id.to_owned(),
+                    confidence: confidence.as_str().to_owned(),
+                    added_at_epoch_ms: now_ms(),
+                })
+                .await?;
+            Ok(if took_a_proof {
+                AliasOutcome::WrittenOverAProof
+            } else {
+                AliasOutcome::Written
+            })
+        }
+    }
 }
 
 /// Fold a kind or an external identifier into its stored form.
@@ -646,6 +842,233 @@ fn normalize_alias(kind: &str, external_id: &str) -> Result<(String, String)> {
         return Err(anyhow!("external_id must be 1..=320 characters"));
     }
     Ok((kind, external_id))
+}
+
+#[cfg(test)]
+mod idp_channel_tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::identity_directory::FederatedAccount;
+    use crate::user_profile::store::IdentityStore;
+
+    const PERSON: &str = "11111111-1111-1111-1111-111111111111";
+    const SUBJECT_A: &str = "kc-subject-a";
+    const SUBJECT_B: &str = "kc-subject-b";
+
+    /// Just enough store for the ceremony: the person's logins, and the alias
+    /// slot it writes into. Everything else is not on this path, and saying so
+    /// with `unimplemented!` keeps the fake from quietly answering a question
+    /// the real store would answer differently.
+    struct Logins {
+        logins: Vec<(&'static str, &'static str)>,
+        aliases: Mutex<Vec<AliasRecord>>,
+    }
+
+    impl Logins {
+        fn with(logins: Vec<(&'static str, &'static str)>) -> Arc<Self> {
+            Arc::new(Self {
+                logins,
+                aliases: Mutex::new(Vec::new()),
+            })
+        }
+        fn written(&self) -> Vec<(String, String)> {
+            self.aliases
+                .lock()
+                .expect("lock")
+                .iter()
+                .map(|a| (a.kind.clone(), a.external_id.clone()))
+                .collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IdentityStore for Logins {
+        async fn logins_of(&self, _user_id: &str) -> Result<Vec<LoginView>> {
+            Ok(self
+                .logins
+                .iter()
+                .map(|(provider, subject)| LoginView {
+                    provider: (*provider).to_owned(),
+                    subject: (*subject).to_owned(),
+                    user_id: PERSON.to_owned(),
+                    verified: true,
+                    linked_at_epoch_ms: 0,
+                })
+                .collect())
+        }
+        async fn get_user(&self, id: &str) -> Result<Option<UserProfile>> {
+            Ok(Some(UserProfile {
+                id: id.to_owned(),
+                ..UserProfile::default()
+            }))
+        }
+        async fn find_alias(&self, kind: &str, external_id: &str) -> Result<Option<AliasRecord>> {
+            Ok(self
+                .aliases
+                .lock()
+                .expect("lock")
+                .iter()
+                .find(|a| a.kind == kind && a.external_id == external_id)
+                .cloned())
+        }
+        async fn upsert_alias(&self, alias: &AliasRecord) -> Result<()> {
+            let mut held = self.aliases.lock().expect("lock");
+            held.retain(|a| !(a.kind == alias.kind && a.external_id == alias.external_id));
+            held.push(alias.clone());
+            Ok(())
+        }
+
+        async fn find_login(&self, _p: &str, _s: &str) -> Result<Option<LoginView>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn upsert_user(&self, _profile: &UserProfile) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn upsert_login(&self, _login: &LoginView) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn upsert_membership(&self, _m: &MembershipView) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn memberships_of(&self, _user_id: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn delete_membership(&self, _user_id: &str, _org_id: &str) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn aliases_of(&self, _user_id: &str) -> Result<Vec<AliasRecord>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn find_aliases(&self, _k: &str, _ids: &[String]) -> Result<Vec<AliasRecord>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn delete_alias(&self, _kind: &str, _external_id: &str) -> Result<()> {
+            unimplemented!("not on the ceremony's path")
+        }
+    }
+
+    /// The IdP, answering per subject. Records which subjects were asked about.
+    struct Broker {
+        accounts: Vec<(&'static str, Vec<FederatedAccount>)>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl FederatedIdentityReader for Broker {
+        async fn federated_accounts(&self, subject: &str) -> anyhow::Result<Vec<FederatedAccount>> {
+            self.asked.lock().expect("lock").push(subject.to_owned());
+            Ok(self
+                .accounts
+                .iter()
+                .find(|(s, _)| *s == subject)
+                .map(|(_, accounts)| accounts.clone())
+                .unwrap_or_default())
+        }
+    }
+
+    fn account(provider: &str, user_name: &str) -> FederatedAccount {
+        FederatedAccount {
+            provider: provider.to_owned(),
+            user_id: "provider-side-id".to_owned(),
+            user_name: user_name.to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_login_the_person_holds_is_asked_about() {
+        // The reason this walks logins instead of the current token: two
+        // brokered providers, one on each of the person's Keycloak logins, and
+        // both are proofs they own (ADR-0014).
+        let store = Logins::with(vec![
+            (PROVIDER_KEYCLOAK, SUBJECT_A),
+            (PROVIDER_KEYCLOAK, SUBJECT_B),
+        ]);
+        let broker = Broker {
+            accounts: vec![
+                (SUBJECT_A, vec![account("github", "Alice")]),
+                (SUBJECT_B, vec![account("gitlab", "alice-gl")]),
+            ],
+            asked: Mutex::new(Vec::new()),
+        };
+        let mut report = ConfirmReport::default();
+        IdentityService::confirm_from_idp(store.as_ref(), PERSON, &broker, &mut report)
+            .await
+            .expect("ceremony ran");
+
+        assert_eq!(
+            broker.asked.lock().expect("lock").as_slice(),
+            [SUBJECT_A, SUBJECT_B]
+        );
+        // Normalized on the way in, so a later lookup by handle cannot miss it.
+        assert_eq!(
+            store.written(),
+            vec![
+                ("github".to_owned(), "alice".to_owned()),
+                ("gitlab".to_owned(), "alice-gl".to_owned()),
+            ]
+        );
+        assert_eq!(report.confirmed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn only_a_realm_login_has_brokered_accounts_to_read() {
+        let store = Logins::with(vec![("github", "direct-github-subject")]);
+        let broker = Broker {
+            accounts: vec![],
+            asked: Mutex::new(Vec::new()),
+        };
+        let mut report = ConfirmReport::default();
+        IdentityService::confirm_from_idp(store.as_ref(), PERSON, &broker, &mut report)
+            .await
+            .expect("ceremony ran");
+
+        assert!(broker.asked.lock().expect("lock").is_empty());
+        assert!(report.confirmed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_broker_with_no_handle_is_reported_not_attributed() {
+        // Proof of control over an account nothing else can name. There is
+        // nothing for an attribution to match, so it is counted, not written.
+        let store = Logins::with(vec![(PROVIDER_KEYCLOAK, SUBJECT_A)]);
+        let broker = Broker {
+            accounts: vec![(SUBJECT_A, vec![account("microsoft", "  ")])],
+            asked: Mutex::new(Vec::new()),
+        };
+        let mut report = ConfirmReport::default();
+        IdentityService::confirm_from_idp(store.as_ref(), PERSON, &broker, &mut report)
+            .await
+            .expect("ceremony ran");
+
+        assert_eq!(report.skipped_no_handle, 1);
+        assert!(report.confirmed.is_empty());
+        assert!(store.written().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_identity_already_proved_is_reported_rather_than_rewritten() {
+        // The overlap case: the same GitHub account confirmed by a connector
+        // credential and by the brokered login.
+        let store = Logins::with(vec![(PROVIDER_KEYCLOAK, SUBJECT_A)]);
+        let broker = Broker {
+            accounts: vec![(SUBJECT_A, vec![account("github", "alice")])],
+            asked: Mutex::new(Vec::new()),
+        };
+        let mut first = ConfirmReport::default();
+        IdentityService::confirm_from_idp(store.as_ref(), PERSON, &broker, &mut first)
+            .await
+            .expect("ceremony ran");
+        let mut again = ConfirmReport::default();
+        IdentityService::confirm_from_idp(store.as_ref(), PERSON, &broker, &mut again)
+            .await
+            .expect("ceremony ran");
+
+        assert_eq!(first.confirmed.len(), 1);
+        assert_eq!(again.already_confirmed, 1);
+        assert!(again.confirmed.is_empty());
+        assert_eq!(store.written().len(), 1);
+    }
 }
 
 #[cfg(test)]

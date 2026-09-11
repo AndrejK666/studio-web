@@ -17,12 +17,19 @@ import { Screen } from './Screen';
 import { Popup } from './Popup';
 import { Overlay } from './Overlay';
 import { OverlayDialog } from './OverlayDialog';
+import { OrganizationAccessGate, useHasNoOrganization } from './OrganizationAccessGate';
 
 export interface LayoutProps {
   children?: React.ReactNode;
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
+  // An authenticated person with no organization membership gets the onboarding
+  // state instead of the mounted screen (ADR-0011 §3). The top bar stays — they
+  // still need the account menu and a way to sign out — but its context slot has
+  // nothing to offer and the screen below has no scope to render in.
+  const noOrganization = useHasNoOrganization();
+
   useEffect(() => {
     // Bootstrap application on mount — the signed-in user, and the organizations
     // the top bar's context slot switches between.
@@ -36,7 +43,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <Header />
 
       {/* The mounted MFE owns everything below the top bar, full width. */}
-      <Screen>{children}</Screen>
+      <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
 
       {/* Out of the flow, over everything: drawer, dialogs, overlays. */}
       <Menu />
