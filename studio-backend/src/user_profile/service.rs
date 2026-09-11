@@ -22,6 +22,7 @@ use super::alias_policy::{
     Confidence, Decision, Held, ProofOwner, decide, displaced_a_proof, proof_owner,
 };
 use super::invitations;
+use super::leaving;
 use super::store::IdentityStore;
 use crate::connectors::service::ConnectorService;
 use crate::identity_directory::IdpDirectoryReader;
@@ -945,13 +946,84 @@ impl IdentityService {
         Ok(Ok(membership))
     }
 
-    /// Remove a person's membership in an organization.
-    pub async fn remove_membership(&self, user_id: &str, org_id: &str) -> Result<()> {
-        self.store.delete_membership(user_id, org_id).await?;
-        memberships_changed();
-        Ok(())
+    /// Everybody in one organization, so a caller can see the room before
+    /// changing who is in it.
+    pub async fn members_of(&self, org_id: &str) -> Result<Vec<MembershipView>> {
+        self.store.memberships_in_org(org_id).await
     }
 
+    /// May this membership end, or change to `new_role`?
+    ///
+    /// One gate for leaving, for being removed, and for being demoted —
+    /// otherwise the rule would hold on one route and be walked around on
+    /// another.
+    pub async fn may_change_membership(
+        &self,
+        user_id: &str,
+        org_id: &str,
+        new_role: Option<&str>,
+    ) -> Result<Result<(), leaving::Refusal>> {
+        let members: Vec<leaving::Member> = self
+            .members_of(org_id)
+            .await?
+            .into_iter()
+            .map(|m| leaving::Member {
+                user_id: m.user_id,
+                role: m.role,
+            })
+            .collect();
+        Ok(leaving::may_change(&members, user_id, new_role))
+    }
+
+    /// Leave an organization: the membership ends, and the leaver's own
+    /// credentials go with them.
+    ///
+    /// Access goes; authorship does not. Documents, projects and workspaces
+    /// belong to the organization and stay, and attribution in the knowledge
+    /// graph stays with the person who earned it — history is not rewritten
+    /// because somebody left (ADR-0018 §6).
+    ///
+    /// What does leave with them is every *personal* connection they created
+    /// here. Without that the organization keeps a working credential of
+    /// somebody no longer in it, and under ADR-0012 it keeps their proof of
+    /// controlling that external account too.
+    pub async fn leave_organization(
+        &self,
+        ctx: &SecurityContext,
+        user_id: &str,
+        org_id: Uuid,
+    ) -> Result<Result<usize, leaving::Refusal>> {
+        let org = org_id.to_string();
+        if let Err(refusal) = self.may_change_membership(user_id, &org, None).await? {
+            return Ok(Err(refusal));
+        }
+        self.store.delete_membership(user_id, &org).await?;
+        memberships_changed();
+
+        // After the membership, not before: the credentials are the tidy-up,
+        // and leaving somebody a member while their connections disappear would
+        // be the worse of the two half-states.
+        let removed = match self.connectors.get().and_then(Option::as_ref) {
+            // This gear *is* the person resolver, so it hands itself over
+            // rather than looking one up.
+            Some(connectors) => connectors
+                .delete_personal_of(ctx, org_id, self, user_id)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        user = %user_id,
+                        organization = %org_id,
+                        "studio-user: left the organization but could not remove their personal \
+                         connections: {error:#}"
+                    );
+                    0
+                }),
+            None => 0,
+        };
+        Ok(Ok(removed))
+    }
+
+    /// Remove a person's membership in an organization.
     /// Merge `from_user` into `into_user`: repoint every login, alias and
     /// membership, then tombstone the source with a `merged_into` pointer.
     pub async fn merge(&self, from_user: &str, into_user: &str) -> Result<MergeResult> {
@@ -1201,6 +1273,9 @@ mod idp_channel_tests {
             unimplemented!("not on the ceremony's path")
         }
         async fn memberships_of(&self, _user_id: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!("not on the ceremony's path")
+        }
+        async fn memberships_in_org(&self, _org_id: &str) -> Result<Vec<MembershipView>> {
             unimplemented!("not on the ceremony's path")
         }
         async fn delete_membership(&self, _user_id: &str, _org_id: &str) -> Result<()> {
