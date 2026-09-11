@@ -589,9 +589,11 @@ impl Ontology {
     /// says where the field actually lives.
     ///
     /// Relation properties are refused too: they are materialized as `declares`
-    /// edges in the model graph, and the store has no way to remove an edge —
-    /// an edge key is a hash the gear derives and never hands back — so editing
-    /// one would leave the old edge behind.
+    /// edges in the model graph, and editing one means removing an edge as well
+    /// as a property. That is possible — a node read returns each incident
+    /// edge's key, which `delete_edge` takes — but it is a second write path
+    /// with its own failure modes, and it is not built. Refusing is honest;
+    /// editing the property and leaving the edge would not be.
     pub fn edit_field(
         &mut self,
         entity_id: &str,
@@ -933,7 +935,7 @@ impl std::fmt::Display for OntologyError {
             Self::RelationProperty(name) => write!(
                 f,
                 "`{name}` is a relation, not a payload field: it is stored as a `declares` edge \
-                 in the model graph, and an edge cannot be removed through this API"
+                 in the model graph, and removing that edge is not implemented here"
             ),
             Self::Malformed => write!(f, "ontology document is malformed"),
         }

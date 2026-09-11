@@ -165,9 +165,10 @@ Two edits are refused, with the reason:
 
 - **an inherited field** — it belongs to the base that declares it, and editing
   it there changes it for everything that extends the base
-- **a relation property** — it is stored as a `declares` edge, and an edge key
-  is a hash the gear derives and never hands back, so the old edge could not be
-  removed
+- **a relation property** — it is stored as a `declares` edge, so editing one
+  means removing an edge as well as a property. The graph can do that (a node
+  read returns each incident edge's key, which `delete_edge` takes); it is a
+  second write path that is simply not built yet
 
 **Dropping a field does not drop data.** The objects keep what they hold under
 that key; it starts being reported as undeclared instead.

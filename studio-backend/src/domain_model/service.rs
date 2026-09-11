@@ -2738,7 +2738,8 @@ mod tests {
             .expect_err("inherited");
         assert!(e.to_string().contains("declared by `system-object`"), "{e}");
 
-        // A relation is an edge, and an edge cannot be removed through this API.
+        // A relation is an edge as well as a property, and removing the edge
+        // is not implemented here.
         let e = service
             .edit_field(
                 &ctx,
