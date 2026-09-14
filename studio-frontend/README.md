@@ -127,6 +127,42 @@ The FrontX ecosystem packages (`@gears-frontx/mfes`, `@gears-frontx/gts-plugin`,
 See **[QUICK_START.md](QUICK_START.md)** for the hands-on development workflow —
 creating screens and microfrontends, layout, state, styling, and commands.
 
+## This application
+
+Everything above describes the template. What follows is specific to
+Constructor Studio Web and lives under [`docs/`](docs) — it is ours, not the
+template's, and survives a `frontx upgrade` only because it sits outside the
+files the CLI manages.
+
+- **[`docs/studio-events.md`](docs/studio-events.md)** — the backend's push
+  channel: how a screen is told that background work finished instead of
+  polling for it, with worked examples and the traps.
+- [`docs/sdlc/FEATURE/`](docs/sdlc/FEATURE) — per-feature notes.
+
+The short version of the first one: `StudioEventsApiService` is already
+registered on the shell, so a screen only subscribes.
+
+```tsx
+import { useApiStream, apiRegistry } from '@gears-frontx/react';
+import { StudioEventsApiService, type StudioEvent, type StudioRunEvent } from '@/app/api';
+
+function RunTicker() {
+  const service = apiRegistry.getService(StudioEventsApiService);
+  const { data, status } = useApiStream(service.events);
+  if (status !== 'connected') return null;
+
+  const event = data as StudioEvent<StudioRunEvent> | undefined;
+  // The stream carries everything the assembly publishes, not only runs.
+  if (event?.subject_type !== 'task_run') return null;
+
+  return <span>{event.subject_id.slice(0, 8)}: {event.payload.state}</span>;
+}
+```
+
+To follow a job you are about to start, read `service.cursor.fetch()` first and
+subscribe with `service.streamFrom(latest_seq)` — a task can finish before the
+connection is open, and a stream opened "from now on" would never mention it.
+
 ## Project structure
 
 ```text

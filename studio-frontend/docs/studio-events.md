@@ -1,0 +1,225 @@
+# Studio events — how a screen is told instead of asking
+
+The backend publishes one SSE stream per tenant, and every background run in
+the assembly announces its transitions on it. A screen that needs to know when
+work finished subscribes to that stream instead of re-reading
+`GET /studio-tasks/v1/runs/{id}` on a timer.
+
+The channel and its constraints are ADR-0013
+([`docs/adr/0013-studio-events-push-channel.md`](../../docs/adr/0013-studio-events-push-channel.md)).
+This page is the client half: what to call, and what bites.
+
+- [The service](#the-service)
+- [Watch every background run](#watch-every-background-run)
+- [Follow one run you just started](#follow-one-run-you-just-started)
+- [Refresh a list without polling](#refresh-a-list-without-polling)
+- [Fill a gap after the fact](#fill-a-gap-after-the-fact)
+- [What the transport does for you](#what-the-transport-does-for-you)
+- [Traps](#traps)
+
+## The service
+
+`StudioEventsApiService` is registered on the shell in
+[`src-app/app/main.tsx`](../src-app/app/main.tsx), so every MFE shares one
+stream. Get it the same way as any other service:
+
+```tsx
+import { apiRegistry } from '@gears-frontx/react';
+import { StudioEventsApiService } from '@/app/api';
+
+const events = apiRegistry.getService(StudioEventsApiService);
+```
+
+It exposes four things:
+
+| Member | What it is |
+|---|---|
+| `events` | the live stream, from now on |
+| `streamFrom(cursor)` | the live stream, replaying everything after `cursor` first |
+| `cursor` | the tenant's current high-water mark, one event at most |
+| `since({ afterSeq, limit? })` | the retained window after a cursor, oldest first |
+
+Every frame is a `StudioEvent`:
+
+```ts
+interface StudioEvent<P = unknown> {
+  seq: number;          // monotonic per tenant — the resume point
+  at_ms: number;
+  kind: string;         // 'task.queued' | 'task.running' | 'task.progress' | 'task.succeeded' | …
+  subject_type: string; // 'task_run', 'workspace', …
+  subject_id: string;   // for a background run, its run id
+  source: string;       // the gear that published it
+  payload: P;
+}
+```
+
+For `task.*` events the payload is a `StudioRunEvent`, carrying the same fields
+`GET /studio-tasks/v1/runs/{id}` answers with — so one view can be fed by
+either without a second mapping.
+
+## Watch every background run
+
+`useApiStream` connects on mount and disconnects on unmount. In the default
+`'latest'` mode `data` is the most recent event:
+
+```tsx
+import { useApiStream, apiRegistry } from '@gears-frontx/react';
+import { StudioEventsApiService, type StudioEvent, type StudioRunEvent } from '@/app/api';
+
+function RunTicker() {
+  const service = apiRegistry.getService(StudioEventsApiService);
+  const { data, status, error } = useApiStream(service.events);
+
+  if (status === 'connecting') return <Spinner />;
+  if (status === 'error') return <StreamError error={error} />;
+
+  const event = data as StudioEvent<StudioRunEvent> | undefined;
+  if (event?.subject_type !== 'task_run') return null;
+
+  // `subject_id` is the run id and is always there; `task_type` is not — a
+  // progress frame carries only what that transition set.
+  return <span>{event.subject_id.slice(0, 8)}: {event.payload.state}</span>;
+}
+```
+
+The stream carries everything the assembly publishes, not only runs — always
+narrow by `subject_type` (and `kind`, if you care about one transition) before
+reading `payload`.
+
+## Follow one run you just started
+
+A task can finish before your connection is even open, and a stream opened
+"from now on" will never mention it. Read the cursor **before** starting the
+job and resume from it:
+
+```tsx
+function useRunProgress() {
+  const service = apiRegistry.getService(StudioEventsApiService);
+  const [from, setFrom] = useState<number | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+
+  async function start() {
+    // Read the mark first: everything the job publishes is then replayed,
+    // however fast it finishes.
+    const { latest_seq } = await service.cursor.fetch();
+    setFrom(latest_seq);
+    const { run_id } = await startTheJob();
+    setRunId(run_id);
+  }
+
+  const { data } = useApiStream(
+    from === null ? service.events : service.streamFrom(from),
+    { enabled: from !== null },
+  );
+
+  const event = data as StudioEvent<StudioRunEvent> | undefined;
+  const mine =
+    event?.subject_type === 'task_run' && event.subject_id === runId
+      ? event.payload
+      : undefined;
+
+  return { start, state: mine?.state, phase: mine?.phase };
+}
+```
+
+`streamFrom` builds a distinct descriptor key per cursor, so changing the
+starting point opens a fresh connection rather than reusing the old one.
+
+## Refresh a list without polling
+
+For a list, the event is a signal to reload, not the data itself. A busy run
+reports progress several times a second, so coalesce:
+
+```tsx
+function useRunListRefresh(load: () => Promise<void>) {
+  const service = apiRegistry.getService(StudioEventsApiService);
+  const { data } = useApiStream(service.events);
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const event = data as StudioEvent | undefined;
+    if (event?.subject_type !== 'task_run') return;
+    if (pending.current) return;
+    pending.current = setTimeout(() => {
+      pending.current = null;
+      void load().catch(() => {
+        /* a failed refresh keeps the last good list */
+      });
+    }, 300);
+    return () => {
+      if (pending.current) clearTimeout(pending.current);
+      pending.current = null;
+    };
+  }, [data, load]);
+}
+```
+
+The prototype's `studio-frontend-prototype/src/tasks.tsx` is the same shape
+against a plain `EventSource`, and worth reading as a worked example.
+
+## Fill a gap after the fact
+
+`since` returns the retained window by cursor. A `latest_seq` above the last
+returned `seq` means the caller fell out of that window and lost events — the
+honest recovery is a full reload, not a longer replay:
+
+```tsx
+const { data } = useApiQuery(service.since({ afterSeq: lastSeen, limit: 200 }));
+
+const lost =
+  data && data.events.length > 0
+    ? data.latest_seq > data.events[data.events.length - 1].seq
+    : false;
+```
+
+## What the transport does for you
+
+The shell replaces the framework's SSE transport with
+[`SseAuthPlugin`](../src/api/plugins/SseAuthPlugin.ts) +
+[`FetchEventSource`](../src/api/sse/FetchEventSource.ts), wired inside
+`StudioEventsApiService`'s constructor. You get three things the stock
+`SseProtocol` cannot give:
+
+- **the bearer token on the connection.** The native `EventSource` can carry no
+  `Authorization` header and the gateway takes no token from the query string,
+  so without this an authenticated stream is simply unreachable.
+- **reconnect.** `SseProtocolConfig.reconnectAttempts` is dead config; the
+  retry loop lives in the transport.
+- **gap-free resume.** On every reconnect the plugin replays what was published
+  while the connection was down, in order, before letting a newer frame
+  through.
+
+## Traps
+
+**Register an SSE plugin on the protocol instance.**
+`BaseApiService.registerPlugin(protocol, plugin)` only records a plugin for the
+framework's mock-mode toggle — it never runs. The call that works is
+`sseProtocol.plugins.add(plugin)`. The TSDoc on `SseAuthPlugin` still says
+`registerPlugin`; the constructor of `StudioEventsApiService` is the correct
+reference.
+
+**The server sends unnamed frames on purpose.** The framework binds only
+`onmessage`, so a named event type never reaches a consumer — the kind lives
+inside the JSON, in `kind`. Do not reach for
+`addEventListener('task.succeeded', …)`.
+
+**An absent field means "unchanged", not "cleared".** Events carry only what a
+transition changed: `phase` rides on `task.progress`, `summary` / `error` on
+the terminal ones, `result` on either — a progress report that carried counts
+announces them, one that did not leaves the run's recorded result alone. Merge
+into what you already hold; treating `undefined` as `null` tells a view a run
+lost its counts.
+
+**A deployment can run without the channel.** The publisher is resolved lazily,
+and an absent one publishes nothing and breaks nothing — which means a screen
+that only listens sits silent there. Keep a slow reload as a floor if the view
+must be right without it; that is what the surviving `setInterval` in the
+prototype's `tasks.tsx` is for.
+
+**Do not confuse it with `packages/studio/src/events/studioEvents.ts`.** That
+`StudioEvents` is the canvas package's own event names and has nothing to do
+with this channel.
+
+**Retries produce repeats.** `studio-tasks` retries up to five times with a
+requeue between attempts, so a failing run emits running/queued pairs before
+its terminal state. Drive the view from `state`, not from a count of events.
