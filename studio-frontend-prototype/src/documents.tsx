@@ -35,7 +35,7 @@ import {
 } from "./api";
 import {
   detectBloat,
-  detectDocType,
+  detectDocTypes,
   detectLeak,
   isDetectorCancel,
   MIN_SPEC_SHARE,
@@ -827,15 +827,38 @@ function IngestedDocumentsView({
     let named = 0;
     let declined = 0;
     try {
-      for (let i = 0; i < targets.length; i += 1) {
-        const b = targets[i];
-        setProgress(`Spec Quality ${i + 1}/${targets.length} · ${basename(b.path)}`);
-        const { docType, specShare, gatePassed, taskId } = await detectDocType(
-          token,
-          b.path,
-          contentByNode[b.node_id],
-          ctrl.signal,
-        );
+      // One run for the whole set: the backend submits each document and waits
+      // for its verdict, and this follows that run. What a verdict MEANS is
+      // still decided here — see the two checks below.
+      const byNode = new Map(targets.map((b) => [b.node_id, b] as const));
+      const verdicts = await detectDocTypes(
+        token,
+        targets.map((b) => ({
+          id: b.node_id,
+          path: b.path,
+          text: contentByNode[b.node_id],
+        })),
+        {
+          onProgress: (phase) => {
+            // The run reports `3/20 · <node id>`; the person wants the name.
+            const [count, node] = phase.split(" · ");
+            const named = node ? byNode.get(node)?.path : undefined;
+            setProgress(`Spec Quality ${count}${named ? ` · ${basename(named)}` : ""}`);
+          },
+          signal: ctrl.signal,
+        },
+      );
+
+      for (const b of targets) {
+        const verdict = verdicts.get(b.node_id);
+        if (!verdict) continue;
+        if ("error" in verdict) {
+          // One document the sweep could not analyse is not a failed run: the
+          // others have verdicts, and this one is simply still unplaced.
+          declined += 1;
+          continue;
+        }
+        const { docType, specShare, gatePassed, taskId } = verdict;
         // Two things have to hold before a verdict is worth recording: the
         // detector recognised enough of the document for the type it named to
         // mean anything, and that name is one this workspace has a template

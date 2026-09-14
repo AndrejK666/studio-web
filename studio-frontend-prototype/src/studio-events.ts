@@ -26,9 +26,9 @@ export interface StudioEvent<P = unknown> {
   at_ms: number;
   /** `task.queued` | `task.running` | `task.progress` | `task.succeeded` | `task.failed` | … */
   kind: string;
-  /** What the event is about: `task`, … */
+  /** What the event is about: `task_run`, `workspace`, … */
   subject_type: string;
-  /** The subject's id — for a task, its `task_id`. */
+  /** The subject's id — for a background run, its run id. */
   subject_id: string;
   /** The gear that published it. */
   source: string;
@@ -227,21 +227,41 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * Follow one `studio-tasks` run to its end over the event channel.
  *
  * Resolves on the terminal transition (`succeeded` / `failed` / `cancelled`);
- * `onProgress` fires for every event before that. Rejects only on timeout —
- * the run then keeps going server-side, which is what the message says.
+ * `onProgress` fires for every event before that. Rejects on timeout, and on
+ * `signal` — in both cases the run keeps going server-side, which is what the
+ * two messages say. Stopping watching is not cancelling: ask the run itself to
+ * stop (`POST /studio-tasks/v1/runs/{id}/cancel`) if that is what you mean.
  */
 export function followRun(
   token: string,
   runId: string,
   onProgress: (payload: RunEventPayload) => void,
-  { fromSeq, timeoutMs = 10 * 60 * 1000 }: { fromSeq?: number; timeoutMs?: number } = {},
+  {
+    fromSeq,
+    timeoutMs = 10 * 60 * 1000,
+    signal,
+  }: { fromSeq?: number; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<RunEventPayload> {
   return new Promise((resolve, reject) => {
     const finish = (settle: () => void) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       unsubscribe();
       settle();
     };
+    // An AbortError rather than a custom sentinel: callers already treat it as
+    // "the user stopped", and it is what every other abortable call here throws.
+    const onAbort = () =>
+      finish(() =>
+        reject(new DOMException("stopped watching the run", "AbortError")),
+      );
+    // Already stopped: reject directly, because `finish` reads bindings that
+    // the lines below have not created yet.
+    if (signal?.aborted) {
+      reject(new DOMException("stopped watching the run", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     const unsubscribe = subscribeStudioEvents(token, {
       fromSeq,
       onEvent: (event) => {

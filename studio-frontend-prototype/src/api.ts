@@ -789,11 +789,23 @@ export interface StudioSession {
   url: string;
   created_at_epoch_secs: number;
   sources: string[];
+  /** The `session.await_ready` run probing this session, on a launch answer.
+   *  Absent where studio-tasks has no database — then the wait falls back to
+   *  polling. */
+  ready_run_id?: string;
 }
 
 interface SessionWaitOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
+  /**
+   * How to follow the readiness run to its end.
+   *
+   * Injected rather than imported: `studio-events.ts` imports from this module,
+   * and calling back into it from here would close the cycle. The caller has
+   * the token anyway, which this module's session helpers do not.
+   */
+  follow?: (runId: string) => Promise<{ state: string; error?: string | null }>;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -804,8 +816,15 @@ interface SessionWaitOptions {
  * Kubernetes returns the session record before its Pod has been scheduled and
  * the gate has bound port 3003. Embedding the URL while it is still `starting`
  * makes the reverse proxy answer 502 and leaves Cloudflare's error document in
- * the iframe. GET refreshes the server-side reachability probe, so poll that
- * state before mounting the frame.
+ * the iframe.
+ *
+ * The probe is the backend's now: a launch queues a `session.await_ready` run
+ * whose reads are what promote `starting` to `running`, so a session comes up
+ * whether or not this tab is still open. Given `ready_run_id` and a `follow`,
+ * this waits on that run and asks for the record once at the end.
+ *
+ * Without them it polls, exactly as it used to — a GET is still what refreshes
+ * the server-side probe, which is what a deployment with no task queue has.
  */
 export async function waitForStudioSessionReady(
   initial: StudioSession,
@@ -820,6 +839,21 @@ export async function waitForStudioSessionReady(
     ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const deadline = now() + timeoutMs;
   let session = initial;
+
+  if (session.state === "starting" && session.ready_run_id && options.follow) {
+    const end = await options.follow(session.ready_run_id);
+    if (end.state !== "succeeded") {
+      throw new Error(end.error || `IDE session did not become ready (run ${end.state})`);
+    }
+    // The run's result deliberately carries no URL — it would contain the
+    // one-shot gate token, and a run's result is broadcast to the whole
+    // tenant. One authenticated read gets it.
+    session = await refresh();
+    if (session.state !== "running") {
+      throw new Error(`IDE session stopped before it became ready (state: ${session.state})`);
+    }
+    return session;
+  }
 
   while (session.state === "starting") {
     const remaining = deadline - now();

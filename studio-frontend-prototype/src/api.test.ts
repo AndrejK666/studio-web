@@ -422,6 +422,56 @@ describe("waitForStudioSessionReady", () => {
     ).rejects.toThrow("stopped before it became ready");
   });
 
+  it("waits on the backend's probe run instead of polling, and reads the record once", async () => {
+    const starting = { ...session("starting"), ready_run_id: "run-1" };
+    let refreshes = 0;
+    let followed = "";
+    const ready = await waitForStudioSessionReady(
+      starting,
+      async () => {
+        refreshes += 1;
+        return session("running");
+      },
+      {
+        follow: async (runId) => {
+          followed = runId;
+          return { state: "succeeded" };
+        },
+        // Any use of these would mean it fell back to polling.
+        sleep: async () => {
+          throw new Error("must not poll when a probe run is being followed");
+        },
+      },
+    );
+    expect(followed).toBe("run-1");
+    expect(ready.state).toBe("running");
+    expect(refreshes).toBe(1);
+  });
+
+  it("reports a failed probe run rather than waiting for a state that is not coming", async () => {
+    const starting = { ...session("starting"), ready_run_id: "run-2" };
+    await expect(
+      waitForStudioSessionReady(starting, async () => session("starting"), {
+        follow: async () => ({ state: "failed", error: "image pull failed" }),
+        sleep: async () => undefined,
+      }),
+    ).rejects.toThrow("image pull failed");
+  });
+
+  it("polls when the deployment queued no probe run", async () => {
+    let refreshes = 0;
+    const ready = await waitForStudioSessionReady(
+      session("starting"),
+      async () => {
+        refreshes += 1;
+        return session("running");
+      },
+      { sleep: async () => undefined },
+    );
+    expect(ready.state).toBe("running");
+    expect(refreshes).toBe(1);
+  });
+
   it("times out instead of polling forever", async () => {
     let clock = 0;
     await expect(

@@ -65,4 +65,10 @@ that caused it.
   `account_management`.
 - Config section `gears.studio-tasks`.
 - Handlers are registered by the gears that own the work — `notify.deliver`,
-  `artifact.ingest`, `session.reap` and the catalogue/graph syncs.
+  `artifact.ingest`, `session.reap`, `session.await_ready`,
+  `spec_quality.analyze`, `spec_quality.analyze_batch`, `catalog.sync` and
+  `connector.graph_sync`.
+- A run's `summary` and `last_error` are cut to 500 characters; its `result` is
+  **not** capped, and it is broadcast whole on
+  [`../studio_events`](../studio_events). A handler that can produce a large
+  result should store a pointer to it rather than the thing itself.

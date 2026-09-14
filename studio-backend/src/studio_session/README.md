@@ -38,7 +38,15 @@ Two consequences worth knowing:
   before or after a restart, calls a session by the same name.
 - Whether the IDE is *answering* is the one thing the runtime cannot report — a
   Pod is `Running` well before Theia binds — so it is probed and remembered
-  across listings.
+  across listings. The probe lives inside the read, which means **a read is what
+  advances the state**: nothing promotes `starting` to `running` on its own.
+- So a launch queues a `session.await_ready` run (`ready_task.rs`) to do that
+  reading. A session comes up whether or not the caller stays to watch, and how
+  long it took is a row. Its result names the session and the state it reached
+  and never the URL — that embeds a one-shot gate token, and a run's result is
+  broadcast to every subscriber in the tenant.
+- Queuing it is best-effort: a deployment without [`../tasks`](../tasks) still
+  launches sessions, and the caller polls `GET /sessions/{id}` as it always did.
 
 The reaper (`reap_task.rs`) also works from the driver, fired by
 [`../scheduler`](../scheduler) rather than by a timer of its own.

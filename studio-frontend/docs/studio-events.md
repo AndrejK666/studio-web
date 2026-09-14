@@ -9,6 +9,7 @@ The channel and its constraints are ADR-0013
 ([`docs/adr/0013-studio-events-push-channel.md`](../../docs/adr/0013-studio-events-push-channel.md)).
 This page is the client half: what to call, and what bites.
 
+- [The rule](#the-rule)
 - [The service](#the-service)
 - [Watch every background run](#watch-every-background-run)
 - [Follow one run you just started](#follow-one-run-you-just-started)
@@ -16,6 +17,37 @@ This page is the client half: what to call, and what bites.
 - [Fill a gap after the fact](#fill-a-gap-after-the-fact)
 - [What the transport does for you](#what-the-transport-does-for-you)
 - [Traps](#traps)
+
+## The rule
+
+**An operation that can outlast a request is a run.** Not a poll loop in a
+screen, not a promise the tab has to stay open for: the gear that owns the work
+records a `studio-tasks` run, and the portal follows it here. That is why one
+vocabulary — `subject_type: task_run` — covers everything the assembly does in
+the background, whichever gear is doing it:
+
+| Task type | The long thing it owns |
+|---|---|
+| `artifact.ingest` | pulling a repository into the artifact graph |
+| `connector.graph_sync` | a repository import |
+| `session.await_ready` | waiting for a Theia session to answer |
+| `spec_quality.analyze` | one detector analysis, to its verdict |
+| `spec_quality.analyze_batch` | one detector over a document set |
+| `notify.deliver` | a notification |
+| `catalog.sync` | a component-catalogue sync |
+| `session.reap`, `tasks.retention_sweep` | scheduled housekeeping |
+
+The list grows; the vocabulary does not. If you are about to write a timer that
+asks the backend whether something finished, the thing to add is a run, not a
+poll.
+
+**A run's `result` is broadcast whole.** `summary` and `last_error` are cut to
+500 characters, but `result` is not capped, and every subscriber in the tenant
+receives it. A handler with a large answer stores a pointer — that is why a
+`spec_quality.analyze_batch` result names each document's upstream task instead
+of carrying the verdicts, and why `session.await_ready` names a session rather
+than its URL, which embeds a one-shot token. Read a result expecting a
+reference, not always the payload.
 
 ## The service
 

@@ -50,6 +50,7 @@ import {
   waitForStudioSessionReady,
   uploadProjectArtifact,
 } from "./api";
+import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
@@ -7185,8 +7186,12 @@ function StudioLauncher({
       );
       const created = await api.createStudioSession(token, target.id, usable, freshRoot);
       setSession(created);
-      const ready = await waitForStudioSessionReady(created, () =>
-        api.studioSession(token, created.id),
+      // The backend probes the session on its own run; this only watches it,
+      // and asks for the record once it is up.
+      const ready = await waitForStudioSessionReady(
+        created,
+        () => api.studioSession(token, created.id),
+        { follow: (runId) => followRun(token, runId, () => {}) },
       );
       setSession(ready);
       onOpen({ id: ready.id, url: ready.url });

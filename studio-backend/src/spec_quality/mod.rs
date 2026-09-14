@@ -12,11 +12,20 @@
 //! the spec-quality key never leaves the backend (it lives in this gear's
 //! config, same pattern as `studio-llm-proxy`).
 //!
-//! Shape mirrors `studio-llm-proxy`: bytes in, bytes out, upstream status and
-//! content-type preserved. The upstream is async (submit → 202 `TaskCreated`,
-//! then poll `GET /v1/tasks/{id}`); the wrapper stays stateless and forwards
-//! both the submit and the poll, so the caller drives the task lifecycle.
+//! The upstream is asynchronous — submit → 202 `TaskCreated`, then read
+//! `GET /v1/tasks/{id}` until it is done — and that second half used to be the
+//! caller's. It is not any more: a submit records a `spec_quality.analyze` run
+//! ([`analyze_task`]) that watches the upstream task to its verdict, so a
+//! minutes-long analysis is a background run like every other one in the
+//! assembly and the portal is told about it on `studio-events` rather than
+//! polling for it.
+//!
+//! The verbatim passthrough remains for the upstream's own task reads
+//! (`GET /spec-quality/v1/tasks/{id}`), which is what the run's handler and
+//! anyone debugging the upstream use.
 
+pub mod analyze_task;
+pub mod batch_task;
 pub mod config;
 pub mod gear;
 pub mod rest;

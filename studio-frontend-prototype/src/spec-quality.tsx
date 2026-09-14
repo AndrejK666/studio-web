@@ -18,6 +18,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { ReactNode } from "react";
 import { api, apiUrl } from "./api";
 import type { ArtifactNode } from "./api";
+import { currentCursor, followRun } from "./studio-events";
 
 /* ── Types ── */
 
@@ -34,7 +35,11 @@ interface DocEntry {
   instanceId?: string;
 }
 
-interface TaskCreated {
+/** What a submit answers with: the run watching the analysis. */
+interface AnalyzeEnqueued {
+  /** The `studio-tasks` run to follow. */
+  run_id: string;
+  /** The upstream detector service's own task id, for its logs. */
   task_id: string;
   detector: Detector;
   status: string;
@@ -114,86 +119,79 @@ const isCancel = (e: unknown) =>
   (e instanceof DOMException && e.name === "AbortError") ||
   (typeof e === "object" && e !== null && (e as { name?: string }).name === "AbortError");
 
-/** Sleep that resolves early (and still resolves) when the signal aborts, so a
- *  Stop doesn't wait out the full poll interval. */
-function sleep(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal?.aborted) return resolve();
-    const t = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      resolve();
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 interface RunOpts {
   onTick?: (t: TaskView) => void;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
 
-/** Submit + poll to a terminal state. Throws CANCELLED if the signal aborts.
+/** Submit an analysis and follow the run the backend opened for it.
  *
- *  Note: the upstream service exposes no cancel endpoint, so Stop halts OUR
- *  polling (and the in-flight request) — the already-submitted task keeps
- *  running server-side and can still be found via GET /tasks. */
+ *  The wait used to be here — a 1.2s poll loop per analysis, N of them on a
+ *  document sweep. It is the backend's now: the submit records a
+ *  `spec_quality.analyze` run, studio-tasks watches the upstream task, and
+ *  every transition arrives on studio-events. Stop unsubscribes; the analysis
+ *  itself keeps running upstream, which is what it always did.
+ */
 async function runDetector(
   detector: Detector,
   payload: unknown,
   token: string,
-  { onTick, signal, timeoutMs = 180_000 }: RunOpts = {},
+  { onTick, signal, timeoutMs = 15 * 60 * 1000 }: RunOpts = {},
 ): Promise<TaskView> {
   if (signal?.aborted) throw new Error(CANCELLED);
-  const created = await sqFetch<TaskCreated>(`/v1/analyze/${detector}`, token, {
+
+  // The mark is read BEFORE the submit: a cached verdict can come back before
+  // the stream is open, and this is what replays it.
+  const fromSeq = await currentCursor(token);
+  const created = await sqFetch<AnalyzeEnqueued>(`/v1/analyze/${detector}`, token, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
   });
-  const started = Date.now();
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+
+  const view = (status: string, extra: Partial<TaskView> = {}): TaskView => ({
+    task_id: created.task_id,
+    detector,
+    status,
+    ...extra,
+  });
+
+  const end = await followRun(
+    token,
+    created.run_id,
+    // `phase` is the upstream's own status, republished by the handler; before
+    // the first one arrives the run's own state is the honest thing to show.
+    (e) => onTick?.(view(e.phase || e.state)),
+    { fromSeq, timeoutMs, signal },
+  ).catch((e: unknown) => {
     if (signal?.aborted) throw new Error(CANCELLED);
-    const view = await sqFetch<TaskView>(`/v1/tasks/${created.task_id}`, token, { signal });
-    onTick?.(view);
-    if (view.status === "succeeded") return view;
-    if (view.status === "failed") {
-      throw new Error(view.error?.message || "analysis failed");
-    }
-    if (Date.now() - started > timeoutMs) {
-      throw new Error(`timed out after ${Math.round(timeoutMs / 1000)}s (task ${created.task_id})`);
-    }
-    await sleep(1200, signal);
-    if (signal?.aborted) throw new Error(CANCELLED);
+    throw e;
+  });
+
+  if (end.state === "succeeded") {
+    return view("succeeded", { result: end.result ?? undefined });
   }
+  if (end.state === "cancelled") throw new Error(CANCELLED);
+  throw new Error(end.error || "analysis failed");
 }
 
-/** Ask the `purpose` detector what kind of document this is.
+/** The purpose payload for one document — the same body whether it is analysed
+ *  on its own or as part of a sweep. */
+export function docTypePayload(path: string, text: string) {
+  return { text, path, classify_doc_type: true };
+}
+
+/** Read a `purpose` result.
  *
- *  The third and most expensive step of document-type detection (see the
- *  studio-documents `classify` module): offline scoring runs on everything,
- *  and only what it could not decide is worth an LLM round-trip. Returns
- *  `null` when the detector declines to name a type.
+ *  Separate from the sweep that produces it, because a sweep gets its verdicts
+ *  back one read at a time and must reach exactly the conclusions a single
+ *  analysis would.
  *
- *  Lives here rather than in the Documents tab because this is the module that
- *  owns talking to the detector service — submit, poll, and the error shapes. */
-export async function detectDocType(
-  token: string,
-  path: string,
-  text: string,
-  signal?: AbortSignal,
-): Promise<DocTypeVerdict> {
-  const view = await runDetector(
-    "purpose",
-    { text, path, classify_doc_type: true },
-    token,
-    { signal },
-  );
-  const r = (view.result ?? {}) as {
+ *  This is interpretation, not policy: what the numbers MEAN for a document's
+ *  type is still the caller's (see MIN_SPEC_SHARE and its callers). */
+export function interpretDocType(result: unknown, taskId: string): DocTypeVerdict {
+  const r = (result ?? {}) as {
     doc_type?: unknown;
     mixture?: Record<string, unknown>;
     gate?: Record<string, unknown>;
@@ -211,8 +209,83 @@ export async function detectDocType(
     docType,
     specShare,
     gatePassed: typeof passed === "boolean" ? passed : null,
-    taskId: view.task_id,
+    taskId,
   };
+}
+
+/** One document's place in a sweep's outcome. */
+interface BatchOutcome {
+  id: string;
+  task_id?: string;
+  status: string;
+  error?: string;
+}
+
+/** Ask the `purpose` detector about many documents, as ONE backend run.
+ *
+ *  This replaces the loop that used to live in the Documents tab: submit, wait,
+ *  submit the next, with the tab as the scheduler. The backend sweeps; this
+ *  follows one run and then reads the verdicts it was told about.
+ *
+ *  Verdicts come back per document, keyed by the id the caller gave. A document
+ *  whose analysis did not finish gets its reason instead — one bad file does
+ *  not cost the sweep. */
+export async function detectDocTypes(
+  token: string,
+  items: { id: string; path: string; text: string }[],
+  { onProgress, signal }: { onProgress?: (phase: string) => void; signal?: AbortSignal } = {},
+): Promise<Map<string, DocTypeVerdict | { error: string }>> {
+  const verdicts = new Map<string, DocTypeVerdict | { error: string }>();
+  if (items.length === 0) return verdicts;
+  if (signal?.aborted) throw new Error(CANCELLED);
+
+  const fromSeq = await currentCursor(token);
+  const queued = await sqFetch<{ run_id: string; count: number }>(
+    `/v1/analyze-batch`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        detector: "purpose",
+        items: items.map((d) => ({ id: d.id, payload: docTypePayload(d.path, d.text) })),
+      }),
+      signal,
+    },
+  );
+
+  const end = await followRun(
+    token,
+    queued.run_id,
+    (e) => onProgress?.(e.phase || e.state),
+    // A sweep is minutes per document by design; the run's own per-document
+    // deadline is what bounds it, not this.
+    { fromSeq, timeoutMs: 6 * 60 * 60 * 1000, signal },
+  ).catch((e: unknown) => {
+    if (signal?.aborted) throw new Error(CANCELLED);
+    throw e;
+  });
+
+  if (end.state !== "succeeded") {
+    throw new Error(end.error || `the sweep ${end.state}`);
+  }
+
+  const outcomes = ((end.result ?? {}) as { items?: BatchOutcome[] }).items ?? [];
+  for (const outcome of outcomes) {
+    if (outcome.status !== "succeeded" || !outcome.task_id) {
+      verdicts.set(outcome.id, { error: outcome.error || outcome.status });
+      continue;
+    }
+    // The run named the upstream task rather than carrying the verdict: a
+    // verdict is a sizeable document and the run's result is broadcast to the
+    // whole tenant. This read is of something already finished.
+    try {
+      const view = await sqFetch<TaskView>(`/v1/tasks/${outcome.task_id}`, token, { signal });
+      verdicts.set(outcome.id, interpretDocType(view.result, outcome.task_id));
+    } catch (e) {
+      verdicts.set(outcome.id, { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return verdicts;
 }
 
 /** What the `purpose` detector concluded about one document. */

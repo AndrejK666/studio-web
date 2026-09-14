@@ -12,10 +12,10 @@ use super::rest::{self, ProxyState};
 
 /// Authenticated wrapper over the external spec-quality service.
 ///
-/// See the module docs (`super`) for the why; the how is deliberately dumb:
-/// authenticated passthrough with a server-held upstream key. No request
-/// rewriting, no task bookkeeping — the upstream owns the task lifecycle and
-/// the caller polls it through this same wrapper.
+/// See the module docs (`super`) for the why. The submit is still a
+/// passthrough with a server-held upstream key; what the gear adds is the
+/// wait — a `spec_quality.analyze` run watches each submitted analysis to its
+/// verdict, so the caller follows it on `studio-events` instead of polling.
 #[toolkit::gear(name = "studio-spec-quality", capabilities = [rest])]
 pub struct SpecQualityGear {
     state: OnceLock<Arc<ProxyState>>,
@@ -58,7 +58,22 @@ impl Gear for SpecQualityGear {
             client,
             base_url,
             api_key,
+            hub: ctx.client_hub(),
         });
+
+        // The wait for a verdict is a run, so the gear owns a task type. It is
+        // registered even when the upstream is unconfigured: a deployment that
+        // gains its key on the next restart should not also need its queue
+        // rebuilt, and a handler with nothing to watch is never dispatched.
+        crate::tasks::registry::register(Arc::new(super::analyze_task::AnalyzeTask::new(
+            Arc::clone(&state),
+        )))?;
+        // A sweep over a document set is one run too — see `super::batch_task`
+        // for what it replaced in the browser.
+        crate::tasks::registry::register(Arc::new(super::batch_task::AnalyzeBatchTask::new(
+            Arc::clone(&state),
+        )))?;
+
         self.state
             .set(state)
             .map_err(|_| anyhow::anyhow!("studio-spec-quality gear already initialized"))?;
