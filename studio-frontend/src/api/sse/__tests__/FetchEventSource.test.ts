@@ -1,9 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FetchEventSource } from '../FetchEventSource';
 
-/** An event as the studio-events backend serialises it. */
+/** The run every event below is about. `subject_id` is the run id. */
+const RUN_ID = '9c8c6d5e-2f1a-4b7c-8d3e-6a5b4c3d2e1f';
+
+/** An event as the studio-events backend serialises it: `studio-tasks`
+ *  announcing one transition of a run. */
 function event(seq: number, kind = 'task.running') {
-  return { seq, at_ms: 1_700_000_000_000 + seq, kind, subject_type: 'task', subject_id: 't1' };
+  return {
+    seq,
+    at_ms: 1_700_000_000_000 + seq,
+    kind,
+    subject_type: 'task_run',
+    subject_id: RUN_ID,
+    source: 'studio-tasks',
+    payload: { run_id: RUN_ID, task_type: 'artifact.ingest', state: kind.slice('task.'.length) },
+  };
 }
 
 /** An SSE body: unnamed frames plus the keep-alive comment the server sends. */
