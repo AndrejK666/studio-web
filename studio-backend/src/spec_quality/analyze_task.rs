@@ -57,6 +57,93 @@ pub struct AnalyzePayload {
     pub upstream_task_id: String,
 }
 
+/// How watching one upstream task ended.
+pub(super) enum Watched {
+    /// The detector answered. Carries whatever `result` it returned.
+    Succeeded(Option<serde_json::Value>),
+    /// The detector refused or broke, with its own message.
+    Failed(String),
+    /// We lost sight of the upstream. The task itself is unaffected.
+    Unreachable(String),
+    /// Still unfinished when the attempt ran out of time.
+    Deadline(String),
+    /// Somebody asked this run to stop.
+    Cancelled,
+}
+
+/// Watch one upstream analysis to its terminal state.
+///
+/// Shared by the single-analysis handler and the batch one, because two copies
+/// of "what counts as finished" is exactly the drift this gear cannot afford:
+/// the batch would keep reporting verdicts the single path had stopped
+/// accepting.
+pub(super) async fn watch_upstream(
+    state: &ProxyState,
+    ctx: &TaskContext,
+    upstream_task_id: &str,
+    deadline: Duration,
+    mut on_phase: impl FnMut(&str),
+) -> Watched {
+    let started = Instant::now();
+    let mut last_phase = String::new();
+
+    loop {
+        if ctx.cancelled() {
+            return Watched::Cancelled;
+        }
+
+        let view = match state.upstream_task(upstream_task_id).await {
+            Ok(view) => view,
+            Err(e) => return Watched::Unreachable(format!("upstream task read failed: {e:#}")),
+        };
+
+        let status = view
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+
+        match status {
+            "succeeded" => return Watched::Succeeded(view.get("result").cloned()),
+            "failed" => {
+                return Watched::Failed(
+                    view.get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("analysis failed")
+                        .to_owned(),
+                );
+            }
+            // Anything else is the upstream still working. An unknown status is
+            // reported verbatim rather than guessed at.
+            other => {
+                if other != last_phase {
+                    last_phase = other.to_owned();
+                    on_phase(if other.is_empty() { "running" } else { other });
+                }
+            }
+        }
+
+        if started.elapsed() > deadline {
+            return Watched::Deadline(format!(
+                "upstream task {upstream_task_id} still {} after {} minutes",
+                if last_phase.is_empty() {
+                    "unfinished"
+                } else {
+                    &last_phase
+                },
+                deadline.as_secs() / 60
+            ));
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(POLL_EVERY) => {}
+            // Waking on cancellation rather than sleeping through it: a Stop
+            // should not wait out the poll interval.
+            () = ctx.cancel.cancelled() => {}
+        }
+    }
+}
+
 /// Watches one upstream analysis to its terminal state.
 pub struct AnalyzeTask {
     state: Arc<ProxyState>,
@@ -82,89 +169,46 @@ impl TaskHandler for AnalyzeTask {
             Err(e) => return TaskOutcome::Failed(format!("unreadable analyze payload: {e}")),
         };
 
-        let started = Instant::now();
-        let mut last_phase = String::new();
+        // Phase lines are collected rather than awaited inside the watcher: it
+        // is shared with the batch, where one line per document is the useful
+        // grain, not one per upstream status change.
+        let mut phase: Option<String> = None;
+        let watched = watch_upstream(
+            &self.state,
+            ctx,
+            &payload.upstream_task_id,
+            ATTEMPT_DEADLINE,
+            |p| phase = Some(p.to_owned()),
+        )
+        .await;
+        if let Some(phase) = phase {
+            ctx.progress(phase).await;
+        }
 
-        loop {
-            if ctx.cancelled() {
-                // The upstream exposes no cancel endpoint, so stopping is
-                // something only WE stop doing. Say so rather than implying the
-                // analysis was called off.
-                return TaskOutcome::Failed(format!(
-                    "cancelled while watching upstream task {} — the analysis itself keeps \
-                     running upstream and can still be read there",
-                    payload.upstream_task_id
-                ));
-            }
-
-            let view = match self.state.upstream_task(&payload.upstream_task_id).await {
-                Ok(view) => view,
-                // The upstream being unreachable is the textbook retry: the
-                // task it is holding is unaffected by our losing sight of it.
-                Err(e) => return TaskOutcome::Retry(format!("upstream task read failed: {e:#}")),
-            };
-
-            let status = view
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-
-            match status {
-                "succeeded" => {
-                    let result = view.get("result").cloned();
-                    let summary = summarise(&payload.detector, result.as_ref());
-                    return match result {
-                        Some(result) => TaskOutcome::done_with(summary, result),
-                        None => TaskOutcome::done(summary),
-                    };
-                }
-                "failed" => {
-                    let message = view
-                        .get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("analysis failed")
-                        .to_owned();
-                    return TaskOutcome::Failed(message);
-                }
-                // Anything else is the upstream still working. An unknown
-                // status is reported verbatim rather than guessed at.
-                other => {
-                    // One UPDATE per phase change, not one per read: a phase
-                    // line is for a person watching, and "running" written
-                    // three hundred times says nothing new.
-                    if other != last_phase {
-                        last_phase = other.to_owned();
-                        ctx.progress(if other.is_empty() { "running" } else { other })
-                            .await;
-                    }
+        match watched {
+            Watched::Succeeded(result) => {
+                let summary = summarise(&payload.detector, result.as_ref());
+                match result {
+                    Some(result) => TaskOutcome::done_with(summary, result),
+                    None => TaskOutcome::done(summary),
                 }
             }
-
-            if started.elapsed() > ATTEMPT_DEADLINE {
+            Watched::Failed(message) => TaskOutcome::Failed(message),
+            Watched::Unreachable(why) | Watched::Deadline(why) => {
                 warn!(
                     upstream_task = %payload.upstream_task_id,
                     detector = %payload.detector,
-                    "studio-spec-quality: analysis still unfinished at the attempt deadline"
+                    "studio-spec-quality: {why}"
                 );
-                return TaskOutcome::Retry(format!(
-                    "upstream task {} still {} after {} minutes",
-                    payload.upstream_task_id,
-                    if last_phase.is_empty() {
-                        "unfinished"
-                    } else {
-                        &last_phase
-                    },
-                    ATTEMPT_DEADLINE.as_secs() / 60
-                ));
+                TaskOutcome::Retry(why)
             }
-
-            tokio::select! {
-                () = tokio::time::sleep(POLL_EVERY) => {}
-                // Waking on cancellation rather than sleeping through it: a
-                // Stop should not wait out the poll interval.
-                () = ctx.cancel.cancelled() => {}
-            }
+            // The upstream exposes no cancel endpoint, so stopping is something
+            // only WE stop doing. Say so rather than implying the analysis was
+            // called off.
+            Watched::Cancelled => TaskOutcome::Failed(format!(
+                "cancelled while watching upstream task {} — the analysis itself keeps                  running upstream and can still be read there",
+                payload.upstream_task_id
+            )),
         }
     }
 }

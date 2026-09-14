@@ -68,6 +68,11 @@ impl Gear for SpecQualityGear {
         crate::tasks::registry::register(Arc::new(super::analyze_task::AnalyzeTask::new(
             Arc::clone(&state),
         )))?;
+        // A sweep over a document set is one run too — see `super::batch_task`
+        // for what it replaced in the browser.
+        crate::tasks::registry::register(Arc::new(super::batch_task::AnalyzeBatchTask::new(
+            Arc::clone(&state),
+        )))?;
 
         self.state
             .set(state)

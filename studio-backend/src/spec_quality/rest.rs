@@ -10,6 +10,7 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_security::SecurityContext;
 
 use super::analyze_task::{ANALYZE_TASK_TYPE, AnalyzePayload};
+use super::batch_task::{BATCH_TASK_TYPE, BatchItem, BatchPayload, MAX_ITEMS};
 
 struct License;
 impl AsRef<str> for License {
@@ -273,6 +274,110 @@ async fn enqueue_analysis(
     }))
 }
 
+/// One document in a sweep, as the caller sends it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct BatchItemDto {
+    /// The caller's own id for this document — a graph node id, a path.
+    /// Echoed back in the result untouched, so results can be joined up.
+    pub id: String,
+    /// The body the detector expects for this document.
+    pub payload: serde_json::Value,
+}
+
+/// Run one detector over a set of documents.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AnalyzeBatchRequest {
+    /// `bloat` | `purpose` | `leak` | `traceability`.
+    pub detector: String,
+    pub items: Vec<BatchItemDto>,
+}
+
+/// Acknowledgement of a sweep.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AnalyzeBatchEnqueuedDto {
+    /// The `studio-tasks` run doing the sweep.
+    pub run_id: String,
+    /// How many documents it will analyse.
+    pub count: usize,
+    pub detector: String,
+    pub status: String,
+    /// Where the run can be read, for a caller that cannot subscribe.
+    pub poll: String,
+}
+
+/// POST /spec-quality/v1/analyze-batch — one detector over many documents.
+///
+/// The sweep used to be a loop in the caller: submit, wait, submit the next.
+/// It is one run now. What a verdict MEANS is still the caller's — the run
+/// reports which analyses finished and names the upstream task holding each
+/// verdict, and the caller reads the ones it cares about.
+async fn analyze_batch(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(state): Extension<Arc<ProxyState>>,
+    Json(req): Json<AnalyzeBatchRequest>,
+) -> ApiResult<JsonBody<AnalyzeBatchEnqueuedDto>> {
+    let queue = state.queue()?;
+
+    let detector = req.detector.trim().to_owned();
+    if !matches!(
+        detector.as_str(),
+        "bloat" | "purpose" | "leak" | "traceability"
+    ) {
+        return Err(CanonicalError::internal(format!(
+            "unknown detector '{detector}' (expected bloat|purpose|leak|traceability)"
+        ))
+        .create());
+    }
+    if req.items.len() > MAX_ITEMS {
+        return Err(CanonicalError::internal(format!(
+            "a sweep takes at most {MAX_ITEMS} documents, and this one has {} —              split it, or the run is one nobody will wait for",
+            req.items.len()
+        ))
+        .create());
+    }
+
+    let count = req.items.len();
+    let run_payload = serde_json::to_value(BatchPayload {
+        detector: detector.clone(),
+        items: req
+            .items
+            .into_iter()
+            .map(|i| BatchItem {
+                id: i.id,
+                payload: i.payload,
+            })
+            .collect(),
+    })
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let run_id = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: ctx.subject_tenant_id(),
+                task_type: BATCH_TASK_TYPE,
+                payload: run_payload,
+                // One sweep at a time per detector: they compete for the same
+                // upstream, and two at once only makes both slower.
+                partition_key: Some(&detector),
+                idempotency_key: None,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("sweep not queued: {e:#}")).create())?;
+
+    Ok(Json(AnalyzeBatchEnqueuedDto {
+        run_id: run_id.to_string(),
+        count,
+        detector,
+        status: "queued".to_owned(),
+        poll: format!("/studio-tasks/v1/runs/{run_id}"),
+    }))
+}
+
 async fn analyze_bloat(
     Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
@@ -391,6 +496,21 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(analyze_bloat)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/spec-quality/v1/analyze-batch")
+        .operation_id("spec_quality.analyze_batch")
+        .summary("Run one detector over a set of documents, as a single run")
+        .description(
+            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /spec-quality/v1/tasks/{task_id}.",
+        )
+        .tag("SpecQuality")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(analyze_batch)
+        .json_response(StatusCode::ACCEPTED, "The run doing the sweep")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

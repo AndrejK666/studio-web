@@ -25,6 +25,7 @@
 //! anyone debugging the upstream use.
 
 pub mod analyze_task;
+pub mod batch_task;
 pub mod config;
 pub mod gear;
 pub mod rest;
