@@ -6,7 +6,10 @@ use axum::{Extension, Router};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_security::SecurityContext;
+
+use super::analyze_task::{ANALYZE_TASK_TYPE, AnalyzePayload};
 
 struct License;
 impl AsRef<str> for License {
@@ -39,6 +42,9 @@ pub struct ProxyState {
     /// None = key not configured; requests fail with a clear message instead
     /// of failing the whole backend boot.
     pub api_key: Option<String>,
+    /// Resolved lazily for the task queue, so this gear keeps no opinion about
+    /// gear init order (see [`ProxyState::queue`]).
+    pub hub: Arc<ClientHub>,
 }
 
 /// Wiring status for the wrapper — deliberately excludes anything secret, so
@@ -54,7 +60,88 @@ pub struct SpecQualityStatusDto {
     pub key_set: bool,
 }
 
+/// What a submit answers with now: the run that is watching the analysis.
+///
+/// `task_id` is the upstream service's own id, kept because it is what appears
+/// in that service's logs and its own task list. Nothing in the portal needs
+/// it: the run is the thing to follow.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AnalyzeEnqueuedDto {
+    /// The `studio-tasks` run watching this analysis.
+    pub run_id: String,
+    /// The upstream detector service's task id.
+    pub task_id: String,
+    /// Which detector was submitted.
+    pub detector: String,
+    /// Always `queued` — the run has been recorded, not yet picked up.
+    pub status: String,
+    /// Where the run can be read, for a caller that cannot subscribe.
+    pub poll: String,
+}
+
 impl ProxyState {
+    /// The task queue, or a 503 that says why analyses cannot be accepted.
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "spec-quality analyses are not available in this deployment                          (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
+    }
+
+    /// One upstream call whose body we read rather than stream back.
+    ///
+    /// The passthrough [`Self::forward`] exists for the caller's own requests;
+    /// this is for the two places the backend has to understand the answer —
+    /// the submit, which yields the task id to watch, and the watcher's reads.
+    pub(super) async fn upstream_json(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Bytes>,
+    ) -> anyhow::Result<serde_json::Value> {
+        if self.base_url.is_empty() {
+            anyhow::bail!("spec-quality upstream not configured");
+        }
+        let key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("spec-quality upstream key is not configured"))?;
+
+        let mut req = self
+            .client
+            .request(method, upstream_url(&self.base_url, path, None))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"));
+        if let Some(bytes) = body {
+            // The caller's bytes, unread: what a detector accepts is between
+            // the caller and the upstream, and a wrapper that parsed the
+            // payload would have to be taught each detector's schema.
+            req = req
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(bytes);
+        }
+        let res = req.send().await?;
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("upstream answered {status}: {}", body.trim());
+        }
+        Ok(serde_json::from_str(&body).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Read one upstream analysis task.
+    pub(super) async fn upstream_task(&self, task_id: &str) -> anyhow::Result<serde_json::Value> {
+        self.upstream_json(reqwest::Method::GET, &format!("/v1/tasks/{task_id}"), None)
+            .await
+    }
+
     /// Forward a request to `{base_url}{path}[?{query}]` verbatim and stream
     /// the upstream response back (JSON body, upstream status and
     /// content-type preserved). The upstream key is attached here, server-side.
@@ -105,58 +192,117 @@ impl ProxyState {
 
 /* ── Handlers ── */
 
-// Each detector is a verbatim POST passthrough. Splitting them into four named
-// routes (rather than one `{detector}` path param) keeps the OpenAPI browser
-// honest about exactly which detectors the wrapper offers.
+// Each detector submits to the upstream and then hands the wait to
+// `studio-tasks`. Splitting them into four named routes (rather than one
+// `{detector}` path param) keeps the OpenAPI browser honest about exactly which
+// detectors the wrapper offers.
+
+/// Submit one analysis upstream and record a run to watch it.
+///
+/// The submit happens here, synchronously, because its failures are the
+/// caller's to see now: an unconfigured upstream, a payload the detector
+/// refuses. What takes minutes — waiting for the verdict — is the run's, and
+/// the caller learns about it on `studio-events` like every other background
+/// run in the assembly.
+async fn enqueue_analysis(
+    ctx: &SecurityContext,
+    state: &Arc<ProxyState>,
+    detector: &str,
+    body: Bytes,
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    // Resolved before the submit: accepting an analysis we then cannot watch
+    // would leave the caller holding an id nothing in the portal can follow.
+    let queue = state.queue()?;
+
+    let created = state
+        .upstream_json(
+            reqwest::Method::POST,
+            &format!("/v1/analyze/{detector}"),
+            Some(body),
+        )
+        .await
+        .map_err(|e| {
+            CanonicalError::internal(format!("spec-quality submit failed: {e:#}")).create()
+        })?;
+
+    let upstream_task_id = created
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            CanonicalError::internal(format!(
+                "spec-quality upstream accepted the analysis without a task_id: {created}"
+            ))
+            .create()
+        })?
+        .to_owned();
+
+    let run_payload = serde_json::to_value(AnalyzePayload {
+        detector: detector.to_owned(),
+        upstream_task_id: upstream_task_id.clone(),
+    })
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let tenant = ctx.subject_tenant_id();
+    let run_id = queue
+        .enqueue(
+            ctx,
+            crate::tasks::service::NewRun {
+                tenant,
+                task_type: ANALYZE_TASK_TYPE,
+                payload: run_payload,
+                // No partition: analyses are independent of each other, and
+                // serialising them would turn a document fan-out into a queue.
+                partition_key: None,
+                // The upstream task id is the natural key — a resubmit that
+                // somehow produced the same one is the same analysis.
+                idempotency_key: Some(&upstream_task_id),
+            },
+        )
+        .await
+        .map_err(|e| {
+            CanonicalError::internal(format!("analysis accepted upstream but not queued: {e:#}"))
+                .create()
+        })?;
+
+    Ok(Json(AnalyzeEnqueuedDto {
+        run_id: run_id.to_string(),
+        task_id: upstream_task_id,
+        detector: detector.to_owned(),
+        status: "queued".to_owned(),
+        poll: format!("/studio-tasks/v1/runs/{run_id}"),
+    }))
+}
 
 async fn analyze_bloat(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
     body: Bytes,
-) -> ApiResult<impl IntoResponse> {
-    state
-        .forward(reqwest::Method::POST, "/v1/analyze/bloat", None, Some(body))
-        .await
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    enqueue_analysis(&ctx, &state, "bloat", body).await
 }
 
 async fn analyze_purpose(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
     body: Bytes,
-) -> ApiResult<impl IntoResponse> {
-    state
-        .forward(
-            reqwest::Method::POST,
-            "/v1/analyze/purpose",
-            None,
-            Some(body),
-        )
-        .await
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    enqueue_analysis(&ctx, &state, "purpose", body).await
 }
 
 async fn analyze_leak(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
     body: Bytes,
-) -> ApiResult<impl IntoResponse> {
-    state
-        .forward(reqwest::Method::POST, "/v1/analyze/leak", None, Some(body))
-        .await
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    enqueue_analysis(&ctx, &state, "leak", body).await
 }
 
 async fn analyze_traceability(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
     body: Bytes,
-) -> ApiResult<impl IntoResponse> {
-    state
-        .forward(
-            reqwest::Method::POST,
-            "/v1/analyze/traceability",
-            None,
-            Some(body),
-        )
-        .await
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    enqueue_analysis(&ctx, &state, "traceability", body).await
 }
 
 /// GET /spec-quality/v1/tasks/{task_id} — poll a submitted task.
@@ -222,10 +368,11 @@ async fn status(
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Shared prose for the four submit endpoints (they differ only in detector).
-const SUBMIT_DESC: &str = "Verbatim passthrough to the external spec-quality service. The \
-     service key is attached server-side; callers authenticate with their \
-     Studio token. Returns the upstream 202 TaskCreated (task_id + poll URL); \
-     poll GET /spec-quality/v1/tasks/{task_id}.";
+const SUBMIT_DESC: &str = "Submits the analysis to the external spec-quality service and \
+     records a studio-tasks run that watches it to completion. The service key is \
+     attached server-side; callers authenticate with their Studio token. Returns the \
+     run id: follow it on studio-events (subject_type task_run), or read \
+     GET /studio-tasks/v1/runs/{run_id}.";
 
 pub fn register_routes(
     mut router: Router,
@@ -243,10 +390,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .handler(analyze_bloat)
-        .json_response(
-            StatusCode::ACCEPTED,
-            "Upstream TaskCreated (task_id, poll URL)",
-        )
+        .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -259,10 +403,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .handler(analyze_purpose)
-        .json_response(
-            StatusCode::ACCEPTED,
-            "Upstream TaskCreated (task_id, poll URL)",
-        )
+        .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -275,10 +416,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .handler(analyze_leak)
-        .json_response(
-            StatusCode::ACCEPTED,
-            "Upstream TaskCreated (task_id, poll URL)",
-        )
+        .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -291,10 +429,7 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .handler(analyze_traceability)
-        .json_response(
-            StatusCode::ACCEPTED,
-            "Upstream TaskCreated (task_id, poll URL)",
-        )
+        .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
