@@ -139,11 +139,11 @@ struct RoleDef {
 }
 
 impl AccessConfig {
-    /// Does `subject` hold the organization-wide owner grant?
-    fn owns(&self, subject: &str) -> bool {
+    /// Does the person behind `subjects` hold the organization-wide owner grant?
+    fn owns(&self, subjects: &[String]) -> bool {
         self.grants.iter().any(|g| {
             g.subject_type == "member"
-                && g.subject_id == subject
+                && subjects.contains(&g.subject_id)
                 && g.role_key == crate::access_config::ROLE_OWNER
                 && g.scope_type == "org"
         })
@@ -163,10 +163,10 @@ impl AccessConfig {
     /// the organization. The owner arm mirrors [`decide`] and the gear's
     /// `grants_privilege_to` — an owner's authority is definitional, never
     /// looked up (ADR-0019 §7).
-    fn grants_org_privilege(&self, subject: &str, privilege: &str) -> bool {
+    fn grants_org_privilege(&self, subjects: &[String], privilege: &str) -> bool {
         self.grants.iter().any(|g| {
             g.subject_type == "member"
-                && g.subject_id == subject
+                && subjects.contains(&g.subject_id)
                 && g.scope_type == "org"
                 && (g.role_key == crate::access_config::ROLE_OWNER
                     || self
@@ -353,6 +353,29 @@ impl Service {
         b.build().unwrap_or_else(|_| SecurityContext::anonymous())
     }
 
+    /// Every sign-in subject belonging to the caller's person, the caller's own
+    /// among them.
+    ///
+    /// Resolved once per decision and matched as a set, so a grant naming one
+    /// login is the person's whichever way they signed in today. Without
+    /// `studio-user`, or when the lookup fails, the caller is their own set —
+    /// which is exactly the behaviour that existed before this, so a database
+    /// hiccup narrows nothing it did not already narrow.
+    async fn subjects_of_caller(&self, subject: &str) -> Vec<String> {
+        let own = vec![subject.to_owned()];
+        let Some(reader) = self.organization_reader() else {
+            return own;
+        };
+        match reader.subjects_of(subject).await {
+            Ok(subjects) if !subjects.is_empty() => subjects,
+            Ok(_) => own,
+            Err(error) => {
+                warn!(%subject, %error, "could not resolve the caller's other sign-in methods");
+                own
+            }
+        }
+    }
+
     /// Who may change the document that decides who owns this organization.
     ///
     /// An owner may. A platform administrator may, because appointing an
@@ -388,14 +411,16 @@ impl Service {
             return tenant_clamp(request, &tids);
         }
 
+        let subjects = self.subjects_of_caller(&subject).await;
         let sec = Service::read_ctx(request, organization);
         let allowed = match self.read_access_config(&sec, organization).await {
             ConfigRead::Absent => true,
             ConfigRead::Unreadable => false,
             ConfigRead::Found(cfg) => {
-                cfg.owns(&subject)
+                cfg.owns(&subjects)
                     || !cfg.has_an_owner()
-                    || (cfg.model == "roles" && cfg.grants_org_privilege(&subject, "access.manage"))
+                    || (cfg.model == "roles"
+                        && cfg.grants_org_privilege(&subjects, "access.manage"))
             }
         };
 
@@ -475,8 +500,8 @@ enum RoleDecision {
 /// tests at all, while the helpers around it had many. Everything here is a
 /// decision; the caller does the I/O and builds the response.
 fn decide(
+    subjects: &[String],
     read: &ConfigRead,
-    subject_id: &str,
     subject_teams: &[String],
     privilege: &str,
 ) -> RoleDecision {
@@ -499,7 +524,7 @@ fn decide(
     let mut project_scopes: Vec<Uuid> = Vec::new();
     for g in &cfg.grants {
         let subject_matches = match g.subject_type.as_str() {
-            "member" => g.subject_id == subject_id,
+            "member" => subjects.contains(&g.subject_id),
             "team" => subject_teams.iter().any(|t| t == &g.subject_id),
             _ => false,
         };
@@ -734,10 +759,11 @@ impl AuthZResolverPluginClient for Service {
         let sec = Service::read_ctx(&request, tid);
         let read = self.read_access_config(&sec, tid).await;
         let subject_id = request.subject.id.to_string();
+        let subjects = self.subjects_of_caller(&subject_id).await;
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
         let subject_teams: Vec<String> = Vec::new();
 
-        let project_scopes = match decide(&read, &subject_id, &subject_teams, privilege) {
+        let project_scopes = match decide(&subjects, &read, &subject_teams, privilege) {
             RoleDecision::Clamp => {
                 let tids = self.reachable_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
@@ -1127,6 +1153,11 @@ mod tests {
 
     const ORG: Uuid = Uuid::from_u128(0x09a);
 
+    /// One login, the way every caller looked before a person could have two.
+    fn one(subject: &str) -> Vec<String> {
+        vec![subject.to_owned()]
+    }
+
     /// A request shaped the way account-management shapes one: the resource
     /// type is its BASE metadata type and the document is named by the
     /// `type_id` property.
@@ -1225,12 +1256,12 @@ mod tests {
     #[test]
     fn only_an_owner_owns() {
         let cfg = config(serde_json::json!({ "grants": [owner_grant("ada", "owner")] }));
-        assert!(cfg.owns("ada"));
-        assert!(!cfg.owns("bob"));
+        assert!(cfg.owns(&one("ada")));
+        assert!(!cfg.owns(&one("bob")));
         assert!(cfg.has_an_owner());
 
         let admins = config(serde_json::json!({ "grants": [owner_grant("ada", "admin")] }));
-        assert!(!admins.owns("ada"));
+        assert!(!admins.owns(&one("ada")));
         assert!(
             !admins.has_an_owner(),
             "an admin grant is not an ownership grant"
@@ -1248,7 +1279,7 @@ mod tests {
                 "roleKey": "admin", "scopeType": "project", "scopeId": ""
             }]
         }));
-        assert!(!cfg.grants_org_privilege("ada", "access.manage"));
+        assert!(!cfg.grants_org_privilege(&one("ada"), "access.manage"));
     }
 
     #[test]
@@ -1260,8 +1291,8 @@ mod tests {
             ],
             "grants": [owner_grant("ada", "admin"), owner_grant("eve", "steward")]
         }));
-        assert!(!cfg.grants_org_privilege("ada", "access.manage"));
-        assert!(cfg.grants_org_privilege("eve", "access.manage"));
+        assert!(!cfg.grants_org_privilege(&one("ada"), "access.manage"));
+        assert!(cfg.grants_org_privilege(&one("eve"), "access.manage"));
     }
 
     /* ── The role path (ADR-0019) ── */
@@ -1289,7 +1320,7 @@ mod tests {
     #[test]
     fn a_config_we_cannot_read_denies_rather_than_falling_back_to_the_clamp() {
         assert_eq!(
-            decide(&ConfigRead::Unreadable, "ada", &[], "access.manage"),
+            decide(&one("ada"), &ConfigRead::Unreadable, &[], "access.manage"),
             RoleDecision::Deny
         );
     }
@@ -1299,7 +1330,7 @@ mod tests {
     #[test]
     fn an_organization_with_no_config_keeps_tenant_behaviour() {
         assert_eq!(
-            decide(&ConfigRead::Absent, "ada", &[], "access.manage"),
+            decide(&one("ada"), &ConfigRead::Absent, &[], "access.manage"),
             RoleDecision::Clamp
         );
     }
@@ -1309,7 +1340,7 @@ mod tests {
     fn the_tenant_model_keeps_tenant_behaviour_whatever_the_grants_say() {
         let cfg = found("tenant", serde_json::json!([]), serde_json::json!([]));
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Clamp
         );
     }
@@ -1327,7 +1358,7 @@ mod tests {
         );
         for privilege in crate::access_config::PRIVILEGES {
             assert_eq!(
-                decide(&cfg, "ada", &[], privilege),
+                decide(&one("ada"), &cfg, &[], privilege),
                 RoleDecision::Clamp,
                 "an owner was denied {privilege} because the document does not define the role"
             );
@@ -1344,11 +1375,11 @@ mod tests {
             serde_json::json!([org_grant("ada", "admin")]),
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "people.manage"),
+            decide(&one("ada"), &cfg, &[], "people.manage"),
             RoleDecision::Clamp
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Deny,
             "ADR-0011 §7: a role is denied operations outside its privilege set"
         );
@@ -1363,7 +1394,7 @@ mod tests {
             serde_json::json!([org_grant("bob", "admin")]),
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Deny
         );
     }

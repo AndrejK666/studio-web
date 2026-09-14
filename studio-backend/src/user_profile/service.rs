@@ -244,6 +244,35 @@ impl IdentityService {
         let _ = self.federated.set(federated);
     }
 
+    /// Every sign-in subject belonging to the same person as `subject`.
+    ///
+    /// One query behind the scenes and one answer in front: resolve the person
+    /// the subject belongs to, then list the logins bound to them. A subject no
+    /// login knows — a service account, a person not provisioned yet — is its
+    /// own answer, so every caller can match against this set alone without a
+    /// second code path.
+    ///
+    /// Never provisions. Nobody has authenticated a subject read out of a
+    /// stored document, which is exactly what a grant's `subjectId` is.
+    pub async fn subjects_of(&self, subject: &str) -> Result<Vec<String>> {
+        let Some(person) = self.resolve_subject(PROVIDER_KEYCLOAK, subject).await? else {
+            return Ok(vec![subject.to_owned()]);
+        };
+        let mut subjects: Vec<String> = self
+            .list_logins(&person)
+            .await?
+            .into_iter()
+            .map(|login| login.subject)
+            .collect();
+        // The caller's own subject is in the set whether or not a login row
+        // knows it — a matcher fed this list must never be narrower than the
+        // one that matched on the bare subject.
+        if !subjects.iter().any(|s| s == subject) {
+            subjects.push(subject.to_owned());
+        }
+        Ok(subjects)
+    }
+
     /// May the caller administer `org_id` — is one privilege theirs to use?
     ///
     /// Replaces `is_org_owner`, which asked the same question with no room for
@@ -272,9 +301,18 @@ impl IdentityService {
         privilege: &str,
     ) -> bool {
         let subject = ctx.subject_id().to_string();
+        // Every way this person signs in, not the one they used today: a grant
+        // records whichever login wrote it, and asking about that login alone
+        // makes authority depend on which door somebody came through
+        // (ADR-0006 follow-up 2). A failed lookup falls back to the bare
+        // subject, which is what this asked before.
+        let subjects = self
+            .subjects_of(&subject)
+            .await
+            .unwrap_or_else(|_| vec![subject.clone()]);
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
-        cfg.grants_ownership_to(&subject)
-            || (cfg.is_roles_model() && cfg.grants_privilege_to(&subject, privilege))
+        cfg.grants_ownership_to(&subjects)
+            || (cfg.is_roles_model() && cfg.grants_privilege_to(&subjects, privilege))
     }
 
     /// The canonical person behind an authenticated caller, provisioning on

@@ -275,6 +275,24 @@ pub trait OrganizationReader: Send + Sync + 'static {
     /// no login knows has none.
     async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>>;
 
+    /// Every sign-in subject belonging to the same person as `subject`,
+    /// including `subject` itself.
+    ///
+    /// A grant records the subject of whichever login was in front of whoever
+    /// wrote it, so matching a grant against the caller's subject alone answers
+    /// a question about a *login*. A person with two sign-in methods then holds
+    /// a privilege through one and not the other — the defect ADR-0018 exists
+    /// to end, arriving through the back door of the access config.
+    ///
+    /// Resolving the whole set once and matching against it keeps the document
+    /// as it is: an old grant naming one login is still the person's, whichever
+    /// way they signed in today, without rewriting anything (ADR-0006
+    /// follow-up 2).
+    ///
+    /// A subject no login knows answers with just itself, so a caller can
+    /// always match against this set alone.
+    async fn subjects_of(&self, subject: &str) -> anyhow::Result<Vec<String>>;
+
     /// Does this subject's person hold a membership of the platform root?
     ///
     /// One spelling of the rule, so a gear deciding whether somebody is a
@@ -294,6 +312,10 @@ pub trait OrganizationReader: Send + Sync + 'static {
 impl OrganizationReader for IdentityService {
     async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>> {
         IdentityService::organizations_of(self, subject).await
+    }
+
+    async fn subjects_of(&self, subject: &str) -> anyhow::Result<Vec<String>> {
+        IdentityService::subjects_of(self, subject).await
     }
 
     async fn is_platform_admin(&self, subject: &str) -> anyhow::Result<bool> {

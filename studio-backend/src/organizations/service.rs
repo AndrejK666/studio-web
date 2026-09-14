@@ -124,9 +124,16 @@ impl OrganizationService {
     /// a deletion gate that disagreed with the policy would be a gate in name.
     pub async fn may_delete(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
         let subject = ctx.subject_id().to_string();
+        // Every way this person signs in, not the one they used today — a grant
+        // records whichever login wrote it (ADR-0006 follow-up 2).
+        let subjects = self
+            .people
+            .subjects_of(&subject)
+            .await
+            .unwrap_or_else(|_| vec![subject.clone()]);
         access_config::read(self.am.as_ref(), ctx, org_id)
             .await
-            .grants_ownership_to(&subject)
+            .grants_ownership_to(&subjects)
             || self
                 .people
                 .is_platform_admin(&subject)
