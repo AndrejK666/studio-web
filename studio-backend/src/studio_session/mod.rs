@@ -12,6 +12,7 @@ pub mod driver;
 pub mod gear;
 pub mod k8s;
 pub mod proxy;
+pub mod ready_task;
 pub mod reap_task;
 pub mod rest;
 pub mod sdk;

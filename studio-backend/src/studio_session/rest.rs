@@ -5,6 +5,7 @@ use axum::{Extension, Router};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
@@ -19,11 +20,16 @@ pub struct StudioSessionError;
 /// (config flag, or no Docker daemon on the host): the endpoints stay
 /// mounted and answer 503 so clients get a clear reason instead of 404s.
 #[derive(Clone)]
-pub struct Sessions(pub Option<Arc<SessionService>>);
+pub struct Sessions {
+    pub service: Option<Arc<SessionService>>,
+    /// For the task queue. Resolved per request rather than held, so this gear
+    /// keeps no opinion about gear init order.
+    pub hub: Arc<ClientHub>,
+}
 
 impl Sessions {
     fn get(&self) -> ApiResult<&Arc<SessionService>> {
-        self.0.as_ref().ok_or_else(|| {
+        self.service.as_ref().ok_or_else(|| {
             CanonicalError::service_unavailable()
                 .with_detail(
                     "IDE sessions are not available in this deployment \
@@ -31,6 +37,46 @@ impl Sessions {
                 )
                 .create()
         })
+    }
+
+    /// Enqueue the run that waits for a session to answer.
+    ///
+    /// Best-effort by design: a deployment without `studio-tasks` still
+    /// launches sessions, and the caller falls back to asking for the record
+    /// itself. Failing a launch because the queue is absent would trade a
+    /// working IDE for a tidier contract.
+    async fn watch_until_ready(&self, ctx: &SecurityContext, session_id: Uuid) -> Option<Uuid> {
+        let queue = self
+            .hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .ok()?;
+        let payload = serde_json::to_value(super::ready_task::ReadyPayload { session_id }).ok()?;
+        match queue
+            .enqueue(
+                ctx,
+                crate::tasks::service::NewRun {
+                    tenant: ctx.subject_tenant_id(),
+                    task_type: super::ready_task::TASK_TYPE,
+                    payload,
+                    // One probe per session, however many times a launch is
+                    // retried: the session id is the natural key.
+                    partition_key: Some(&session_id.to_string()),
+                    idempotency_key: Some(&session_id.to_string()),
+                },
+            )
+            .await
+        {
+            Ok(run_id) => Some(run_id),
+            Err(e) => {
+                tracing::warn!(
+                    session = %session_id,
+                    "studio-session: could not queue the readiness probe ({e:#}) —                      the caller will have to ask for the session record itself"
+                );
+                None
+            }
+        }
     }
 }
 
@@ -108,6 +154,13 @@ pub struct SessionDto {
     pub created_at_epoch_secs: u64,
     /// Source summaries, e.g. "docs (git)", "demo (local)".
     pub sources: Vec<String>,
+    /// The `session.await_ready` run probing this session, when one was queued.
+    ///
+    /// Present only on the answer to a launch: follow it on studio-events and
+    /// re-read the session when it succeeds. Absent where `studio-tasks` has no
+    /// database — then the caller polls this endpoint as it always did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_run_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -132,6 +185,8 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
         url,
         created_at_epoch_secs: s.created_at_epoch_secs,
         sources: s.sources,
+        // Only a launch queues a probe; a plain read is not waiting for one.
+        ready_run_id: None,
     }
 }
 
@@ -233,7 +288,16 @@ async fn create_session(
     } else {
         StatusCode::CREATED
     };
-    Ok((status, Json(to_dto(svc, session))))
+    // A session that is already running needs no probe; one that is starting
+    // gets a run, so it comes up whether or not the caller stays to watch.
+    let ready_run_id = if session.state.as_str() == "starting" {
+        sessions.watch_until_ready(&ctx, session.id).await
+    } else {
+        None
+    };
+    let mut dto = to_dto(svc, session);
+    dto.ready_run_id = ready_run_id.map(|id| id.to_string());
+    Ok((status, Json(dto)))
 }
 
 async fn list_sessions(
@@ -241,7 +305,7 @@ async fn list_sessions(
     Extension(sessions): Extension<Sessions>,
 ) -> ApiResult<JsonBody<SessionListDto>> {
     // List degrades gracefully: no driver = no sessions (portal keeps working).
-    let Some(svc) = sessions.0.as_ref() else {
+    let Some(svc) = sessions.service.as_ref() else {
         return Ok(Json(SessionListDto { items: Vec::new() }));
     };
     let items = svc
@@ -291,6 +355,7 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<SessionService>>,
+    hub: Arc<ClientHub>,
 ) -> Router {
     router = OperationBuilder::post("/studio-session/v1/sessions")
         .operation_id("studio_session.create_session")
@@ -412,5 +477,5 @@ pub fn register_routes(
         };
     }
 
-    router.layer(Extension(Sessions(service)))
+    router.layer(Extension(Sessions { service, hub }))
 }

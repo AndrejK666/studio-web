@@ -64,7 +64,7 @@ async fn proxy(
     rest: String,
     mut req: Request,
 ) -> Response {
-    let Some(svc) = sessions.0.as_ref() else {
+    let Some(svc) = sessions.service.as_ref() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "IDE sessions disabled").into_response();
     };
     // Only Kubernetes (Service) sessions are proxied; a Docker (Loopback)

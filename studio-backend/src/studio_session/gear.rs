@@ -130,6 +130,12 @@ impl Gear for StudioSessionGear {
             service.clone(),
         )))?;
 
+        // Waiting for a session to answer is also a run — see
+        // `super::ready_task` for why the browser could not keep doing it.
+        crate::tasks::registry::register(Arc::new(super::ready_task::SessionReadyTask::new(
+            service.clone(),
+        )))?;
+
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-session gear already initialized"))?;
@@ -148,7 +154,12 @@ impl toolkit::contracts::RestApiCapability for StudioSessionGear {
         // None = sessions disabled (config flag or no Docker): the routes
         // still mount and answer 503 with a clear message.
         let service = self.service.get().cloned();
-        Ok(rest::register_routes(router, openapi, service))
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            _ctx.client_hub(),
+        ))
     }
 }
 
