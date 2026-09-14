@@ -14,6 +14,8 @@
 
 mod alias_policy;
 mod entity;
+mod invitations;
+mod leaving;
 mod migrations;
 mod rest;
 mod service;
@@ -33,7 +35,62 @@ use toolkit_db::DBProvider;
 use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 
+use serde::Deserialize;
+
 use service::IdentityService;
+
+/// What the installation states about itself.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StudioUserConfig {
+    /// The sign-in subjects that are platform administrators here.
+    ///
+    /// ADR-0011 §4: the first administrator is a deliberately provisioned
+    /// identity, not the first person to open the portal. Each one named here
+    /// gets a membership of the platform root at every start, which is what
+    /// being a platform administrator *is* after ADR-0018 §3.
+    #[serde(default)]
+    pub platform_admins: Vec<String>,
+
+    /// What a person gets the first time they are seen, if anything.
+    ///
+    /// Absent in the cloud: people arrive with no organization and create one.
+    /// Set in an installation inside one company, where the deployment is
+    /// stating *the users of this identity provider are the members of this
+    /// organization* (ADR-0018 §4).
+    ///
+    /// That statement is recorded as a membership row, which is not the same as
+    /// deriving access from authentication: a row can be revoked — suspending
+    /// somebody in Studio without removing them from the corporate directory —
+    /// and it records how it came about. Access that followed the token could do
+    /// neither.
+    #[serde(default)]
+    pub on_first_login: Option<FirstLoginJoin>,
+}
+
+/// The organization a new person joins, and as what.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FirstLoginJoin {
+    #[serde(with = "uuid_text")]
+    pub organization: uuid::Uuid,
+    /// `member` unless the installation says otherwise. Never `owner`:
+    /// ownership is not something a deployment hands to everybody who signs in.
+    #[serde(default = "default_join_role")]
+    pub role: String,
+}
+
+fn default_join_role() -> String {
+    "member".to_owned()
+}
+
+/// A uuid written as a string in YAML.
+mod uuid_text {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<uuid::Uuid, D::Error> {
+        let raw = String::deserialize(d)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
 
 /// Fold an alias key into its stored form. Re-exported because the
 /// knowledge-graph sync must normalize a login the same way a write did,
@@ -145,6 +202,13 @@ pub trait AssignmentRecorder: Send + Sync + 'static {
         org_id: uuid::Uuid,
         role: &str,
     ) -> anyhow::Result<()>;
+
+    /// Record that `subject` created `org_id` and owns it.
+    ///
+    /// The role is not a parameter: creating an organization makes you its
+    /// owner and nothing else, so letting a caller pass a role here would only
+    /// create a way to get it wrong.
+    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -156,6 +220,88 @@ impl AssignmentRecorder for IdentityService {
         role: &str,
     ) -> anyhow::Result<()> {
         IdentityService::record_assignment(self, subject, org_id, role).await
+    }
+
+    async fn record_creation(&self, subject: &str, org_id: uuid::Uuid) -> anyhow::Result<()> {
+        IdentityService::record_creation(self, subject, org_id).await
+    }
+}
+
+/// Emptying an organization that is being deleted.
+///
+/// Separate from [`AssignmentRecorder`] because it is the opposite act with the
+/// opposite risk: recording an assignment can be wrong and corrected, while this
+/// removes every membership of an organization at once and takes credentials
+/// with it. A gear asks for this one deliberately.
+///
+/// It does not check the last-owner rule, and that is the point: the rule keeps
+/// an organization administrable, and an organization being deleted has nothing
+/// left to administer. The authority to delete is checked where deletion is
+/// decided — this is the consequence, not the decision.
+#[async_trait]
+pub trait MembershipEvictor: Send + Sync + 'static {
+    /// End every membership of `org_id`, removing each person's personal
+    /// connections in it as they go.
+    async fn evict_everybody(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<service::Eviction>;
+}
+
+#[async_trait]
+impl MembershipEvictor for IdentityService {
+    async fn evict_everybody(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+    ) -> anyhow::Result<service::Eviction> {
+        IdentityService::evict_everybody(self, ctx, org_id).await
+    }
+}
+
+/// The organizations a sign-in method's person belongs to.
+///
+/// Published for the Studio PDP, which has a token subject and needs to know
+/// what that person may reach. Deliberately not `PersonResolver`: that one
+/// provisions, and an authorization decision must not create a person as a side
+/// effect of somebody knocking.
+///
+/// Read-only and one subject at a time, like every other interface this gear
+/// publishes.
+#[async_trait]
+pub trait OrganizationReader: Send + Sync + 'static {
+    /// The organizations the person behind `subject` is a member of. A subject
+    /// no login knows has none.
+    async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>>;
+
+    /// Does this subject's person hold a membership of the platform root?
+    ///
+    /// One spelling of the rule, so a gear deciding whether somebody is a
+    /// platform administrator cannot drift from the gear that records it.
+    async fn is_platform_admin(&self, subject: &str) -> anyhow::Result<bool>;
+
+    /// Changes whenever any membership is written anywhere.
+    ///
+    /// A caller that caches an answer from `organizations_of` keeps this beside
+    /// it and throws the answer away when it moves. Without it a cache outlives
+    /// the write that invalidates it — which is how a person briefly could not
+    /// finish creating their own organization.
+    fn membership_generation(&self) -> u64;
+}
+
+#[async_trait]
+impl OrganizationReader for IdentityService {
+    async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>> {
+        IdentityService::organizations_of(self, subject).await
+    }
+
+    async fn is_platform_admin(&self, subject: &str) -> anyhow::Result<bool> {
+        IdentityService::is_platform_admin(self, subject).await
+    }
+
+    fn membership_generation(&self) -> u64 {
+        service::membership_generation()
     }
 }
 
@@ -208,10 +354,20 @@ impl Gear for StudioUserGear {
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 people,
             );
-            let assignments: Arc<dyn AssignmentRecorder> = svc;
+            let assignments: Arc<dyn AssignmentRecorder> = svc.clone();
             ctx.client_hub().register_scoped::<dyn AssignmentRecorder>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 assignments,
+            );
+            let evictor: Arc<dyn MembershipEvictor> = svc.clone();
+            ctx.client_hub().register_scoped::<dyn MembershipEvictor>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                evictor,
+            );
+            let organizations: Arc<dyn OrganizationReader> = svc;
+            ctx.client_hub().register_scoped::<dyn OrganizationReader>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                organizations,
             );
         }
 
@@ -260,7 +416,7 @@ impl RestApiCapability for StudioUserGear {
             // answers 400 only if neither channel is there.
             let federated = ctx
                 .client_hub()
-                .get_scoped::<dyn crate::identity_directory::FederatedIdentityReader>(
+                .get_scoped::<dyn crate::identity_directory::IdpDirectoryReader>(
                     &ClientScope::gts_id(crate::identity_directory::IDP_DIRECTORY_INSTANCE_ID),
                 )
                 .ok();
@@ -271,6 +427,48 @@ impl RestApiCapability for StudioUserGear {
                 );
             }
             svc.attach_federated(federated);
+
+            // Seeded here rather than in `init` because it writes through the
+            // same path everything else does and wants the gear fully built.
+            // Failing to seed is logged, not fatal: an installation that cannot
+            // reach its database has a larger problem than an unseeded
+            // administrator, and refusing to boot would hide it.
+            let cfg = ctx
+                .config_or_default::<StudioUserConfig>()
+                .unwrap_or_default();
+            if let Some(join) = cfg.on_first_login.as_ref() {
+                if join.role == crate::access_config::ROLE_OWNER {
+                    warn!(
+                        "studio-user: on_first_login.role is `owner` — refusing it. Everybody who \
+                         signs in would own the organization; set `member` or `admin`."
+                    );
+                } else {
+                    info!(
+                        organization = %join.organization,
+                        role = %join.role,
+                        "studio-user: a new person joins this organization on first sight"
+                    );
+                    svc.set_first_login_join(Some((join.organization, join.role.clone())));
+                }
+            }
+            let admins = cfg.platform_admins;
+            if admins.is_empty() {
+                warn!(
+                    "studio-user: no platform_admins configured. Being a platform administrator \
+                     is a membership of the platform root now, and nothing seeds one here \
+                     (ADR-0018 §3) — conflict resolution and the directory's administrative \
+                     routes have nobody to answer to until such a membership exists."
+                );
+            }
+            if !admins.is_empty() {
+                let svc = svc.clone();
+                tokio::spawn(async move {
+                    match svc.seed_platform_admins(&admins).await {
+                        Ok(n) => info!("studio-user: {n} platform administrator(s) seeded"),
+                        Err(e) => warn!("studio-user: cannot seed platform administrators: {e:#}"),
+                    }
+                });
+            }
         }
 
         Ok(rest::register_routes(router, openapi, service))
