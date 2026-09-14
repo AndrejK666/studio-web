@@ -45,22 +45,25 @@ export interface Privilege {
   label: string;
 }
 
-/** The Studio privilege catalogue. Ordered by resource family, then action. */
+/** The Studio privilege catalogue (ADR-0019 §2). Ordered by resource family,
+ *  then action.
+ *
+ *  This list must match `PRIVILEGES` in `studio-backend/src/access_config.rs`,
+ *  which is the side that seeds the ladder into the stored document and the
+ *  side the PDP evaluates. This screen WRITES the document (`putAccessConfig`),
+ *  so a privilege named here and not there is written into a role and then
+ *  carries nothing.
+ *
+ *  `project.*` and `work.*` used to head this list and are gone: projects are
+ *  account-management tenants (ADR-0010), so reaching one is membership rather
+ *  than a privilege, and `studio-project` — the gear "Works" belonged to — no
+ *  longer exists. */
 export const PRIVILEGES: Privilege[] = [
-  { id: "project.view", group: "Projects", label: "View projects" },
-  { id: "project.create", group: "Projects", label: "Create projects" },
-  { id: "project.edit", group: "Projects", label: "Edit a project" },
-  { id: "project.delete", group: "Projects", label: "Delete a project" },
-  { id: "project.studio", group: "Projects", label: "Open in IDE" },
+  { id: "people.view", group: "People & Team", label: "View people" },
+  { id: "people.invite", group: "People & Team", label: "Invite to the organization" },
+  { id: "people.manage", group: "People & Team", label: "Manage memberships and roles" },
 
-  { id: "work.view", group: "Works", label: "View works" },
-  { id: "work.create", group: "Works", label: "Create works" },
-  { id: "work.edit", group: "Works", label: "Edit a work" },
-  { id: "work.archive", group: "Works", label: "Archive a work" },
-
-  { id: "artifact.view", group: "Artifacts", label: "View artifacts" },
-  { id: "artifact.add", group: "Artifacts", label: "Add artifacts" },
-  { id: "artifact.remove", group: "Artifacts", label: "Remove artifacts" },
+  { id: "access.manage", group: "Administration", label: "Manage roles and grants" },
 
   { id: "connector.view", group: "Connections", label: "View connections" },
   { id: "connector.manage", group: "Connections", label: "Manage connections" },
@@ -68,11 +71,10 @@ export const PRIVILEGES: Privilege[] = [
   { id: "secret.view", group: "Secrets", label: "View secrets" },
   { id: "secret.manage", group: "Secrets", label: "Manage secrets" },
 
-  { id: "people.view", group: "People & Team", label: "View people" },
-  { id: "people.invite", group: "People & Team", label: "Invite to the organization" },
-  { id: "team.assign", group: "People & Team", label: "Assign people to a project team" },
+  { id: "document.view", group: "Documents", label: "View documents" },
+  { id: "document.edit", group: "Documents", label: "Edit documents" },
 
-  { id: "access.manage", group: "Administration", label: "Manage access, roles and grants" },
+  { id: "session.open", group: "Sessions", label: "Open a workspace in the IDE" },
 ];
 
 /** Catalogue grouped for the editor, preserving the order above. */
@@ -99,7 +101,17 @@ export interface RoleDef {
   system?: boolean;
 }
 
-/** The seeded roles for a fresh org (a sensible owner → viewer ladder). */
+/** The seeded roles for a fresh org (a sensible owner → viewer ladder).
+ *
+ *  Must match `default_roles()` in `studio-backend/src/access_config.rs`. The
+ *  backend seeds this into the document when an organization's first grant is
+ *  written; this screen overwrites the document wholesale when it saves, so a
+ *  ladder that disagrees here silently replaces the one the PDP was built
+ *  against.
+ *
+ *  `owner` is listed for editing, not for deciding: the PDP treats an
+ *  org-scoped `owner` grant as carrying every privilege whatever this array
+ *  says (ADR-0019 §7), so an owner cannot be locked out by a bad edit. */
 export function defaultRoles(): RoleDef[] {
   return [
     { key: "owner", name: "Owner", system: true, privileges: [...ALL] },
@@ -107,27 +119,22 @@ export function defaultRoles(): RoleDef[] {
       key: "admin",
       name: "Admin",
       system: true,
-      // Everything except deleting a project.
-      privileges: ALL.filter((id) => id !== "project.delete"),
+      // Everything except redefining the roles themselves: running the
+      // organization is an administrator's job, deciding who may run it is
+      // the owner's (ADR-0019 §2).
+      privileges: ALL.filter((id) => id !== "access.manage"),
     },
     {
       key: "editor",
       name: "Editor",
       system: true,
       privileges: [
-        "project.view",
-        "project.edit",
-        "project.studio",
-        "work.view",
-        "work.create",
-        "work.edit",
-        "work.archive",
-        "artifact.view",
-        "artifact.add",
-        "artifact.remove",
+        "people.view",
+        "document.view",
+        "document.edit",
         "connector.view",
         "secret.view",
-        "people.view",
+        "session.open",
       ],
     },
     {

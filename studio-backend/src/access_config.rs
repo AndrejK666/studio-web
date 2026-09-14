@@ -37,11 +37,75 @@ const SCOPE_ORG: &str = "org";
 /// The role key that makes somebody an owner.
 pub const ROLE_OWNER: &str = "owner";
 
+/// The Studio privilege catalogue (ADR-0019 §2).
+///
+/// Each entry is one `(resource type, action)` question the PDP can be asked.
+/// `project.*` and `work.*` from the prototype's older catalogue are absent on
+/// purpose: projects are account-management tenants (ADR-0010), so reaching one
+/// is membership rather than a privilege, and an entry that must be granted to
+/// everybody in order not to break them is worse than no entry.
+pub const PRIVILEGES: [&str; 11] = [
+    "people.view",
+    "people.invite",
+    "people.manage",
+    "access.manage",
+    "connector.view",
+    "connector.manage",
+    "secret.view",
+    "secret.manage",
+    "document.view",
+    "document.edit",
+    "session.open",
+];
+
+/// The role ladder a fresh organization is seeded with (ADR-0019 §2).
+///
+/// This is written into the document rather than supplied by whoever reads it.
+/// The prototype fills the ladder in on read, in the browser, which means the
+/// stored document never gains it — and a grant naming a role the document does
+/// not contain carries nothing. See [`set_owner_grant`] for what that cost.
+///
+/// `owner` is seeded for editing, not for deciding: an owner's authority does
+/// not depend on this array (ADR-0019 §7).
+fn default_roles() -> serde_json::Value {
+    let except = |missing: &[&str]| -> Vec<&str> {
+        PRIVILEGES
+            .iter()
+            .copied()
+            .filter(|p| !missing.contains(p))
+            .collect()
+    };
+    serde_json::json!([
+        { "key": ROLE_OWNER, "name": "Owner", "system": true, "privileges": PRIVILEGES },
+        { "key": "admin", "name": "Admin", "system": true, "privileges": except(&["access.manage"]) },
+        { "key": "editor", "name": "Editor", "system": true, "privileges": [
+            "people.view", "document.view", "document.edit",
+            "connector.view", "secret.view", "session.open",
+        ] },
+        { "key": "viewer", "name": "Viewer", "system": true, "privileges":
+            PRIVILEGES.iter().filter(|p| p.ends_with(".view")).collect::<Vec<_>>() },
+    ])
+}
+
+/// The `model` value that turns role evaluation on for an organization.
+const MODEL_ROLES: &str = "roles";
+
 /// The subset of the document this assembly writes and asks questions of.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AccessConfig {
     #[serde(default)]
+    model: String,
+    #[serde(default)]
+    roles: Vec<RoleDef>,
+    #[serde(default)]
     grants: Vec<GrantDef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RoleDef {
+    key: String,
+    #[serde(default)]
+    privileges: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +133,50 @@ impl AccessConfig {
                 && g.role_key == ROLE_OWNER
                 && g.scope_type == SCOPE_ORG
         })
+    }
+
+    /// Has this organization opted into role-based access?
+    ///
+    /// Everything that exists today answers `false`, which is what keeps
+    /// ADR-0019 releasable: a privilege can only ever *add* a way in, and only
+    /// where somebody deliberately switched the model.
+    #[must_use]
+    pub fn is_roles_model(&self) -> bool {
+        self.model == MODEL_ROLES
+    }
+
+    /// Does `subject` hold `privilege` across the whole organization?
+    ///
+    /// Only organization-scoped grants count. A project-scoped grant narrows
+    /// which rows somebody may touch inside one project; it says nothing about
+    /// administering the organization, and reading it as though it did would
+    /// let a grant about one project decide who may change memberships.
+    ///
+    /// `subject` is a token subject, for the reason given on [`set_owner_grant`].
+    #[must_use]
+    pub fn grants_privilege_to(&self, subject: &str, privilege: &str) -> bool {
+        self.grants.iter().any(|g| {
+            g.subject_type == SUBJECT_MEMBER
+                && g.subject_id == subject
+                && g.scope_type == SCOPE_ORG
+                && self.role_carries(&g.role_key, privilege)
+        })
+    }
+
+    /// Does the named role carry `privilege`?
+    ///
+    /// An owner's authority is definitional rather than looked up (ADR-0019 §7):
+    /// a document whose `roles` array does not define `owner` — every document
+    /// written before the ladder was seeded — would otherwise strip its owner of
+    /// every privilege, `access.manage` included, leaving nobody able to repair
+    /// it. The same rule holds in the PDP, and the two must not disagree.
+    fn role_carries(&self, role_key: &str, privilege: &str) -> bool {
+        role_key == ROLE_OWNER
+            || self
+                .roles
+                .iter()
+                .find(|r| r.key == role_key)
+                .is_some_and(|r| r.privileges.iter().any(|p| p == privilege))
     }
 }
 
@@ -113,11 +221,25 @@ pub async fn set_owner_grant(
     let mut config = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
         Ok(entry) => entry.value,
         // No document yet: a fresh organization has none until its first grant.
-        Err(_) => serde_json::json!({ "model": "tenant", "roles": [], "grants": [] }),
+        Err(_) => serde_json::json!({ "model": "tenant", "roles": default_roles(), "grants": [] }),
     };
     let object = config
         .as_object_mut()
         .context("organization access config is not an object")?;
+
+    // Backfill the ladder into a document written before it was seeded. A grant
+    // naming a role the document does not define carries no privilege, so an
+    // organization switching to the roles model with an empty `roles` array
+    // would deny every role-gated request — `access.manage` among them, which
+    // is the only way back. Writing the ladder here means the document is
+    // repaired the next time anything touches its grants.
+    let missing_roles = object
+        .get("roles")
+        .and_then(serde_json::Value::as_array)
+        .is_none_or(Vec::is_empty);
+    if missing_roles {
+        object.insert("roles".to_owned(), default_roles());
+    }
     let grants = object
         .entry("grants")
         .or_insert_with(|| serde_json::json!([]))
@@ -188,5 +310,145 @@ mod tests {
     fn a_document_with_no_grants_denies() {
         assert!(!AccessConfig::default().grants_ownership_to("ada"));
         assert!(!config(serde_json::json!({})).grants_ownership_to("ada"));
+    }
+
+    /* ── Holding a privilege (ADR-0019 §2, §3) ── */
+
+    fn roles_doc(grants: serde_json::Value) -> AccessConfig {
+        config(serde_json::json!({
+            "model": "roles", "roles": default_roles(), "grants": grants
+        }))
+    }
+
+    fn grant(subject: &str, role: &str, scope: &str) -> serde_json::Value {
+        serde_json::json!({
+            "subjectType": "member", "subjectId": subject,
+            "roleKey": role, "scopeType": scope
+        })
+    }
+
+    /// The property that makes this releasable: every organization that exists
+    /// is on the `tenant` model, and there a privilege opens nothing. Ownership
+    /// stays the only way in, exactly as before ADR-0019.
+    #[test]
+    fn the_tenant_model_grants_no_privilege_however_the_roles_read() {
+        let cfg = config(serde_json::json!({
+            "model": "tenant",
+            "roles": default_roles(),
+            "grants": [grant("ada", "admin", "org")],
+        }));
+        assert!(!cfg.is_roles_model());
+        assert!(!cfg.grants_ownership_to("ada"));
+    }
+
+    #[test]
+    fn an_admin_on_the_roles_model_holds_people_manage_but_not_access_manage() {
+        let cfg = roles_doc(serde_json::json!([grant("ada", "admin", "org")]));
+        assert!(cfg.is_roles_model());
+        assert!(cfg.grants_privilege_to("ada", "people.manage"));
+        assert!(cfg.grants_privilege_to("ada", "people.invite"));
+        assert!(
+            !cfg.grants_privilege_to("ada", "access.manage"),
+            "ADR-0011 §7: a role is denied operations outside its privilege set"
+        );
+    }
+
+    #[test]
+    fn a_viewer_holds_reads_and_nothing_that_writes() {
+        let cfg = roles_doc(serde_json::json!([grant("ada", "viewer", "org")]));
+        assert!(cfg.grants_privilege_to("ada", "people.view"));
+        for privilege in ["people.manage", "people.invite", "access.manage"] {
+            assert!(
+                !cfg.grants_privilege_to("ada", privilege),
+                "a viewer was allowed {privilege}"
+            );
+        }
+    }
+
+    /// ADR-0019 §7 again, from the other side of the assembly: the gear and the
+    /// PDP must not disagree about what an owner holds.
+    #[test]
+    fn an_owner_holds_every_privilege_even_when_the_ladder_is_missing() {
+        let cfg = config(serde_json::json!({
+            "model": "roles",
+            "roles": [],
+            "grants": [grant("ada", "owner", "org")],
+        }));
+        for privilege in PRIVILEGES {
+            assert!(
+                cfg.grants_privilege_to("ada", privilege),
+                "an owner was denied {privilege} because the document omits the role"
+            );
+        }
+    }
+
+    /// A grant about one project is not authority over the organization.
+    #[test]
+    fn a_project_scoped_grant_does_not_administer_the_organization() {
+        let cfg = roles_doc(serde_json::json!([grant("ada", "admin", "project")]));
+        assert!(!cfg.grants_privilege_to("ada", "people.manage"));
+    }
+
+    #[test]
+    fn a_member_with_no_grant_holds_nothing() {
+        let cfg = roles_doc(serde_json::json!([grant("bob", "admin", "org")]));
+        assert!(!cfg.grants_privilege_to("ada", "people.manage"));
+    }
+
+    /// The ladder is what a grant's `roleKey` is resolved against, so every key
+    /// the writer can produce has to exist in it.
+    #[test]
+    fn the_seeded_ladder_defines_the_role_the_owner_grant_names() {
+        let roles = default_roles();
+        let keys: Vec<&str> = roles
+            .as_array()
+            .expect("the ladder is an array")
+            .iter()
+            .map(|r| r["key"].as_str().expect("a role has a key"))
+            .collect();
+        assert!(
+            keys.contains(&ROLE_OWNER),
+            "set_owner_grant writes roleKey {ROLE_OWNER}, and the ladder must define it"
+        );
+        assert_eq!(keys, [ROLE_OWNER, "admin", "editor", "viewer"]);
+    }
+
+    /// ADR-0019 §2: an administrator runs the organization; redefining the
+    /// roles themselves is the one thing that decides who may do any of it.
+    #[test]
+    fn admin_holds_everything_except_redefining_access() {
+        let roles = default_roles();
+        let privileges = |key: &str| -> Vec<String> {
+            roles
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["key"] == key)
+                .expect("role present")["privileges"]
+                .as_array()
+                .expect("privileges is an array")
+                .iter()
+                .map(|p| p.as_str().expect("a privilege is a string").to_owned())
+                .collect()
+        };
+
+        let owner = privileges(ROLE_OWNER);
+        assert_eq!(
+            owner.len(),
+            PRIVILEGES.len(),
+            "the owner ladder is the whole catalogue"
+        );
+
+        let admin = privileges("admin");
+        assert!(!admin.contains(&"access.manage".to_owned()));
+        assert!(admin.contains(&"people.manage".to_owned()));
+        assert_eq!(admin.len(), PRIVILEGES.len() - 1);
+
+        let viewer = privileges("viewer");
+        assert!(
+            viewer.iter().all(|p| p.ends_with(".view")),
+            "a viewer holds only reads, got {viewer:?}"
+        );
+        assert!(!viewer.is_empty());
     }
 }
