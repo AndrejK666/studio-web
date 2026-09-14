@@ -368,19 +368,27 @@ async fn require_platform_admin(
     }
 }
 
-/// A membership write needs authority over that organization: its owner has it,
-/// and so does a platform administrator.
+/// An administrative act on an organization needs authority over it: its owner
+/// has it, a platform administrator has it, and — for an organization on the
+/// roles model — so does whoever holds `privilege` (ADR-0019 §2).
 ///
 /// The platform arm is not a convenience. Assignment from the identity directory
 /// is a platform act (ADR-0011 §4 — only a platform administrator appoints an
 /// organization's first owner), so an owner-only gate makes the very first
 /// membership of a fresh organization unwritable: there is nobody to write it.
+///
+/// The refusal still says `ORG_OWNER_REQUIRED`. Every organization is on the
+/// `tenant` model, where ownership is the only arm that can fire, so the reason
+/// is still true of every refusal this can currently produce — and ADR-0016
+/// documents that code against these routes.
 async fn require_org_authority(
     ctx: &SecurityContext,
     service: &Arc<IdentityService>,
     org_id: Uuid,
+    privilege: &str,
 ) -> ApiResult<()> {
-    if is_platform_admin(ctx, service).await || service.is_org_owner(ctx, org_id).await {
+    if is_platform_admin(ctx, service).await || service.may_administer(ctx, org_id, privilege).await
+    {
         Ok(())
     } else {
         Err(UserProfileError::permission_denied()
@@ -548,7 +556,7 @@ async fn put_membership(
 ) -> ApiResult<JsonBody<OrgMembershipDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_authority(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org, "people.manage").await?;
     let status = req.status.as_deref().unwrap_or(leaving::STATUS_ACTIVE);
     if !leaving::STATUSES.contains(&status) {
         return Err(UserProfileError::invalid_argument()
@@ -582,7 +590,7 @@ async fn delete_membership(
 ) -> ApiResult<JsonBody<LeaveResultDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_authority(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org, "people.manage").await?;
     // Removed by an owner or walking out on their own, the departure is the
     // same one: the same invariant holds it back, and the same credentials go
     // with it.
@@ -773,7 +781,7 @@ async fn invite_to_organization(
 ) -> ApiResult<JsonBody<InvitationCreatedDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_authority(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org, "people.invite").await?;
     let inviter = caller_user_id(&ctx, &service).await?;
     let (record, token) = service
         .invite(org, &inviter, &req.email, &req.role)
@@ -792,7 +800,7 @@ async fn list_organization_invitations(
 ) -> ApiResult<JsonBody<InvitationListDto>> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_authority(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org, "people.view").await?;
     let items = service
         .invitations_of(org)
         .await
@@ -810,7 +818,7 @@ async fn revoke_invitation(
 ) -> ApiResult<StatusCode> {
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
-    require_org_authority(&ctx, &service, org).await?;
+    require_org_authority(&ctx, &service, org, "people.invite").await?;
     if service
         .revoke_invitation(org, &invitation_id)
         .await

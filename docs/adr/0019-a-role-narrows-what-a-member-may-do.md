@@ -116,16 +116,36 @@ that comes from being an owner, never from a grant somebody was given.
 governed by tenancy, and saying so once is better than carrying an entry that
 must be granted to everyone in order not to break them.
 
-### 3. A gear asks; the PDP answers
+### 3. Two questions, two places — and only one of them is the PDP's
 
-Each role-gated surface declares a `ResourceType` in its own gear and calls the
-enforcer on the route, the way account-management does. The gateway is not the
-place for it: only the gear knows whether a given route reads or writes, and an
-enforcement point that has to infer the action from an HTTP verb gets it wrong
-on exactly the routes that matter.
+Building the first slice showed that "route every privilege through the PDP" is
+wrong, and wrong in the dangerous direction. The two questions are not the same
+shape:
 
-`privilege_for` then maps the declared types and actions onto the table in §2.
-It becomes reachable because the gears now ask.
+- **May this person administer this organization?** — manage its people, its
+  invitations, its roles. There is one answer per organization and it filters no
+  rows.
+- **Which rows of this resource may this person see?** — documents, connections,
+  issues. The answer is a filter, and the tenant clamp is the outer bound of it.
+
+The PDP answers the second. Asking it the first is a category error with teeth:
+for an organization on the `tenant` model the PDP answers every mapped request
+with the tenant clamp, which admits **every member of the organization**. A
+gear that took that as "yes, you may administer" would let any member change
+memberships — where today it requires an owner. Routing administration through
+the clamp does not narrow authority, it widens it, which is the opposite of
+what enforcement is for.
+
+So administrative authority is answered **in the gear, from the access config**,
+which is where it already lives: `is_org_owner` reads that document through the
+shared `access_config` module today, and holding a privilege is the same
+question asked with a different word. No second copy of the document, no PEP
+round trip, and the tenant-model path keeps exactly the owner gate it has.
+
+Row-level access — follow-ups 2 and 3 — is the PDP's, and that is where a gear
+declares a `ResourceType` and calls the enforcer the way account-management
+does. `privilege_for` maps those types when their gears start asking. It stays
+empty until then, and the test that says so stays with it.
 
 ### 4. "No roles" and "cannot tell" are different answers
 
@@ -227,9 +247,15 @@ the tripwire for this, and it is replaced rather than deleted.
 
 ## Follow-ups
 
-1. **The people surface**, the first slice: `people.view`, `people.invite`,
-   `access.manage` on the membership and invitation routes, replacing the binary
-   owner gate of §5.
+1. **The people surface. Shipped**, and it is what found §3: `people.manage` on
+   the membership write and delete, `people.invite` on inviting and revoking,
+   `people.view` on listing invitations. `require_org_authority` takes the
+   privilege it needs; ownership and the platform arm are unchanged, so every
+   organization — all of them on the `tenant` model — behaves exactly as it did.
+   `access.manage` is named in §2 and gates nothing yet: the screen that edits
+   roles and grants lives in the prototype and writes through
+   account-management's metadata route, so gating it is that surface's own
+   piece of work.
 2. **Connections and secrets**, which is where a privilege is worth the most,
    because a connection holds a credential.
 3. **Documents and sessions.**

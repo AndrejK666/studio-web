@@ -244,14 +244,37 @@ impl IdentityService {
         let _ = self.federated.set(federated);
     }
 
-    /// Is the caller an OWNER of `org_id`? Read from that organization's access
-    /// config — the same owner grant the Studio PDP recognizes. This is the
-    /// per-org authority gate: no platform-wide admin needed, and it is scoped
-    /// to the one organization.
-    pub async fn is_org_owner(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
-        crate::access_config::read(self.am.as_ref(), ctx, org_id)
-            .await
-            .grants_ownership_to(&ctx.subject_id().to_string())
+    /// May the caller administer `org_id` — is one privilege theirs to use?
+    ///
+    /// Replaces `is_org_owner`, which asked the same question with no room for
+    /// an answer other than ownership. It was deleted rather than kept beside
+    /// this: a second door to one rule is how the two drift, and the caller that
+    /// takes the older one silently stops honouring roles.
+    ///
+    /// Ownership answers yes on its own, whatever the access model, which is
+    /// what keeps every organization that exists behaving exactly as it does
+    /// today: they are all on the `tenant` model, where this is the only arm
+    /// that can fire (ADR-0019 §6).
+    ///
+    /// A privilege is the second arm and only opens for an organization that
+    /// deliberately switched to roles. It can only ever widen — an owner never
+    /// loses a route by somebody enabling the model.
+    ///
+    /// Deliberately not asked of the PDP. For a `tenant`-model organization the
+    /// PDP answers a mapped resource with the tenant clamp, which admits every
+    /// member; taking that as authority would let any member change memberships
+    /// where today an owner is required. The clamp bounds which rows a person
+    /// may see, not whether they may administer the place (ADR-0019 §3).
+    pub async fn may_administer(
+        &self,
+        ctx: &SecurityContext,
+        org_id: Uuid,
+        privilege: &str,
+    ) -> bool {
+        let subject = ctx.subject_id().to_string();
+        let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
+        cfg.grants_ownership_to(&subject)
+            || (cfg.is_roles_model() && cfg.grants_privilege_to(&subject, privilege))
     }
 
     /// The canonical person behind an authenticated caller, provisioning on
