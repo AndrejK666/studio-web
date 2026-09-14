@@ -6573,7 +6573,7 @@ function AccessView({
     const key = `role_${cfg.roles.length + 1}_${PRIVILEGES.length}`.replace(/[^a-z0-9_]/gi, "");
     mutate({
       ...cfg,
-      roles: [...cfg.roles, { key, name: "New role", privileges: ["project.view"] }],
+      roles: [...cfg.roles, { key, name: "New role", privileges: ["people.view"] }],
     });
   }
 
