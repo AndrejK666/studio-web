@@ -215,6 +215,11 @@ git push origin infra-v0.1.0
 
 - [`studio-backend/README.md`](studio-backend/README.md) — backend architecture
   and development.
+- [`studio-frontend/docs/studio-events.md`](studio-frontend/docs/studio-events.md)
+  — consuming the push channel from the portal: how a screen is told that
+  background work finished instead of polling for it.
+- [`docs/adr/0013-studio-events-push-channel.md`](docs/adr/0013-studio-events-push-channel.md)
+  — the channel itself, and why the Theia protocol is not its contract.
 - [`studio-backend/docs/adr/0003-theia-sessions.md`](studio-backend/docs/adr/0003-theia-sessions.md)
   — IDE session model.
 - [`theia/README.md`](theia/README.md) — Theia image and IDE customisation.
