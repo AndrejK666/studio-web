@@ -313,15 +313,133 @@ impl Service {
         b.build().unwrap_or_else(|_| SecurityContext::anonymous())
     }
 
-    async fn read_access_config(&self, sec: &SecurityContext, tid: Uuid) -> Option<AccessConfig> {
+    async fn read_access_config(&self, sec: &SecurityContext, tid: Uuid) -> ConfigRead {
         match self
             .am
             .resolve_metadata(sec, tid, GtsTypeId::new(ACCESS_METADATA_TYPE))
             .await
         {
-            Ok(Some(e)) => serde_json::from_value::<AccessConfig>(e.value).ok(),
-            _ => None,
+            Ok(Some(e)) => match serde_json::from_value::<AccessConfig>(e.value) {
+                Ok(cfg) => ConfigRead::Found(cfg),
+                // A document we cannot parse is not a document that says
+                // "tenant". We do not know what it says.
+                Err(error) => {
+                    warn!(tenant = %tid, %error, "organization access config did not parse");
+                    ConfigRead::Unreadable
+                }
+            },
+            Ok(None) => ConfigRead::Absent,
+            Err(error) => {
+                warn!(tenant = %tid, %error, "organization access config could not be read");
+                ConfigRead::Unreadable
+            }
         }
+    }
+}
+
+/// What a read of an organization's access config found.
+///
+/// "This organization has no access config" and "we could not find out what its
+/// access config says" are different answers, and collapsing them into one is
+/// the way this change goes wrong quietly (ADR-0019 §4).
+///
+/// The first is a choice: an organization that never opted into roles gets
+/// tenant behaviour, which is correct and is what every organization has today.
+/// The second is an outage — and answering it with tenant behaviour hands
+/// `access.manage` to anybody who merely reaches the organization, for as long
+/// as account-management is unwell.
+enum ConfigRead {
+    /// The document exists and parsed.
+    Found(AccessConfig),
+    /// There is no document: this organization never opted into roles.
+    Absent,
+    /// The read failed, or the document did not parse.
+    Unreadable,
+}
+
+/// What the role path decides, before the answer is shaped into constraints.
+#[derive(Debug, PartialEq, Eq)]
+enum RoleDecision {
+    /// Answer with the tenant clamp: this organization is not on the roles
+    /// model, or the caller holds the privilege across the whole organization.
+    Clamp,
+    /// Refuse.
+    Deny,
+    /// Narrow the clamp to these project scopes.
+    Narrow(Vec<Uuid>),
+}
+
+/// Decide the role path from a config read and the subject's identity.
+///
+/// Pure on purpose. The role path used to live inline in `evaluate`, where
+/// testing it meant standing up an account-management double — so it had no
+/// tests at all, while the helpers around it had many. Everything here is a
+/// decision; the caller does the I/O and builds the response.
+fn decide(
+    read: &ConfigRead,
+    subject_id: &str,
+    subject_teams: &[String],
+    privilege: &str,
+) -> RoleDecision {
+    let cfg = match read {
+        // We do not know what this organization decided, so we do not act on a
+        // guess: allowing would hand the privilege to anybody who reaches the
+        // organization for as long as the read keeps failing (ADR-0019 §4).
+        ConfigRead::Unreadable => return RoleDecision::Deny,
+        // No document: never opted into roles, so tenant behaviour.
+        ConfigRead::Absent => return RoleDecision::Clamp,
+        ConfigRead::Found(cfg) => cfg,
+    };
+    if cfg.model != "roles" {
+        return RoleDecision::Clamp;
+    }
+
+    // Walk the subject's grants that carry this privilege. An org-scoped grant
+    // means "the whole tenant" (== the tenant clamp); project-scoped grants
+    // collect the specific scope ids to narrow to.
+    let mut project_scopes: Vec<Uuid> = Vec::new();
+    for g in &cfg.grants {
+        let subject_matches = match g.subject_type.as_str() {
+            "member" => g.subject_id == subject_id,
+            "team" => subject_teams.iter().any(|t| t == &g.subject_id),
+            _ => false,
+        };
+        if !subject_matches {
+            continue;
+        }
+        // An owner's authority is definitional, not looked up (ADR-0019 §7).
+        // Resolving it through the document would mean a document whose `roles`
+        // array does not define `owner` — which is every document written
+        // before the ladder was seeded — strips its owner of every privilege,
+        // `access.manage` included, leaving nobody able to repair it. The
+        // ladder is for editing; it never decides whether an owner is an owner.
+        let role_has = g.role_key == crate::access_config::ROLE_OWNER
+            || cfg
+                .roles
+                .iter()
+                .find(|r| r.key == g.role_key)
+                .is_some_and(|r| r.privileges.iter().any(|p| p == privilege));
+        if !role_has {
+            continue;
+        }
+        match g.scope_type.as_str() {
+            // Carries the privilege across the whole tenant: exactly the clamp.
+            "org" => return RoleDecision::Clamp,
+            "project" => {
+                if let Ok(pid) = Uuid::parse_str(&g.scope_id) {
+                    project_scopes.push(pid);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // No grant at all → deny. Roles NARROW: tenant membership by itself does
+    // not confer access to a mapped resource.
+    if project_scopes.is_empty() {
+        RoleDecision::Deny
+    } else {
+        RoleDecision::Narrow(project_scopes)
     }
 }
 
@@ -428,75 +546,23 @@ impl AuthZResolverPluginClient for Service {
             Plan::Roles { tid, privilege } => (tid, privilege),
         };
 
-        // Read the org access config. Missing/unreadable OR non-roles model →
-        // tenant clamp (behaviour == today, fail-safe).
+        // Read the org access config and decide from it. The decision itself is
+        // a pure function so it can be tested without an account-management
+        // double — the reason the role path had no tests of its own.
         let sec = Service::read_ctx(&request, tid);
-        let Some(cfg) = self.read_access_config(&sec, tid).await else {
-            let tids = self.reachable_tenants(&request, tid).await;
-            return Ok(tenant_clamp(&request, &tids));
-        };
-        if cfg.model != "roles" {
-            let tids = self.reachable_tenants(&request, tid).await;
-            return Ok(tenant_clamp(&request, &tids));
-        }
-
+        let read = self.read_access_config(&sec, tid).await;
         let subject_id = request.subject.id.to_string();
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
         let subject_teams: Vec<String> = Vec::new();
 
-        // Walk the subject's grants that carry this privilege. An org-scoped
-        // grant means "the whole tenant" (== the tenant clamp); project-scoped
-        // grants collect the specific scope ids to narrow to.
-        let mut org_grant = false;
-        let mut project_scopes: Vec<Uuid> = Vec::new();
-        for g in &cfg.grants {
-            let subject_matches = match g.subject_type.as_str() {
-                "member" => g.subject_id == subject_id,
-                "team" => subject_teams.iter().any(|t| t == &g.subject_id),
-                _ => false,
-            };
-            if !subject_matches {
-                continue;
+        let project_scopes = match decide(&read, &subject_id, &subject_teams, privilege) {
+            RoleDecision::Clamp => {
+                let tids = self.reachable_tenants(&request, tid).await;
+                return Ok(tenant_clamp(&request, &tids));
             }
-            // An owner's authority is definitional, not looked up (ADR-0019 §7).
-            // Resolving it through the document would mean a document whose
-            // `roles` array does not define `owner` — which is every document
-            // written before the ladder was seeded — strips its owner of every
-            // privilege, `access.manage` included, leaving nobody able to
-            // repair it. The ladder is for editing; it never decides whether an
-            // owner is an owner.
-            let role_has = g.role_key == crate::access_config::ROLE_OWNER
-                || cfg
-                    .roles
-                    .iter()
-                    .find(|r| r.key == g.role_key)
-                    .is_some_and(|r| r.privileges.iter().any(|p| p == privilege));
-            if !role_has {
-                continue;
-            }
-            match g.scope_type.as_str() {
-                "org" => org_grant = true,
-                "project" => {
-                    if let Ok(pid) = Uuid::parse_str(&g.scope_id) {
-                        project_scopes.push(pid);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // An org-scoped grant carries the privilege across the whole tenant:
-        // that is exactly the tenant clamp (incl. the hierarchy subtree).
-        if org_grant {
-            let tids = self.reachable_tenants(&request, tid).await;
-            return Ok(tenant_clamp(&request, &tids));
-        }
-
-        // No grant at all → deny. Roles NARROW: tenant membership by itself does
-        // not confer access to a mapped Work resource.
-        if project_scopes.is_empty() {
-            return Ok(deny());
-        }
+            RoleDecision::Deny => return Ok(deny()),
+            RoleDecision::Narrow(scopes) => scopes,
+        };
 
         // Project-scoped grants: start from the tenant clamp (the invariant
         // outer boundary) and AND the granted scope ids into every branch of it.
@@ -873,6 +939,110 @@ mod tests {
                 "{resource_type} must not need the config to be authorized"
             );
         }
+    }
+
+    /* ── The role path (ADR-0019) ── */
+
+    fn found(model: &str, roles: serde_json::Value, grants: serde_json::Value) -> ConfigRead {
+        ConfigRead::Found(
+            serde_json::from_value(serde_json::json!({
+                "model": model, "roles": roles, "grants": grants
+            }))
+            .expect("valid access config"),
+        )
+    }
+
+    fn org_grant(subject: &str, role: &str) -> serde_json::Value {
+        serde_json::json!({
+            "subjectType": "member", "subjectId": subject,
+            "roleKey": role, "scopeType": "org", "scopeId": ""
+        })
+    }
+
+    /// ADR-0019 §4. The defect this split exists to close: a failing read used
+    /// to be answered with the tenant clamp, which is permission — so an
+    /// account-management outage handed every privilege, `access.manage`
+    /// included, to anybody who merely reached the organization.
+    #[test]
+    fn a_config_we_cannot_read_denies_rather_than_falling_back_to_the_clamp() {
+        assert_eq!(
+            decide(&ConfigRead::Unreadable, "ada", &[], "access.manage"),
+            RoleDecision::Deny
+        );
+    }
+
+    /// The other half of §4: "no document" is a choice, not an outage, and it
+    /// is the state every organization is in today.
+    #[test]
+    fn an_organization_with_no_config_keeps_tenant_behaviour() {
+        assert_eq!(
+            decide(&ConfigRead::Absent, "ada", &[], "access.manage"),
+            RoleDecision::Clamp
+        );
+    }
+
+    /// Opting out explicitly is the same answer as never opting in.
+    #[test]
+    fn the_tenant_model_keeps_tenant_behaviour_whatever_the_grants_say() {
+        let cfg = found("tenant", serde_json::json!([]), serde_json::json!([]));
+        assert_eq!(
+            decide(&cfg, "ada", &[], "access.manage"),
+            RoleDecision::Clamp
+        );
+    }
+
+    /// ADR-0019 §7, the lockout. Every document written before the ladder was
+    /// seeded has `roles: []` and an owner grant naming a role that is not
+    /// there. Resolving the owner through the document would deny its owner
+    /// `access.manage` — the one privilege that could repair the document.
+    #[test]
+    fn an_owner_holds_every_privilege_even_when_the_ladder_is_missing() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([]),
+            serde_json::json!([org_grant("ada", "owner")]),
+        );
+        for privilege in crate::access_config::PRIVILEGES {
+            assert_eq!(
+                decide(&cfg, "ada", &[], privilege),
+                RoleDecision::Clamp,
+                "an owner was denied {privilege} because the document does not define the role"
+            );
+        }
+    }
+
+    /// A role that IS defined is still resolved through the document, so the
+    /// ladder decides everything that is not ownership.
+    #[test]
+    fn a_role_is_denied_the_privileges_its_definition_omits() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([{ "key": "admin", "privileges": ["people.manage"] }]),
+            serde_json::json!([org_grant("ada", "admin")]),
+        );
+        assert_eq!(
+            decide(&cfg, "ada", &[], "people.manage"),
+            RoleDecision::Clamp
+        );
+        assert_eq!(
+            decide(&cfg, "ada", &[], "access.manage"),
+            RoleDecision::Deny,
+            "ADR-0011 §7: a role is denied operations outside its privilege set"
+        );
+    }
+
+    /// Roles narrow. Being in the tenant is not itself a grant.
+    #[test]
+    fn a_member_with_no_grant_is_denied_rather_than_clamped() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([{ "key": "admin", "privileges": ["access.manage"] }]),
+            serde_json::json!([org_grant("bob", "admin")]),
+        );
+        assert_eq!(
+            decide(&cfg, "ada", &[], "access.manage"),
+            RoleDecision::Deny
+        );
     }
 
     /// The property this restructure exists for. `privilege_for` maps nothing
