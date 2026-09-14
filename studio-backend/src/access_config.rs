@@ -37,6 +37,56 @@ const SCOPE_ORG: &str = "org";
 /// The role key that makes somebody an owner.
 pub const ROLE_OWNER: &str = "owner";
 
+/// The Studio privilege catalogue (ADR-0019 §2).
+///
+/// Each entry is one `(resource type, action)` question the PDP can be asked.
+/// `project.*` and `work.*` from the prototype's older catalogue are absent on
+/// purpose: projects are account-management tenants (ADR-0010), so reaching one
+/// is membership rather than a privilege, and an entry that must be granted to
+/// everybody in order not to break them is worse than no entry.
+pub const PRIVILEGES: [&str; 11] = [
+    "people.view",
+    "people.invite",
+    "people.manage",
+    "access.manage",
+    "connector.view",
+    "connector.manage",
+    "secret.view",
+    "secret.manage",
+    "document.view",
+    "document.edit",
+    "session.open",
+];
+
+/// The role ladder a fresh organization is seeded with (ADR-0019 §2).
+///
+/// This is written into the document rather than supplied by whoever reads it.
+/// The prototype fills the ladder in on read, in the browser, which means the
+/// stored document never gains it — and a grant naming a role the document does
+/// not contain carries nothing. See [`set_owner_grant`] for what that cost.
+///
+/// `owner` is seeded for editing, not for deciding: an owner's authority does
+/// not depend on this array (ADR-0019 §7).
+fn default_roles() -> serde_json::Value {
+    let except = |missing: &[&str]| -> Vec<&str> {
+        PRIVILEGES
+            .iter()
+            .copied()
+            .filter(|p| !missing.contains(p))
+            .collect()
+    };
+    serde_json::json!([
+        { "key": ROLE_OWNER, "name": "Owner", "system": true, "privileges": PRIVILEGES },
+        { "key": "admin", "name": "Admin", "system": true, "privileges": except(&["access.manage"]) },
+        { "key": "editor", "name": "Editor", "system": true, "privileges": [
+            "people.view", "document.view", "document.edit",
+            "connector.view", "secret.view", "session.open",
+        ] },
+        { "key": "viewer", "name": "Viewer", "system": true, "privileges":
+            PRIVILEGES.iter().filter(|p| p.ends_with(".view")).collect::<Vec<_>>() },
+    ])
+}
+
 /// The subset of the document this assembly writes and asks questions of.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AccessConfig {
@@ -113,11 +163,25 @@ pub async fn set_owner_grant(
     let mut config = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
         Ok(entry) => entry.value,
         // No document yet: a fresh organization has none until its first grant.
-        Err(_) => serde_json::json!({ "model": "tenant", "roles": [], "grants": [] }),
+        Err(_) => serde_json::json!({ "model": "tenant", "roles": default_roles(), "grants": [] }),
     };
     let object = config
         .as_object_mut()
         .context("organization access config is not an object")?;
+
+    // Backfill the ladder into a document written before it was seeded. A grant
+    // naming a role the document does not define carries no privilege, so an
+    // organization switching to the roles model with an empty `roles` array
+    // would deny every role-gated request — `access.manage` among them, which
+    // is the only way back. Writing the ladder here means the document is
+    // repaired the next time anything touches its grants.
+    let missing_roles = object
+        .get("roles")
+        .and_then(serde_json::Value::as_array)
+        .is_none_or(Vec::is_empty);
+    if missing_roles {
+        object.insert("roles".to_owned(), default_roles());
+    }
     let grants = object
         .entry("grants")
         .or_insert_with(|| serde_json::json!([]))
@@ -188,5 +252,62 @@ mod tests {
     fn a_document_with_no_grants_denies() {
         assert!(!AccessConfig::default().grants_ownership_to("ada"));
         assert!(!config(serde_json::json!({})).grants_ownership_to("ada"));
+    }
+
+    /// The ladder is what a grant's `roleKey` is resolved against, so every key
+    /// the writer can produce has to exist in it.
+    #[test]
+    fn the_seeded_ladder_defines_the_role_the_owner_grant_names() {
+        let roles = default_roles();
+        let keys: Vec<&str> = roles
+            .as_array()
+            .expect("the ladder is an array")
+            .iter()
+            .map(|r| r["key"].as_str().expect("a role has a key"))
+            .collect();
+        assert!(
+            keys.contains(&ROLE_OWNER),
+            "set_owner_grant writes roleKey {ROLE_OWNER}, and the ladder must define it"
+        );
+        assert_eq!(keys, [ROLE_OWNER, "admin", "editor", "viewer"]);
+    }
+
+    /// ADR-0019 §2: an administrator runs the organization; redefining the
+    /// roles themselves is the one thing that decides who may do any of it.
+    #[test]
+    fn admin_holds_everything_except_redefining_access() {
+        let roles = default_roles();
+        let privileges = |key: &str| -> Vec<String> {
+            roles
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["key"] == key)
+                .expect("role present")["privileges"]
+                .as_array()
+                .expect("privileges is an array")
+                .iter()
+                .map(|p| p.as_str().expect("a privilege is a string").to_owned())
+                .collect()
+        };
+
+        let owner = privileges(ROLE_OWNER);
+        assert_eq!(
+            owner.len(),
+            PRIVILEGES.len(),
+            "the owner ladder is the whole catalogue"
+        );
+
+        let admin = privileges("admin");
+        assert!(!admin.contains(&"access.manage".to_owned()));
+        assert!(admin.contains(&"people.manage".to_owned()));
+        assert_eq!(admin.len(), PRIVILEGES.len() - 1);
+
+        let viewer = privileges("viewer");
+        assert!(
+            viewer.iter().all(|p| p.ends_with(".view")),
+            "a viewer holds only reads, got {viewer:?}"
+        );
+        assert!(!viewer.is_empty());
     }
 }

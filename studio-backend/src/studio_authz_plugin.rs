@@ -458,11 +458,19 @@ impl AuthZResolverPluginClient for Service {
             if !subject_matches {
                 continue;
             }
-            let role_has = cfg
-                .roles
-                .iter()
-                .find(|r| r.key == g.role_key)
-                .is_some_and(|r| r.privileges.iter().any(|p| p == privilege));
+            // An owner's authority is definitional, not looked up (ADR-0019 §7).
+            // Resolving it through the document would mean a document whose
+            // `roles` array does not define `owner` — which is every document
+            // written before the ladder was seeded — strips its owner of every
+            // privilege, `access.manage` included, leaving nobody able to
+            // repair it. The ladder is for editing; it never decides whether an
+            // owner is an owner.
+            let role_has = g.role_key == crate::access_config::ROLE_OWNER
+                || cfg
+                    .roles
+                    .iter()
+                    .find(|r| r.key == g.role_key)
+                    .is_some_and(|r| r.privileges.iter().any(|p| p == privilege));
             if !role_has {
                 continue;
             }
