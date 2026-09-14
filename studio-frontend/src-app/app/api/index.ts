@@ -10,6 +10,13 @@ export {
   ORGANIZATIONS_API_BASE_URL,
 } from './OrganizationsApiService';
 export {
+  StudioEventsApiService,
+  STUDIO_EVENTS_API_BASE_URL,
+  type StudioEvent,
+  type StudioEventPage,
+  type StudioRunEvent,
+} from './StudioEventsApiService';
+export {
   type Invitation,
   type InvitationList,
   type Me,
