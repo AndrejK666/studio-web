@@ -23,10 +23,10 @@ declare module '@gears-frontx/react' {
     'app/context/fetch': void;
     /** An organization was picked in the switcher. */
     'app/context/org/changed': { orgId: string };
-    /** A project was opened — published by whoever owns projects. `workspaceId` is the scope it was read in, so a late announcement from a workspace since left can be dropped. */
-    'app/context/project/opened': { id: string; name: string; workspaceId?: string };
+    /** A project was opened — published by whoever owns projects. `workspaceId` is the scope it was read in, so a late announcement from a workspace since left can be dropped. Required, not optional: an omitted scope is one the shell waves through, and a sender that cannot name its workspace has nothing to announce. */
+    'app/context/project/opened': { id: string; name: string; workspaceId: string };
     /** The switchable project list — published by whoever owns projects. `workspaceId` is the scope it was read in, and carries the same meaning it has on `project/opened`: the list travels with that event and is dropped on the same terms. */
-    'app/context/projects': { items: { id: string; name: string }[]; workspaceId?: string };
+    'app/context/projects': { items: { id: string; name: string }[]; workspaceId: string };
     /** A project was picked in the switcher; the owning MFE navigates. */
     'app/context/project/changed': { projectId: string };
     /** Left the project scope (a global screen mounted, or "All projects"). */
@@ -37,8 +37,13 @@ declare module '@gears-frontx/react' {
     'app/context/screen/requested': { extensionId: string };
     /** A section of the level in scope is now on screen — chosen in the rail, or moved by the MFE itself. */
     'app/context/project/section': { section: string | null };
-    /** A workspace was picked — in its slot, or on a screen that read it itself (then with its name). `organizationId` is set only by the latter, and says which organization the screen was listing. */
-    'app/context/workspace/changed': { workspaceId: string; name?: string; organizationId?: string };
+    /** A workspace was picked — in its slot, or on a screen that read it itself (then with its name). `organizationId` is set only by the latter, and says which organization the screen was listing. `enter` asks for the workspace level as part of the same announcement, so the move cannot outlive a selection dropped as stale. */
+    'app/context/workspace/changed': {
+      workspaceId: string;
+      name?: string;
+      organizationId?: string;
+      enter?: boolean;
+    };
     /** A workspace was created by an MFE and must become the current one. `organizationId` is the parent it was created under. */
     'app/context/workspace/created': { id: string; name: string; organizationId?: string };
     /** The mounted screen works inside a workspace, so the slot naming it belongs in the bar. */

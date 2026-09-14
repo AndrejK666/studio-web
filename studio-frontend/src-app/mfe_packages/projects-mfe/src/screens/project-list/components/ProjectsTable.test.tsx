@@ -29,6 +29,16 @@ vi.mock('../../../shared/useProjectConfig', () => ({
   useProjectConfig: () => configState,
 }));
 
+let scope: { workspace: { id: string; name: string } | null; projects: Tenant[] } = {
+  workspace: { id: 'ws-1', name: 'Platform' },
+  projects: [],
+};
+
+vi.mock('../../../shared/workspaceProjects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/workspaceProjects')>()),
+  useWorkspaceProjects: () => ({ ...scope, org: null, loading: false, failed: false }),
+}));
+
 /** Reassigned per test, like `configState`: the Owner cell reads all three. */
 let ownerState: UserLookup = {
   user: { id: 'user-1', username: 'ada', display_name: 'Ada L.' },
@@ -85,6 +95,7 @@ async function mount(rows: Tenant[]) {
 }
 
 const beforeEachState = () => {
+  scope = { workspace: { id: 'ws-1', name: 'Platform' }, projects: [PROJECT] };
   configState = { config: CONFIG, loading: false, unset: false, failed: false };
   ownerState = {
     user: { id: 'user-1', username: 'ada', display_name: 'Ada L.' },
@@ -104,10 +115,16 @@ describe('ProjectsTable rows', () => {
       fireEvent.click(button);
     });
 
-    // The shell owns which project is open. A row asks; it does not decide.
+    // The shell owns which project is open. A row asks; it does not decide —
+    // and it names the workspace it read the project in, or the shell cannot
+    // tell a late announcement from a current one.
     const payloads = executeActionsChain.mock.calls.map(([chain]) => chain.action.payload);
     expect(payloads).toContainEqual(
-      expect.objectContaining({ kind: 'opened', project: { id: 'proj', name: 'proj' } })
+      expect.objectContaining({
+        kind: 'opened',
+        project: { id: 'proj', name: 'proj' },
+        workspaceId: 'ws-1',
+      })
     );
 
     // Local state stays put until the shell publishes the project back. It used
@@ -115,6 +132,18 @@ describe('ProjectsTable rows', () => {
     // echo look like "nothing changed" — the rail then marked no section.
     const state = mfeApp.store.getState() as Record<string, { projectId: string | null }>;
     expect(state['projects/nav'].projectId).toBeNull();
+  });
+
+  it('announces nothing at all while no workspace is in scope', async () => {
+    scope = { workspace: null, projects: [] };
+    const { executeActionsChain } = await mount([PROJECT]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /proj/ }));
+    });
+
+    const payloads = executeActionsChain.mock.calls.map(([chain]) => chain.action.payload);
+    expect(payloads).not.toContainEqual(expect.objectContaining({ kind: 'opened' }));
   });
 
   it('draws a row from the project metadata, not from the tenant', async () => {

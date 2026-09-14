@@ -56,13 +56,14 @@ function publish(bridge: ChildMfeBridge | null, payload: Record<string, unknown>
  * changed" — the rail's section among them — was skipped. `ProjectsRoot` opens
  * the project when the property arrives, and that is the only way in.
  */
+// @cpt-dod:cpt-studiofrontend-dod-workspace-scope-claim:p1
 export function requestOpenProject(
   project: ContextEntity,
   siblings: ContextEntity[],
   bridge: ChildMfeBridge | null,
-  workspaceId: string | null
+  workspaceId: string
 ): void {
-  publish(bridge, { kind: 'opened', project, siblings, ...(workspaceId ? { workspaceId } : {}) });
+  publish(bridge, { kind: 'opened', project, siblings, workspaceId });
 }
 
 /**
@@ -86,7 +87,7 @@ export function announceCreatedProject(
   bridge: ChildMfeBridge | null,
   project: ContextEntity,
   siblings: readonly ContextEntity[],
-  workspaceId: string | null
+  workspaceId: string
 ): Promise<void> {
   if (!bridge) return Promise.resolve();
   const listed = siblings.some((sibling) => sibling.id === project.id)
@@ -99,9 +100,11 @@ export function announceCreatedProject(
       kind: 'opened',
       project,
       siblings: listed,
-      // See `requestOpenProject`: the wizard's own scope, so a create that
-      // resolves after a workspace switch does not land in the new workspace.
-      ...(workspaceId ? { workspaceId } : {}),
+      // See `requestOpenProject`: the workspace the project was *written*
+      // under, so a create that resolves after a workspace switch does not land
+      // in the new one. It comes from the create request rather than from
+      // whatever is in scope now — the caller passes it on.
+      workspaceId,
     },
   });
 }

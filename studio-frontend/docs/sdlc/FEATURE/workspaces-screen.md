@@ -186,12 +186,20 @@ buy nothing but a second remote to load.
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-row-opens`
 
 The system **MUST** enter the workspace level from a row by announcing the
-workspace and then asking the shell for that level, and **MUST NOT** mount the
-workspace level's screen itself.
+workspace **and the level it asks for as one announcement**, and **MUST NOT**
+mount the workspace level's screen itself.
 
 One way into a level. The chain's slot already asks the shell, the shell already
 knows which screen is the level's entry point, and an MFE that mounted a screen
 of its own choosing would be deciding what the level is.
+
+One announcement rather than two, because the two are not independent: the shell
+drops a workspace announced for an organization it has since left
+(`cpt-studiofrontend-dod-workspace-scope-claim`), and a level request sent
+beside it would still be honoured — landing the session on the workspace level
+with the previous workspace current. The request therefore travels *with* the
+workspace and is acted on only once the workspace has been accepted. Asking is
+still the MFE's, and deciding which screen that means is still the shell's.
 
 **Implements**:
 - `cpt-studiofrontend-flow-workspaces-screen-open`

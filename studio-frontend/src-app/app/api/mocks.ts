@@ -11,7 +11,12 @@
  */
 
 import type { MockMap } from '@gears-frontx/react';
-import type { MembershipList } from './types';
+import type {
+  InvitationList,
+  MembershipList,
+  Organization,
+  OrganizationCapabilities,
+} from './types';
 
 /** The organization the mocked session is a member of. */
 const HOME_TENANT_ID = '00000000-0000-0000-0000-0000000000aa';
@@ -29,8 +34,22 @@ export const identityMockMap: MockMap = {
         user_id: '00000000-0000-0000-0000-0000000000f1',
         org_id: HOME_TENANT_ID,
         role: 'owner',
+        status: 'active',
         source: 'assignment',
       },
     ],
+  }),
+
+  'GET /cf/studio-user/v1/me/invitations': (): InvitationList => ({ items: [] }),
+};
+
+export const organizationsMockMap: MockMap = {
+  'GET /cf/studio-organizations/v1/capabilities': (): OrganizationCapabilities => ({
+    self_service: true,
+  }),
+
+  'POST /cf/studio-organizations/v1/organizations': (body): Organization => ({
+    id: '00000000-0000-0000-0000-0000000000c1',
+    name: (body as { name?: string } | undefined)?.name ?? 'New organization',
   }),
 };

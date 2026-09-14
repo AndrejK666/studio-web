@@ -78,6 +78,7 @@ function currentOrgId(app: FrontXApp): string | null {
   return contextSlice(app).org?.id ?? null;
 }
 
+// @cpt-dod:cpt-studiofrontend-dod-workspace-scope-claim:p1
 /**
  * Whether an announcement belongs to a scope the session has left.
  *
@@ -314,7 +315,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     enterScreen(registry, target, true, `the ${target.presentation.label} screen`);
   });
 
-  eventBus.on('app/context/workspace/changed', ({ workspaceId, name, organizationId }) => {
+  eventBus.on('app/context/workspace/changed', ({ workspaceId, name, organizationId, enter }) => {
     // The same rule the workspace read follows (`workspace-scope-resolve`
     // inst-2/inst-3): an announcement made for an organization that has since
     // been left is dropped rather than applied to whatever is current now.
@@ -328,6 +329,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
     );
     publishSelectedWorkspace(app);
     publishSelectedProject(app);
+    if (enter) eventBus.emit('app/context/level/requested', { level: 'workspace' });
   });
 
   /** Created by an MFE and handed over as an action chain — see contextActions. */

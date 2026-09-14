@@ -112,7 +112,11 @@ export function initWizardEffects(dispatch: AppDispatch, app: FrontXApp): void {
             return [] as ProjectRef[];
           });
         void invalidateQueryCacheForApp(app, children);
-        eventBus.emit('mfe/projects/created', { project: { id: tenantId, name }, siblings });
+        eventBus.emit('mfe/projects/created', {
+          project: { id: tenantId, name },
+          siblings,
+          workspaceId,
+        });
       };
 
       // @cpt-begin:cpt-studiofrontend-algo-project-create-write:p2:inst-4a

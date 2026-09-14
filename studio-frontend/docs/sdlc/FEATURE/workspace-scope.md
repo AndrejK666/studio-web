@@ -17,6 +17,7 @@
   - [Workspace Slot State Machine](#workspace-slot-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [The shell owns the workspace list](#the-shell-owns-the-workspace-list)
+  - [Every announcement names the scope it was made in](#every-announcement-names-the-scope-it-was-made-in)
   - [The workspace has its own slot next to the organization](#the-workspace-has-its-own-slot-next-to-the-organization)
   - [Creation is an overlay extension with one field](#creation-is-an-overlay-extension-with-one-field)
   - [A created workspace reaches the shell and becomes current](#a-created-workspace-reaches-the-shell-and-becomes-current)
@@ -232,6 +233,47 @@ Two rules follow from the shell owning it, and neither is optional:
 - Property: `constructor_studio.context.workspace.selected.v1~`
 - Entities: `appContextSlice`, `appContextEffects`, `sharedContext`
 
+### Every announcement names the scope it was made in
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-claim`
+
+The system **MUST** carry the scope an announcement was made in on the
+announcement itself — the organization for a workspace, the workspace for a
+project and for its sibling list — and the shell **MUST** drop an announcement
+whose scope is not the one in scope when it arrives, rather than apply it to
+whatever is current now. A sender that cannot name its scope **MUST NOT**
+announce at all.
+
+The same rule the workspace read already follows, generalised to every writer.
+Scopes are switched faster than a gear answers, and an announcement is a read
+that has been travelling: a project opened from a list, a workspace named on a
+screen, a tenant written by an overlay. Each of them was true of the scope it
+was made in and of no other. The scope therefore has to be part of the message
+— derived at the receiving end it is only ever "now", which is the one answer
+that cannot be checked.
+
+An announcement that is dropped **MUST** take with it everything that was
+conditional on it. A selection that also moves the session to another level
+carries that request **in the same announcement**, so that the level change
+cannot outlive the selection it was asking for: two independent messages leave
+the shell free to honour the second after refusing the first, which lands the
+session at a level with the previous scope still current.
+
+Omission is not the escape hatch. An absent scope reads as "not claimed" and so
+as "cannot be checked", which is the answer the shell's own top-bar slots need —
+they *are* the scope in question and have nothing to disagree with. An MFE's
+announcement is never in that position, so its scope is required rather than
+optional, and a missing one is a refusal to send and not a message the guard
+waves through.
+
+**Implements**:
+- `cpt-studiofrontend-flow-workspace-scope-switch`
+- `cpt-studiofrontend-algo-workspace-scope-resolve`
+
+**Touches**:
+- Action: `constructor_studio.context.workspaces.publish.v1~`, `constructor_studio.context.publish.v1~`
+- Entities: `appContextEffects`, `contextActions`, `projectsActions`, `workspaceActions`
+
 ### The workspace has its own slot next to the organization
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-slot`
@@ -388,6 +430,8 @@ only button is already refused.
 - [ ] Choosing the organization already in scope changes nothing: the workspace stays current, an open project stays open, and no request is made.
 - [ ] On a workspace-scoped screen the slot holds a placeholder while the list is being read, rather than disappearing and coming back.
 - [ ] Switching organizations while the previous organization's workspaces are still being read leaves the slot showing the new organization's, whatever order the two reads answer in.
+- [ ] A workspace picked on a screen of an organization since switched away from is not made current, and does not move the session to the workspace level either.
+- [ ] A project opened, or a sibling list published, from a workspace since left changes neither the top bar nor the project switcher.
 - [ ] A failed workspace read leaves the workspace in scope and the switcher's list untouched, and does not present the organization as having no workspace.
 - [ ] The Projects list shows an empty state, not workspace rows, for a workspace with no projects.
 - [ ] Every row in the list is a project: no expandable rows, no indentation and no container rows anywhere in it.

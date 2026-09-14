@@ -1,11 +1,4 @@
-/**
- * Identity Domain - API Types
- *
- * What `studio-user` answers with. The account-management vocabulary this used
- * to hold — `Me`, `Tenant`, `Page`, `TENANT_TYPES` — moved to
- * `@constructor-studio/mfe-shared`, where the MFEs can reach it too; only what
- * is identity's own is left here.
- */
+/** Identity Domain - API Types */
 
 /**
  * One organization membership of the signed-in person
@@ -18,6 +11,7 @@ export interface Membership {
   user_id: string;
   org_id: string;
   role: string;
+  status: string;
   source: string;
 }
 
@@ -36,3 +30,24 @@ export interface MembershipList {
  * allowed to see.
  */
 export const PLATFORM_ROOT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
+export interface Invitation {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  expires_at_epoch_ms: number;
+}
+
+export interface InvitationList {
+  items: Invitation[];
+}
+
+export interface OrganizationCapabilities {
+  self_service: boolean;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+}

@@ -76,11 +76,14 @@ const WizardBody: React.FC = () => {
   const FooterNote = STEP_FOOTER_NOTES[step.key];
 
   useEffect(() => {
-    const subscription = eventBus.on('mfe/projects/created', ({ project, siblings }) => {
-      void announceCreatedProject(bridge, project, siblings, workspaceId).finally(() =>
-        closeProjectWizard(bridge)
-      );
-    });
+    const subscription = eventBus.on(
+      'mfe/projects/created',
+      ({ project, siblings, workspaceId: writtenUnder }) => {
+        void announceCreatedProject(bridge, project, siblings, writtenUnder).finally(() =>
+          closeProjectWizard(bridge)
+        );
+      }
+    );
     return () => subscription.unsubscribe();
   }, [bridge]);
 

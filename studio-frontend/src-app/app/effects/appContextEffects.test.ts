@@ -282,6 +282,49 @@ describe('entering a screen', () => {
       expect(dispatch).not.toHaveBeenCalled();
     });
 
+    it('does not enter the workspace level for a workspace it just dropped', async () => {
+      await emit('app/context/workspace/changed', {
+        workspaceId: 'ws-9',
+        name: 'Late',
+        organizationId: 'org-OLD',
+        enter: true,
+      });
+
+      expect(mockEmit).not.toHaveBeenCalledWith(
+        'app/context/level/requested',
+        expect.anything()
+      );
+      expect(mockMountScreen).not.toHaveBeenCalled();
+    });
+
+    it('enters the workspace level once an accepted selection asked it to', async () => {
+      await emit('app/context/workspace/changed', {
+        workspaceId: 'ws-9',
+        name: 'Fresh',
+        organizationId: 'org-1',
+        enter: true,
+      });
+
+      expect(mockEmit).toHaveBeenCalledWith('app/context/level/requested', {
+        level: 'workspace',
+      });
+      const [write] = dispatch.mock.invocationCallOrder;
+      const requested = mockEmit.mock.calls.findIndex(
+        ([name]) => name === 'app/context/level/requested'
+      );
+      expect(write).toBeLessThan(mockEmit.mock.invocationCallOrder[requested]);
+    });
+
+    it('stays where it is when the selection asked for no level', async () => {
+      await emit('app/context/workspace/changed', { workspaceId: 'ws-2' });
+
+      expect(dispatch).toHaveBeenCalled();
+      expect(mockEmit).not.toHaveBeenCalledWith(
+        'app/context/level/requested',
+        expect.anything()
+      );
+    });
+
     it('drops a project announced from a workspace since left', async () => {
       await emit('app/context/project/opened', {
         id: 'p9',

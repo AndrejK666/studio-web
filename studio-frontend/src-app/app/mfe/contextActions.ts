@@ -29,6 +29,7 @@ function scopeOf<K extends string>(
   return typeof value === 'string' ? ({ [key]: value } as Record<K, string>) : {};
 }
 
+// @cpt-dod:cpt-studiofrontend-dod-workspace-scope-claim:p1
 /**
  * Handler for the action, registered on the screen domain.
  *
@@ -42,12 +43,13 @@ export function createContextPublishHandler(): ActionHandler {
 
     if (kind === 'opened') {
       if (!isEntity(payload?.project)) return;
+      const workspaceId = payload?.workspaceId;
+      if (typeof workspaceId !== 'string' || !workspaceId) return;
       // Order matters: the list first, so the slot never names a project while
       // the menu behind it still holds the previous workspace's siblings.
       const siblings = Array.isArray(payload?.siblings) ? payload.siblings : [];
-      const scope = scopeOf(payload, 'workspaceId');
-      eventBus.emit('app/context/projects', { items: siblings.filter(isEntity), ...scope });
-      eventBus.emit('app/context/project/opened', { ...payload.project, ...scope });
+      eventBus.emit('app/context/projects', { items: siblings.filter(isEntity), workspaceId });
+      eventBus.emit('app/context/project/opened', { ...payload.project, workspaceId });
       return;
     }
 
@@ -65,6 +67,7 @@ export function createContextPublishHandler(): ActionHandler {
 
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-announce:p1
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-slot:p1
+/** Scope claims here too — the marker for that DoD is on the handler above. */
 export function createWorkspacePublishHandler(): ActionHandler {
   return ActionHandler.fromFunction(async (_actionTypeId, payload) => {
     if (payload?.kind === 'scoped') {
@@ -76,9 +79,9 @@ export function createWorkspacePublishHandler(): ActionHandler {
       eventBus.emit('app/context/workspace/changed', {
         workspaceId: payload.workspace.id,
         name: payload.workspace.name,
+        enter: true,
         ...scopeOf(payload, 'organizationId'),
       });
-      eventBus.emit('app/context/level/requested', { level: 'workspace' });
       return;
     }
     if (payload?.kind !== 'created') return;

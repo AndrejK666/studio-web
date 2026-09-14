@@ -11,6 +11,7 @@ export interface ProjectRef {
 declare module '@gears-frontx/react' {
   interface EventPayloadMap {
     'mfe/projects/create-requested': { workspaceId: string; draft: ProjectDraft };
-    'mfe/projects/created': { project: ProjectRef; siblings: ProjectRef[] };
+    /** `workspaceId` is the workspace the project was written under — the one the create was submitted with, which the announcement to the shell has to name. */
+    'mfe/projects/created': { project: ProjectRef; siblings: ProjectRef[]; workspaceId: string };
   }
 }

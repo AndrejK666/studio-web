@@ -37,8 +37,9 @@ const ProjectRow: React.FC<{ project: Tenant }> = ({ project }) => {
   const { projects, workspace } = useWorkspaceProjects();
 
   const open = (): void => {
+    if (!workspace) return;
     const siblings = projects.map((sibling) => ({ id: sibling.id, name: sibling.name }));
-    requestOpenProject({ id: project.id, name: project.name }, siblings, bridge, workspace?.id ?? null);
+    requestOpenProject({ id: project.id, name: project.name }, siblings, bridge, workspace.id);
   };
 
   return (
