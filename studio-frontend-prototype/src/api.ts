@@ -804,8 +804,14 @@ interface SessionWaitOptions {
    * Injected rather than imported: `studio-events.ts` imports from this module,
    * and calling back into it from here would close the cycle. The caller has
    * the token anyway, which this module's session helpers do not.
+   *
+   * `signal` fires as soon as the wait is over by any route, so a follower that
+   * holds a subscription can drop it instead of running out its own timeout.
    */
-  follow?: (runId: string) => Promise<{ state: string; error?: string | null }>;
+  follow?: (
+    runId: string,
+    signal: AbortSignal,
+  ) => Promise<{ state: string; error?: string | null }>;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -838,32 +844,59 @@ export async function waitForStudioSessionReady(
     options.sleep ??
     ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const deadline = now() + timeoutMs;
+
+  /** Ask the record until it stops saying `starting`, or the deadline passes. */
+  const poll = async (from: StudioSession): Promise<StudioSession> => {
+    let session = from;
+    while (session.state === "starting") {
+      const remaining = deadline - now();
+      if (remaining <= 0) {
+        throw new Error(
+          `IDE session did not become ready within ${Math.ceil(timeoutMs / 1_000)} seconds`,
+        );
+      }
+      await sleep(Math.min(pollIntervalMs, remaining));
+      session = await refresh();
+    }
+    return session;
+  };
+
   let session = initial;
 
   if (session.state === "starting" && session.ready_run_id && options.follow) {
-    const end = await options.follow(session.ready_run_id);
-    if (end.state !== "succeeded") {
-      throw new Error(end.error || `IDE session did not become ready (run ${end.state})`);
+    /* The run stream is an ACCELERATOR and a failure reporter, not the source
+       of truth. The subscription is opened after the session was created, so a
+       run that finishes in between never delivers its terminal event to it, and
+       waiting on the stream alone then sits out the follower's own timeout —
+       minutes of a launch that was ready in seconds. Poll alongside it and take
+       whichever answers first: the stream reports a FAILED run immediately, the
+       poll guarantees a successful one is noticed. */
+    const controller = new AbortController();
+    const watched = options.follow(session.ready_run_id, controller.signal).then(async (end) => {
+      if (end.state !== "succeeded") {
+        throw new Error(end.error || `IDE session did not become ready (run ${end.state})`);
+      }
+      // The run's result deliberately carries no URL — it would contain the
+      // one-shot gate token, and a run's result is broadcast to the whole
+      // tenant. One authenticated read gets it.
+      return refresh();
+    });
+    // The loser of the race still settles. Without this, an abort — or a run
+    // that fails after the poll already succeeded — surfaces as an unhandled
+    // rejection.
+    watched.catch(() => undefined);
+    try {
+      session = await Promise.race([watched, poll(session)]);
+    } finally {
+      controller.abort();
     }
-    // The run's result deliberately carries no URL — it would contain the
-    // one-shot gate token, and a run's result is broadcast to the whole
-    // tenant. One authenticated read gets it.
-    session = await refresh();
-    if (session.state !== "running") {
-      throw new Error(`IDE session stopped before it became ready (state: ${session.state})`);
+    // The run can finish a moment before the record catches up; keep asking
+    // rather than calling that a stopped session.
+    if (session.state === "starting") {
+      session = await poll(session);
     }
-    return session;
-  }
-
-  while (session.state === "starting") {
-    const remaining = deadline - now();
-    if (remaining <= 0) {
-      throw new Error(
-        `IDE session did not become ready within ${Math.ceil(timeoutMs / 1_000)} seconds`,
-      );
-    }
-    await sleep(Math.min(pollIntervalMs, remaining));
-    session = await refresh();
+  } else {
+    session = await poll(session);
   }
 
   if (session.state !== "running") {
