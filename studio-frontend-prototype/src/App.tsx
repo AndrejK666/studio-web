@@ -623,10 +623,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // The open project's active tab. Lifted here so the sidebar is the project's
   // nav (see the PROJECT section below); opening a different project resets it.
   const [projectTab, setProjectTab] = useState<ProjTab>("overview");
+  /** The open workspace's section. Lives here beside projectTab and for the
+   *  same reason: the band that switches it is chrome above the work area, not
+   *  part of the screen it switches. */
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("projects");
   // Opening a different project starts on its Overview.
   useEffect(() => {
     setProjectTab("overview");
   }, [crumb.nestedId]);
+  // And a different workspace starts on its Projects, for the same reason: the
+  // section you left on the last one says nothing about this one, and landing
+  // in a type editor belonging to a workspace you have only just opened reads
+  // as the app having lost your place.
+  useEffect(() => {
+    setWorkspaceTab("projects");
+  }, [crumb.projectId]);
   const [accountMenu, setAccountMenu] = useState(false);
   // Active organization — the top context, now that the level above projects is
   // back. Lifted to the shell so the sidebar switcher (where "Home" used to be)
@@ -1144,6 +1155,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
   const projectOpen = !adminOpen && !activeSpace && view === "projects" && !!crumb.nestedId;
+  /** A workspace is open when one is picked and no project inside it is. The
+   *  two are mutually exclusive, so exactly one band ever shows. */
+  const workspaceOpen =
+    !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
 
   const panelView: PanelView = dash ? "dashboard" : view;
 
@@ -1695,6 +1710,28 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           ))}
         </nav>
       )}
+      {/* A workspace gets the same band, because it is the same kind of thing:
+          something you have open, with sections of its own. Its projects are
+          one of those sections rather than a table pinned above a different
+          switch — the level above should not invent its own navigation. */}
+      {workspaceOpen && (
+        <nav className="project-sections" aria-label="Workspace sections">
+          {WORKSPACE_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`psection${workspaceTab === t.id ? " on" : ""}`}
+              aria-current={workspaceTab === t.id ? "page" : undefined}
+              title={t.hint}
+              onClick={() => setWorkspaceTab(t.id)}
+            >
+              <span className="ico" aria-hidden>
+                <NavIcon name={t.icon} />
+              </span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      )}
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
       {/* While the portal is active the host stays rendered but parked as a
@@ -1903,6 +1940,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             setProjectLabel={setProjectLabel}
             projectTab={projectTab}
             setProjectTab={setProjectTab}
+            workspaceTab={workspaceTab}
             onChanged={refresh}
             onOpenStudio={setStudio}
           />
@@ -2652,6 +2690,7 @@ function ProjectsView({
   setProjectLabel,
   projectTab,
   setProjectTab,
+  workspaceTab,
   onChanged,
   onOpenStudio,
 }: {
@@ -2666,9 +2705,12 @@ function ProjectsView({
   setCrumb: (c: Crumb) => void;
   projectLabel?: string;
   setProjectLabel: (n: string | undefined) => void;
-  /** Open project's active tab — the sidebar owns this (see the shell). */
+  /** Open project's active section — the shell owns this, because the band
+   *  that switches it is shell chrome above the work area. */
   projectTab: ProjTab;
   setProjectTab: (t: ProjTab) => void;
+  /** Open workspace's active section, owned by the shell for the same reason. */
+  workspaceTab: WorkspaceTab;
   onChanged: () => void;
   onOpenStudio: (target: StudioTarget) => void;
 }) {
@@ -2730,71 +2772,105 @@ function ProjectsView({
     );
   }
 
-  // Level 2 — the workspace: its projects, then its own properties panel
-  // (workspace settings), reusing the same dashboard the project Overview uses.
+  // Level 2 — the workspace. One section at a time, chosen by the band above
+  // the work area, exactly as a project behaves.
   return (
     <>
       <Breadcrumbs items={trail} />
-      <WorkspaceProjects
-        token={token}
-        workspace={root}
-        onOpenProject={(p) => {
-          setProjectLabel(p.name);
-          setCrumb({ projectId: root.id, nestedId: p.id });
-        }}
-        onChanged={onChanged}
-      />
-      <div style={{ marginTop: 20 }}>
-        <WorkspaceCatalogue token={token} workspaceId={root.id} studioTarget={root} />
-      </div>
+      {workspaceTab === "projects" ? (
+        <WorkspaceProjects
+          token={token}
+          workspace={root}
+          onOpenProject={(p) => {
+            setProjectLabel(p.name);
+            setCrumb({ projectId: root.id, nestedId: p.id });
+          }}
+          onChanged={onChanged}
+        />
+      ) : (
+        <>
+          <WorkspaceHeader workspace={root} />
+          <WorkspaceCatalogue
+            token={token}
+            workspaceId={root.id}
+            studioTarget={root}
+            tab={workspaceTab}
+          />
+        </>
+      )}
     </>
   );
 }
 
 
-/** What a workspace owns and every project under it inherits: the document
- *  types, the journey, and the documents written from those types before any
- *  project has claimed them.
+/** What a workspace owns: its projects, and the catalogues every project under
+ *  it inherits — the document types, the journey, and the documents written
+ *  from those types before any project has claimed them.
  *
- *  Tabs rather than a stack of panels: these are three catalogues, not three
- *  sections of one page, and stacking them buried the two below the fold.
- */
-type CatalogueTab = "types" | "process" | "documents";
+ *  These are SECTIONS, drawn in the same 44px band the project uses, and the
+ *  projects list is one of them. It used to be a stack: the projects table
+ *  always at the top, then a row of blue pill buttons choosing between the
+ *  three catalogues. That made the two levels behave differently for no
+ *  reason a user could name — in a project every section is in the band, in a
+ *  workspace one thing was pinned above a different kind of switch — and it
+ *  pushed the type editor, which is the tallest screen in the product, below a
+ *  projects table it has nothing to do with. */
+type WorkspaceTab = "projects" | "types" | "process" | "documents";
+
+/** The workspace's page header, shown above EVERY one of its sections — the
+ *  project screen does exactly this with its own name, and the level above
+ *  should not be the one place where the thing you have open stops naming
+ *  itself as soon as you change section. Only the actions differ: creating a
+ *  project belongs to the Projects section and nowhere else. */
+function WorkspaceHeader({
+  workspace,
+  actions,
+}: {
+  workspace: Workspace;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="topbar">
+      <div>
+        <h1>{workspace.name}</h1>
+        <p className="subtitle" style={{ margin: 0 }}>
+          workspace · <code>{workspace.id.slice(0, 8)}…</code>
+        </p>
+      </div>
+      {actions}
+    </div>
+  );
+}
+
+const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
+  { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
+  { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
+  { id: "process", icon: "activity", label: "Process", hint: "The journey's stages and the capability vocabulary" },
+  {
+    id: "documents",
+    icon: "scan",
+    label: "Documents",
+    hint: "Written from a type here, then published into a repository",
+  },
+];
 
 function WorkspaceCatalogue({
   token,
   workspaceId,
   studioTarget,
+  tab,
 }: {
   token: string;
   workspaceId: string;
   /** The workspace an "Edit in Studio" hand-off launches the IDE against. */
   studioTarget?: StudioTarget;
+  /** Which catalogue the band selected. "projects" never reaches here — the
+   *  screen above renders that one itself, because it owns the navigation into
+   *  a project. */
+  tab: Exclude<WorkspaceTab, "projects">;
 }) {
-  const [tab, setTab] = useState<CatalogueTab>("types");
-  const TABS: { id: CatalogueTab; label: string; hint: string }[] = [
-    { id: "types", label: "Document types", hint: "Templates, section checklists and rules" },
-    { id: "process", label: "Process", hint: "The journey's stages and the capability vocabulary" },
-    {
-      id: "documents",
-      label: "Documents",
-      hint: "Written from a type here, then published into a repository",
-    },
-  ];
   return (
     <div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            title={t.hint}
-            className={tab === t.id ? "primary" : undefined}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
       {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
       {tab === "documents" && (
@@ -3079,17 +3155,14 @@ function WorkspaceProjects({
 
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>{workspace.name}</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            workspace · <code>{workspace.id.slice(0, 8)}…</code>
-          </p>
-        </div>
-        <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
-          New project
-        </button>
-      </div>
+      <WorkspaceHeader
+        workspace={workspace}
+        actions={
+          <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
+            New project
+          </button>
+        }
+      />
       {err && <div className="error">{err}</div>}
       {creating && (
         <div className="card">

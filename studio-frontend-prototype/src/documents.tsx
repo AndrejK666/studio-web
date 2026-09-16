@@ -3251,9 +3251,14 @@ function TypesView({
   return (
     <div className="dt-grid">
       <aside className="dt-list">
-        <button className="dt-new" onClick={blank}>
-          + New type
-        </button>
+        <div className="dt-list-head">
+          <span className="dt-list-title">
+            {types.length} type{types.length === 1 ? "" : "s"}
+          </span>
+          <button className="dt-new" onClick={blank}>
+            New type
+          </button>
+        </div>
         {types.map((t) => (
           <button
             key={t.key}
@@ -3478,12 +3483,29 @@ const DOCTYPES_CSS = `
 .doctypes .dt-flow-arrow { align-self: center; color: var(--dtmu); font-size: 15px; }
 .doctypes .dt-flow-arrow.big { font-size: 18px; color: var(--dtac); }
 
-.doctypes .dt-grid { display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 16px; align-items: start; }
-.doctypes .dt-list { display: flex; flex-direction: column; gap: 6px; }
-.doctypes .dt-new { padding: 9px 12px; border-radius: var(--radius-lg); border: 0; cursor: pointer; background: var(--dtac); color: var(--primary-foreground); font: inherit; font-weight: 600; margin-bottom: 4px; }
-.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; border: 1px solid var(--dtb); border-radius: var(--radius-lg); background: var(--dtsf); transition: border-color .12s, background .12s; }
-.doctypes .dt-type:hover { border-color: var(--dtac); }
-.doctypes .dt-type.active { border-color: var(--dtac); background: var(--dtacs); }
+/* 280px, not 250: "Architecture Decision Record" wrapped to three lines at the
+   old width, which is what made every card in the list a different height. */
+.doctypes .dt-grid { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 16px; align-items: start; }
+/* ONE panel with hairline dividers, not a stack of bordered cards each with its
+   own gap. Eight types were eight floating boxes with eight shadow-less
+   outlines — the list read as eight unrelated things rather than one column of
+   choices, and the 6px gaps made it taller than the editor beside it. */
+.doctypes .dt-list { display: flex; flex-direction: column; border: 1px solid var(--dtb); border-radius: var(--radius-xl); background: var(--dtsf); overflow: hidden; }
+/* The create action is a control, not a banner. It was a full-width solid-blue
+   slab above the list — the single heaviest thing on a screen whose subject is
+   the list under it. It sits in the panel's own header row now, at the size the
+   rest of the product's buttons are. */
+.doctypes .dt-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--dtb); }
+.doctypes .dt-list-title { font-family: var(--font-mono); font-size: 10px; line-height: 16px; text-transform: uppercase; color: var(--dtmu); }
+.doctypes .dt-new { padding: 5px 12px; height: 28px; border-radius: var(--radius-md); border: 1px solid var(--dtb); cursor: pointer; background: var(--dtsf2); color: var(--dttx); font: inherit; font-size: 12px; font-weight: 500; }
+.doctypes .dt-new:hover { background: var(--studio-control-hover-neutral); }
+.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 0; border-top: 1px solid var(--dtb); border-radius: 0; background: none; transition: background var(--motion-micro) var(--ease-standard), color var(--motion-micro) var(--ease-standard); }
+.doctypes .dt-type:first-of-type { border-top: 0; }
+.doctypes .dt-type:hover { background: var(--studio-control-hover-neutral); }
+/* Selected is the shell's own pair — neutral fill, blue label — so a chosen
+   type reads the same as a chosen section in the band above it. */
+.doctypes .dt-type.active { background: var(--studio-selection-subtle); }
+.doctypes .dt-type.active .dt-type-name { color: var(--dtac); }
 .doctypes .dt-type-name { font-weight: 600; font-size: 13px; }
 .doctypes .dt-type-meta { display: flex; align-items: center; gap: 7px; }
 .doctypes .dt-type-meta code { font-size: 11px; color: var(--dtmu); }
