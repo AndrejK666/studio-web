@@ -49,6 +49,7 @@ import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioPerspectiveContribution } from './studio-perspectives';
+import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 
 import '../../src/browser/style/index.css';
@@ -65,6 +66,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(FrontendApplicationContribution).toService(StudioExplorerFilter);
     bind(StudioFileTreeLabelProvider).toSelf().inSingletonScope();
     bind(LabelProviderContribution).toService(StudioFileTreeLabelProvider);
+    // The project's name, as the portal knows it, for the one node that would
+    // otherwise be called after the container's directory.
+    bind(StudioWorkspaceName).toSelf().inSingletonScope();
+    bind(LabelProviderContribution).toService(StudioWorkspaceName);
     bind(ExplorerModeContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(ExplorerModeContribution);
     bind(TabBarToolbarContribution).toService(ExplorerModeContribution);

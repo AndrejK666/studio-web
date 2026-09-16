@@ -7,7 +7,6 @@ import { Command } from '@theia/core';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { StudioWidget } from './studio-widget';
 import { GitOperationsWidget } from './git-operations-widget';
-import { WorkspaceGraphWidget } from './workspace-graph-widget';
 import { ObjectDetailsWidget } from './object-details-widget';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditWidget } from './audit-widget';
@@ -22,7 +21,10 @@ export const StudioCommand: Command = { id: 'studio:command' };
  *  how the two would drift apart. */
 export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' | 'right' | 'bottom' }> = [
     { id: StudioWidget.ID, area: 'left' },
-    { id: WorkspaceGraphWidget.ID, area: 'main' },
+    // The Workspace Graph is NOT here any more. It used to be the main area's
+    // occupant and the widget activated last, so every session opened on a
+    // picture of itself — in front of the file the person came for. It is a
+    // view you ask for, and it is one command away.
     { id: ObjectDetailsWidget.ID, area: 'right' },
     { id: OrcaWidget.ID, area: 'right' },
     { id: GitOperationsWidget.ID, area: 'bottom' },
@@ -54,10 +56,8 @@ export class StudioContribution extends AbstractViewContribution<StudioWidget> i
         // Adding a widget to a side area only puts it in that area's tab bar;
         // the panel stays collapsed until something activates it, which is how
         // the Agents panel came out invisible on a fresh session. Activating it
-        // expands the right panel, and the graph is activated afterwards so
-        // that it, not Orca, ends up with the focus.
+        // is what expands the right panel.
         await app.shell.activateWidget(OrcaWidget.ID);
-        await app.shell.activateWidget(WorkspaceGraphWidget.ID);
     }
     override async openView(args: Partial<OpenViewArguments> = {}): Promise<StudioWidget> {
         return super.openView({ activate: false, reveal: true, ...args });

@@ -1898,7 +1898,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     // workspace tenant (its graph shows every project) or a
                     // project tenant (just that project). The IDE scopes the
                     // Artifact Graph's reads to it.
-                    { type: "studio.init", theme, apiToken: tokenRef.current, workspaceId: s.wsId },
+                    {
+                      type: "studio.init",
+                      theme,
+                      apiToken: tokenRef.current,
+                      workspaceId: s.wsId,
+                      // The IDE opens `/workspace`, so without the name every
+                      // surface in it calls the project after the container's
+                      // directory. The portal is the only side that knows what
+                      // the person actually opened.
+                      workspaceName: s.wsName,
+                    },
                     origin,
                   );
                 };

@@ -35,6 +35,7 @@ import { StudioApi } from './studio-api';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
 import { StudioDocumentOpener } from './studio-document-opener';
+import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 
 interface PortalMessage {
@@ -55,6 +56,10 @@ interface PortalMessage {
      *  tab shows. */
     documentId?: string;
     title?: string;
+    /** What the portal calls this session. The IDE opens `/workspace`, so
+     *  without this every surface names the project after the container's
+     *  directory. */
+    workspaceName?: string;
 }
 
 /**
@@ -90,6 +95,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     // just does not rearrange itself around them.
     @inject(PerspectiveService) @optional()
     protected readonly perspectives: PerspectiveService | undefined;
+
+    @inject(StudioWorkspaceName)
+    protected readonly workspaceName: StudioWorkspaceName;
 
     protected readonly toDispose = new DisposableCollection();
     /** See [`openWhenLayoutReady`]. */
@@ -136,6 +144,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             }
             if ((msg.type === 'studio.init' || msg.type === 'studio.token') && typeof msg.workspaceId === 'string') {
                 StudioApi.scope = msg.workspaceId;
+            }
+            if (typeof msg.workspaceName === 'string') {
+                this.workspaceName.setName(msg.workspaceName);
             }
             if (msg.type === 'studio.init') {
                 this.postStatus(); // answer the handshake right away

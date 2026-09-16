@@ -6,7 +6,6 @@ import 'reflect-metadata';
 jest.mock('./studio-contribution', () => ({
     DEFAULT_LAYOUT: [
         { id: 'studio:widget', area: 'left' },
-        { id: 'studio:workspace-graph', area: 'main' },
         { id: 'studio.orca', area: 'right' },
         { id: 'studio:audit', area: 'bottom' }
     ]
@@ -56,15 +55,14 @@ describe('Studio workbench modes', () => {
         const workbench = register().get(WORKBENCH_PERSPECTIVE_ID);
         expect([...workbench.viewPlacements.entries()]).toEqual([
             ['studio:widget', 'left'],
-            ['studio:workspace-graph', 'main'],
             ['studio.orca', 'right'],
             ['studio:audit', 'bottom'],
         ]);
-        // The graph last, so it takes the focus from the agents dock.
-        expect(workbench.primaryViews).toEqual({
-            right: 'studio.orca',
-            main: 'studio:workspace-graph',
-        });
+        expect(workbench.primaryViews).toEqual({ right: 'studio.orca' });
+        // The desktop collapses its side panels on start and this workbench had
+        // no equivalent — #167 recorded the result as a strip of unclaimed
+        // right panel beside the editor.
+        expect(workbench.chromeOptions).toEqual({ collapseAreas: ['right', 'bottom'] });
     });
 
     it('clears the flanks for writing, and keeps findings one click away', () => {
