@@ -104,15 +104,22 @@ describe('StudioContribution', () => {
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(7);
+        expect(shell.addWidget).toHaveBeenCalledTimes(6);
         expect(shell.addWidget).toHaveBeenCalledWith(
             expect.objectContaining({ id: OrcaWidget.ID }),
             { area: 'right' }
         );
-        // The Agents panel is revealed by activating it, and the graph is
-        // activated last so the focus lands there rather than in Orca.
+        // The Agents panel is revealed by activating it — adding a widget to a
+        // side area only puts it in that area's tab bar.
         expect(shell.activateWidget.mock.calls.map(([id]: [string]) => id))
-            .toEqual([OrcaWidget.ID, WorkspaceGraphWidget.ID]);
+            .toEqual([OrcaWidget.ID]);
+        // The graph is no longer part of what a session opens on: it used to
+        // occupy the main area and be activated last, so every session opened
+        // on a picture of itself, in front of the file the person came for.
+        expect(shell.addWidget).not.toHaveBeenCalledWith(
+            expect.objectContaining({ id: WorkspaceGraphWidget.ID }),
+            expect.anything()
+        );
     });
 
     it('does not compose the default layout when Theia restores a saved layout', async () => {
@@ -148,9 +155,9 @@ describe('StudioContribution', () => {
 
         await application.runInitializeLayout();
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(7);
+        expect(shell.addWidget).toHaveBeenCalledTimes(6);
         expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
-        expect(shell.activateWidget).toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
+        expect(shell.activateWidget).not.toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
     });
 
     it('registers exactly one Studio toggle command and one View menu entry', () => {
