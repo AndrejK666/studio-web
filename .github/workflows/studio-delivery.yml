@@ -248,7 +248,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      # The session entrypoint's own tests. They extract the shipped shell out
+      # of entrypoint.sh rather than copying it, so they fail when the boot
+      # order or the clone phase changes under them — which is the point.
       - run: node theia/docker/gate.test.mjs
+      - run: node theia/docker/clone-sources.test.mjs
+      - run: node theia/docker/materialize-workspace.test.mjs
+      - run: node theia/docker/git-credentials.test.mjs
 
   # The one check that spans all three trees: every URL either portal calls has
   # to exist in the backend's committed API surface (rule G3 of

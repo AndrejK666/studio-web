@@ -36,7 +36,7 @@ describe('StudioRuntimeEndpoint', () => {
         expect(harness.workspaceBoundary.initialize).toHaveBeenCalled();
         expect(harness.repositoryDiscovery.initialize).toHaveBeenCalledWith(
             expect.objectContaining({ workspaceRoot }),
-            { mode: 'canonical' }
+            expect.objectContaining({ mode: 'canonical' })
         );
         expect(harness.workspaceSourceRegistry.reconcile).toHaveBeenCalledWith(
             harness.loadResult,
@@ -48,6 +48,46 @@ describe('StudioRuntimeEndpoint', () => {
         );
         expect(harness.workspaceSyncOrchestrator.initialize).toHaveBeenCalledTimes(1);
     });
+
+    it('registers a source that only appears after the IDE has started', async () => {
+        // The entrypoint clones behind the running IDE so that opening a
+        // document does not wait for a git clone of every source. A source is
+        // therefore commonly absent when the workspace is first projected and
+        // lands seconds later; discovery reports the change and this is what
+        // has to turn it into a registered repository, without a reload.
+        const harness = createHarness({
+            loadResult: validLoadResult(configPath, 'rev-1'),
+            startupMode: 'canonical-active',
+            projectedRepositories: []
+        });
+
+        await harness.endpoint.onStart();
+        expect(harness.repositoryRegistry.replace).toHaveBeenCalledTimes(1);
+
+        // The clone lands: the manifest's source now resolves to a checkout.
+        const late = [{
+            repositoryRoot: '/workspace/repos/late',
+            gitDirectory: '/workspace/repos/late/.git',
+            commonDirectory: '/workspace/repos/late/.git'
+        }];
+        harness.workspaceSourceRegistry.projectRepositories.mockResolvedValue(late);
+
+        const options = harness.repositoryDiscovery.initialize.mock.calls[0][1];
+        // The watcher's callback is fire-and-forget by design — nothing is
+        // waiting on a filesystem event — so let its work drain.
+        options.onWorkspaceContentChanged();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        // The manifest is re-resolved against disk — not re-initialized, which
+        // would tear down the watcher that reported the change.
+        expect(harness.workspaceSourceRegistry.reconcile).toHaveBeenCalledTimes(2);
+        expect(harness.repositoryDiscovery.initialize).toHaveBeenCalledTimes(1);
+        expect(harness.repositoryRegistry.replace).toHaveBeenLastCalledWith(
+            [...late, harness.hostRepository],
+            expect.anything()
+        );
+    });
+
 
     it('starts canonical shadow runtime with the same authoritative SCM projection', async () => {
         const harness = createHarness({
@@ -62,7 +102,7 @@ describe('StudioRuntimeEndpoint', () => {
 
         expect(harness.repositoryDiscovery.initialize).toHaveBeenCalledWith(
             expect.objectContaining({ workspaceRoot }),
-            { mode: 'canonical' }
+            expect.objectContaining({ mode: 'canonical' })
         );
         expect(harness.workspaceSourceRegistry.reconcile).toHaveBeenCalledWith(
             harness.loadResult,
@@ -428,7 +468,7 @@ describe('StudioRuntimeEndpoint', () => {
         expect(harness.repositoryDiscovery.initialize).toHaveBeenNthCalledWith(
             2,
             expect.objectContaining({ workspaceRoot }),
-            { mode: 'canonical' }
+            expect.objectContaining({ mode: 'canonical' })
         );
         expect(harness.workspaceSourceRegistry.reconcile).toHaveBeenCalledWith(
             validLoadResult(configPath, 'rev-2'),

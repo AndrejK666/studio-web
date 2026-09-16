@@ -10,10 +10,11 @@ mkdir -p "$STUDIO_DATA_DIR"
 export GIT_TERMINAL_PROMPT=0
 
 # ── Splash ────────────────────────────────────────────────────────────────
-# Cloning a workspace with several sources takes a while, and until Theia
-# binds the port the browser shows a connection error. Hold the port with a
-# tiny splash page instead; it reloads itself every 3s, so the moment Theia
-# takes the port over, the IDE appears. Killed right before exec.
+# Holds port 3003 until the gate below takes it over, so the browser gets a
+# page instead of a connection error, and so Kubernetes does not publish the
+# Pod before the gate owns the port. It covers workspace PREPARATION only —
+# the manifest and, where there is one, the workspace root. Source clones run
+# behind the IDE now, so this is normally a blink.
 cat > /tmp/splash.js <<'SPLASH'
 const http = require("http");
 const lines = [
@@ -85,6 +86,75 @@ git config --global user.email "${STUDIO_GIT_AUTHOR_EMAIL:-studio@constructor.te
 git config --global credential.useHttpPath true
 git config --global credential.helper '!node /usr/local/lib/studio-git-credentials.mjs'
 
+# ── Workspace sources (multi-repo) ────────────────────────────────────────
+# STUDIO_SOURCES is a JSON array of {name, url, branch?, token?} injected by
+# the studio-session gear (tokens resolved from credstore, env-only). Each git
+# source is cloned into /workspace/<name> if missing; local sources arrive as
+# bind mounts and the canonical .cf-workspace.toml lists them all for the
+# Studio's Workspace Sources. Tokens go through an inline credential helper
+# (username "oauth2" satisfies both GitHub and GitLab PATs) and never land in
+# .git/config.
+#
+# This phase runs BEHIND the IDE, not in front of it — see the call site below.
+# Defined between the markers because docker/clone-sources.test.mjs extracts it
+# from this file rather than copying it, so the test cannot drift from what
+# ships.
+# >>> studio:clone-sources
+clone_source() {
+    local name=$1 dir=$2 url=$3 branch=$4 token=$5
+    local dest="$WORKSPACE/$dir"
+    if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+        echo "[entrypoint] source '$name' already materialized — skipping"
+        return 0
+    fi
+    echo "[entrypoint] cloning $url into $dest"
+    local opts=()
+    if [ -n "$token" ]; then
+        opts+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
+    fi
+    # The token reaches the helper through this command's own environment
+    # rather than a shell-wide export: concurrent clones would otherwise
+    # overwrite each other's credentials. It still never lands in .git/config.
+    if ! STUDIO_GIT_TOKEN="$token" git "${opts[@]}" \
+            clone ${branch:+--branch "$branch"} "$url" "$dest"; then
+        echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
+    fi
+}
+
+# The whole phase as one callable unit, so the call site decides whether the
+# session waits for it.
+clone_workspace_sources() {
+    if [ -n "${STUDIO_SOURCES:-}" ]; then
+        # Fields are separated by US (0x1f), not a tab: a tab is IFS whitespace,
+        # so `read` collapses runs of them and an absent `branch` would shift the
+        # token into its place — a source with a token and no branch then cloned
+        # with `--branch <token>`, which fails and prints the token into the log.
+        node -e '
+            const sources = JSON.parse(process.env.STUDIO_SOURCES);
+            for (const s of sources) {
+                console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\u001f"));
+            }
+        ' | {
+            # Clones run concurrently. Several sources are the normal case and
+            # each lands in its own directory, so this phase should cost the
+            # slowest repository rather than the sum of all of them — it is the
+            # phase the splash above exists to cover. STUDIO_CLONE_JOBS caps the
+            # concurrency; the constraint is network and volume throughput.
+            running=0
+            while IFS=$'\x1f' read -r name dir url branch token; do
+                clone_source "$name" "$dir" "$url" "$branch" "$token" &
+                running=$((running + 1))
+                if [ "$running" -ge "${STUDIO_CLONE_JOBS:-4}" ]; then
+                    wait -n || true
+                    running=$((running - 1))
+                fi
+            done
+            wait
+        }
+    fi
+}
+# <<< studio:clone-sources
+
 # The workspace root itself may be a repository (a CLI-created Studio
 # workspace: manifest, docs, .workspace-sources/). Adopt it into /workspace.
 #
@@ -115,63 +185,6 @@ if [ -n "${STUDIO_ROOT_URL:-}" ]; then
         fi
         rm -rf "$ROOT_TMP"
     fi
-fi
-
-# Workspace sources (multi-repo): STUDIO_SOURCES is a JSON array of
-# {name, url, branch?, token?} injected by the studio-session gear (tokens
-# resolved from credstore, env-only). Each git source is cloned into
-# /workspace/<name> if missing; local sources arrive as bind mounts and the
-# canonical .cf-workspace.toml lists them all for the Studio's Workspace
-# Sources. Tokens go through an inline credential helper (username "oauth2"
-# satisfies both GitHub and GitLab PATs) and never land in .git/config.
-clone_source() {
-    local name=$1 dir=$2 url=$3 branch=$4 token=$5
-    local dest="$WORKSPACE/$dir"
-    if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
-        echo "[entrypoint] source '$name' already materialized — skipping"
-        return 0
-    fi
-    echo "[entrypoint] cloning $url into $dest"
-    local opts=()
-    if [ -n "$token" ]; then
-        opts+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
-    fi
-    # The token reaches the helper through this command's own environment
-    # rather than a shell-wide export: concurrent clones would otherwise
-    # overwrite each other's credentials. It still never lands in .git/config.
-    if ! STUDIO_GIT_TOKEN="$token" git "${opts[@]}" \
-            clone ${branch:+--branch "$branch"} "$url" "$dest"; then
-        echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
-    fi
-}
-
-if [ -n "${STUDIO_SOURCES:-}" ]; then
-    # Fields are separated by US (0x1f), not a tab: a tab is IFS whitespace,
-    # so `read` collapses runs of them and an absent `branch` would shift the
-    # token into its place — a source with a token and no branch then cloned
-    # with `--branch <token>`, which fails and prints the token into the log.
-    node -e '
-        const sources = JSON.parse(process.env.STUDIO_SOURCES);
-        for (const s of sources) {
-            console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\u001f"));
-        }
-    ' | {
-        # Clones run concurrently. Several sources are the normal case and
-        # each lands in its own directory, so this phase should cost the
-        # slowest repository rather than the sum of all of them — it is the
-        # phase the splash above exists to cover. STUDIO_CLONE_JOBS caps the
-        # concurrency; the constraint is network and volume throughput.
-        running=0
-        while IFS=$'\x1f' read -r name dir url branch token; do
-            clone_source "$name" "$dir" "$url" "$branch" "$token" &
-            running=$((running + 1))
-            if [ "$running" -ge "${STUDIO_CLONE_JOBS:-4}" ]; then
-                wait -n || true
-                running=$((running - 1))
-            fi
-        done
-        wait
-    }
 fi
 
 # Kubernetes sessions receive a fresh emptyDir at /workspace, not the
@@ -207,7 +220,7 @@ if [ "${STUDIO_MANAGED_WORKSPACE:-}" = "1" ] && [ -d "$WORKSPACE/.git" ]; then
     : > "$WORKSPACE/.git/cf-studio-managed-root"
 fi
 
-# Clones are done — hand the port over to the session gate.
+# The workspace is prepared — hand the port over to the session gate.
 kill "$SPLASH_PID" 2>/dev/null || true
 wait "$SPLASH_PID" 2>/dev/null || true
 
@@ -368,6 +381,21 @@ http
   .listen(3003, "0.0.0.0");
 GATE
 node /tmp/gate.js &
+
+# ── Sources, behind the IDE ──────────────────────────────────────────────
+# The clones used to run in front of everything: the session was not reported
+# ready until they finished, so opening one document — which needs no checkout
+# at all, only the documents gear — cost a full clone of every source.
+#
+# The gate owns the port now, so the session is reachable, and Theia starts
+# below while this runs. Sources land underneath a workspace that is already
+# open, and the node re-resolves the manifest against disk as each one appears
+# (RepositoryDiscoveryService, canonical mode), so they register themselves
+# without a reload.
+#
+# Backgrounded before the exec below: the shell is replaced by Theia, and a
+# child started here survives that and keeps writing to the container log.
+clone_workspace_sources &
 
 # Baseline user settings (only when absent — user changes persist for the
 # container's lifetime): keep the cloned workspace trusted so Theia AI is
