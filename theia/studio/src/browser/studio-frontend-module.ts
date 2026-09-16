@@ -48,6 +48,8 @@ import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { StudioDocumentOpener } from './studio-document-opener';
+import { StudioChromeMode } from './studio-chrome-mode';
+import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
@@ -105,6 +107,14 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // perspective exists.
     bind(StudioPerspectiveContribution).toSelf().inSingletonScope();
     bind(PerspectiveContribution).toService(StudioPerspectiveContribution);
+    // Theia's switch is a command, and this session has no menu bar to find it
+    // in. The status bar says which mode you are in and switches on a click.
+    bind(StudioModeStatus).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioModeStatus);
+    // …and the chrome the mode implies — Theia's own menu bar in the workbench,
+    // none of it while writing.
+    bind(StudioChromeMode).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioChromeMode);
     bind(MarkdownEditorOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownEditorOpenHandler);
     // Portal documents as editable resources (`studio-doc:`). Without the
