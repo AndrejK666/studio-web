@@ -85,6 +85,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     protected readonly documentResources: StudioDocumentResourceResolver;
 
     protected readonly toDispose = new DisposableCollection();
+    /** See [`openWhenLayoutReady`]. */
+    protected layoutReady = false;
+    protected readonly deferredOpens: (() => void)[] = [];
     protected portalOrigin: string | undefined;
     protected lastDirty = -1;
     protected lastAiToken = '';
@@ -134,23 +137,23 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // Experiment (ADR-0010): the portal's artifact list asks the
                 // embedded IDE to open the Artifact Graph view (backend graph,
                 // no `cfs map` dependency).
-                void this.commands.executeCommand(ArtifactGraphCommand.id);
+                this.openWhenLayoutReady(() => void this.commands.executeCommand(ArtifactGraphCommand.id));
             }
             if (msg.type === 'studio.openInEditor' && msg.path) {
                 // The portal's file list asks the embedded IDE to open a
                 // repository file in its editor (ADR-0010 openInEditor). Resolved
                 // against the first workspace root by the controller.
-                void this.opener.onOpenInEditor({ relativePath: msg.path });
+                const relativePath = msg.path;
+                this.openWhenLayoutReady(() => void this.opener.onOpenInEditor({ relativePath }));
             }
             if (msg.type === 'studio.openDocument' && msg.workspaceId && msg.documentId) {
                 // A portal DOCUMENT — not a file in any checkout. It opens in
                 // the markdown editor over the `studio-doc:` resolver, which
                 // reads and writes it through the documents gear, so the portal
                 // and the IDE edit one row rather than two copies.
-                void this.documentOpener.open(
-                    { workspaceId: msg.workspaceId, documentId: msg.documentId },
-                    msg.title,
-                );
+                const ref = { workspaceId: msg.workspaceId, documentId: msg.documentId };
+                const title = msg.title;
+                this.openWhenLayoutReady(() => void this.documentOpener.open(ref, title));
             }
         };
         window.addEventListener('message', onMessage);
@@ -163,8 +166,41 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         this.toDispose.push(Disposable.create(() => clearInterval(statusTimer)));
     }
 
+    /**
+     * Runs after Theia has restored (or built) its shell layout.
+     *
+     * The portal's hand-off arrives during `onStart`, which is EARLIER: the
+     * frontend starts its contributions, and only then restores the layout,
+     * which re-activates whichever tab was active when the session was last
+     * used. A file opened from `onStart` therefore opens correctly and is then
+     * buried — the tab is there, with the old view in front of it, which reads
+     * as "the hand-off did nothing".
+     */
+    onDidInitializeLayout(): void {
+        this.layoutReady = true;
+        for (const open of this.deferredOpens.splice(0)) {
+            open();
+        }
+    }
+
     onStop(): void {
         this.toDispose.dispose();
+    }
+
+    /**
+     * Open something only once the layout can no longer take the focus back.
+     *
+     * Theme and token messages are applied the moment they arrive — they have
+     * nothing to do with the shell's layout. Only the ones that put something
+     * in front of the user wait, and they keep their order, so the last thing
+     * the portal asked for is the thing on top.
+     */
+    protected openWhenLayoutReady(open: () => void): void {
+        if (this.layoutReady) {
+            open();
+            return;
+        }
+        this.deferredOpens.push(open);
     }
 
     /**
