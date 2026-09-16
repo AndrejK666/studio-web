@@ -2843,7 +2843,6 @@ function ProjectsView({
           filters={filters}
           tab={projectTab}
           setTab={setProjectTab}
-          onBack={() => setCrumb({ projectId: root.id })}
           onOpenStudio={onOpenStudio}
         />
       </>
@@ -3681,17 +3680,15 @@ function ProjectScreen({
   filters,
   tab,
   setTab,
-  onBack,
   onOpenStudio,
 }: {
   token: string;
   projectTenantId: string;
   workspace: Workspace;
   filters: Filters;
-  /** Active tab — lifted to the shell so the sidebar is the project's nav. */
+  /** Active section — lifted to the shell, which draws the band that sets it. */
   tab: ProjTab;
   setTab: (t: ProjTab) => void;
-  onBack: () => void;
   onOpenStudio: (target: StudioTarget) => void;
 }) {
   const [tenant, setTenant] = useState<Tenant | null>(null);
@@ -3729,8 +3726,11 @@ function ProjectScreen({
             project · <code>{tenant.id.slice(0, 8)}…</code>
           </p>
         </div>
+        {/* No "← <workspace>" here. It went to exactly where the bar's PathBar
+            workspace segment goes, which made this header the third thing on
+            one screen offering the same move. What is left is the one action
+            that belongs to a project and to nothing above it. */}
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={onBack}>← {workspace.name}</button>
           <button className="primary" onClick={() => onOpenStudio(proj)}>
             Open in IDE
           </button>
