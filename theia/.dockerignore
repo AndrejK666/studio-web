@@ -1,5 +1,7 @@
 node_modules
 **/node_modules
+# Compiled TypeScript output. product-ext's hand-written JavaScript is under
+# src/ and is copied in whole by the COPY product-ext/ line in the Dockerfile.
 **/lib
 browser-app/src-gen
 browser-app/gen-webpack*

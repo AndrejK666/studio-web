@@ -185,7 +185,7 @@ fn default_driver() -> String {
     "docker".into()
 }
 fn default_image() -> String {
-    "ghcr.io/constructorfabric/fabric-poc/cf-studio-theia:edge".into()
+    "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge".into()
 }
 fn default_always_pull() -> bool {
     true // the default image tag (edge) is mutable

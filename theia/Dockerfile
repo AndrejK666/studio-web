@@ -26,14 +26,20 @@
 FROM node:22.23.1-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ git libsecret-1-dev libx11-dev libxkbfile-dev \
+    curl unzip \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json lerna.json .nvmrc ./
 COPY studio/ studio/
 COPY drawio-editor/ drawio-editor/
+COPY product-ext/ product-ext/
 COPY browser-app/ browser-app/
 COPY electron-app/package.json electron-app/package.json
-COPY esbuild.mjs gen-esbuild.browser.mjs gen-esbuild.node.mjs ./
+# mermaid-entry.mjs and katex-entry.mjs are the two separate bundles
+# browser-app/esbuild.mjs builds; without them in the context the build fails
+# on a missing entry point, and without those bundles mermaid-view.js and
+# katex-runtime.js have no `mermaid.js` / `katex.js` script to load.
+COPY esbuild.mjs gen-esbuild.browser.mjs gen-esbuild.node.mjs mermaid-entry.mjs katex-entry.mjs ./
 # patch-package runs from `postinstall`; without patches/ in the build
 # context it silently no-ops and the THEIA_CODEX_PATH / THEIA_CLAUDE_CODE_PATH
 # overrides in @theia/ai-codex and @theia/ai-claude-code are never applied.
@@ -119,6 +125,38 @@ RUN --mount=type=secret,id=github_token \
     GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     /opt/cfs/bin/python -c "import sys; from studio_proxy.cache import download_and_cache; ok, message = download_and_cache(version='${STUDIO_CFS_ENGINE}'); print(message); sys.exit(0 if ok else 1)" \
     && /opt/cfs/bin/python -c "import sys; from studio_proxy.resolve import find_cached_skill; entry = find_cached_skill(); print('skill engine entry point:', entry); sys.exit(0 if entry else 1)"
+
+# The two assistant extensions, fetched here rather than through
+# `theiaPlugins`, because they are the only platform-specific entries we ship
+# and that map is a fixed list of URLs. product-ext drives Claude and Codex
+# through THESE extensions' commands — `claude-vscode.sidebar.open`,
+# `chatgpt.openSidebar`, `chatgpt.addFileToThread` — which nothing else
+# registers: @theia/ai-codex and @theia/ai-claude-code provide their own chat,
+# not those command ids, so without these the "Ask AI" actions fail with
+# "… is not available here".
+#
+# The prototype pinned darwin-arm64, which cannot run in this container.
+# TARGETARCH is set by BuildKit, so an arm64 image gets linux-arm64 and CI's
+# amd64 image gets linux-x64 from the same line; an unknown value fails the
+# build rather than silently producing an IDE whose assistants do nothing.
+ARG TARGETARCH
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) vsx_target=linux-x64 ;; \
+      arm64) vsx_target=linux-arm64 ;; \
+      *) echo "unsupported TARGETARCH '${TARGETARCH}' for the assistant extensions" >&2; exit 1 ;; \
+    esac; \
+    fetch_vsix() { \
+      namespace="$1"; name="$2"; version="$3"; dir="$4"; \
+      url="https://open-vsx.org/api/${namespace}/${name}/${vsx_target}/${version}/file/${namespace}.${name}-${version}@${vsx_target}.vsix"; \
+      echo "fetching ${dir} (${vsx_target})"; \
+      curl -fsSL "$url" -o /tmp/plugin.vsix; \
+      mkdir -p "plugins/${dir}"; \
+      unzip -q /tmp/plugin.vsix -d "plugins/${dir}"; \
+      rm -f /tmp/plugin.vsix; \
+    }; \
+    fetch_vsix Anthropic claude-code 2.1.227 anthropic.claude-code; \
+    fetch_vsix openai chatgpt 26.5803.61601 openai.chatgpt
 
 # ── Runtime ──
 FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
