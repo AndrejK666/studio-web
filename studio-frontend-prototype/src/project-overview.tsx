@@ -33,7 +33,7 @@ import type {
   User,
   WorkspaceSettings,
 } from "./api";
-import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync";
+import { parseRepoSource } from "./artifact-sync";
 import { errText, initials, relTime } from "./format";
 
 /** The sections of an open project. Lives here because Overview is the screen
@@ -64,6 +64,7 @@ export type ProjTab =
   | "overview"
   | "components"
   | "artifacts"
+  | "sources"
   | "documents"
   | "activity"
   | "timeline"
@@ -186,8 +187,6 @@ export function ProjectOverview({
   const [missing, setMissing] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Per-repository sync progress, keyed by the source's directory name.
-  const [sync, setSync] = useState<Record<string, SyncProgress>>({});
   // Validation run from this screen: per document id, what the checker said.
   const [checks, setChecks] = useState<Record<string, DocValidation>>({});
   const [validating, setValidating] = useState(false);
@@ -350,19 +349,11 @@ export function ProjectOverview({
 
   /* ── Actions ── */
 
-  const syncOne = async (r: RepoEntry) => {
-    await runRepoSync(
-      token,
-      r,
-      { workspaceId: parentWorkspaceId, projectId: project.id },
-      (p) => {
-        setSync((prev) => ({ ...prev, [r.name]: p }));
-        // When the job ends, re-read the counts and the repo node so the card
-        // shows the sync it just did rather than the one before it.
-        if (!p.running) void load(true);
-      },
-    );
-  };
+  /* Running a sync moved to the Sources section along with the card that
+     offered it. This screen still READS the repositories — the Repositories
+     stat counts them and warns when some are unsynced — but a job that takes
+     minutes should not be owned by a dashboard people leave as soon as they
+     have read it. */
 
   /** Re-run every document's type checks and keep the reports. The stored
    *  `conforms` flag is only as fresh as each document's last save, and it
@@ -449,7 +440,10 @@ export function ProjectOverview({
           value={missed("workspace settings") ? "—" : repos.length}
           sub={repos.length ? `${syncedRepos} synced` : "none attached"}
           tone={repos.length > 0 && syncedRepos < repos.length ? "warn" : undefined}
-          onClick={() => onOpenTab("artifacts")}
+          /* Sources, not Artifacts. The stat counts sources and the tone warns
+             about unsynced ones, so the place it opens should be the one where
+             a sync is run — not the list of what a sync produced. */
+          onClick={() => onOpenTab("sources")}
         />
         <Stat
           label="Artifacts"
@@ -598,78 +592,6 @@ export function ProjectOverview({
             )}
           </div>
 
-          {/* ── Sources: what is attached, when it was last pulled into the
-                graph, and what came in. Sync runs from right here. ── */}
-          <div className="card">
-            <div className="card-head">
-              <h2>Repositories{repos.length ? ` · ${repos.length}` : ""}</h2>
-              <button className="ghost" onClick={() => onOpenTab("artifacts")}>
-                Artifacts →
-              </button>
-            </div>
-            <p className="hint">
-              The sources a session clones on launch. Sync pulls their issues, pull requests and
-              files into the project's artifact graph — that is where every artifact number on this
-              screen comes from.
-            </p>
-            {repos.length === 0 ? (
-              <p className="empty">
-                No repositories attached yet — pick one from a connector on the Artifacts tab.
-              </p>
-            ) : (
-              <ul className="rows">
-                {repos.map((r) => {
-                  const node = graphRepo(r);
-                  const live = sync[r.name];
-                  const syncedAt = node?.value.synced_at as string | undefined;
-                  const pulled = node
-                    ? [
-                        node.value.issues ? `${node.value.issues} issues` : "",
-                        node.value.pull_requests ? `${node.value.pull_requests} PRs` : "",
-                        node.value.files ? `${node.value.files} files` : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : "";
-                  return (
-                    <li key={r.name}>
-                      <div className="grow">
-                        <div className="name">{r.name}</div>
-                        <div className="sub">
-                          {r.source}
-                          {r.branch ? ` · ${r.branch}` : ""}
-                          {r.url ? ` · ${r.url}` : ""}
-                        </div>
-                        <div className="sub">
-                          {live ? (
-                            live.line
-                          ) : node ? (
-                            <>
-                              {syncedAt ? `synced ${relTime(syncedAt)}` : "synced"}
-                              {pulled ? ` — ${pulled}` : ""}
-                            </>
-                          ) : (
-                            "never synced"
-                          )}
-                        </div>
-                      </div>
-                      <span className={`badge ${live?.running ? "syncing" : node ? "ok" : "warn"}`}>
-                        {live?.running ? "syncing" : node ? "synced" : "not synced"}
-                      </span>
-                      <button
-                        className="ghost"
-                        disabled={!!live?.running}
-                        title="Pull this repository's issues, pull requests and files into the graph"
-                        onClick={() => void syncOne(r)}
-                      >
-                        {live?.running ? "…" : node ? "Re-sync" : "Sync"}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
         </div>
 
         <div className="dash-col">
