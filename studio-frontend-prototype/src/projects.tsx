@@ -15,6 +15,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { api, TENANT_TYPES, type User } from "./api";
 import { errText, matches } from "./format";
+import { rollupText, workspaceRollup, type WorkspaceRollup } from "./rollups";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
 function initials(name: string): string {
@@ -108,6 +109,9 @@ export function ProjectsPortfolio({
   onChanged: () => void;
 }) {
   const [people, setPeople] = useState<Record<string, User[]>>({});
+  /** What each workspace contains. Absent until counted — see rollups.ts on
+   *  why an uncounted workspace must not render as 0. */
+  const [rollups, setRollups] = useState<Record<string, WorkspaceRollup>>({});
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -157,6 +161,7 @@ export function ProjectsPortfolio({
   const load = useCallback(async () => {
     if (!ids) {
       setPeople({});
+      setRollups({});
       return;
     }
     const list = ids.split(",");
@@ -173,6 +178,22 @@ export function ProjectsPortfolio({
       }),
     );
     setPeople(Object.fromEntries(entries));
+    // The project count, and the children it counted. Kept as a second pass
+    // rather than folded into the one above so the table paints with names and
+    // people first — a count arriving a moment later is a cell changing from
+    // "—" to a number, which is much better than a blank page while every
+    // workspace is asked how many projects it has.
+    const counted = await Promise.all(
+      list.map(async (id) => [id, await workspaceRollup(token, id)] as const),
+    );
+    setRollups(Object.fromEntries(counted.map(([id, r]) => [id, r.rollup])));
+    // Counting already fetched the children, so the tree can expand without
+    // asking again.
+    setChildren((c) => {
+      const next = { ...c };
+      for (const [id, r] of counted) if (r.children) next[id] = r.children;
+      return next;
+    });
   }, [token, ids]);
 
   useEffect(() => {
@@ -270,6 +291,7 @@ export function ProjectsPortfolio({
             <thead>
               <tr>
                 <th>Workspace</th>
+                <th className="pnum">Projects</th>
                 <th>People</th>
                 <th aria-label="actions" />
               </tr>
@@ -304,6 +326,7 @@ export function ProjectsPortfolio({
                           </div>
                         </div>
                       </td>
+                      <td className="pnum">{rollupText(rollups[root.id]?.projects ?? null)}</td>
                       <td>
                         <Avatars users={people[root.id]} />
                       </td>
@@ -320,13 +343,13 @@ export function ProjectsPortfolio({
                     {isOpen &&
                       (kids === undefined && kidsLoading ? (
                         <tr className="prow nested">
-                          <td colSpan={3}>
+                          <td colSpan={4}>
                             <div className="pcell indent sub">Loading projects…</div>
                           </td>
                         </tr>
                       ) : (kids ?? []).length === 0 ? (
                         <tr className="prow nested">
-                          <td colSpan={3}>
+                          <td colSpan={4}>
                             <div className="pcell indent sub">No projects yet</div>
                           </td>
                         </tr>
@@ -343,6 +366,11 @@ export function ProjectsPortfolio({
                                 </button>
                               </div>
                             </td>
+                            {/* Projects and People are workspace facts. A
+                                project's own counts belong on the projects
+                                table inside the workspace, which has room for
+                                all three of them. */}
+                            <td />
                             <td />
                             <td className="pactions">
                               <button onClick={() => onOpenProject?.(root.id, p)}>Open</button>

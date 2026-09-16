@@ -1485,6 +1485,15 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .ptable tbody tr { height: 4rem; transition: background-color var(--motion-micro) var(--ease-standard); }
 .ptable tbody td { padding: 8px 12px; font-size: 12px; line-height: 1rem; }
 .ptable tbody tr:hover td { background: var(--muted); }
+/* Rollup counts: what a row CONTAINS. Right-aligned and tabular so the digits
+   line up into a column you can scan for the big one — left-aligned counts of
+   differing width make the reader compare string starts instead of magnitudes.
+   Narrow, because every value here is one or two digits. */
+.ptable th.pnum, .ptable td.pnum { text-align: right; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ptable td.pnum { color: var(--muted-foreground); }
+/* A non-zero finding count is the one number on these tables that is a reason
+   to act, so it is the one that carries the state colour. */
+.pnum-attn { color: var(--warning-foreground); font-weight: 600; }
 .pname { font-weight: 600; color: var(--foreground); }
 .pname:hover { color: var(--primary); }
 
