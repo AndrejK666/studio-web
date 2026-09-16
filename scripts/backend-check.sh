@@ -69,6 +69,31 @@ fi
 # only those 15 tests, which is where they already were.
 mount_socket=(-v "/var/run/docker.sock:/var/run/docker.sock")
 
+# protoc and cmake come from an image built once, not from an apt-get inside
+# every run. The container is `--rm`, so that install was paid in full on every
+# invocation — measured at 8 seconds, which is more than the whole `fmt` gate
+# and about a seventh of a warm `all`. It also put a Debian mirror on the path
+# of every local check, so the gates could not run offline.
+#
+# The tag carries the toolchain, so bumping rust-toolchain.toml builds a new
+# image rather than running the new compiler on the old layer.
+image="cf-studio-backend-check:${toolchain}"
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    echo "[backend-check] building $image (once; later runs reuse it)"
+    docker build -q -t "$image" - >/dev/null <<DOCKERFILE
+FROM rust:${toolchain}-bookworm
+RUN apt-get update -qq \
+ && apt-get install -y -qq protobuf-compiler cmake \
+ && rm -rf /var/lib/apt/lists/*
+# rust-toolchain.toml asks for clippy and rustfmt, and the stock rust image
+# does not carry them. Without this line rustup re-syncs the channel and
+# downloads both INSIDE EVERY RUN — 26 seconds of network before a gate that
+# takes three. Baking them makes the toolchain part of the layer, which is what
+# pinning the tag was for.
+RUN rustup component add clippy rustfmt
+DOCKERFILE
+fi
+
 echo "[backend-check] $gate on rust:${toolchain} (same as CI)"
 exec docker run --rm -i \
     -v "${root}:/w" \
@@ -76,13 +101,8 @@ exec docker run --rm -i \
     -v cf-studio-backend-target:/w/studio-backend/target \
     "${mount_socket[@]}" \
     -w /w/studio-backend \
-    "rust:${toolchain}-bookworm" \
+    "$image" \
     bash -c "
         set -e
-        # Quiet, and only when missing: the layer is not cached between runs.
-        if ! command -v protoc >/dev/null || ! command -v cmake >/dev/null; then
-            apt-get update -qq
-            apt-get install -y -qq protobuf-compiler cmake >/dev/null 2>&1
-        fi
         ${cmd}
     "
