@@ -408,13 +408,6 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 /* Workspace rows unfold in place; the caret is the only affordance needed. */
 .caret { display: inline-block; width: 12px; color: var(--muted-foreground); }
 
-/* Drill-down breadcrumbs: organization → workspace → project. */
-.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  margin: 0 0 0.4rem; font-size: 13px; }
-.crumb-sep { color: var(--muted-foreground); margin-right: 6px; }
-.crumb-here { color: var(--muted-foreground); }
-.crumbs .linklike { font-size: 13px; }
-
 /* Current context highlighted in the account switcher. */
 .account-orgs button.on { color: var(--primary); }
 .account-orgs button .sub { color: var(--muted-foreground); font-size: 12px; }

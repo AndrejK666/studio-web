@@ -392,12 +392,13 @@ export function ProjectOverview({
 
   return (
     <div className="dash">
-      {/* Where this project sits and how it is set up — one line, not a card. */}
+      {/* How this project is SET UP — one line, not a card.
+          Where it sits is no longer repeated here. The id was already under the
+          title two lines above ("project · d5e76267…") and the organization is
+          the first segment of the bar's PathBar, so this row opened by telling
+          the reader twice what they could already see, and buried the part only
+          it knows — kind, status, automation level — behind that. */}
       <div className="dash-context">
-        <span className="badge neutral" title={project.id}>
-          <code>{project.id.slice(0, 8)}…</code>
-        </span>
-        <span className="sub">{project.orgName}</span>
         {config?.kind && <span className="badge info">{config.kind.replace("_", " ")}</span>}
         {config?.status && (
           <span
