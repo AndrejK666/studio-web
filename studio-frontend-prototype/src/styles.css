@@ -1074,11 +1074,26 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted-foreground); padding: 0 10px 4px;
 }
-.space-row { display: flex; align-items: center; gap: 2px; }
-.space-row button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.space-x { padding: 2px 6px; flex: 0 0 auto; }
-.space-refresh { padding: 2px 6px; flex: 0 0 auto; font-size: 15px; }
-.space-stop { padding: 2px 6px; flex: 0 0 auto; font-size: 10px; color: var(--destructive); }
+/* A space is FOUR controls on one row, and the rail sizes every nav button as
+   a full 232px row of its own (`.drawer nav button`). Left alone, the three
+   actions each claimed a whole row: ~960px inside a 240px rail, so the name —
+   the only one that could shrink — was squeezed to nothing and the drawer grew
+   a horizontal scrollbar. The row is the row here; the buttons inside it are
+   not. */
+.space-row {
+  display: flex; align-items: center; gap: 2px;
+  width: 232px; margin-inline: 4px;
+}
+.drawer nav .space-row button { width: auto; margin-inline: 0; }
+.drawer nav .space-row button:first-child { flex: 1; min-width: 0; }
+/* The label is a span so it can ellipsize: the button is a flex container, and
+   text-overflow does nothing to a bare text node inside one. */
+.space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer nav .space-row .space-x,
+.drawer nav .space-row .space-refresh,
+.drawer nav .space-row .space-stop { flex: 0 0 auto; padding-inline: 6px; }
+.space-refresh { font-size: 15px; }
+.space-stop { font-size: 10px; color: var(--destructive); }
 .dirty-dot { color: var(--warning); margin-left: 6px; font-size: 10px; }
 .content > h1 { margin-bottom: 0.25rem; }
 /* Narrow viewports: the bar keeps its shape, so only the context slot has to
