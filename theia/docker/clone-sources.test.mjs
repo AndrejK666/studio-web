@@ -1,12 +1,13 @@
 // The workspace-source clone phase of the session entrypoint.
 //
-// This phase is what the boot splash exists to cover, so it is also where
-// startup time is won or lost — and it had no coverage at all. The two things
-// asserted here are the ones that broke silently: field parsing (a source
-// carrying a token but no branch used to clone with `--branch <token>`, which
-// fails and prints the token into the container log) and concurrency (sources
-// are independent directories, so the phase must cost the slowest repository
-// rather than the sum).
+// This phase is where startup time is won or lost, and it had no coverage at
+// all. Three things are asserted here, each one something that broke or could
+// break silently: field parsing (a source carrying a token but no branch used
+// to clone with `--branch <token>`, which fails and prints the token into the
+// container log), concurrency (sources are independent directories, so the
+// phase must cost the slowest repository rather than the sum), and its place
+// in the boot order — the phase runs BEHIND the IDE, and a change that quietly
+// put it back in front would restore the wait it exists to avoid.
 //
 // Like gate.test.mjs, the code under test is extracted from entrypoint.sh
 // rather than copied, so this cannot drift away from what ships.
@@ -28,15 +29,31 @@ if (!hasBash) {
   console.log('workspace source clones: skipped (no bash on PATH)');
 } else {
   const entrypoint = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
-  const match = entrypoint.match(/^clone_source\(\) \{[\s\S]*?^fi$/m);
-  assert.ok(match, 'entrypoint must contain the clone_source worker and the sources block');
-  const block = match[0];
+  const match = entrypoint.match(/^# >>> studio:clone-sources$([\s\S]*?)^# <<< studio:clone-sources$/m);
+  assert.ok(match, 'entrypoint must delimit the clone phase with the studio:clone-sources markers');
+  const block = match[1];
   assert.match(block, /STUDIO_SOURCES/, 'extracted block must include the sources loop');
   assert.match(block, /STUDIO_CLONE_JOBS/, 'extracted block must include the concurrency cap');
 
+  // ── Boot order ──
+  // The phase is a function precisely so the session does not wait for it: the
+  // gate takes the port first, the clones are backgrounded, and the IDE starts
+  // over a workspace they are still filling in. A document needs none of them.
+  const gateAt = entrypoint.indexOf('\nnode /tmp/gate.js &');
+  const cloneAt = entrypoint.indexOf('\nclone_workspace_sources &');
+  const execAt = entrypoint.indexOf('\nexec npm');
+  assert.ok(gateAt > 0, 'entrypoint must start the session gate');
+  assert.ok(cloneAt > gateAt, 'sources must be cloned after the gate owns the port');
+  assert.ok(execAt > cloneAt, 'the IDE must start after the clone phase is backgrounded');
+  assert.doesNotMatch(
+    entrypoint,
+    /^clone_workspace_sources$/m,
+    'the clone phase must never be called in the foreground',
+  );
+
   const directory = await mkdtemp(path.join(os.tmpdir(), 'studio-clone-test-'));
   const script = path.join(directory, 'clone-block.sh');
-  await writeFile(script, `#!/bin/bash\nset -euo pipefail\nWORKSPACE="$1"\nshift\n${block}\n`, 'utf8');
+  await writeFile(script, `#!/bin/bash\nset -euo pipefail\nWORKSPACE="$1"\nshift\n${block}\nclone_workspace_sources\n`, 'utf8');
 
   const git = (args, cwd) => {
     const result = spawnSync('git', args, { cwd, encoding: 'utf8' });

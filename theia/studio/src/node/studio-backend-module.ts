@@ -503,13 +503,48 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
         const config = this.runtimeConfigService.getConfig();
         if (isCanonicalProjectionMode(this.runtimeMode)) {
             await this.workspaceSourceRegistry.reconcile(loadResult, new Date().toISOString());
-            await this.repositoryDiscovery.initialize(config, { mode: 'canonical' });
+            await this.repositoryDiscovery.initialize(config, {
+                mode: 'canonical',
+                // The session entrypoint clones the workspace's sources BEHIND
+                // the running IDE, so that opening a document — which needs no
+                // checkout, only the documents gear — does not wait for a git
+                // clone of every source. A source therefore commonly resolves
+                // to nothing at startup and appears seconds later; this is what
+                // registers it when it does, without a reload.
+                onWorkspaceContentChanged: () => void this.projectMaterializedSources()
+            });
             await this.refreshRepositoryProjection();
             return;
         }
         await this.repositoryDiscovery.initialize(config, {
             mode: this.runtimeMode === 'single-folder' ? 'single-folder' : 'legacy'
         });
+    }
+
+    /**
+     * Resolve the manifest's sources against disk again and republish the
+     * repositories.
+     *
+     * Narrower than [`refreshWorkspaceState`] on purpose: it re-reads the
+     * configuration and the checkouts, but does not re-initialize discovery —
+     * which would tear down and rebuild the very watcher that called it.
+     * Failures are logged rather than thrown: this runs off a filesystem event
+     * with no caller to report to, and a half-written clone that resolves badly
+     * now will fire again when it finishes.
+     */
+    protected async projectMaterializedSources(): Promise<void> {
+        try {
+            const loadResult = await this.workspaceConfigService.load(this.workspaceRoot);
+            await this.workspaceSourceRegistry.reconcile(loadResult, new Date().toISOString());
+            await this.refreshRepositoryProjection();
+        } catch (error) {
+            // This endpoint takes its dependencies positionally and has no
+            // logger; the backend's console is where its own start-up messages
+            // go, so the warning goes there too.
+            console.warn(
+                `[studio] re-projecting workspace sources failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     protected async refreshRepositoryProjection(): Promise<void> {

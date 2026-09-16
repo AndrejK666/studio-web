@@ -17,6 +17,19 @@ const MAX_SCANNED_DIRECTORIES = 50_000;
 export interface RepositoryDiscoveryInitializeOptions {
     readonly mode?: 'legacy' | 'single-folder' | 'canonical';
     readonly initialRegistrations?: readonly RepositoryRegistration[];
+    /**
+     * Called, debounced, when a Git marker appears or disappears under the
+     * workspace root while the session is running.
+     *
+     * Canonical mode does not scan the filesystem for repositories — the
+     * manifest is authoritative — but it does RESOLVE the manifest's sources
+     * against disk, and a source whose checkout is not there yet resolves to
+     * nothing. The session entrypoint now clones behind the running IDE
+     * precisely so a document need not wait for it, which makes "not there
+     * yet" an ordinary startup state rather than an error. This is how the
+     * caller learns to resolve again.
+     */
+    readonly onWorkspaceContentChanged?: () => void;
 }
 
 @injectable()
@@ -50,6 +63,14 @@ export class RepositoryDiscoveryService implements Disposable {
                     allowConfiguredExternalRoots: [config.repositoryRoot]
                 });
             }
+            // No scan — the manifest is authoritative here. The watcher only
+            // tells the caller that the disk changed, so it can resolve the
+            // manifest's sources again and pick up a checkout that has just
+            // landed.
+            const onChanged = options.onWorkspaceContentChanged;
+            if (onChanged) {
+                this.startWatcher(config.workspaceRoot, onChanged);
+            }
             return;
         }
         if (this.initializationMode === 'single-folder') {
@@ -57,7 +78,9 @@ export class RepositoryDiscoveryService implements Disposable {
             return;
         }
         await this.initializeConfiguredRepository(config);
-        this.startWatcher(config.workspaceRoot);
+        this.startWatcher(config.workspaceRoot, () =>
+            this.rescanInBackground('nested Git repository rescan')
+        );
         this.rescanInBackground('initial nested repository discovery');
     }
 
@@ -156,11 +179,11 @@ export class RepositoryDiscoveryService implements Disposable {
         this.watcher = undefined;
     }
 
-    protected startWatcher(workspaceRoot: string): void {
+    protected startWatcher(workspaceRoot: string, onMarkerChanged: () => void): void {
         try {
             this.watcher = fs.watch(workspaceRoot, { recursive: true }, (_eventType, filename) => {
                 if (filename && isGitMarkerPath(filename.toString())) {
-                    this.scheduleRescan();
+                    this.scheduleTrigger(onMarkerChanged);
                 }
             });
             this.watcher.on('error', error => {
@@ -173,7 +196,8 @@ export class RepositoryDiscoveryService implements Disposable {
         }
     }
 
-    protected scheduleRescan(): void {
+    /** Coalesce a burst of marker events — a clone writes many — into one run. */
+    protected scheduleTrigger(run: () => void): void {
         if (this.disposed) {
             return;
         }
@@ -182,7 +206,7 @@ export class RepositoryDiscoveryService implements Disposable {
         }
         this.rescanTimer = setTimeout(() => {
             this.rescanTimer = undefined;
-            this.rescanInBackground('nested Git repository rescan');
+            run();
         }, RESCAN_DEBOUNCE_MS);
     }
 
