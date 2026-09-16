@@ -1545,23 +1545,21 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 .dash .coverage { min-width: 130px; }
 
 /* ── Editing hand-off to the IDE ──
-   Shown while the portal reuses or launches the session a document or file is
-   about to open in. Above the spaces host and the right panel (z-index 60),
-   so it reads the same whether the hand-off starts from a portal screen or
-   from an already-open space. The scrim matches the filter panel's. */
+   Reports while the portal launches the session a document or file is about to
+   open in. A corner status, NOT a modal and NOT a scrim: a first launch clones
+   the sources, and covering the screen for that would take away the editor the
+   person already has open on the very document they asked to edit. Above the
+   spaces host and the right panel (z-index 60) so it reads the same from a
+   portal screen and from an open space. */
 .handoff {
-  position: fixed; inset: 0; z-index: 60;
-  display: grid; place-items: center;
-  background: rgb(15 18 24 / 0.48);
-}
-.handoff-card {
-  min-width: 320px; max-width: 460px; padding: 1.25rem 1.4rem;
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  width: min(380px, calc(100vw - 40px));
+  padding: 0.95rem 1.1rem;
   background: var(--card);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  display: grid; gap: 0.6rem;
+  display: grid; gap: 0.5rem;
   animation: rightbar-in 0.18s ease;
 }
-.handoff-card h2 { margin: 0; }
-.handoff-card p { margin: 0; }
-.handoff-card button { justify-self: start; }
+.handoff p { margin: 0; }
+.handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }

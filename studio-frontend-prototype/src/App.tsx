@@ -108,6 +108,12 @@ interface Workspace extends Tenant {
  *  defines the typed calls that produce these. */
 type BridgeMessage = { type: string } & Record<string, unknown>;
 
+/** What the hand-off has to say for itself while a session comes up. */
+type HandoffState =
+  | { kind: "opening"; name: string; targetId: string }
+  | { kind: "ready"; name: string; targetId: string }
+  | { kind: "error"; name: string; error: string };
+
 /** The product's mark, served from public/. Built through BASE_URL rather than
  *  written as "/constructor-symbol.svg": vite is configured with `base: "./"`
  *  precisely because this bundle is also mounted under `/prototype/` (see
@@ -829,10 +835,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
      repository path. */
   const spacesRef = useRef(spaces);
   spacesRef.current = spaces;
+  const activeSpaceRef = useRef(activeSpace);
+  activeSpaceRef.current = activeSpace;
   const bridgeReadyRef = useRef<Set<string>>(new Set());
   const bridgeQueueRef = useRef<Record<string, BridgeMessage[]>>({});
   const [opening, setOpening] = useState<string | null>(null);
-  const [handoff, setHandoff] = useState<{ name: string; error?: string } | null>(null);
+  const [handoff, setHandoff] = useState<HandoffState | null>(null);
+  /** Set when the person dismissed the wait: the session still comes up and
+   *  still gets the message, it just stops stealing the screen when it does. */
+  const handoffDismissedRef = useRef(false);
   const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
 
   const postToFrame = useCallback((wsId: string, msg: BridgeMessage): boolean => {
@@ -865,21 +876,42 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   );
 
   const openInStudio = useCallback(
-    async (target: StudioTarget, msg: BridgeMessage) => {
-      setHandoff({ name: target.name });
+    async (target: StudioTarget, msg: BridgeMessage, reuseAnySpace = false) => {
+      // Already mounted: no wait to report at all, and switching never reloads
+      // Theia. This is the common case once a session is up, and it has to stay
+      // free of any "opening…" flicker.
+      //
+      // `reuseAnySpace` widens that to a session opened against something else.
+      // Only a DOCUMENT may do this: it is read and written through the gear by
+      // (workspace, id), so any running IDE can edit it. A repository file
+      // cannot — it exists in one checkout, and only that session has it.
+      const mounted =
+        spacesRef.current.find((s) => s.wsId === target.id) ??
+        (reuseAnySpace
+          ? spacesRef.current.find((s) => s.wsId === activeSpaceRef.current) ??
+            spacesRef.current[spacesRef.current.length - 1]
+          : undefined);
+      if (mounted) {
+        setActiveSpace(mounted.wsId);
+        postToSpace(mounted.wsId, msg);
+        return;
+      }
+      handoffDismissedRef.current = false;
+      setHandoff({ kind: "opening", name: target.name, targetId: target.id });
       setOpening(target.id);
       try {
-        if (spacesRef.current.some((s) => s.wsId === target.id)) {
-          // Already mounted — switching costs nothing and never reloads Theia.
-          setActiveSpace(target.id);
-        } else {
-          const ready = await startStudioSession(token, target);
-          openSpace(target, { id: ready.id, url: ready.url });
-        }
+        const ready = await startStudioSession(token, target);
+        // Mount either way — the frame boots Theia and takes the message while
+        // the person carries on. It only takes the screen if they are still
+        // waiting for it.
+        const dismissed = handoffDismissedRef.current;
+        openSpace(target, { id: ready.id, url: ready.url }, !dismissed);
         postToSpace(target.id, msg);
-        setHandoff(null);
+        setHandoff(
+          dismissed ? { kind: "ready", name: target.name, targetId: target.id } : null,
+        );
       } catch (e) {
-        setHandoff({ name: target.name, error: errText(e) });
+        setHandoff({ kind: "error", name: target.name, error: errText(e) });
       } finally {
         setOpening(null);
       }
@@ -890,15 +922,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const studioBridge = useMemo<StudioBridge>(
     () => ({
       openDocument: (target: StudioTarget, doc: StudioDocumentRef) =>
-        openInStudio(target, {
-          type: "studio.openDocument",
-          // The documents gear stores rows under the workspace tenant, while a
-          // space can be keyed by a project — the two ids differ, so both have
-          // to travel.
-          workspaceId: doc.workspaceId,
-          documentId: doc.id,
-          title: doc.title,
-        }),
+        openInStudio(
+          target,
+          {
+            type: "studio.openDocument",
+            // The documents gear stores rows under the workspace tenant, while
+            // a space can be keyed by a project — the two ids differ, so both
+            // have to travel.
+            workspaceId: doc.workspaceId,
+            documentId: doc.id,
+            title: doc.title,
+          },
+          // A session the person already has open beats waiting a minute for
+          // one of this target's own, and the document reads the same in either.
+          true,
+        ),
       openFile: (target: StudioTarget, path: string) =>
         openInStudio(target, { type: "studio.openInEditor", path }),
       openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
@@ -1910,31 +1948,62 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         />
       )}
 
-      {/* Editing hand-off. One overlay for every entry point — a document, a
+      {/* Editing hand-off. One status for every entry point — a document, a
           repository file, the graph — so no view has to grow its own "the IDE
           is starting" state, and so the wait is visibly part of the SAME
-          gesture rather than a launcher the user has to notice and click. */}
+          gesture rather than a launcher to notice and click.
+
+          Deliberately NOT a modal. A first launch pulls an image and clones the
+          sources, and blocking the portal behind that takes away the editor the
+          person already has open on the very document they asked to edit. It
+          reports, it does not detain: dismiss it and the session still comes up
+          and still receives the message. */}
       {handoff && (
         <div className="handoff" role="status" aria-live="polite">
-          <div className="handoff-card">
-            {handoff.error ? (
-              <>
-                <h2>Could not open {handoff.name} in Studio</h2>
-                <p className="error">{handoff.error}</p>
-                <button className="primary" onClick={() => setHandoff(null)}>
-                  Close
+          {handoff.kind === "error" ? (
+            <>
+              <strong>Could not open {handoff.name} in Studio</strong>
+              <p className="error">{handoff.error}</p>
+              <div className="handoff-actions">
+                <button onClick={() => setHandoff(null)}>Close</button>
+              </div>
+            </>
+          ) : handoff.kind === "ready" ? (
+            <>
+              <strong>{handoff.name} is ready in Studio</strong>
+              <p className="hint">The editor is open on what you asked for.</p>
+              <div className="handoff-actions">
+                <button
+                  className="primary"
+                  onClick={() => {
+                    setActiveSpace(handoff.targetId);
+                    setHandoff(null);
+                  }}
+                >
+                  Open Studio
                 </button>
-              </>
-            ) : (
-              <>
-                <h2>Opening {handoff.name} in Studio…</h2>
-                <p className="hint">
-                  Starting the IDE session and handing the editor over. The first launch of a
-                  workspace takes a few seconds while its sources are cloned.
-                </p>
-              </>
-            )}
-          </div>
+                <button onClick={() => setHandoff(null)}>Not now</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <strong>Opening {handoff.name} in Studio…</strong>
+              <p className="hint">
+                Starting the IDE session. The first launch of a workspace takes a few seconds
+                while its sources are cloned — you can keep working here meanwhile.
+              </p>
+              <div className="handoff-actions">
+                <button
+                  onClick={() => {
+                    handoffDismissedRef.current = true;
+                    setHandoff(null);
+                  }}
+                >
+                  Keep working here
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -7358,7 +7427,7 @@ async function startStudioSession(
   // The backend probes the session on its own run; this only watches it, and
   // asks for the record once it is up.
   return waitForStudioSessionReady(created, () => api.studioSession(token, created.id), {
-    follow: (runId) => followRun(token, runId, () => {}),
+    follow: (runId, signal) => followRun(token, runId, () => {}, { signal }),
   });
 }
 

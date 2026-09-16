@@ -547,17 +547,21 @@ function DocumentsView({
                   {studio && studioTarget && (
                     <button
                       className="primary"
-                      onClick={() =>
+                      onClick={async () => {
+                        // Hand over what is on screen, not what was last
+                        // saved: the IDE reads the row from the gear, so an
+                        // unsaved draft here would simply not be there.
+                        if (dirty) await save();
                         void studio.openDocument(studioTarget, {
                           workspaceId,
                           id: selected.id,
                           title: selected.title,
-                        })
-                      }
-                      disabled={!editable || opening}
+                        });
+                      }}
+                      disabled={!editable || opening || busy}
                       title={
                         editable
-                          ? "Edit this document in Studio's markdown editor — the session opens if it is not running yet"
+                          ? "Edit this document in Studio's markdown editor — it opens in a session you already have running, or starts one"
                           : "Inherited from the workspace — edit it where it is defined"
                       }
                     >
