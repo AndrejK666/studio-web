@@ -40,6 +40,7 @@ import {
   isDetectorCancel,
   MIN_SPEC_SHARE,
 } from "./spec-quality";
+import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -115,9 +116,14 @@ export function DocumentsTab({
 export function WorkspaceDocumentsTab({
   token,
   workspaceId,
+  studioTarget,
 }: {
   token: string;
   workspaceId: string;
+  /** The workspace an "Edit in Studio" hand-off launches the IDE against.
+   *  Absent where no target is known — the hand-off is then simply not
+   *  offered, and the in-portal editor below is the only editor. */
+  studioTarget?: StudioTarget;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -140,7 +146,12 @@ export function WorkspaceDocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      <DocumentsView token={token} workspaceId={workspaceId} types={types} />
+      <DocumentsView
+        token={token}
+        workspaceId={workspaceId}
+        types={types}
+        studioTarget={studioTarget}
+      />
     </div>
   );
 }
@@ -221,10 +232,12 @@ function DocumentsView({
   token,
   workspaceId,
   types,
+  studioTarget,
 }: {
   token: string;
   workspaceId: string;
   types: DocType[];
+  studioTarget?: StudioTarget;
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -247,6 +260,29 @@ function DocumentsView({
   const selected = useMemo(() => docs.find((d) => d.id === selectedId) ?? null, [docs, selectedId]);
   const editable = !!selected && !selected.inherited;
 
+  /* ── Editing in the IDE ──
+     The same document, opened in Studio's markdown editor instead of the
+     textarea below. One gesture: the portal reuses or launches the workspace's
+     session, mounts its space and hands the document over (see
+     ./studio-bridge). The IDE reads and writes it straight through the
+     documents gear over a `studio-doc:` URI, so there is no copy to reconcile
+     — only a reload here once it reports the write back.
+
+     This is the authoring surface: a project's Documents tab reports what its
+     repository contains, and a document gets there by being published into it.
+     Before it is published there is no file to open, which is exactly why the
+     IDE needed a way to address the row itself. */
+  const studio = useStudioBridge();
+  const opening = !!studioTarget && studio?.opening === studioTarget.id;
+  const dirty =
+    !!selected && (draftTitle !== selected.title || draftBody !== selected.content);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  /** Set when the IDE saved the document currently open here while this view
+   *  held unsaved edits — reloading is then the user's call, not ours. */
+  const [staleDoc, setStaleDoc] = useState<string | null>(null);
+  const handledSaveRef = useRef(0);
+
   const reload = useCallback(async () => {
     setErr(null);
     try {
@@ -262,6 +298,25 @@ function DocumentsView({
   useEffect(() => {
     if (types.length > 0 && !newType) setNewType(types[0].key);
   }, [types, newType]);
+
+  // The IDE wrote a document back through the gear: re-read it so the list,
+  // the status and the conformance checklist reflect what was just saved.
+  // Keyed on the report's timestamp, not on `docs`, so the reload it triggers
+  // cannot re-trigger itself.
+  useEffect(() => {
+    const saved = studio?.savedDocument;
+    if (!saved || saved.at === handledSaveRef.current) return;
+    if (saved.workspaceId !== workspaceId) return;
+    handledSaveRef.current = saved.at;
+    if (saved.documentId === selectedId && dirtyRef.current) {
+      setStaleDoc(saved.documentId); // local draft would be overwritten
+      return;
+    }
+    void reload();
+  }, [studio?.savedDocument, workspaceId, selectedId, reload]);
+
+  // A different document is a different conversation — drop the stale banner.
+  useEffect(() => setStaleDoc(null), [selectedId]);
 
   useEffect(() => {
     if (!selected) {
@@ -464,6 +519,23 @@ function DocumentsView({
                     ))}
                   </select>
                 </div>
+                {staleDoc === selected.id && (
+                  <div className="hint" style={{ ...card, display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ flex: 1 }}>
+                      Saved in Studio while you had unsaved changes here. Reloading takes the
+                      IDE&rsquo;s version and drops the draft below.
+                    </span>
+                    <button
+                      onClick={() => {
+                        setStaleDoc(null);
+                        void reload();
+                      }}
+                      disabled={busy}
+                    >
+                      Reload
+                    </button>
+                  </div>
+                )}
                 <textarea
                   value={draftBody}
                   onChange={(e) => setDraftBody(e.target.value)}
@@ -471,8 +543,39 @@ function DocumentsView({
                   spellCheck={false}
                   style={{ width: "100%", minHeight: 420, fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, lineHeight: 1.5, padding: 10, borderRadius: 8, border: "1px solid var(--border)", resize: "vertical" }}
                 />
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button className="primary" onClick={save} disabled={!editable || busy}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {studio && studioTarget && (
+                    <button
+                      className="primary"
+                      onClick={() =>
+                        void studio.openDocument(studioTarget, {
+                          workspaceId,
+                          id: selected.id,
+                          title: selected.title,
+                        })
+                      }
+                      disabled={!editable || opening}
+                      title={
+                        editable
+                          ? "Edit this document in Studio's markdown editor — the session opens if it is not running yet"
+                          : "Inherited from the workspace — edit it where it is defined"
+                      }
+                    >
+                      {opening
+                        ? "Opening Studio…"
+                        : studio.isOpen(studioTarget.id)
+                          ? "Edit in Studio"
+                          : "Edit in Studio →"}
+                    </button>
+                  )}
+                  {/* Still here, and still the only editor when no session can
+                      be opened. It stays a plain button next to the hand-off so
+                      the IDE is the obvious place to write, not the exception. */}
+                  <button
+                    className={studio && studioTarget ? "" : "primary"}
+                    onClick={save}
+                    disabled={!editable || busy}
+                  >
                     Save &amp; validate
                   </button>
                   {selected.type_key === "app_spec" && (

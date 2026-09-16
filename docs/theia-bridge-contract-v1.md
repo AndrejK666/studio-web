@@ -147,3 +147,72 @@ studio-theia side like every other bridge call.
    command contribution path).
 
 Everything else in §2/§4 is additive on top of this slice.
+
+## 6. Portal ↔ IDE browser channel (`postMessage`)
+
+A second, unrelated transport to §1–§5: the **portal page** talking to the
+**IDE page** it embeds as an iframe (a "Space"). No backend hop, no S2S token —
+`window.postMessage` between two browser windows, origin-checked on both ends
+(`portal-bridge-contribution.ts` in the IDE, the spaces host in the portal).
+Present because some things are properties of the *running UI*, not of the
+workspace: the theme, the editor that is open, the dirty count.
+
+**Delivery.** The portal queues every message for a space until the IDE's bridge
+answers the handshake (any `studio.*` reply), then flushes in order. This is
+what makes editing a single gesture: a view can ask for a document while the
+session is still being launched, and the message lands when the IDE is ready
+instead of being dropped into a booting iframe. A frame reload re-arms the
+queue — the bridge in the new document has not acked yet.
+
+### portal → IDE
+
+| Message | Payload | Effect |
+|---|---|---|
+| `studio.init` | `{ theme, apiToken, workspaceId }` | handshake: theme, the caller's API token (gears are called same-origin through the session gate), and the tenant the Artifact Graph scopes to |
+| `studio.theme` | `{ theme }` | portal theme changed |
+| `studio.token` | `{ apiToken, workspaceId? }` | silent renew |
+| `studio.openInEditor` | `{ path }` | open a checkout-relative repository file |
+| `studio.openGraph` | — | open the Artifact Graph view |
+| `studio.openDocument` | `{ workspaceId, documentId, title? }` | open a **portal document** in the markdown editor |
+
+### IDE → portal
+
+| Message | Payload | Effect |
+|---|---|---|
+| `studio.status` | `{ dirty }` | unsaved-editor count; also the handshake ack |
+| `studio.documentSaved` | `{ workspaceId, documentId }` | the IDE wrote a document back; the portal re-reads the row |
+
+### Portal documents as editor resources
+
+`studio.openDocument` is the one that needed a new addressing scheme. A
+document is not a file: it lives in the `studio-documents` gear, keyed by
+(workspace tenant, document id), so the IDE had no way to name it and the
+portal's textarea was the only editor. The IDE now gives it a URI —
+
+```
+studio-doc:/{workspaceId}/{documentId}/{slug}.md
+```
+
+— resolved by `StudioDocumentResourceResolver`, which reads and writes it
+straight through `GET`/`PUT /studio-documents/v1/workspaces/{ws}/documents/{id}`
+over the same session gate and portal-issued token as every other Studio call.
+There is no local copy: the portal's list and the IDE's editor are two views of
+one row.
+
+The trailing filename carries no identity — it makes the tab readable and keeps
+`.md` editor routing working. Identity is the first two segments, so renaming a
+document never orphans an open editor.
+
+`workspaceId` here means the workspace tenant that **stores** the document,
+which is not the tenant the session was opened against: a project shows the
+documents of its parent workspace, and the session is keyed by the project. The
+two ids genuinely differ, which is why the message carries its own rather than
+reusing the handshake's scope.
+
+**Conflicts.** The gear's `PUT` carries no version, so the resource does not
+claim optimistic concurrency. It reports `updated_at` as the editor's version
+marker — enough for the markdown editor's external-change detection (Compare /
+Reload from Disk / Keep Local) — and last write wins if two sessions really do
+race. The portal takes the other half of that deal: on `studio.documentSaved`
+it reloads the row, unless its own textarea holds unsaved edits, in which case
+it offers the reload rather than discarding them.

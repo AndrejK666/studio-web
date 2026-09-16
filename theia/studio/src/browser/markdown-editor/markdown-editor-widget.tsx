@@ -417,6 +417,12 @@ export class MarkdownEditorWidget extends ReactWidget implements Navigatable, Sa
         if (!resourceUri) {
             throw new Error('Markdown editor resource is unavailable.');
         }
+        if (resourceUri.scheme !== 'file') {
+            // Assets live next to their document on disk. A portal document
+            // (`studio-doc:`) has no directory to put them in, so say so
+            // instead of failing inside the file service with "no provider".
+            throw new Error('Images cannot be attached to a Studio document — it has no folder to store them in.');
+        }
         const documentDirectory = resourceUri.parent;
         const naming = createAssetNaming(resourceUri.path.toString(), file.name, file.type || 'image/png');
         const assetDirectory = documentDirectory.resolve(naming.assetDirName);
