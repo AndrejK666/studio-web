@@ -228,6 +228,39 @@ generation that every access-config write moves, with an age limit as a
 backstop. The existing test that asserts no request reaches the config read is
 the tripwire for this, and it is replaced rather than deleted.
 
+### 9. Only an owner may say who owns an organization
+
+Added after the fact, because building §7 found the hole it closes.
+
+The access config is the document this whole ADR decides from, and it is stored
+as account-management tenant metadata. Every tenant-metadata request is answered
+by our PDP with the tenant clamp: the family is short-circuited there because
+deciding who may *read* the access config means reading the access config, and
+that recursion has to stop somewhere. The clamp's answer is "is this caller
+inside this tenant", and every member of an organization is.
+
+So any member could write the document an owner grant naming themselves, and
+then administer and delete the organization. Demonstrated on a stand, not
+inferred.
+
+The escape was too wide. Reads keep the guard — the recursion is real. Writes do
+not have that problem: the decision reads the document, and that read is still
+clamped, so it terminates. Writes to this one schema are decided by ownership,
+with a platform administrator's arm (ADR-0011 §4) and, under the roles model,
+`access.manage`. Two openings, both narrow: a document that does not exist yet
+is an organization being created, and a document nobody owns cannot be gated by
+ownership without wedging the organization forever.
+
+This is not a workaround around the platform. Account-management already passes
+the schema id on every authorize call so that a PDP can decide per schema, and
+its DESIGN's "Metadata steward" row already says per-schema grants are explicit.
+What is missing is a way for a PDP to read its own policy document without that
+read being a decision — which is what makes the family-wide escape necessary in
+the first place. That is written up for the platform in
+`studio-backend/docs/account-management-requests.md`, together with a second,
+smaller ask: a schema that names its owning gear, so a document with one writer
+is not reachable through a generic route at all.
+
 ## Consequences
 
 - The member-management UI ADR-0011 §7 gates becomes releasable, for

@@ -205,13 +205,18 @@ subject=?`; the full scans disappear; uniqueness and FK integrity become real.
    coupling), or `studio-user` publishes an SDK client that `identity_directory`
    depends on and calls in-process. The second needs gear-lifecycle care (the
    graph store resolves in the REST phase), so land it against a compiler.
-2. **PDP dual-key match (non-breaking).** Today `studio_authz_plugin` matches
-   grants by the IdP subject id, and `privilege_for` maps no Studio resource yet
-   (the role path is dormant). When the first Studio resource is role-mapped,
-   resolve `subject -> user_id` via the mapper and match a grant whose
-   `subjectId` is EITHER the subject or the `user_id` — old grants keep working,
-   new `user_id`-keyed grants start working. This is gated on there being a
-   mapped resource, so it is deliberately not written blind.
+2. **PDP dual-key match (non-breaking). Shipped**, and it came due the moment
+   ADR-0019 made grants decide something: `may_administer` and the access-config
+   barrier both read them, so keying on a login meant authority depended on
+   which door somebody came through.
+
+   It landed as one key rather than two. `subjects_of` resolves a caller to the
+   person behind them and lists every sign-in subject bound to that person, and
+   the matchers take that set. An old grant naming one login is the person's
+   whichever way they signed in today — so no document is rewritten, and the
+   `user_id`-keyed grants this note anticipated turned out not to be needed at
+   all. A subject no login knows is its own set, which is exactly the behaviour
+   that existed before, so nothing narrowed.
 3. **Active-organization context.** Carry the person in the token and make the
    active org a session context the PDP clamps to, replacing the single-home
    `tenant_id` assumption.

@@ -137,6 +137,46 @@ struct RoleDef {
     #[serde(default)]
     privileges: Vec<String>,
 }
+
+impl AccessConfig {
+    /// Does the person behind `subjects` hold the organization-wide owner grant?
+    fn owns(&self, subjects: &[String]) -> bool {
+        self.grants.iter().any(|g| {
+            g.subject_type == "member"
+                && subjects.contains(&g.subject_id)
+                && g.role_key == crate::access_config::ROLE_OWNER
+                && g.scope_type == "org"
+        })
+    }
+
+    /// Does anybody own this organization?
+    fn has_an_owner(&self) -> bool {
+        self.grants
+            .iter()
+            .any(|g| g.role_key == crate::access_config::ROLE_OWNER && g.scope_type == "org")
+    }
+
+    /// Does `subject` hold `privilege` across the whole organization?
+    ///
+    /// Organization-scoped grants only: a project-scoped grant narrows which
+    /// rows somebody may touch inside one project and confers no authority over
+    /// the organization. The owner arm mirrors [`decide`] and the gear's
+    /// `grants_privilege_to` — an owner's authority is definitional, never
+    /// looked up (ADR-0019 §7).
+    fn grants_org_privilege(&self, subjects: &[String], privilege: &str) -> bool {
+        self.grants.iter().any(|g| {
+            g.subject_type == "member"
+                && subjects.contains(&g.subject_id)
+                && g.scope_type == "org"
+                && (g.role_key == crate::access_config::ROLE_OWNER
+                    || self
+                        .roles
+                        .iter()
+                        .find(|r| r.key == g.role_key)
+                        .is_some_and(|r| r.privileges.iter().any(|p| p == privilege)))
+        })
+    }
+}
 #[derive(Debug, Clone, Deserialize)]
 struct GrantDef {
     #[serde(rename = "subjectType")]
@@ -313,6 +353,90 @@ impl Service {
         b.build().unwrap_or_else(|_| SecurityContext::anonymous())
     }
 
+    /// Every sign-in subject belonging to the caller's person, the caller's own
+    /// among them.
+    ///
+    /// Resolved once per decision and matched as a set, so a grant naming one
+    /// login is the person's whichever way they signed in today. Without
+    /// `studio-user`, or when the lookup fails, the caller is their own set —
+    /// which is exactly the behaviour that existed before this, so a database
+    /// hiccup narrows nothing it did not already narrow.
+    async fn subjects_of_caller(&self, subject: &str) -> Vec<String> {
+        let own = vec![subject.to_owned()];
+        let Some(reader) = self.organization_reader() else {
+            return own;
+        };
+        match reader.subjects_of(subject).await {
+            Ok(subjects) if !subjects.is_empty() => subjects,
+            Ok(_) => own,
+            Err(error) => {
+                warn!(%subject, %error, "could not resolve the caller's other sign-in methods");
+                own
+            }
+        }
+    }
+
+    /// Who may change the document that decides who owns this organization.
+    ///
+    /// An owner may. A platform administrator may, because appointing an
+    /// organization's first owner is a platform act (ADR-0011 §4) and repairing
+    /// one that has wedged itself has to be possible from somewhere. Under the
+    /// roles model, `access.manage` may. Nobody else — and in particular not
+    /// "anyone who is in this tenant", which is what the clamp would have said.
+    ///
+    /// Two openings, both narrow and both necessary:
+    ///
+    /// * **No document yet.** An organization is being created and has no owner
+    ///   to ask about; `set_owner_grant` is the writer, and it is the call that
+    ///   makes the creator the owner.
+    /// * **A document nobody owns.** Ownership cannot be the gate when there is
+    ///   no owner, and refusing here would leave an organization nothing could
+    ///   ever repair. The last-owner rule is what keeps this state from
+    ///   arising in the first place.
+    ///
+    /// An unreadable document refuses: we cannot tell who owns it, and this is
+    /// the write that would decide.
+    async fn decide_access_config_write(
+        &self,
+        request: &EvaluationRequest,
+        tid: Uuid,
+        organization: Uuid,
+    ) -> EvaluationResponse {
+        let subject = request.subject.id.to_string();
+
+        if let Some(reader) = self.organization_reader()
+            && reader.is_platform_admin(&subject).await.unwrap_or(false)
+        {
+            let tids = self.reachable_tenants(request, tid).await;
+            return tenant_clamp(request, &tids);
+        }
+
+        let subjects = self.subjects_of_caller(&subject).await;
+        let sec = Service::read_ctx(request, organization);
+        let allowed = match self.read_access_config(&sec, organization).await {
+            ConfigRead::Absent => true,
+            ConfigRead::Unreadable => false,
+            ConfigRead::Found(cfg) => {
+                cfg.owns(&subjects)
+                    || !cfg.has_an_owner()
+                    || (cfg.model == "roles"
+                        && cfg.grants_org_privilege(&subjects, "access.manage"))
+            }
+        };
+
+        if allowed {
+            let tids = self.reachable_tenants(request, tid).await;
+            tenant_clamp(request, &tids)
+        } else {
+            warn!(
+                organization = %organization,
+                %subject,
+                "refused a write to the organization's access config: not an owner"
+            );
+            deny()
+        }
+    }
+
     async fn read_access_config(&self, sec: &SecurityContext, tid: Uuid) -> ConfigRead {
         match self
             .am
@@ -376,8 +500,8 @@ enum RoleDecision {
 /// tests at all, while the helpers around it had many. Everything here is a
 /// decision; the caller does the I/O and builds the response.
 fn decide(
+    subjects: &[String],
     read: &ConfigRead,
-    subject_id: &str,
     subject_teams: &[String],
     privilege: &str,
 ) -> RoleDecision {
@@ -400,7 +524,7 @@ fn decide(
     let mut project_scopes: Vec<Uuid> = Vec::new();
     for g in &cfg.grants {
         let subject_matches = match g.subject_type.as_str() {
-            "member" => g.subject_id == subject_id,
+            "member" => subjects.contains(&g.subject_id),
             "team" => subject_teams.iter().any(|t| t == &g.subject_id),
             _ => false,
         };
@@ -456,6 +580,62 @@ const RECURSION_GUARDED_FAMILIES: [&str; 3] = [
     "gts.cf.core.am.tenant_type.v1",
 ];
 
+/// Account-management's PEP attribute carrying the chained metadata schema id.
+///
+/// The resource type on the wire is AM's BASE metadata type
+/// (`gts.cf.core.am.tenant_metadata.v1~`) for every document it stores; which
+/// document this is travels as a resource property. Matching on the resource
+/// type alone would catch every tenant metadata document in the assembly.
+const AM_TYPE_ID_PROPERTY: &str = "type_id";
+
+/// The account-management metadata actions that change a document.
+///
+/// AM's vocabulary is `read | list | write | delete`; `write` covers PUT and
+/// PATCH alike, which AM leaves to the PDP to tell apart if it ever needs to.
+fn is_mutating_metadata_action(action: &str) -> bool {
+    matches!(action, "write" | "delete")
+}
+
+/// Is this request an attempt to CHANGE an organization's Studio access config?
+///
+/// That document names the organization's owners, and it is written through
+/// account-management's generic metadata route — which the recursion guard
+/// below answers with the tenant clamp, i.e. with "are you in this tenant at
+/// all". Every member is. So every member could write themselves an owner
+/// grant and then administer, and delete, the organization.
+///
+/// The guard has to stay for READS: deciding who may read this document means
+/// reading it, and that is the recursion it exists to stop. Writes have no such
+/// problem — the decision reads the document, and the read is still clamped —
+/// so they are the half that can be defended.
+fn is_access_config_write(request: &EvaluationRequest) -> bool {
+    is_mutating_metadata_action(&request.action.name)
+        && family_of(request.resource.resource_type.as_str()) == family_of(ACCESS_METADATA_TYPE)
+        && request
+            .resource
+            .properties
+            .get(AM_TYPE_ID_PROPERTY)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|type_id| type_id == ACCESS_METADATA_TYPE)
+}
+
+/// The tenant that OWNS the resource under decision, as the PEP declared it.
+///
+/// Deliberately not [`Service::tenant_of`], which answers with the tenant the
+/// caller's TOKEN names. On this request the two differ — the token names the
+/// person's home tenant and the resource is the organization being written —
+/// and taking the token's answer reads the platform root's access config,
+/// finds none, and allows the write. That was the first version of this
+/// barrier, and the stand caught it.
+fn resource_owner_tenant(request: &EvaluationRequest) -> Option<Uuid> {
+    request
+        .resource
+        .properties
+        .get(pep_properties::OWNER_TENANT_ID)
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+}
+
 /// The family a GTS type id belongs to: everything before the first `~`.
 ///
 /// A GTS id is a `~`-terminated chain in which the first segment names the base
@@ -497,6 +677,10 @@ enum Plan {
     Clamp(Uuid),
     /// A resource this deployment role-gates. Only this needs the config.
     Roles { tid: Uuid, privilege: &'static str },
+    /// A write to the document that decides who owns an organization.
+    /// Answered by ownership of `organization` rather than by the clamp — see
+    /// [`is_access_config_write`].
+    AccessConfigWrite { tid: Uuid, organization: Uuid },
 }
 
 impl Plan {
@@ -512,6 +696,24 @@ impl Plan {
         // platform / service caller is never role-gated — anti-lockout backstop.
         if request.context.token_scopes.iter().any(|s| s == "*") {
             return Self::Clamp(tid);
+        }
+
+        // Before the guard, and deliberately: the one metadata document whose
+        // writes the clamp must not answer, because the clamp's answer is
+        // "you are a member", and that is how a member appoints themselves
+        // owner.
+        if is_access_config_write(request) {
+            // WHICH organization's ownership decides is the tenant that OWNS
+            // the document, not the tenant the caller's token names. Those
+            // differ on exactly the request that matters: the token names the
+            // person's home tenant, so asking it reads the ROOT's access
+            // config, finds none, and allows the write. Without a resource
+            // tenant there is no ownership to check, and refusing is the only
+            // safe answer.
+            let Some(organization) = resource_owner_tenant(request) else {
+                return Self::Deny;
+            };
+            return Self::AccessConfigWrite { tid, organization };
         }
 
         // RECURSION GUARD: authorizing a read of AM tenant-metadata must not
@@ -543,6 +745,11 @@ impl AuthZResolverPluginClient for Service {
                 let tids = self.reachable_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
             }
+            Plan::AccessConfigWrite { tid, organization } => {
+                return Ok(self
+                    .decide_access_config_write(&request, tid, organization)
+                    .await);
+            }
             Plan::Roles { tid, privilege } => (tid, privilege),
         };
 
@@ -552,10 +759,11 @@ impl AuthZResolverPluginClient for Service {
         let sec = Service::read_ctx(&request, tid);
         let read = self.read_access_config(&sec, tid).await;
         let subject_id = request.subject.id.to_string();
+        let subjects = self.subjects_of_caller(&subject_id).await;
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
         let subject_teams: Vec<String> = Vec::new();
 
-        let project_scopes = match decide(&read, &subject_id, &subject_teams, privilege) {
+        let project_scopes = match decide(&subjects, &read, &subject_teams, privilege) {
             RoleDecision::Clamp => {
                 let tids = self.reachable_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
@@ -941,6 +1149,152 @@ mod tests {
         }
     }
 
+    /* ── The access-config barrier ── */
+
+    const ORG: Uuid = Uuid::from_u128(0x09a);
+
+    /// One login, the way every caller looked before a person could have two.
+    fn one(subject: &str) -> Vec<String> {
+        vec![subject.to_owned()]
+    }
+
+    /// A request shaped the way account-management shapes one: the resource
+    /// type is its BASE metadata type and the document is named by the
+    /// `type_id` property.
+    fn metadata_request(action: &str, type_id: &str, owner: Option<Uuid>) -> EvaluationRequest {
+        let mut r = request("gts.cf.core.am.tenant_metadata.v1~");
+        r.action.name = action.to_string();
+        r.resource.properties.insert(
+            AM_TYPE_ID_PROPERTY.to_string(),
+            serde_json::Value::String(type_id.to_string()),
+        );
+        if let Some(owner) = owner {
+            r.resource.properties.insert(
+                pep_properties::OWNER_TENANT_ID.to_string(),
+                serde_json::Value::String(owner.to_string()),
+            );
+        }
+        r
+    }
+
+    /// The escalation this barrier exists to close: the access config names the
+    /// organization's owners and is written through account-management's
+    /// generic metadata route, which the recursion guard answers with the
+    /// tenant clamp — "are you in this tenant". Every member is, so every
+    /// member could write themselves an owner grant, then administer and
+    /// delete the organization.
+    #[test]
+    fn a_write_to_the_access_config_is_not_answered_by_the_clamp() {
+        for action in ["write", "delete"] {
+            assert_eq!(
+                Plan::for_request(&metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG))),
+                Plan::AccessConfigWrite {
+                    tid: TENANT,
+                    organization: ORG
+                },
+                "{action} on the access config fell through to the clamp"
+            );
+        }
+    }
+
+    /// Reads must keep the guard: deciding who may read this document means
+    /// reading it, which is the recursion the guard exists to stop.
+    #[test]
+    fn reads_of_the_access_config_keep_the_recursion_guard() {
+        for action in ["read", "list"] {
+            assert_eq!(
+                Plan::for_request(&metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG))),
+                Plan::Clamp(TENANT),
+                "{action} lost the recursion guard"
+            );
+        }
+    }
+
+    /// The barrier is for one document, not for tenant metadata at large.
+    #[test]
+    fn another_metadata_document_is_untouched() {
+        let other = "gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalog.v1~";
+        assert_eq!(
+            Plan::for_request(&metadata_request("write", other, Some(ORG))),
+            Plan::Clamp(TENANT)
+        );
+    }
+
+    /// Without the resource's tenant there is no ownership to check. Falling
+    /// back to the caller's tenant is what the first version of this did, and
+    /// it read the platform root's config, found none, and allowed the write.
+    #[test]
+    fn a_write_with_no_resource_tenant_is_refused() {
+        assert_eq!(
+            Plan::for_request(&metadata_request("write", ACCESS_METADATA_TYPE, None)),
+            Plan::Deny
+        );
+    }
+
+    #[test]
+    fn the_resource_tenant_is_read_from_the_resource_not_the_token() {
+        let r = metadata_request("write", ACCESS_METADATA_TYPE, Some(ORG));
+        assert_eq!(resource_owner_tenant(&r), Some(ORG));
+        assert_ne!(
+            resource_owner_tenant(&r),
+            Service::tenant_of(&r),
+            "the caller's tenant and the resource's must not be confused"
+        );
+    }
+
+    fn config(json: serde_json::Value) -> AccessConfig {
+        serde_json::from_value(json).expect("valid access config")
+    }
+
+    fn owner_grant(subject: &str, role: &str) -> serde_json::Value {
+        serde_json::json!({
+            "subjectType": "member", "subjectId": subject,
+            "roleKey": role, "scopeType": "org", "scopeId": ""
+        })
+    }
+
+    #[test]
+    fn only_an_owner_owns() {
+        let cfg = config(serde_json::json!({ "grants": [owner_grant("ada", "owner")] }));
+        assert!(cfg.owns(&one("ada")));
+        assert!(!cfg.owns(&one("bob")));
+        assert!(cfg.has_an_owner());
+
+        let admins = config(serde_json::json!({ "grants": [owner_grant("ada", "admin")] }));
+        assert!(!admins.owns(&one("ada")));
+        assert!(
+            !admins.has_an_owner(),
+            "an admin grant is not an ownership grant"
+        );
+    }
+
+    /// A project-scoped grant is about rows inside one project; it confers no
+    /// authority over the organization, least of all over who owns it.
+    #[test]
+    fn a_project_scoped_grant_cannot_rewrite_the_access_config() {
+        let cfg = config(serde_json::json!({
+            "roles": [{ "key": "admin", "privileges": ["access.manage"] }],
+            "grants": [{
+                "subjectType": "member", "subjectId": "ada",
+                "roleKey": "admin", "scopeType": "project", "scopeId": ""
+            }]
+        }));
+        assert!(!cfg.grants_org_privilege(&one("ada"), "access.manage"));
+    }
+
+    #[test]
+    fn access_manage_reaches_the_config_and_the_other_privileges_do_not() {
+        let cfg = config(serde_json::json!({
+            "roles": [
+                { "key": "admin", "privileges": ["people.manage"] },
+                { "key": "steward", "privileges": ["access.manage"] },
+            ],
+            "grants": [owner_grant("ada", "admin"), owner_grant("eve", "steward")]
+        }));
+        assert!(!cfg.grants_org_privilege(&one("ada"), "access.manage"));
+        assert!(cfg.grants_org_privilege(&one("eve"), "access.manage"));
+    }
+
     /* ── The role path (ADR-0019) ── */
 
     fn found(model: &str, roles: serde_json::Value, grants: serde_json::Value) -> ConfigRead {
@@ -966,7 +1320,7 @@ mod tests {
     #[test]
     fn a_config_we_cannot_read_denies_rather_than_falling_back_to_the_clamp() {
         assert_eq!(
-            decide(&ConfigRead::Unreadable, "ada", &[], "access.manage"),
+            decide(&one("ada"), &ConfigRead::Unreadable, &[], "access.manage"),
             RoleDecision::Deny
         );
     }
@@ -976,7 +1330,7 @@ mod tests {
     #[test]
     fn an_organization_with_no_config_keeps_tenant_behaviour() {
         assert_eq!(
-            decide(&ConfigRead::Absent, "ada", &[], "access.manage"),
+            decide(&one("ada"), &ConfigRead::Absent, &[], "access.manage"),
             RoleDecision::Clamp
         );
     }
@@ -986,7 +1340,7 @@ mod tests {
     fn the_tenant_model_keeps_tenant_behaviour_whatever_the_grants_say() {
         let cfg = found("tenant", serde_json::json!([]), serde_json::json!([]));
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Clamp
         );
     }
@@ -1004,7 +1358,7 @@ mod tests {
         );
         for privilege in crate::access_config::PRIVILEGES {
             assert_eq!(
-                decide(&cfg, "ada", &[], privilege),
+                decide(&one("ada"), &cfg, &[], privilege),
                 RoleDecision::Clamp,
                 "an owner was denied {privilege} because the document does not define the role"
             );
@@ -1021,11 +1375,11 @@ mod tests {
             serde_json::json!([org_grant("ada", "admin")]),
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "people.manage"),
+            decide(&one("ada"), &cfg, &[], "people.manage"),
             RoleDecision::Clamp
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Deny,
             "ADR-0011 §7: a role is denied operations outside its privilege set"
         );
@@ -1040,7 +1394,7 @@ mod tests {
             serde_json::json!([org_grant("bob", "admin")]),
         );
         assert_eq!(
-            decide(&cfg, "ada", &[], "access.manage"),
+            decide(&one("ada"), &cfg, &[], "access.manage"),
             RoleDecision::Deny
         );
     }

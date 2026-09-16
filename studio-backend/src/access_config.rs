@@ -121,15 +121,19 @@ struct GrantDef {
 }
 
 impl AccessConfig {
-    /// Does `subject` hold the organization-wide owner grant?
+    /// Does the person behind `subjects` hold the organization-wide owner grant?
     ///
-    /// `subject` is a token subject, because that is what the grants record —
-    /// see the note on [`set_owner_grant`].
+    /// `subjects` is every sign-in subject that belongs to one person
+    /// (`subjects_of`), not one token subject. A grant records whichever login
+    /// was in front of whoever wrote it, so matching a single subject answers a
+    /// question about a *login*: the same human, signed in the other way, would
+    /// not be the owner. Matching the set is what makes the answer about the
+    /// person without rewriting a single grant (ADR-0006 follow-up 2).
     #[must_use]
-    pub fn grants_ownership_to(&self, subject: &str) -> bool {
+    pub fn grants_ownership_to(&self, subjects: &[String]) -> bool {
         self.grants.iter().any(|g| {
             g.subject_type == SUBJECT_MEMBER
-                && g.subject_id == subject
+                && subjects.contains(&g.subject_id)
                 && g.role_key == ROLE_OWNER
                 && g.scope_type == SCOPE_ORG
         })
@@ -152,12 +156,13 @@ impl AccessConfig {
     /// administering the organization, and reading it as though it did would
     /// let a grant about one project decide who may change memberships.
     ///
-    /// `subject` is a token subject, for the reason given on [`set_owner_grant`].
+    /// `subjects` is every sign-in subject of one person — see
+    /// [`Self::grants_ownership_to`] for why that is the unit of the question.
     #[must_use]
-    pub fn grants_privilege_to(&self, subject: &str, privilege: &str) -> bool {
+    pub fn grants_privilege_to(&self, subjects: &[String], privilege: &str) -> bool {
         self.grants.iter().any(|g| {
             g.subject_type == SUBJECT_MEMBER
-                && g.subject_id == subject
+                && subjects.contains(&g.subject_id)
                 && g.scope_type == SCOPE_ORG
                 && self.role_carries(&g.role_key, privilege)
         })
@@ -276,6 +281,11 @@ pub async fn set_owner_grant(
 mod tests {
     use super::*;
 
+    /// One login, the way every caller looked before a person could have two.
+    fn one(subject: &str) -> Vec<String> {
+        vec![subject.to_owned()]
+    }
+
     fn config(json: serde_json::Value) -> AccessConfig {
         serde_json::from_value(json).expect("valid access config")
     }
@@ -288,8 +298,8 @@ mod tests {
                 "roleKey": "owner", "scopeType": "org"
             }]
         }));
-        assert!(cfg.grants_ownership_to("ada"));
-        assert!(!cfg.grants_ownership_to("bob"));
+        assert!(cfg.grants_ownership_to(&one("ada")));
+        assert!(!cfg.grants_ownership_to(&one("bob")));
     }
 
     #[test]
@@ -302,14 +312,14 @@ mod tests {
             serde_json::json!({"subjectType": "member", "subjectId": "ada", "roleKey": "owner", "scopeType": "project"}),
         ] {
             let cfg = config(serde_json::json!({ "grants": [grant] }));
-            assert!(!cfg.grants_ownership_to("ada"));
+            assert!(!cfg.grants_ownership_to(&one("ada")));
         }
     }
 
     #[test]
     fn a_document_with_no_grants_denies() {
-        assert!(!AccessConfig::default().grants_ownership_to("ada"));
-        assert!(!config(serde_json::json!({})).grants_ownership_to("ada"));
+        assert!(!AccessConfig::default().grants_ownership_to(&one("ada")));
+        assert!(!config(serde_json::json!({})).grants_ownership_to(&one("ada")));
     }
 
     /* ── Holding a privilege (ADR-0019 §2, §3) ── */
@@ -338,17 +348,17 @@ mod tests {
             "grants": [grant("ada", "admin", "org")],
         }));
         assert!(!cfg.is_roles_model());
-        assert!(!cfg.grants_ownership_to("ada"));
+        assert!(!cfg.grants_ownership_to(&one("ada")));
     }
 
     #[test]
     fn an_admin_on_the_roles_model_holds_people_manage_but_not_access_manage() {
         let cfg = roles_doc(serde_json::json!([grant("ada", "admin", "org")]));
         assert!(cfg.is_roles_model());
-        assert!(cfg.grants_privilege_to("ada", "people.manage"));
-        assert!(cfg.grants_privilege_to("ada", "people.invite"));
+        assert!(cfg.grants_privilege_to(&one("ada"), "people.manage"));
+        assert!(cfg.grants_privilege_to(&one("ada"), "people.invite"));
         assert!(
-            !cfg.grants_privilege_to("ada", "access.manage"),
+            !cfg.grants_privilege_to(&one("ada"), "access.manage"),
             "ADR-0011 §7: a role is denied operations outside its privilege set"
         );
     }
@@ -356,10 +366,10 @@ mod tests {
     #[test]
     fn a_viewer_holds_reads_and_nothing_that_writes() {
         let cfg = roles_doc(serde_json::json!([grant("ada", "viewer", "org")]));
-        assert!(cfg.grants_privilege_to("ada", "people.view"));
+        assert!(cfg.grants_privilege_to(&one("ada"), "people.view"));
         for privilege in ["people.manage", "people.invite", "access.manage"] {
             assert!(
-                !cfg.grants_privilege_to("ada", privilege),
+                !cfg.grants_privilege_to(&one("ada"), privilege),
                 "a viewer was allowed {privilege}"
             );
         }
@@ -376,7 +386,7 @@ mod tests {
         }));
         for privilege in PRIVILEGES {
             assert!(
-                cfg.grants_privilege_to("ada", privilege),
+                cfg.grants_privilege_to(&one("ada"), privilege),
                 "an owner was denied {privilege} because the document omits the role"
             );
         }
@@ -386,13 +396,49 @@ mod tests {
     #[test]
     fn a_project_scoped_grant_does_not_administer_the_organization() {
         let cfg = roles_doc(serde_json::json!([grant("ada", "admin", "project")]));
-        assert!(!cfg.grants_privilege_to("ada", "people.manage"));
+        assert!(!cfg.grants_privilege_to(&one("ada"), "people.manage"));
     }
 
     #[test]
     fn a_member_with_no_grant_holds_nothing() {
         let cfg = roles_doc(serde_json::json!([grant("bob", "admin", "org")]));
-        assert!(!cfg.grants_privilege_to("ada", "people.manage"));
+        assert!(!cfg.grants_privilege_to(&one("ada"), "people.manage"));
+    }
+
+    /// The defect this set exists to close (ADR-0006 follow-up 2). A grant
+    /// records whichever login was in front of whoever wrote it. Ada owns the
+    /// organization; she also signs in with GitHub. Asked about that login
+    /// alone, she is not the owner of the place she owns.
+    #[test]
+    fn an_owner_is_the_owner_whichever_way_they_signed_in() {
+        let cfg = config(serde_json::json!({
+            "grants": [grant("ada-keycloak", "owner", "org")]
+        }));
+        let both = vec!["ada-github".to_owned(), "ada-keycloak".to_owned()];
+
+        assert!(cfg.grants_ownership_to(&both));
+        assert!(
+            !cfg.grants_ownership_to(&one("ada-github")),
+            "this is the old behaviour, kept here to say what changed"
+        );
+        assert!(cfg.grants_ownership_to(&one("ada-keycloak")));
+    }
+
+    /// The set is one person's logins, never a way to borrow somebody else's.
+    #[test]
+    fn another_persons_login_in_the_set_grants_nothing() {
+        let cfg = config(serde_json::json!({
+            "grants": [grant("bob", "owner", "org")]
+        }));
+        assert!(!cfg.grants_ownership_to(&["ada-github".to_owned(), "ada-keycloak".to_owned()]));
+    }
+
+    #[test]
+    fn a_privilege_follows_the_person_too() {
+        let cfg = roles_doc(serde_json::json!([grant("ada-keycloak", "admin", "org")]));
+        let both = vec!["ada-github".to_owned(), "ada-keycloak".to_owned()];
+        assert!(cfg.grants_privilege_to(&both, "people.manage"));
+        assert!(!cfg.grants_privilege_to(&both, "access.manage"));
     }
 
     /// The ladder is what a grant's `roleKey` is resolved against, so every key
