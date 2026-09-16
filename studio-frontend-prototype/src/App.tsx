@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { env as runtimeEnv } from "./env";
 import { errText, matches } from "./format";
@@ -20,6 +20,14 @@ import { makeZip } from "./zip";
 import { DomainModelGraph } from "./domain-model-graph";
 import { GtsEntitiesTable } from "./gts-entities";
 import { GearsTable, PermissionsTable } from "./system-tables";
+import {
+  StudioBridgeProvider,
+  useStudioBridge,
+  type SavedDocument,
+  type StudioBridge,
+  type StudioDocumentRef,
+  type StudioTarget,
+} from "./studio-bridge";
 import {
   ACCESS_MODELS,
   defaultAccessConfig,
@@ -44,6 +52,7 @@ import {
   type ProjectMode,
   type RemoteRepo,
   type RepoEntry,
+  type StudioSession,
   type Tenant,
   type WorkspaceSettings,
   sessionOrigin,
@@ -90,16 +99,14 @@ interface Workspace extends Tenant {
  *  treats workspace_id as an opaque per-session key — directory name, pod
  *  label, idempotency — and does not require it to be a tenant, so no tenant is
  *  created for a nested project. */
-type StudioTarget = {
-  id: string;
-  name: string;
-  /** Explicit repo set; when omitted the launcher reads workspaceSettings(id). */
-  repos?: RepoEntry[];
-  /** Root repo/path override; when omitted taken from workspaceSettings(id). */
-  root?: { path?: string; repoUrl?: string; branch?: string; tokenRef?: string };
-  /** True when this is a nested project (no workspaceSettings of its own). */
-  standalone?: boolean;
-};
+/* The type itself now lives in ./studio-bridge, next to the hand-off contract
+   that consumes it, so a view can take a target without importing the shell. */
+
+/** One postMessage frame on the portal → IDE channel. `type` is always a
+ *  `studio.*` name the IDE's portal-bridge knows; the rest is the payload for
+ *  that name. Deliberately loose — the bridge transports, `studio-bridge`
+ *  defines the typed calls that produce these. */
+type BridgeMessage = { type: string } & Record<string, unknown>;
 
 /** The product's mark, served from public/. Built through BASE_URL rather than
  *  written as "/constructor-symbol.svg": vite is configured with `base: "./"`
@@ -650,6 +657,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   const closeSpace = useCallback((wsId: string) => {
     stopInitRetry(wsId);
+    // The bridge dies with the frame: drop its readiness and anything still
+    // queued for it, so a later space with the same id re-handshakes instead
+    // of posting into a window that is gone.
+    bridgeReadyRef.current.delete(wsId);
+    delete bridgeQueueRef.current[wsId];
     setSpaces((prev) => prev.filter((s) => s.wsId !== wsId));
     setActiveSpace((a) => (a === wsId ? null : a));
     setSpaceDirty((prev) => {
@@ -803,15 +815,129 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
+  /* ── One-gesture editing hand-off (contract in ./studio-bridge) ──
+     A view asks for a document/file/graph in the IDE; this reuses or launches
+     the session, mounts its space and delivers the message. Messages posted
+     before the IDE's bridge has answered the handshake are QUEUED PER SPACE
+     and flushed on its first `studio.*` reply — a plain postMessage into a
+     booting iframe is dropped, which is why opening the IDE used to have to be
+     a separate, earlier click.
+
+     This replaces the single module-scoped `pendingEditorOpen` slot: one queue
+     per space rather than one path per tab, so two spaces can be handed a file
+     each, and so the queue can carry a document or the graph and not only a
+     repository path. */
+  const spacesRef = useRef(spaces);
+  spacesRef.current = spaces;
+  const bridgeReadyRef = useRef<Set<string>>(new Set());
+  const bridgeQueueRef = useRef<Record<string, BridgeMessage[]>>({});
+  const [opening, setOpening] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<{ name: string; error?: string } | null>(null);
+  const [savedDocument, setSavedDocument] = useState<SavedDocument | null>(null);
+
+  const postToFrame = useCallback((wsId: string, msg: BridgeMessage): boolean => {
+    const frame = Array.from(
+      document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame"),
+    ).find((f) => f.dataset.ws === wsId);
+    const origin = frame?.dataset.origin;
+    if (!frame || !origin) return false;
+    frame.contentWindow?.postMessage(msg, origin);
+    return true;
+  }, []);
+
+  const postToSpace = useCallback(
+    (wsId: string, msg: BridgeMessage) => {
+      if (bridgeReadyRef.current.has(wsId) && postToFrame(wsId, msg)) return;
+      const queue = bridgeQueueRef.current;
+      queue[wsId] = [...(queue[wsId] ?? []), msg];
+    },
+    [postToFrame],
+  );
+
+  const flushSpaceQueue = useCallback(
+    (wsId: string) => {
+      const queued = bridgeQueueRef.current[wsId];
+      if (!queued?.length) return;
+      delete bridgeQueueRef.current[wsId];
+      for (const msg of queued) postToFrame(wsId, msg);
+    },
+    [postToFrame],
+  );
+
+  const openInStudio = useCallback(
+    async (target: StudioTarget, msg: BridgeMessage) => {
+      setHandoff({ name: target.name });
+      setOpening(target.id);
+      try {
+        if (spacesRef.current.some((s) => s.wsId === target.id)) {
+          // Already mounted — switching costs nothing and never reloads Theia.
+          setActiveSpace(target.id);
+        } else {
+          const ready = await startStudioSession(token, target);
+          openSpace(target, { id: ready.id, url: ready.url });
+        }
+        postToSpace(target.id, msg);
+        setHandoff(null);
+      } catch (e) {
+        setHandoff({ name: target.name, error: errText(e) });
+      } finally {
+        setOpening(null);
+      }
+    },
+    [token, openSpace, postToSpace],
+  );
+
+  const studioBridge = useMemo<StudioBridge>(
+    () => ({
+      openDocument: (target: StudioTarget, doc: StudioDocumentRef) =>
+        openInStudio(target, {
+          type: "studio.openDocument",
+          // The documents gear stores rows under the workspace tenant, while a
+          // space can be keyed by a project — the two ids differ, so both have
+          // to travel.
+          workspaceId: doc.workspaceId,
+          documentId: doc.id,
+          title: doc.title,
+        }),
+      openFile: (target: StudioTarget, path: string) =>
+        openInStudio(target, { type: "studio.openInEditor", path }),
+      openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
+      opening,
+      isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
+      savedDocument,
+    }),
+    [openInStudio, opening, savedDocument],
+  );
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const sp = spaces.find((s) => spaceOrigin(s.url) === e.origin);
       if (!sp) return; // only embedded sessions are trusted senders
-      const d = e.data as { type?: string; dirty?: number };
+      const d = e.data as {
+        type?: string;
+        dirty?: number;
+        workspaceId?: string;
+        documentId?: string;
+      };
       if (typeof d?.type === "string" && d.type.startsWith("studio.")) {
         stopInitRetry(sp.wsId); // the bridge is alive — handshake done
-        const waiting = takePendingEditorOpen();
-        if (waiting) openInStudioEditor(waiting);
+        // …and anything a view asked for while it was booting can go now.
+        bridgeReadyRef.current.add(sp.wsId);
+        flushSpaceQueue(sp.wsId);
+      }
+      if (
+        d?.type === "studio.documentSaved" &&
+        typeof d.workspaceId === "string" &&
+        typeof d.documentId === "string"
+      ) {
+        // The IDE wrote a portal document back through the documents gear —
+        // the Documents view re-reads it (content, status, conformance) rather
+        // than showing the copy it had before the hand-off.
+        setSavedDocument({
+          workspaceId: d.workspaceId,
+          documentId: d.documentId,
+          at: Date.now(),
+        });
       }
       if (d?.type === "studio.status" && typeof d.dirty === "number") {
         const dirty = d.dirty; // narrow before the closure
@@ -822,7 +948,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [spaces]);
+  }, [spaces, flushSpaceQueue, spaceOrigin, stopInitRetry]);
 
   useEffect(() => {
     // Broadcast portal theme changes to every mounted space.
@@ -1061,6 +1187,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   }
 
   return (
+    <StudioBridgeProvider value={studioBridge}>
     <div className="shell">
       {/* The only chrome in the flow: one 56px row carrying the control that
           opens the navigation drawer, the product, the context the session is
@@ -1533,6 +1660,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               title={`Studio — ${s.wsName}`}
               allow="clipboard-read; clipboard-write"
               data-origin={spaceOrigin(s.url)}
+              /* Addresses this frame for a targeted hand-off — the theme/token
+                 broadcasts go to every space, `studio.openDocument` to one. */
+              data-ws={s.wsId}
               onLoad={(e) => {
                 // Handshake: theme + the caller's API token (the IDE calls the
                 // gears same-origin through the session gate's /studio-api/*).
@@ -1542,6 +1672,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 // reset the timer each time.
                 const frame = e.currentTarget;
                 const origin = spaceOrigin(s.url);
+                // A (re)load means a fresh bridge that has not acked yet:
+                // anything posted now would be dropped, so go back to queuing
+                // until it answers the handshake below.
+                bridgeReadyRef.current.delete(s.wsId);
                 const post = () => {
                   const theme = document.documentElement.dataset.theme ?? "light";
                   frame.contentWindow?.postMessage(
@@ -1775,7 +1909,36 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           componentCategories={componentCategories}
         />
       )}
+
+      {/* Editing hand-off. One overlay for every entry point — a document, a
+          repository file, the graph — so no view has to grow its own "the IDE
+          is starting" state, and so the wait is visibly part of the SAME
+          gesture rather than a launcher the user has to notice and click. */}
+      {handoff && (
+        <div className="handoff" role="status" aria-live="polite">
+          <div className="handoff-card">
+            {handoff.error ? (
+              <>
+                <h2>Could not open {handoff.name} in Studio</h2>
+                <p className="error">{handoff.error}</p>
+                <button className="primary" onClick={() => setHandoff(null)}>
+                  Close
+                </button>
+              </>
+            ) : (
+              <>
+                <h2>Opening {handoff.name} in Studio…</h2>
+                <p className="hint">
+                  Starting the IDE session and handing the editor over. The first launch of a
+                  workspace takes a few seconds while its sources are cloned.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+    </StudioBridgeProvider>
   );
 }
 
@@ -2467,7 +2630,7 @@ function ProjectsView({
         onChanged={onChanged}
       />
       <div style={{ marginTop: 20 }}>
-        <WorkspaceCatalogue token={token} workspaceId={root.id} />
+        <WorkspaceCatalogue token={token} workspaceId={root.id} studioTarget={root} />
       </div>
     </>
   );
@@ -2483,7 +2646,16 @@ function ProjectsView({
  */
 type CatalogueTab = "types" | "process" | "documents";
 
-function WorkspaceCatalogue({ token, workspaceId }: { token: string; workspaceId: string }) {
+function WorkspaceCatalogue({
+  token,
+  workspaceId,
+  studioTarget,
+}: {
+  token: string;
+  workspaceId: string;
+  /** The workspace an "Edit in Studio" hand-off launches the IDE against. */
+  studioTarget?: StudioTarget;
+}) {
   const [tab, setTab] = useState<CatalogueTab>("types");
   const TABS: { id: CatalogueTab; label: string; hint: string }[] = [
     { id: "types", label: "Document types", hint: "Templates, section checklists and rules" },
@@ -2510,7 +2682,13 @@ function WorkspaceCatalogue({ token, workspaceId }: { token: string; workspaceId
       </div>
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
       {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
-      {tab === "documents" && <WorkspaceDocumentsTab token={token} workspaceId={workspaceId} />}
+      {tab === "documents" && (
+        <WorkspaceDocumentsTab
+          token={token}
+          workspaceId={workspaceId}
+          studioTarget={studioTarget}
+        />
+      )}
     </div>
   );
 }
@@ -3201,6 +3379,7 @@ function ProjectScreen({
 }) {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const studio = useStudioBridge();
 
   useEffect(() => {
     let cancelled = false;
@@ -3264,7 +3443,10 @@ function ProjectScreen({
             token={token}
             workspaceId={workspace.id}
             projectTenantId={proj.id}
-            onOpenFile={(path) => openDocumentInStudio(path, () => onOpenStudio(proj))}
+            /* One gesture: the bridge reuses or launches this project's
+               session, mounts its space and opens the file — no launcher card
+               in between, and nothing lost if the IDE is still booting. */
+            onOpenFile={(path) => void studio?.openFile(proj, path)}
           />
         )}
         {tab === "findings" && (
@@ -4547,56 +4729,15 @@ function ArtifactsView({
         onOpenStudio={onOpenStudio}
         onSynced={() => setRefreshKey((k) => k + 1)}
       />
-      <IngestedArtifacts token={token} scope={workspace.id} refreshKey={refreshKey} />
+      <IngestedArtifacts
+        token={token}
+        scope={workspace.id}
+        target={workspace}
+        refreshKey={refreshKey}
+      />
       <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
     </>
   );
-}
-
-/** A file the portal asked the IDE to open before the IDE existed.
- *
- *  Opening a document means starting a session when none is running, and a
- *  `studio.openInEditor` posted at an iframe that has not loaded its bridge yet
- *  is simply lost — the same failure the `studio.init` retry exists for. So the
- *  path waits here and goes out on the bridge's first sign of life.
- *
- *  Module-scoped rather than a prop threaded from the shell to the project
- *  screen: one browser tab opens one file at a time, and the listener that
- *  drains it lives several components above the button that fills it. */
-let pendingEditorOpen: string | null = null;
-
-function takePendingEditorOpen(): string | null {
-  const path = pendingEditorOpen;
-  pendingEditorOpen = null;
-  return path;
-}
-
-/** Open a document where documents are edited: the project's IDE session.
- *
- *  Two steps because the second only works once the first has happened. The
- *  session may not be running at all, and even a fresh iframe spends its first
- *  load events on the session gate's redirect, so the path is both posted now
- *  (for a session already up) and remembered for the bridge's first message.
- *
- *  The path is repo-relative, which is what the IDE's opener wants: it resolves
- *  against every workspace root and each root's children, because a repository
- *  is cloned to `/workspace/<name>`. */
-function openDocumentInStudio(path: string, start: () => void): void {
-  pendingEditorOpen = path;
-  start();
-  openInStudioEditor(path);
-}
-
-/** Ask every embedded Studio (Theia) iframe to open a file in its editor. The
- *  IDE's portal-bridge maps `studio.openInEditor` onto the editor open against
- *  the workspace roots (ADR-0010). `path` is checkout-relative — a repo file's
- *  path. No-op when no session is open. */
-function openInStudioEditor(path?: string): void {
-  if (!path) return;
-  document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame").forEach((f) => {
-    const origin = f.dataset.origin;
-    if (origin) f.contentWindow?.postMessage({ type: "studio.openInEditor", path }, origin);
-  });
 }
 
 /** The ingested-artifacts viewer: issues and pull requests pulled from the
@@ -4605,14 +4746,18 @@ function openInStudioEditor(path?: string): void {
 function IngestedArtifacts({
   token,
   scope,
+  target,
   refreshKey,
 }: {
   token: string;
   /** Project tenant id — reads are scoped to it so the list shows only this
    *  project's ingested artifacts, not every repo across the org. */
   scope?: string;
+  /** The project the IDE opens against when a row is handed off to it. */
+  target: StudioTarget;
   refreshKey: number;
 }) {
+  const studio = useStudioBridge();
   const PAGE = 50;
   const [nodes, setNodes] = useState<import("./api").ArtifactNode[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -4673,25 +4818,20 @@ function IngestedArtifacts({
   const emptyLabel =
     tab === "issue" ? "issues" : tab === "pull_request" ? "pull requests" : "files";
 
-  // Experiment: ask the embedded Studio (Theia) sessions to open their
-  // Workspace Graph view. Same postMessage channel as the theme/token bridge;
-  // the IDE's portal-bridge maps `studio.openGraph` onto the graph command.
-  const openGraphInStudio = () => {
-    document
-      .querySelectorAll<HTMLIFrameElement>("iframe.space-frame")
-      .forEach((f) => {
-        const origin = f.dataset.origin;
-        if (origin) f.contentWindow?.postMessage({ type: "studio.openGraph" }, origin);
-      });
-  };
-
   return (
     <div className="card">
       <div className="card-head">
         <h2>Ingested{total != null ? ` · ${total}` : ""}</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="ghost" onClick={openGraphInStudio} title="Open the Workspace Graph in the embedded Studio IDE">
-            Open graph in Studio
+          {/* Launches the session if none is running — the graph is one click
+              from here whether or not the IDE is already open. */}
+          <button
+            className="ghost"
+            onClick={() => void studio?.openGraph(target)}
+            disabled={!studio || studio.opening === target.id}
+            title="Open the Workspace Graph in the Studio IDE"
+          >
+            {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
           </button>
           <button className="ghost" onClick={() => load(offset)} disabled={busy}>
             Refresh
@@ -4788,8 +4928,9 @@ function IngestedArtifacts({
                   {typeof v.path === "string" && v.path && (
                     <button
                       className="ghost"
-                      onClick={() => openInStudioEditor(v.path)}
-                      title="Open this file in the embedded Studio editor"
+                      onClick={() => void studio?.openFile(target, String(v.path))}
+                      disabled={!studio || studio.opening === target.id}
+                      title="Open this file in the Studio editor"
                     >
                       Open in editor
                     </button>
@@ -7169,6 +7310,58 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
 
 /* ── Studio launcher (studio-session gear → per-workspace Theia container) ── */
 
+/** Reuse-or-launch the IDE session for a target and return it only once the
+ *  backend's reachability probe says it is actually serving.
+ *
+ *  Creation is idempotent per workspace — the gear returns the already-running
+ *  session instead of a second container — so this doubles as "give me the
+ *  session for this target", which is what makes the editing hand-off a single
+ *  gesture (`studio-bridge`) rather than a launch click plus an edit click.
+ *
+ *  Sources are read at launch time on purpose: a launcher card may have been
+ *  open since before the last "Save repositories", and a stale snapshot
+ *  silently launches without the new sources/targets/token refs.
+ *
+ *  `onResolved` reports the sources back so a caller that displays them (the
+ *  launcher card) does not need a second round trip. */
+async function startStudioSession(
+  token: string,
+  target: StudioTarget,
+  onResolved?: (sources: {
+    repos: RepoEntry[];
+    root: { path?: string; repoUrl?: string; branch?: string; tokenRef?: string };
+  }) => void,
+): Promise<StudioSession> {
+  let repos = target.repos ?? [];
+  let root = target.root ?? {};
+  // A nested project is standalone — it carries its own repos/root and has no
+  // workspaceSettings of its own to read.
+  if (!target.standalone) {
+    try {
+      const s = await api.workspaceSettings(token, target.id);
+      repos = s?.repos ?? [];
+      root = {
+        path: s?.root_path?.trim() || undefined,
+        repoUrl: s?.root_repo_url?.trim() || undefined,
+        branch: s?.root_branch?.trim() || undefined,
+        tokenRef: s?.root_token_ref?.trim() || undefined,
+      };
+    } catch {
+      // Settings unreachable — fall back to whatever the target carries.
+    }
+  }
+  onResolved?.({ repos, root });
+  const usable = repos.filter((r) =>
+    r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
+  );
+  const created = await api.createStudioSession(token, target.id, usable, root);
+  // The backend probes the session on its own run; this only watches it, and
+  // asks for the record once it is up.
+  return waitForStudioSessionReady(created, () => api.studioSession(token, created.id), {
+    follow: (runId) => followRun(token, runId, () => {}),
+  });
+}
+
 function StudioLauncher({
   token,
   target,
@@ -7236,39 +7429,13 @@ function StudioLauncher({
     setBusy(true);
     setError(null);
     try {
-      // Re-read settings at launch time: the card may have been open since
-      // before the last "Save repositories", and a stale snapshot silently
-      // launches without the new sources/targets/token refs.
-      let freshRepos = repos ?? [];
-      let freshRoot = root;
-      if (!target.standalone) {
-        try {
-          const s = await api.workspaceSettings(token, target.id);
-          freshRepos = s?.repos ?? [];
-          freshRoot = {
-            path: s?.root_path?.trim() || undefined,
-            repoUrl: s?.root_repo_url?.trim() || undefined,
-            branch: s?.root_branch?.trim() || undefined,
-            tokenRef: s?.root_token_ref?.trim() || undefined,
-          };
-          setRepos(freshRepos);
-          setRoot(freshRoot);
-        } catch {
-          // Settings unreachable — fall back to the snapshot we have.
-        }
-      }
-      const usable = freshRepos.filter((r) =>
-        r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
-      );
-      const created = await api.createStudioSession(token, target.id, usable, freshRoot);
-      setSession(created);
-      // The backend probes the session on its own run; this only watches it,
-      // and asks for the record once it is up.
-      const ready = await waitForStudioSessionReady(
-        created,
-        () => api.studioSession(token, created.id),
-        { follow: (runId) => followRun(token, runId, () => {}) },
-      );
+      // Same path the editing hand-off takes (see `startStudioSession`), so a
+      // session opened from a document and one opened from this card are the
+      // same session with the same sources.
+      const ready = await startStudioSession(token, target, (sources) => {
+        setRepos(sources.repos);
+        setRoot(sources.root);
+      });
       setSession(ready);
       onOpen({ id: ready.id, url: ready.url });
     } catch (e) {

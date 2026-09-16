@@ -2,6 +2,7 @@ import { injectable } from '@theia/core/shared/inversify';
 import { Disposable, DisposableCollection } from '@theia/core';
 import { NavigatableWidgetOpenHandler, NavigatableWidgetOptions, OpenWithService, OpenWithHandler, WidgetOpenerOptions } from '@theia/core/lib/browser';
 import URI from '@theia/core/lib/common/uri';
+import { isStudioDocumentUri } from '../../common/studio-document-uri';
 import { MarkdownEditorWidget } from './markdown-editor-widget';
 
 @injectable()
@@ -48,6 +49,12 @@ export class MarkdownEditorOpenHandler extends NavigatableWidgetOpenHandler<Mark
     }
 
     protected canOpen(uri: URI): boolean {
+        // A portal document is markdown by definition — it has no other form,
+        // so the scheme alone decides (its URI does end in `.md`, but that is
+        // a display detail of the address, not a claim about a file on disk).
+        if (isStudioDocumentUri(uri)) {
+            return true;
+        }
         if (uri.scheme !== 'file') {
             return false;
         }

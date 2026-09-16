@@ -4,6 +4,7 @@ import { StudioContribution } from './studio-contribution';
 import { ApplicationShell, bindViewContribution, FrontendApplicationContribution, LabelProviderContribution, OpenHandler, SaveableService, WidgetFactory, WebSocketConnectionProvider } from '@theia/core/lib/browser';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
+import { ResourceResolver } from '@theia/core/lib/common/resource';
 import { StudioRuntimeService, studioRuntimeServicePath } from '../common/studio-protocol';
 import { FilesystemSaveableService } from '@theia/filesystem/lib/browser/filesystem-saveable-service';
 import { GitOperationsContribution, GitOperationsFrontendController } from './git-operations-contribution';
@@ -45,6 +46,8 @@ import { PortalBridgeContribution } from './portal-bridge-contribution';
 import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
+import { StudioDocumentOpener } from './studio-document-opener';
+import { StudioDocumentResourceResolver } from './studio-document-resource';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
@@ -92,6 +95,12 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     rebind(FilesystemSaveableService).toService(StudioSaveableService);
     bind(MarkdownEditorOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownEditorOpenHandler);
+    // Portal documents as editable resources (`studio-doc:`). Without the
+    // ResourceResolver binding the scheme resolves to nothing and the editor
+    // opens an empty, unsaveable tab — the resolver IS the integration.
+    bind(StudioDocumentResourceResolver).toSelf().inSingletonScope();
+    bind(ResourceResolver).toService(StudioDocumentResourceResolver);
+    bind(StudioDocumentOpener).toSelf().inSingletonScope();
     bind(GraphOpenHandler).toSelf().inSingletonScope();
     bind(MarkdownEditorContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(MarkdownEditorContribution);

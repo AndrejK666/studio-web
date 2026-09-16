@@ -6,7 +6,15 @@
 //    portal never opens a light IDE.
 //  * IDE → portal: `studio.status` messages report the dirty-editor count,
 //    so the portal can mark the space ("unsaved changes" dot) without
-//    polling.
+//    polling, and `studio.documentSaved` reports a portal document the IDE
+//    has just written back through the documents gear.
+//
+// The portal→IDE half also carries the *editing hand-off*: `studio.openInEditor`
+// (a repository file), `studio.openGraph` and `studio.openDocument` (a portal
+// document, opened in the markdown editor via the `studio-doc:` resolver).
+// The portal queues these until its handshake is acked, so a message that
+// arrives with — or before — the session's first paint is still delivered:
+// that is what lets "open the IDE" and "edit this thing" be one click.
 //
 // Security: messages are only exchanged with the embedding window. We do
 // not know the portal's origin at build time (dev :5173, prod domains), so
@@ -19,10 +27,13 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser/fronten
 import { ThemeService } from '@theia/core/lib/browser/theming';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { Saveable } from '@theia/core/lib/browser/saveable';
-import { CommandService, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
+import { CommandService, Disposable, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { ArtifactGraphCommand } from './artifact-graph-contribution';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
 import { StudioApi } from './studio-api';
+import { StudioDocumentOpener } from './studio-document-opener';
+import { StudioDocumentResourceResolver } from './studio-document-resource';
 
 interface PortalMessage {
     type?: string;
@@ -31,8 +42,17 @@ interface PortalMessage {
     path?: string;
     /** Tenant that opened this session — a workspace tenant (shows every
      *  project under it) or a project tenant (shows just that project). Scopes
-     *  the Artifact Graph's reads so it never bleeds other projects' nodes. */
+     *  the Artifact Graph's reads so it never bleeds other projects' nodes.
+     *
+     *  On `studio.openDocument` it means something narrower: the workspace
+     *  tenant that STORES the document. A project shows its parent workspace's
+     *  documents, so the two ids genuinely differ and the handshake's scope
+     *  cannot stand in for it. */
     workspaceId?: string;
+    /** `studio.openDocument`: the document to open, and the title its editor
+     *  tab shows. */
+    documentId?: string;
+    title?: string;
 }
 
 /**
@@ -58,6 +78,13 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     @inject(OpenInEditorFrontendController)
     protected readonly opener: OpenInEditorFrontendController;
 
+    @inject(StudioDocumentOpener)
+    protected readonly documentOpener: StudioDocumentOpener;
+
+    @inject(StudioDocumentResourceResolver)
+    protected readonly documentResources: StudioDocumentResourceResolver;
+
+    protected readonly toDispose = new DisposableCollection();
     protected portalOrigin: string | undefined;
     protected lastDirty = -1;
     protected lastAiToken = '';
@@ -67,7 +94,21 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             return; // standalone tab — no portal to talk to
         }
 
-        window.addEventListener('message', (event) => {
+        // Tell the portal about every document this session writes back, so its
+        // list, status and conformance checklist re-read the row instead of
+        // showing the copy it held before the hand-off.
+        this.toDispose.push(this.documentResources.onDidSaveDocument(ref => {
+            if (!this.portalOrigin) {
+                return;
+            }
+            window.parent.postMessage({
+                type: 'studio.documentSaved',
+                workspaceId: ref.workspaceId,
+                documentId: ref.documentId,
+            }, this.portalOrigin);
+        }));
+
+        const onMessage = (event: MessageEvent): void => {
             if (event.source !== window.parent) {
                 return; // only the embedding portal window is trusted
             }
@@ -101,12 +142,29 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // against the first workspace root by the controller.
                 void this.opener.onOpenInEditor({ relativePath: msg.path });
             }
-        });
+            if (msg.type === 'studio.openDocument' && msg.workspaceId && msg.documentId) {
+                // A portal DOCUMENT — not a file in any checkout. It opens in
+                // the markdown editor over the `studio-doc:` resolver, which
+                // reads and writes it through the documents gear, so the portal
+                // and the IDE edit one row rather than two copies.
+                void this.documentOpener.open(
+                    { workspaceId: msg.workspaceId, documentId: msg.documentId },
+                    msg.title,
+                );
+            }
+        };
+        window.addEventListener('message', onMessage);
+        this.toDispose.push(Disposable.create(() => window.removeEventListener('message', onMessage)));
 
         // Dirty-state reporting: cheap 2s poll over the shell's widgets —
         // there is no aggregate dirty event, and per-widget listeners would
         // leak on close. Only changes are posted.
-        setInterval(() => this.postStatus(), 2000);
+        const statusTimer = setInterval(() => this.postStatus(), 2000);
+        this.toDispose.push(Disposable.create(() => clearInterval(statusTimer)));
+    }
+
+    onStop(): void {
+        this.toDispose.dispose();
     }
 
     /**

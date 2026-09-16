@@ -95,6 +95,12 @@ export class StudioSaveableService extends FilesystemSaveableService {
         result: URI,
         savedContent: BinaryBuffer | undefined
     ): Promise<void> {
+        if (result.scheme !== 'file') {
+            // A portal document (`studio-doc:`) is stored by the documents gear,
+            // not by any checkout — there is no repository path to journal and
+            // nothing for the git operation queue to commit.
+            return;
+        }
         const runtimeSession = await this.operationsController.getSession();
         if (!runtimeSession?.workspaceId || !runtimeSession.features.allowGitMutations) {
             return;
