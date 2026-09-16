@@ -32,6 +32,57 @@ pub enum SessionAddress {
     Service { host: String, port: u16 },
 }
 
+impl SessionAddress {
+    /// Where the BACKEND dials this session.
+    ///
+    /// Not the same thing as where the browser goes. A `Loopback` session is
+    /// published on the backend HOST's loopback, which is only `127.0.0.1`
+    /// when the backend runs on that host; in compose it runs in a container
+    /// of its own, where `127.0.0.1` is itself and nothing answers. The probe
+    /// used to hardcode it and so could never see a healthy session come up —
+    /// the record stayed `starting` until the caller gave up, with a
+    /// perfectly good IDE listening on the other side of the bridge.
+    ///
+    /// `reach_host` is [`StudioSessionConfig::control_reach_host`], which
+    /// already names that host for the control API on this very port.
+    pub fn dial_target(&self, reach_host: &str) -> String {
+        match self {
+            Self::Loopback { port } => format!("{reach_host}:{port}"),
+            Self::Service { host, port } => format!("{host}:{port}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::SessionAddress;
+
+    #[test]
+    fn loopback_is_dialled_on_the_configured_reach_host() {
+        let address = SessionAddress::Loopback { port: 41_000 };
+        // Backend on the host: unchanged.
+        assert_eq!(address.dial_target("127.0.0.1"), "127.0.0.1:41000");
+        // Backend in a container: the published port lives on the host.
+        assert_eq!(
+            address.dial_target("host.docker.internal"),
+            "host.docker.internal:41000"
+        );
+    }
+
+    #[test]
+    fn a_service_address_names_its_own_host() {
+        let address = SessionAddress::Service {
+            host: "session-abc.studio.svc".into(),
+            port: 3003,
+        };
+        // In-cluster DNS is already absolute — the reach host must not apply.
+        assert_eq!(
+            address.dial_target("host.docker.internal"),
+            "session-abc.studio.svc:3003"
+        );
+    }
+}
+
 /// A local source directory bind-mounted into the workspace. Docker-only: the
 /// Kubernetes driver has no host filesystem to bind and rejects a non-empty
 /// list at launch.
