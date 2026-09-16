@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { env as runtimeEnv } from "./env";
 import { errText, matches } from "./format";
 import { ProjectsPortfolio } from "./projects";
+import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
 import { BackgroundWork } from "./tasks";
@@ -3000,6 +3001,9 @@ function WorkspaceProjects({
   onChanged: () => void;
 }) {
   const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
+  /** Documents, findings and repositories per project. Absent until counted —
+   *  see rollups.ts on why an uncounted project must not render as 0. */
+  const [rollups, setRollups] = useState<Record<string, ProjectRollup>>({});
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -3045,6 +3049,31 @@ function WorkspaceProjects({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // What each project contains, counted after the table has already painted
+  // its names. Three reads per project, each settled on its own — a project
+  // whose gears are half-deployed shows the numbers it can and a dash for the
+  // rest, rather than costing the whole column. Deliberately NOT part of
+  // `reload`: a rename must not make every count blink back to "—".
+  const projectIds = (projects ?? []).map((p) => p.id).join(",");
+  useEffect(() => {
+    if (!projectIds) {
+      setRollups({});
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      const entries = await Promise.all(
+        projectIds
+          .split(",")
+          .map(async (id) => [id, await projectRollup(token, workspace.id, id)] as const),
+      );
+      if (alive) setRollups(Object.fromEntries(entries));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [token, workspace.id, projectIds]);
 
   // Load the shared component catalogue when the create card opens.
   useEffect(() => {
@@ -3529,8 +3558,14 @@ function WorkspaceProjects({
         ) : (
           <table className="ptable">
             <thead>
+              {/* What each project CONTAINS, beside what it is called. The
+                  table used to say a name and a truncated id, which answered
+                  nothing anybody opens this screen to find out. */}
               <tr>
                 <th>Project</th>
+                <th className="pnum">Documents</th>
+                <th className="pnum">Findings</th>
+                <th className="pnum">Repos</th>
                 <th>ID</th>
                 <th aria-label="actions" />
               </tr>
@@ -3565,6 +3600,18 @@ function WorkspaceProjects({
                         </div>
                       </div>
                     </td>
+                    <td className="pnum">{rollupText(rollups[p.id]?.documents ?? null)}</td>
+                    {/* Findings read as a state, not a quantity: any open
+                        finding is the reason to look at this project, and the
+                        number only says how much of it there is. */}
+                    <td className="pnum">
+                      {rollups[p.id]?.findings ? (
+                        <span className="pnum-attn">{rollups[p.id]!.findings}</span>
+                      ) : (
+                        rollupText(rollups[p.id]?.findings ?? null)
+                      )}
+                    </td>
+                    <td className="pnum">{rollupText(rollups[p.id]?.repos ?? null)}</td>
                     <td>
                       <code>{p.id.slice(0, 8)}…</code>
                     </td>
