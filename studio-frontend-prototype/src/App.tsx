@@ -1722,7 +1722,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                           spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
                         }`}
                       >
-                        <span className="ico">⚙</span> {s.wsName}
+                        <span className="ico">⚙</span>
+                        <span className="space-name">{s.wsName}</span>
                         {(spaceDirty[s.wsId] ?? 0) > 0 && <span className="dirty-dot">●</span>}
                       </button>
                       <button
