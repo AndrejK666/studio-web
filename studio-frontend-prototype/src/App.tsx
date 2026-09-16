@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { env as runtimeEnv } from "./env";
-import { errText, matches } from "./format";
+import { errText, matches, relTime } from "./format";
 import { ProjectsPortfolio } from "./projects";
 import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
@@ -15,7 +15,7 @@ import { ObjectTypes } from "./object-types";
 import { ProjectKits } from "./kits";
 import { DocumentsTab, DocumentTypesTab, WorkspaceDocumentsTab } from "./documents";
 import { ProcessCatalogTab } from "./process-catalog";
-import { runRepoSync, type SyncProgress } from "./artifact-sync";
+import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { DomainModelGraph } from "./domain-model-graph";
@@ -3673,6 +3673,11 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "overview", icon: "home", label: "Overview" },
   { id: "components", icon: "package", label: "Components" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
+  // Sources sits beside Artifacts because it is where they come from: a sync
+  // run here is what puts anything in that list at all. It was a card near the
+  // bottom of Overview, which buried the project's only long-running action
+  // under six panels people read and then leave.
+  { id: "sources", icon: "plug", label: "Sources" },
   // Documents stands where the product puts Findings — see ProjTab. A finding
   // is about a document and does not survive being separated from one.
   { id: "documents", icon: "scan", label: "Documents" },
@@ -3759,14 +3764,25 @@ function ProjectScreen({
           />
         )}
         {tab === "artifacts" && (
-          <ArtifactsView
-            token={token}
-            workspace={proj}
-            parentWorkspaceId={workspace.id}
-            onOpenStudio={onOpenStudio}
-          />
+          <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} />
         )}
         {tab === "components" && <ProjectKits token={token} projectId={proj.id} />}
+        {tab === "sources" && (
+          <>
+            <h1>Sources</h1>
+            <p className="subtitle">
+              The repositories this project is built from. A session clones them when you open it;
+              a sync pulls their issues, pull requests and files into the artifact graph — which is
+              where every artifact number in this project comes from.
+            </p>
+            <ProjectSources
+              token={token}
+              workspace={proj}
+              parentWorkspaceId={workspace.id}
+              onOpenStudio={onOpenStudio}
+            />
+          </>
+        )}
         {tab === "documents" && (
           <DocumentsTab
             token={token}
@@ -5037,31 +5053,30 @@ function ArtifactsView({
   token,
   workspace,
   parentWorkspaceId,
-  onOpenStudio,
 }: {
   token: string;
   workspace: Workspace;
   /** The parent workspace tenant id. `workspace` here is the project tenant;
-   *  both are tagged onto synced nodes so the graph can scope to either. */
+   *  ProjectFiles tags BOTH onto every file it adds so the graph can scope to
+   *  either level. Still needed after Sources moved out — dropping it would
+   *  silently start writing files that only the project can see. */
   parentWorkspaceId?: string;
-  onOpenStudio?: (ws: Workspace) => void;
 }) {
-  // Bumped after every successful sync so the ingested-artifacts viewer reloads.
-  const [refreshKey, setRefreshKey] = useState(0);
+  // Was bumped after every sync, back when the sync button was on this page.
+  // It is a Sources action now, and this list re-reads on mount — which is the
+  // only moment it can have changed, because you have to leave to run one.
+  const [refreshKey] = useState(0);
   return (
     <>
       <h1>Artifacts</h1>
       <p className="subtitle">
-        What this project works on — repositories attached as sources, plus files added by hand. A
-        session clones these into the IDE when you open it.
+        What a sync pulled into this project's graph — issues, pull requests and files — plus files
+        added by hand. The repositories they came from are on the Sources tab.
       </p>
-      <ProjectSources
-        token={token}
-        workspace={workspace}
-        parentWorkspaceId={parentWorkspaceId}
-        onOpenStudio={onOpenStudio}
-        onSynced={() => setRefreshKey((k) => k + 1)}
-      />
+      {/* Sources moved out to their own section. This tab lists what a sync
+          PRODUCED, and attaching a repository is not a thing you do while
+          reading that list. The two were on one page mostly because the sync
+          button had to live somewhere. */}
       <IngestedArtifacts
         token={token}
         scope={workspace.id}
@@ -5487,6 +5502,9 @@ function ProjectSources({
   onSynced?: () => void;
 }) {
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
+  /** The `repo` nodes the graph holds for this project — what a sync left
+   *  behind, keyed by full path rather than by name. */
+  const [repoNodes, setRepoNodes] = useState<import("./api").ArtifactNode[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Per-repo artifact-sync progress, keyed by repo name.
@@ -5509,7 +5527,28 @@ function ProjectSources({
   const reload = useCallback(async () => {
     const s = await api.workspaceSettings(token, ws.id).catch(() => null);
     setRepos(s?.repos ?? []);
+    // The graph's side of a source: present once it has been synced at least
+    // once, carrying when that was and what came in. This used to be readable
+    // only from the Overview card, which is why that card existed at all —
+    // without it a source that has never been synced looks exactly like one
+    // that synced this morning.
+    try {
+      const page = await api.listArtifactNodes(token, "repo", ws.id, undefined, 200);
+      setRepoNodes(page.nodes ?? []);
+    } catch {
+      // Ingest not deployed: the rows still list what is attached, and simply
+      // cannot say when it was last pulled.
+      setRepoNodes([]);
+    }
   }, [token, ws.id]);
+
+  /** Matched on the parsed full path, not on the directory name: the name is a
+   *  local choice, the full path is the repository's identity. */
+  const graphRepo = (r: RepoEntry): import("./api").ArtifactNode | undefined => {
+    const fullPath = parseRepoSource(r.url ?? undefined)?.full_path;
+    if (!fullPath) return undefined;
+    return repoNodes.find((n) => n.value.full_path === fullPath);
+  };
 
   useEffect(() => {
     void reload();
@@ -5555,7 +5594,20 @@ function ProjectSources({
         <p className="empty">No repositories attached yet — pick one from a connector below.</p>
       ) : (
         <ul className="rows">
-          {repos.map((r) => (
+          {repos.map((r) => {
+            const node = graphRepo(r);
+            const live = sync[r.name];
+            const syncedAt = node?.value.synced_at as string | undefined;
+            const pulled = node
+              ? [
+                  node.value.issues ? `${node.value.issues} issues` : "",
+                  node.value.pull_requests ? `${node.value.pull_requests} PRs` : "",
+                  node.value.files ? `${node.value.files} files` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "";
+            return (
             <li key={r.name}>
               <div className="grow">
                 <div className="name">{r.name}</div>
@@ -5563,22 +5615,41 @@ function ProjectSources({
                   {r.source}
                   {r.url ? ` · ${r.url}` : ""}
                   {r.branch ? ` · ${r.branch}` : ""}
-                  {sync[r.name] ? ` — sync: ${sync[r.name].line}` : ""}
+                </div>
+                {/* What the graph knows. A running sync's own line wins — it is
+                    the newer fact — and "never synced" is stated rather than
+                    left as an empty row, because that is the state this screen
+                    exists to make visible. */}
+                <div className="sub">
+                  {live ? (
+                    live.line
+                  ) : node ? (
+                    <>
+                      {syncedAt ? `synced ${relTime(syncedAt)}` : "synced"}
+                      {pulled ? ` — ${pulled}` : ""}
+                    </>
+                  ) : (
+                    "never synced"
+                  )}
                 </div>
               </div>
+              <span className={`badge ${live?.running ? "syncing" : node ? "ok" : "warn"}`}>
+                {live?.running ? "syncing" : node ? "synced" : "not synced"}
+              </span>
               <button
                 className="ghost"
                 title="Clone this source and pull its issues, pull requests and files into the graph"
-                disabled={!!sync[r.name]?.running}
+                disabled={!!live?.running}
                 onClick={() => void syncRepo(r)}
               >
-                {sync[r.name]?.running ? "…" : "Sync"}
+                {live?.running ? "…" : node ? "Re-sync" : "Sync"}
               </button>
               <button className="ghost" disabled={busy === r.name} onClick={() => void detach(r.name)}>
                 {busy === r.name ? "…" : "Detach"}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 
