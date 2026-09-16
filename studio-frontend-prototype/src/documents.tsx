@@ -3250,6 +3250,11 @@ function TypesView({
 
   return (
     <div className="dt-grid">
+      {/* A table, not a column of cards. Each type carried five facts stacked
+          into three lines inside a 280px rail, so the reader compared them by
+          scrolling instead of by scanning — the question "which of these has
+          front-matter rules" needed seven separate reads. In columns it is one
+          glance down, and the same table idiom the documents list uses. */}
       <aside className="dt-list">
         <div className="dt-list-head">
           <span className="dt-list-title">
@@ -3259,20 +3264,30 @@ function TypesView({
             New type
           </button>
         </div>
+        <div className="dt-row dt-row-head">
+          <span>Name</span>
+          <span>Key</span>
+          <span>Owner</span>
+          <span>Sections</span>
+          <span>Front-matter</span>
+        </div>
         {types.map((t) => (
           <button
             key={t.key}
-            className={`dt-type${dirtyKey === t.key ? " active" : ""}`}
+            className={`dt-row dt-type${dirtyKey === t.key ? " active" : ""}`}
             onClick={() => load(t)}
           >
             <span className="dt-type-name">{t.name}</span>
-            <span className="dt-type-meta">
-              <code>{t.key}</code>
+            <code className="dt-type-key">{t.key}</code>
+            <span>
               <span className={`dt-owner ${t.owner === "workspace" ? "ws" : "bi"}`}>{t.owner}</span>
             </span>
-            <span className="dt-type-sub">
-              {t.sections.length} section{t.sections.length === 1 ? "" : "s"}
-              {t.rules.front_matter.length > 0 ? ` · ${t.rules.front_matter.length} front-matter` : ""}
+            <span className="dt-type-num">{t.sections.length}</span>
+            {/* A dash, not a 0. Zero front-matter rules and "this type does not
+                use front matter" are the same fact, and a column of noughts
+                reads as data the reader has to discount. */}
+            <span className="dt-type-num">
+              {t.rules.front_matter.length || <span className="dt-dash">—</span>}
             </span>
           </button>
         ))}
@@ -3283,7 +3298,7 @@ function TypesView({
         {!editing ? (
           <div className="dt-empty">
             <div className="dt-empty-ic">▤</div>
-            <p>Pick a type on the left to view or override it, or create a new one.</p>
+            <p>Pick a type above to view or override it, or create a new one.</p>
             <p className="dt-hint">
               Saving always writes a <strong>workspace-owned</strong> type — overriding a built-in of
               the same key — and every project inherits it.
@@ -3483,14 +3498,28 @@ const DOCTYPES_CSS = `
 .doctypes .dt-flow-arrow { align-self: center; color: var(--dtmu); font-size: 15px; }
 .doctypes .dt-flow-arrow.big { font-size: 18px; color: var(--dtac); }
 
-/* 280px, not 250: "Architecture Decision Record" wrapped to three lines at the
-   old width, which is what made every card in the list a different height. */
-.doctypes .dt-grid { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 16px; align-items: start; }
+/* The table on top, the editor under it — not side by side. A 280px rail could
+   not hold five facts per type without stacking them three deep, and the editor
+   it left room for is the tallest screen in the product: both halves were
+   cramped to make a split that helped neither. Full width, one below the other,
+   each with the room it actually needs. */
+.doctypes .dt-grid { display: flex; flex-direction: column; gap: 16px; }
 /* ONE panel with hairline dividers, not a stack of bordered cards each with its
    own gap. Eight types were eight floating boxes with eight shadow-less
    outlines — the list read as eight unrelated things rather than one column of
-   choices, and the 6px gaps made it taller than the editor beside it. */
+   choices. */
 .doctypes .dt-list { display: flex; flex-direction: column; border: 1px solid var(--dtb); border-radius: var(--radius-xl); background: var(--dtsf); overflow: hidden; }
+/* Name | Key | Owner | Sections | Front-matter. Name is the only one that
+   flexes; the four beside it are short and fixed, so the columns do not
+   reshuffle as types load in. */
+/* Only Name flexes. Key was minmax(140px,0.5fr) and took 339px at 1600 to
+   print "adr" — a slug has a known, short length, so the slack belongs to the
+   one column that can actually use it. */
+.doctypes .dt-row { display: grid; grid-template-columns: minmax(200px,1fr) 180px 110px 90px 120px; gap: 12px; align-items: center; padding: 10px 14px; }
+.doctypes .dt-row-head { font-family: var(--font-mono); font-size: 10px; line-height: 16px; text-transform: uppercase; color: var(--dtmu); border-bottom: 1px solid var(--dtb); }
+.doctypes .dt-type-key { font-size: 11px; color: var(--dtmu); overflow: hidden; text-overflow: ellipsis; }
+.doctypes .dt-type-num { font-variant-numeric: tabular-nums; color: var(--dttx); }
+.doctypes .dt-dash { opacity: 0.4; }
 /* The create action is a control, not a banner. It was a full-width solid-blue
    slab above the list — the single heaviest thing on a screen whose subject is
    the list under it. It sits in the panel's own header row now, at the size the
@@ -3499,20 +3528,17 @@ const DOCTYPES_CSS = `
 .doctypes .dt-list-title { font-family: var(--font-mono); font-size: 10px; line-height: 16px; text-transform: uppercase; color: var(--dtmu); }
 .doctypes .dt-new { padding: 5px 12px; height: 28px; border-radius: var(--radius-md); border: 1px solid var(--dtb); cursor: pointer; background: var(--dtsf2); color: var(--dttx); font: inherit; font-size: 12px; font-weight: 500; }
 .doctypes .dt-new:hover { background: var(--studio-control-hover-neutral); }
-.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; color: inherit; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 0; border-top: 1px solid var(--dtb); border-radius: 0; background: none; transition: background var(--motion-micro) var(--ease-standard), color var(--motion-micro) var(--ease-standard); }
-.doctypes .dt-type:first-of-type { border-top: 0; }
+.doctypes .dt-type { text-align: left; cursor: pointer; font: inherit; font-size: 12px; color: inherit; border: 0; border-top: 1px solid var(--dtb); border-radius: 0; background: none; transition: background var(--motion-micro) var(--ease-standard), color var(--motion-micro) var(--ease-standard); }
+.doctypes .dt-row-head + .dt-type { border-top: 0; }
 .doctypes .dt-type:hover { background: var(--studio-control-hover-neutral); }
 /* Selected is the shell's own pair — neutral fill, blue label — so a chosen
    type reads the same as a chosen section in the band above it. */
 .doctypes .dt-type.active { background: var(--studio-selection-subtle); }
 .doctypes .dt-type.active .dt-type-name { color: var(--dtac); }
-.doctypes .dt-type-name { font-weight: 600; font-size: 13px; }
-.doctypes .dt-type-meta { display: flex; align-items: center; gap: 7px; }
-.doctypes .dt-type-meta code { font-size: 11px; color: var(--dtmu); }
+.doctypes .dt-type-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doctypes .dt-owner { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: var(--radius-full); }
 .doctypes .dt-owner.bi { background: var(--dtsf2); color: var(--dtmu); border: 1px solid var(--dtb); }
 .doctypes .dt-owner.ws { background: var(--dtacs); color: var(--dtac); }
-.doctypes .dt-type-sub { font-size: 10.5px; color: var(--dtmu); }
 
 .doctypes .dt-editor { display: flex; flex-direction: column; gap: 12px; }
 .doctypes .dt-empty { text-align: center; padding: 40px 20px; color: var(--dtmu); border: 1px dashed var(--dtb); border-radius: 12px; }
@@ -3556,5 +3582,7 @@ const DOCTYPES_CSS = `
 .doctypes .dt-save { font: inherit; font-weight: 600; cursor: pointer; background: var(--dtac); color: var(--primary-foreground); border: 0; border-radius: var(--radius-lg); padding: 9px 16px; }
 .doctypes .dt-save:disabled { opacity: .6; cursor: default; }
 
-@media (max-width: 720px) { .doctypes .dt-grid { grid-template-columns: 1fr; } }
+/* Past the columns' own minimums the panel scrolls sideways rather than
+   crushing Name to an ellipsis — the same trade the documents table makes. */
+@media (max-width: 900px) { .doctypes .dt-list { overflow-x: auto; } }
 `;
