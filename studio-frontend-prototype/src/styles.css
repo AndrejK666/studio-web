@@ -505,14 +505,32 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
    width of the AI dock, which is why it animates: opening the assistant is a
    deliberate act and the work is expected to make room for it. */
 .shell-body {
+  --nav-track: 48px;
+  --ai-track: 48px;
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px;
+  display: grid;
+  grid-template-columns: var(--nav-track) minmax(0, 1fr) var(--ai-track);
   position: relative;
   transition: grid-template-columns var(--motion-panel) var(--ease-standard);
 }
-.shell-body[data-ai="open"] { grid-template-columns: 48px minmax(0, 1fr) 368px; }
-.shell-body[data-ai="none"] { grid-template-columns: 48px minmax(0, 1fr) 0; }
-.shell-body > .screen { min-width: 0; position: relative; z-index: 0; }
+/* PINNED is not hover. On hover the rail overlays and the track stays 48px, so
+   a pointer crossing the edge never reflows the screen — that is the shipped
+   behaviour and it is right for something transient. Pinning is a decision the
+   user made and keeps, so it takes a real 240px track and the work moves over.
+   Leaving it at 48px is what the first cut did, and the open rail then sat on
+   top of 192px of content for as long as it stayed pinned. */
+.shell-body[data-sidebar="open"] { --nav-track: 240px; }
+.shell-body[data-ai="open"] { --ai-track: 368px; }
+.shell-body[data-ai="none"] { --ai-track: 0; }
+/* grid-column: 2 is NOT redundant, and leaving it to auto-placement is what
+   blanked the whole work area once. The rail is `position: absolute`, so it is
+   out of flow and occupies no cell; the only other child, .studio-ai, claims
+   column 3 explicitly. That leaves .screen as the first in-flow item, and
+   auto-placement drops it into column 1 — the 48px rail track — where it is
+   both a sliver and completely covered by the rail painted over it. The work
+   area looks empty because it is 48px wide and hidden, not because nothing
+   rendered. Say which column it belongs to. */
+.shell-body > .screen { grid-column: 2; min-width: 0; min-height: 0; position: relative; z-index: 0; }
 
 .appbar {
   display: flex; align-items: center;
@@ -949,12 +967,22 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 @media (max-width: 720px) {
   .appbar .bar-context, .appbar .bar-sep { display: none; }
   /* Both flanks give up their footprint: 96px of permanent chrome is a quarter
-     of a phone. The assistant opens over the content here, full width. */
+     of a phone. Both panels open OVER the content at this width — including the
+     pinned rail, which cannot afford a 240px track here. */
   .shell-body,
+  .shell-body[data-sidebar="open"],
   .shell-body[data-ai="open"],
-  .shell-body[data-ai="none"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .shell-body[data-ai="none"] { --nav-track: 0; --ai-track: 0; }
   .studio-ai.collapsed { display: none; }
   .shell-body[data-ai="open"] .studio-ai {
+    /* grid-column: 1 / -1 is what makes the width below mean anything. An
+       absolutely-positioned child of a grid container is positioned against its
+       GRID AREA, not the container's padding box, whenever its grid position is
+       definite. The base rule pins this panel to column 3, and column 3 is 0px
+       wide here — so `100%` resolved to 0 and the panel came out 1px wide (its
+       own left border). Spanning every column restores a containing block with
+       a real width. */
+    grid-column: 1 / -1;
     position: absolute; inset: 0 0 0 auto; z-index: 45;
     width: min(368px, 100%); box-shadow: var(--shadow-lg);
   }
