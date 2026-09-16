@@ -3460,12 +3460,13 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "overview", icon: "home", label: "Overview" },
   { id: "components", icon: "package", label: "Components" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
-  { id: "findings", icon: "scan", label: "Findings" },
+  // Documents stands where the product puts Findings — see ProjTab. A finding
+  // is about a document and does not survive being separated from one.
+  { id: "documents", icon: "scan", label: "Documents" },
   { id: "activity", icon: "activity", label: "Activity" },
   { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
   // Ours, kept below the product's list rather than interleaved with it.
-  { id: "documents", icon: "file", label: "Documents" },
   { id: "automation", icon: "shield", label: "Automation" },
 ];
 
@@ -3562,10 +3563,14 @@ function ProjectScreen({
                session, mounts its space and opens the file — no launcher card
                in between, and nothing lost if the IDE is still booting. */
             onOpenFile={(path) => void studio?.openFile(proj, path)}
+            /* The detector console, handed in rather than imported inside the
+               tab: it needs the PROJECT tenant as its workspace and the parent
+               as its catalogue scope, which is the pairing this screen already
+               holds and documents.tsx would have to be taught. */
+            analysis={
+              <SpecQuality token={token} workspaceId={proj.id} parentWorkspaceId={workspace.id} />
+            }
           />
-        )}
-        {tab === "findings" && (
-          <SpecQuality token={token} workspaceId={proj.id} parentWorkspaceId={workspace.id} />
         )}
         {/* Two sections the product has and this prototype does not. They say
             so rather than showing a plausible-looking empty table: a section
