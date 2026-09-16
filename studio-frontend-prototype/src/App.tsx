@@ -2040,7 +2040,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             filters={filters}
             crumb={crumb}
             setCrumb={setCrumb}
-            projectLabel={projectLabel}
             setProjectLabel={setProjectLabel}
             projectTab={projectTab}
             setProjectTab={setProjectTab}
@@ -2759,29 +2758,6 @@ function PathBar({
   );
 }
 
-function Breadcrumbs({
-  items,
-}: {
-  items: { label: string; onClick?: () => void }[];
-}) {
-  return (
-    <nav className="crumbs">
-      {items.map((it, i) => (
-        <span key={`${it.label}-${i}`}>
-          {i > 0 && <span className="crumb-sep">/</span>}
-          {it.onClick ? (
-            <button type="button" className="linklike" onClick={it.onClick}>
-              {it.label}
-            </button>
-          ) : (
-            <span className="crumb-here">{it.label}</span>
-          )}
-        </span>
-      ))}
-    </nav>
-  );
-}
-
 function ProjectsView({
   token,
   workspaces,
@@ -2790,7 +2766,6 @@ function ProjectsView({
   filters,
   crumb,
   setCrumb,
-  projectLabel,
   setProjectLabel,
   projectTab,
   setProjectTab,
@@ -2807,7 +2782,9 @@ function ProjectsView({
   filters: Filters;
   crumb: Crumb;
   setCrumb: (c: Crumb) => void;
-  projectLabel?: string;
+  /** Only the SETTER: opening a project names it for the bar's PathBar. The
+   *  label itself was read here by the breadcrumb trail, and there is no trail
+   *  any more. */
   setProjectLabel: (n: string | undefined) => void;
   /** Open project's active section — the shell owns this, because the band
    *  that switches it is shell chrome above the work area. */
@@ -2846,21 +2823,17 @@ function ProjectsView({
     );
   }
 
-  const trail: { label: string; onClick?: () => void }[] = [
-    ...(activeOrg ? [{ label: activeOrg.name, onClick: () => setCrumb({}) }] : []),
-    { label: "Workspaces", onClick: () => setCrumb({}) },
-    {
-      label: root.name,
-      onClick: crumb.nestedId ? () => setCrumb({ projectId: root.id }) : undefined,
-    },
-  ];
-  if (crumb.nestedId) trail.push({ label: projectLabel ?? "project" });
+  /* There is no breadcrumb trail here any more. The top bar's PathBar already
+     carries organization › workspace › project, and carries it BETTER: each
+     segment is a picker, so it both says where you are and moves you, while a
+     crumb only moves you back the way you came. Two rows of the same path with
+     the weaker one directly under the stronger one is the kind of duplication
+     nobody notices they are ignoring. */
 
   // Level 3 — an open project (its own AM tenant): a self-contained screen.
   if (crumb.nestedId) {
     return (
       <>
-        <Breadcrumbs items={trail} />
         <ProjectScreen
           key={crumb.nestedId}
           token={token}
@@ -2880,7 +2853,6 @@ function ProjectsView({
   // the work area, exactly as a project behaves.
   return (
     <>
-      <Breadcrumbs items={trail} />
       {workspaceTab === "projects" ? (
         <WorkspaceProjects
           token={token}
