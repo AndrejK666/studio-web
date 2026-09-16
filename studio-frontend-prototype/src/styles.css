@@ -817,7 +817,110 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .proj-content { min-width: 0; }
 /* Project switcher reuses the org switcher shell; mark the current project. */
 .org-menu button.on { color: var(--primary); font-weight: 600; }
-/* ── Login page (creative full-bleed) ── */
+/* ── Sign-in ─────────────────────────────────────────────────────────────────
+   The deployed portal's own screen, read off the .initial-auth-* block that its
+   index.html inlines for the first paint — so these are the product's numbers,
+   not a measurement of a screenshot. Two panes: a story on a dark-to-blue
+   gradient, and a fixed 480px card beside it.
+
+   The gradient is hard-coded rather than mixed from tokens. It is authored art
+   with four stops, it is identical in both themes there, and deriving it from
+   --primary would make a theme change silently repaint the front door. */
+.auth-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(480px, 2fr);
+  min-height: 100dvh;
+  overflow: hidden;
+  background: linear-gradient(107deg, #090b10 4%, #0f172a 51%, #0065e3 95%);
+  color: #fff;
+}
+.auth-story,
+.auth-panel-wrap { display: flex; align-items: center; min-height: 800px; }
+.auth-story { padding: 0 clamp(48px, 5vw, 80px); }
+.auth-story > div { width: 100%; max-width: 760px; }
+.auth-brand { margin: 0; font-size: 36px; line-height: 40px; font-weight: 600; }
+.auth-rule {
+  width: 64px; height: 3px; margin-top: 34px;
+  border-radius: var(--radius-full); background: var(--primary);
+}
+/* The skeleton reserves a fixed 170px here so the headline cannot reflow when
+   the real one arrives. There is nothing to arrive for us — this IS the real
+   one — so it takes its natural height. */
+.auth-title {
+  margin: 29px 0 0;
+  font-size: clamp(48px, 3.5vw, 56px); line-height: 1.14;
+  font-weight: 600; letter-spacing: -0.025em;
+}
+.auth-copy {
+  max-width: 720px; margin: 30px 0 0;
+  color: rgb(255 255 255 / 0.7); font-size: 14px; line-height: 20px;
+}
+
+.auth-panel-wrap { justify-content: center; padding: 0 40px; }
+/* 480px wide is the product's exact figure. The height is NOT: theirs is a flat
+   640px because an e-mail and a password field fill it, and ours has neither
+   (see the Login component). A min-height keeps the card from reading as a stub
+   without stranding 200px of empty white under the last control. */
+.auth-panel {
+  box-sizing: border-box;
+  width: 480px; min-height: 560px; padding: 34px 40px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.12);
+}
+.auth-kicker {
+  margin: 0; color: var(--muted-foreground);
+  font: 10px/14px var(--font-mono);
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.auth-heading {
+  margin: 12px 0 0; color: var(--foreground);
+  font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em;
+}
+.auth-panel-copy {
+  margin: 12px 0 0; color: var(--muted-foreground);
+  font-size: 14px; line-height: 20px;
+}
+/* Every control in the card is the same 40px pill on the same 10px radius —
+   the product draws its fields and its buttons to one metric. */
+.auth-panel .auth-submit,
+.auth-panel .auth-provider,
+.auth-panel .auth-more button {
+  box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; height: 40px; padding: 0 12px;
+  border: 1px solid var(--input); border-radius: var(--radius);
+  font-size: 12px; font-weight: 500;
+}
+.auth-panel .auth-submit {
+  margin-top: 22px;
+  border-color: var(--primary); background: var(--primary); color: var(--primary-foreground);
+}
+.auth-divider { height: 1px; margin-top: 34px; background: var(--border); }
+.auth-panel .auth-provider { margin-top: 22px; background: var(--muted); color: var(--foreground); }
+.auth-panel .auth-provider svg { flex: none; }
+/* Google and Microsoft: still working, deliberately quieter than GitHub. */
+.auth-more { display: flex; gap: 10px; margin-top: 10px; }
+.auth-more button { color: var(--muted-foreground); }
+.auth-error { margin-top: 16px; }
+
+@media (max-width: 1280px) {
+  .auth-shell { grid-template-columns: minmax(0, 1fr) 520px; }
+}
+/* One column below the product's own breakpoint: 480px of card plus a headline
+   that starts at 48px cannot share a phone. The story keeps the gradient and
+   loses its fixed 800px, which would otherwise push the card off-screen. */
+@media (max-width: 860px) {
+  .auth-shell { grid-template-columns: minmax(0, 1fr); }
+  .auth-story { min-height: 0; padding: 48px clamp(24px, 6vw, 48px) 0; }
+  .auth-title { font-size: clamp(32px, 8vw, 44px); }
+  .auth-panel-wrap { min-height: 0; padding: 32px 16px 48px; }
+  .auth-panel { width: 100%; max-width: 480px; min-height: 0; padding: 28px 24px; }
+}
+
+/* ── Login page (creative full-bleed) ──
+   Still the frame for the access-pending screen, which is not a sign-in: the
+   identity is already established and the answer is about membership. */
 .login-page {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   background:
