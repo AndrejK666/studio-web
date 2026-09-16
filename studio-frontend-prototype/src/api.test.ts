@@ -490,6 +490,50 @@ describe("waitForStudioSessionReady", () => {
     ).rejects.toThrow("image pull failed");
   });
 
+  it("stops polling once the run has reported a failure", async () => {
+    // The poll is the loser of a `Promise.race`, and a race settles only its
+    // winner. Before the poll took the abort signal it kept asking for the rest
+    // of the deadline — with the default 120s that is two minutes of requests
+    // about a session the user has already been told is dead. This test is the
+    // reason api.test.ts used to take 120 seconds to run.
+    const starting = { ...session("starting"), ready_run_id: "run-5" };
+    let refreshes = 0;
+    let clock = 0;
+    await expect(
+      waitForStudioSessionReady(
+        starting,
+        async () => {
+          refreshes += 1;
+          return session("starting");
+        },
+        {
+          follow: async () => ({ state: "failed", error: "image pull failed" }),
+          // A real clock, so a poll that ignored the signal would have to burn
+          // the whole deadline rather than skip it in fake time.
+          now: () => clock,
+          timeoutMs: 120_000,
+          pollIntervalMs: 1_000,
+          sleep: async (milliseconds) => {
+            clock += milliseconds;
+          },
+        },
+      ),
+    ).rejects.toThrow("image pull failed");
+
+    // Let anything still running have its turn before counting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The clock is the assertion that matters. Every poll iteration advances it
+    // by one interval, so a loop that ignored the signal would run the deadline
+    // out and leave it at 120_000. Stopping leaves it at a couple of ticks.
+    expect(clock).toBeLessThan(5_000);
+    // And the request count follows from that. Not "at most one": the race
+    // rejects and the abort lands a few microtasks apart, so the loop can get
+    // one more turn in between. The point is that it is a small constant and
+    // not the ~120 it takes to sit out the deadline.
+    expect(refreshes).toBeLessThanOrEqual(3);
+  });
+
   it("polls when the deployment queued no probe run", async () => {
     let refreshes = 0;
     const ready = await waitForStudioSessionReady(
