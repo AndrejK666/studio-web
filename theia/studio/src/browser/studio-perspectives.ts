@@ -23,7 +23,6 @@ import { FILE_NAVIGATOR_ID } from '@theia/navigator/lib/browser/navigator-widget
 import { AnalyzeWidget } from './analyze-widget';
 import { DEFAULT_LAYOUT } from './studio-contribution';
 import { OrcaWidget } from './orca-widget';
-import { WorkspaceGraphWidget } from './workspace-graph-widget';
 import { DOCUMENTS_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 
 @injectable()
@@ -39,7 +38,13 @@ export class StudioPerspectiveContribution implements PerspectiveContribution {
             // The graph last, so it takes the focus from the agents dock —
             // the same order `StudioContribution.initializeLayout` establishes
             // when it builds a fresh session's layout.
-            primaryViews: { right: OrcaWidget.ID, main: WorkspaceGraphWidget.ID },
+            primaryViews: { right: OrcaWidget.ID },
+            // The desktop collapses its side panels on start; this workbench
+            // had no equivalent, and #167 recorded the result — a fresh session
+            // opening with a wide strip of unclaimed right panel beside the
+            // editor. Collapsed is not hidden: the Agents dock is one click on
+            // its tab, and the panel stays where the person leaves it.
+            chromeOptions: { collapseAreas: ['right', 'bottom'] },
         });
 
         service.registerPerspective({
