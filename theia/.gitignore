@@ -1,9 +1,18 @@
 node_modules
 .browser_modules
+# Compiled TypeScript output: studio/lib and drawio-editor/lib. Matches at
+# any depth. product-ext is hand-written JavaScript and lives under src/,
+# so nothing here touches it — which is exactly why it was moved out of a
+# directory called lib/, where it read as build output and was skipped.
 lib
 *.log
 *-app/*
 !*-app/package.json
+# The esbuild customization (mermaid as its own script, .wasm as a file,
+# no secondary-window app) is source, not generated output: `theia build`
+# writes a default esbuild.mjs only when one is absent, so an ignored file
+# would be silently replaced by the default on every fresh checkout.
+!browser-app/esbuild.mjs
 !browser-app/scripts/
 browser-app/scripts/*
 !browser-app/scripts/start-browser.js
@@ -441,3 +450,7 @@ browser-app/scripts/*
 .windsurf/workflows/cf-write-skills.md
 .windsurf/workflows/cf.md
 # END Constructor Studio
+
+# A capture left behind by a debugging session, and a file created by a shell
+# expansion that never ran. Neither belongs in the tree.
+*.har
