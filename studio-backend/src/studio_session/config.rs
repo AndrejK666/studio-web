@@ -135,9 +135,13 @@ pub struct StudioSessionConfig {
     #[serde(default)]
     pub theia_control_enabled: bool,
 
-    /// Host studio-backend uses to reach a Loopback session's control API
-    /// (Docker MVP). Default `127.0.0.1` (backend on the host); set to
-    /// `host.docker.internal` when the backend itself runs in a container.
+    /// Host studio-backend uses to DIAL a Loopback session — both the
+    /// readiness probe that moves it from `starting` to `running` and the
+    /// control API (Docker MVP), which share the session's port.
+    ///
+    /// Default `127.0.0.1` (backend on the host); set to
+    /// `host.docker.internal` when the backend itself runs in a container,
+    /// where its own loopback is not the host that published the port.
     #[serde(default = "default_control_reach_host")]
     pub control_reach_host: String,
 }

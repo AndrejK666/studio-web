@@ -174,10 +174,7 @@ impl SessionDriver for DockerDriver {
     }
 
     async fn is_reachable(&self, address: &SessionAddress) -> bool {
-        let addr = match address {
-            SessionAddress::Loopback { port } => format!("127.0.0.1:{port}"),
-            SessionAddress::Service { host, port } => format!("{host}:{port}"),
-        };
+        let addr = address.dial_target(&self.cfg.control_reach_host);
         tokio::time::timeout(
             std::time::Duration::from_millis(500),
             tokio::net::TcpStream::connect(&addr),
