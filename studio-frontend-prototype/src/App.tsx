@@ -102,10 +102,18 @@ type StudioTarget = {
 };
 
 /** The product's mark, served from public/. Built through BASE_URL rather than
- *  written as "/favicon.png": vite is configured with `base: "./"` precisely
- *  because this bundle is also mounted under `/prototype/` (see nginx.conf),
- *  and an absolute path would 404 there while working fine at the root. */
-const PRODUCT_MARK = `${import.meta.env.BASE_URL}favicon.png`;
+ *  written as "/constructor-symbol.svg": vite is configured with `base: "./"`
+ *  precisely because this bundle is also mounted under `/prototype/` (see
+ *  nginx.conf), and an absolute path would 404 there while working fine at the
+ *  root.
+ *
+ *  The VECTOR symbol, taken from the deployed portal (/brand/constructor-symbol-
+ *  vector.svg), not the old 79KB favicon.png. The mark is a gradient fabric knot
+ *  that is drawn at 18px in the rail and at 44px on the sign-in screen; the
+ *  raster was authored for a browser tab and visibly mushed at both. favicon.png
+ *  stays in public/ for now — nothing references it, but the deploy's nginx
+ *  config may still be asked for it. */
+const PRODUCT_MARK = `${import.meta.env.BASE_URL}constructor-symbol.svg`;
 
 /* ── Filters (right panel) ── */
 
@@ -403,6 +411,15 @@ function NavIcon({ name }: { name: string }) {
         <path d="M8 8h.01M8 16h.01" />
       </>
     ),
+    // lucide `activity` and `clock-3`, the two the shipped project-sidebar uses
+    // for those sections.
+    activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
+    clock: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5h4" />
+      </>
+    ),
   };
   return (
     <svg
@@ -574,10 +591,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     setAccountMenu(false);
     setMenuOpen(false);
   };
-  /** The navigation drawer. Closed is the resting state and it is not
-   *  remembered: an overlay that covered the screen on every load would be a
-   *  worse sidebar, not a drawer. */
+  /** Whether the navigation rail is PINNED open. Not "is it visible" — the rail
+   *  is always visible and opens on hover; this is only the latch that keeps it
+   *  open once the pointer leaves. Unpinned is the resting state. */
   const [menuOpen, setMenuOpen] = useState(false);
+  /** Whether the Studio AI dock is open (368px) rather than railed (48px).
+   *  Owned here because the shell grid sizes the track — see .shell-body. */
+  const [aiOpen, setAiOpen] = useState(false);
   const [home, setHome] = useState<Tenant | null>(null);
   const [accessState, setAccessState] = useState<"loading" | "ready" | "unassigned">(
     "loading",
@@ -1047,11 +1067,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           in, and the session's own affordances. Everything below it belongs to
           the screen. */}
       <header className="appbar">
+        {/* Pins the rail open. It is not an open/close control any more — the
+            rail is always there and opens on hover — so it reports pressed
+            state rather than naming a destination. */}
         <button
           className="bar-burger"
-          aria-label="Open global navigation"
+          aria-label={menuOpen ? "Unpin global navigation" : "Pin global navigation open"}
+          aria-pressed={menuOpen}
           title="Navigation"
-          onClick={() => setMenuOpen(true)}
+          onClick={() => setMenuOpen((v) => !v)}
         >
           ☰
         </button>
@@ -1101,6 +1125,20 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           )}
         </div>
         <div className="bar-right">
+          {/* The assistant's own toggle. The dock has a rail you can click, but
+              the rail gives up its footprint below 720px, so without this there
+              would be no way to reach the assistant on a phone at all. */}
+          {!activeSpace && (
+            <button
+              className="pill pill-ai"
+              title={aiOpen ? "Collapse Studio AI" : "Open Studio AI"}
+              aria-label="Studio AI"
+              aria-pressed={aiOpen}
+              onClick={() => setAiOpen((v) => !v)}
+            >
+              <span aria-hidden>✦</span>
+            </button>
+          )}
           {!activeSpace && (
             <button
               className="pill"
@@ -1195,45 +1233,34 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         </div>
       </header>
 
-      {menuOpen && (
-        <>
-          {/* Covers everything to the right of the panel; the panel itself
-              stays at full brightness, as the product draws it. */}
-          <button
-            type="button"
-            className="drawer-scrim"
-            aria-label="Close global navigation"
-            onClick={() => setMenuOpen(false)}
-          />
+      {/* Everything under the bar, as the product lays it out: a grid whose
+          first track is the navigation and whose second is the work. The rail
+          is 48px of icons at rest and 240px once it is asked for, and the
+          content does NOT reflow when it opens — the rail overlays, which is
+          why the track stays 48px in both states and the panel is absolutely
+          positioned inside it. */}
+      <div
+        className="shell-body"
+        data-sidebar={menuOpen ? "open" : "rail"}
+        /* "none" while a space is showing: the IDE is a whole application, and
+           the product does not dock its own assistant beside somebody else's
+           editor — that column belongs to Theia. */
+        data-ai={activeSpace ? "none" : aiOpen ? "open" : "rail"}
+      >
+          {/* Always mounted. The old overlay-with-a-scrim was the last place
+              this prototype and the portal disagreed structurally: there,
+              navigation is permanent chrome you glance at, not a modal you
+              summon and dismiss. Hovering it opens it; the bar control pins it
+              open so it survives the pointer leaving. */}
           <aside
             className="drawer"
+            data-expanded={menuOpen ? "true" : "false"}
+            aria-label="Global navigation"
             onKeyDown={(e) => {
               if (e.key === "Escape") setMenuOpen(false);
             }}
           >
-            <div className="drawer-head">
-              <button
-                className="bar-burger"
-                aria-label="Close global navigation"
-                onClick={() => setMenuOpen(false)}
-              >
-                ✕
-              </button>
-              <strong>Constructor Studio</strong>
-            </div>
-            <nav
-              onClick={(e) => {
-                // Picking a destination closes the drawer, the way the
-                // product's does once a screen has mounted. Two exceptions stay
-                // open because they act *inside* the panel rather than
-                // navigating: the organization picker, which unfolds a submenu,
-                // and a space row's own controls (hide, refresh, stop).
-                const el = e.target as HTMLElement;
-                if (!el.closest(".org-select-wrap") && !el.closest("button.ghost")) {
-                  setMenuOpen(false);
-                }
-              }}
-            >
+            <nav>
               {adminOpen ? (
                 <>
                   <div className="nav-section">
@@ -1327,28 +1354,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     horizontal path picker (org › workspace › project) above the
                     content is now the single place to switch context, so the
                     sidebar keeps only the nav surfaces below. */}
-                {projectOpen && (
-                  // ── Project context: the open project's tabs live in the sidebar ──
-                  <div className="nav-section nav-section-project">
-                    <div className="nav-section-title">{projectLabel ?? "Project"}</div>
-                    {PROJECT_TABS.map((t) => (
-                      <button
-                        key={t.id}
-                        className={projectTab === t.id ? "active" : ""}
-                        title={t.label}
-                        onClick={() => {
-                          setProjectTab(t.id);
-                          setActiveSpace(null);
-                        }}
-                      >
-                        <span className="ico">
-                          <NavIcon name={t.icon} />
-                        </span>{" "}
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* The open project's sections are NOT here any more — they are
+                    the band across the top of the work area (.project-sections).
+                    Listing them in both places was the same navigation twice,
+                    and the rail is for context, not for the open thing's parts. */}
                 {
                   // ── Organization context: work surfaces of the whole org ──
                   NAV_SECTIONS.map((sec) => {
@@ -1445,13 +1454,36 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               </button>
             </nav>
           </aside>
-        </>
-      )}
 
-      {/* Everything below the bar. The IDE host and the portal content are
-          siblings inside it — exactly one of the two is showing — so neither
-          can claim the viewport out from under the bar. */}
+      {/* The work area. The IDE host and the portal content are siblings
+          inside it — exactly one of the two is showing — so neither can claim
+          the viewport out from under the bar. */}
       <div className="screen">
+      {/* The project's sections, as the product draws them: a 44px band across
+          the top of the work area, not a list inside the navigation rail.
+
+          They used to live in the rail (commit a2b7f89). The product keeps the
+          rail for where you ARE — organization, workspaces, products — and puts
+          the sections of the thing you have open on the thing itself, which is
+          also why they can be a row: seven short labels fit across a work area
+          and would each cost a line in a 240px column. */}
+      {projectOpen && (
+        <nav className="project-sections" aria-label="Project sections">
+          {PROJECT_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`psection${projectTab === t.id ? " on" : ""}`}
+              aria-current={projectTab === t.id ? "page" : undefined}
+              onClick={() => setProjectTab(t.id)}
+            >
+              <span className="ico" aria-hidden>
+                <NavIcon name={t.icon} />
+              </span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      )}
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
       {/* While the portal is active the host stays rendered but parked as a
@@ -1543,8 +1575,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       </div>
 
       <div className="content" style={activeSpace ? { display: "none" } : undefined}>
-        {/* Floating assistant, bottom-right, on every portal screen (mockups). */}
-        <StudioAI token={token} />
         {error && <div className="error">{error}</div>}
         {adminOpen ? (
           <>
@@ -1727,6 +1757,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         </div>
+      </div>
+
+      {/* Third column of the grid. Rendered even while parked at 48px — the
+          thread and the lazily-created chat id live inside it, and unmounting
+          the panel to collapse it would throw both away. */}
+      {!activeSpace && <StudioAI token={token} open={aiOpen} onOpenChange={setAiOpen} />}
       </div>
 
       {!activeSpace && panelOpen && (
@@ -3106,17 +3142,38 @@ function WorkspaceProjects({
   );
 }
 
+/** A section the product's navigation lists but this prototype has no screen
+ *  for. Named honestly on the page, with what it would show and what is
+ *  actually missing, so it cannot be mistaken for a working screen with no
+ *  data in it. */
+function NotBuiltYet({ title, what, why }: { title: string; what: string; why: string }) {
+  return (
+    <div className="card">
+      <h2>{title}</h2>
+      <p className="empty">
+        Not built yet. This section would show {what}.
+      </p>
+      <p className="hint">Why it is empty: {why}.</p>
+    </div>
+  );
+}
+
 /** The sections of an open project — the type is defined next to the Overview
- *  that links to them; this is the shell sidebar's rendering of the list (the
+ *  that links to them; this is the shell rail's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
 const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
+  // The product's seven, in the product's order (see ProjTab). Icons are the
+  // lucide names the shipped project-sidebar picks for each.
   { id: "overview", icon: "home", label: "Overview" },
+  { id: "components", icon: "package", label: "Components" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
-  { id: "documents", icon: "file", label: "Documents" },
-  { id: "kits", icon: "package", label: "Kits" },
-  { id: "analyze", icon: "scan", label: "Spec Quality" },
-  { id: "automation", icon: "shield", label: "Automation" },
+  { id: "findings", icon: "scan", label: "Findings" },
+  { id: "activity", icon: "activity", label: "Activity" },
+  { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
+  // Ours, kept below the product's list rather than interleaved with it.
+  { id: "documents", icon: "file", label: "Documents" },
+  { id: "automation", icon: "shield", label: "Automation" },
 ];
 
 /** Level 3: one project (its own AM tenant). The tabs live in the sidebar; this
@@ -3201,7 +3258,7 @@ function ProjectScreen({
             onOpenStudio={onOpenStudio}
           />
         )}
-        {tab === "kits" && <ProjectKits token={token} projectId={proj.id} />}
+        {tab === "components" && <ProjectKits token={token} projectId={proj.id} />}
         {tab === "documents" && (
           <DocumentsTab
             token={token}
@@ -3210,8 +3267,27 @@ function ProjectScreen({
             onOpenFile={(path) => openDocumentInStudio(path, () => onOpenStudio(proj))}
           />
         )}
-        {tab === "analyze" && (
+        {tab === "findings" && (
           <SpecQuality token={token} workspaceId={proj.id} parentWorkspaceId={workspace.id} />
+        )}
+        {/* Two sections the product has and this prototype does not. They say
+            so rather than showing a plausible-looking empty table: a section
+            that renders "0 events" is indistinguishable from a working one
+            reading an empty project, and somebody will eventually report that
+            as a bug against the backend. */}
+        {tab === "activity" && (
+          <NotBuiltYet
+            title="Activity"
+            what="a feed of what changed in this project — commits, runs, document transitions, findings opened and closed"
+            why="the events exist (studio-events carries them) but nothing here subscribes to them yet"
+          />
+        )}
+        {tab === "timeline" && (
+          <NotBuiltYet
+            title="Timeline"
+            what="the project's milestones and journey stages on a time axis"
+            why="the stage catalogue is already read on Overview; the time axis is the part that does not exist"
+          />
         )}
         {tab === "automation" && <AutomationSettings token={token} ws={proj} />}
         {tab === "people" && (

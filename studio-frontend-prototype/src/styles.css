@@ -10,41 +10,62 @@
 @import '@fontsource/jetbrains-mono/400.css';
 
 /* ── Design tokens ───────────────────────────────────────────────────────────
-   A snapshot of the REAL frontend's default theme — studio-frontend's
-   app/themes/default.ts, which is itself a mirror of @gears-frontx/ui-kit's
-   Studio palette. Names are the kit's names (shadcn convention, WHOLE colours
-   rather than bare HSL triplets), so this prototype and the product speak one
-   vocabulary: a screen ported either direction needs no token translation, and
-   dropping @gears-frontx/ui-kit in later is an install, not a repaint.
+   A snapshot of the theme the product actually SHIPS — read off the deployed
+   bundle at studio.constructor.rocks (assets/index-*.css, the :root block),
+   not off studio-frontend/app/themes/default.ts. Those two had drifted: the
+   file in this repo still says the brand is violet, and the thing users open
+   is blue. Where they disagree the deployed build wins, because that is the
+   screen we are being measured against.
 
-   Keep every value here equal to its counterpart in default.ts. Tokens marked
-   "local" have no counterpart there — they are this prototype's own, kept
-   because 147 hand-written classes read them, and derived from kit tokens so
-   they follow a theme change instead of freezing a light-mode colour. */
+   Names are the kit's names (shadcn convention, WHOLE colours rather than bare
+   HSL triplets), so this prototype and the product speak one vocabulary: a
+   screen ported either direction needs no token translation, and dropping
+   @gears-frontx/ui-kit in later is an install, not a repaint.
+
+   Tokens marked "local" have no counterpart in the shipped theme — they are
+   this prototype's own, kept because 147 hand-written classes read them, and
+   derived from shipped tokens so they follow a theme change instead of
+   freezing a light-mode colour. */
 :root {
-  --background: hsl(210 40% 98%);
-  --foreground: hsl(222.2 47.4% 11.2%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(222.2 47.4% 11.2%);
-  --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(222.2 47.4% 11.2%);
-  --primary: hsl(258 74.1% 62.2%);
-  --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(210 40% 96.1%);
-  --secondary-foreground: hsl(222.2 47.4% 11.2%);
-  --muted: hsl(210 40% 96.1%);
-  --muted-foreground: hsl(215.4 16.3% 46.9%);
-  /* The kit's --accent is a pale tint of primary used as a SURFACE (selected
-     rows, active chips), and --accent-foreground the text on it. This is the
-     one place the rename bit: the prototype used to call its action colour
-     "--accent", and that role is --primary here. */
-  --accent: hsl(268.7 100% 95.5%);
-  --accent-foreground: hsl(263.4 70% 50.4%);
-  --destructive: hsl(346.8 77.2% 49.8%);
-  --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(214.3 31.8% 91.4%);
-  --input: hsl(212.7 26.8% 83.9%);
-  --ring: hsl(258.3 89.5% 66.3%);
+  --background: #f1f5f9;
+  --foreground: #0f172a;
+  --card: #fff;
+  --card-foreground: #0f172a;
+  --popover: #fff;
+  --popover-foreground: #0f172a;
+  --primary: #0065e3;
+  --primary-foreground: #fff;
+  --secondary: #eef2f7;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #334155;
+  /* --accent is a SURFACE here (selected rows, active chips) and
+     --accent-foreground the text on it. The shipped theme collapses --accent
+     onto the brand blue and paints selection from --studio-selection-subtle
+     instead; 147 hand-written classes in this file read --accent as the
+     surface, so the ROLE stays and the VALUE follows the shipped selection
+     colour. An active nav item there is exactly this pair: subtle fill, blue
+     text (.context-navigation-item[aria-current=page]). */
+  --accent: var(--studio-selection-subtle);
+  --accent-foreground: var(--primary);
+  --destructive: #e11d48;
+  --destructive-foreground: #fff;
+  --border: #e2e8f0;
+  --input: #d9e2ec;
+  --ring: #0065e3;
+
+  /* The shipped shell's own names, kept verbatim so a screen ported either
+     direction needs no translation. Selection is neutral, not tinted. */
+  --studio-control-selected: var(--secondary);
+  --studio-control-selected-border: var(--border);
+  --studio-selection-subtle: var(--studio-control-selected);
+  --studio-control-hover-neutral: #f1f5f9;
+  --studio-control-selected-neutral: #e2e8f0;
+  --studio-icon-subtle: #8190a3;
+  --studio-icon-selected: #52677d;
+  --studio-section-height: 44px;
+  /* The assistant's second hue — the only non-blue accent the shell spends. */
+  --studio-ai-violet: oklch(55% 0.24 300);
 
   /* Categorical palette. The product's own — the real theme calls these the
      avatar colours, and uses them wherever a set of unrelated things each need
@@ -66,24 +87,33 @@
   --avatar-green: hsl(116.6 47.5% 35.9%);
   --avatar-foreground: hsl(0 0% 100%);
 
-  /* The navigation column's own surface set. The product themes the menu apart
-     from the cards on purpose — it is chrome, not content — so an item's rest,
-     hover and active states come from here rather than from --muted/--accent.
-     The accent on an active item stays --primary; there is no menu-local copy
-     of the brand colour. */
-  --left-menu: hsl(210 40% 96.1%);
-  --left-menu-foreground: hsl(215.4 16.3% 46.9%);
-  --left-menu-hover: hsl(0 0% 100%);
-  --left-menu-active: hsl(0 0% 100%);
-  --left-menu-active-foreground: hsl(222.2 47.4% 11.2%);
-  --left-menu-border: hsl(214.3 31.8% 91.4%);
+  /* The navigation column's own surface set. The shipped rail is a white
+     column separated by a hairline, not a tinted well — .context-navigation-rail
+     sits on --card with a --border right edge and greys its icons to
+     --studio-icon-subtle until an item is current. An item's rest, hover and
+     active states come from here rather than from --muted/--accent; the accent
+     on an active item stays --primary, there is no menu-local copy of the
+     brand colour. */
+  --left-menu: var(--card);
+  --left-menu-foreground: var(--studio-icon-subtle);
+  --left-menu-hover: var(--studio-control-hover-neutral);
+  --left-menu-active: var(--studio-selection-subtle);
+  --left-menu-active-foreground: var(--foreground);
+  --left-menu-border: var(--border);
 
-  /* Chart series, shadcn's light set (OKLCH). */
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  /* Chart series. Not shadcn's stock OKLCH ramp — the shipped theme picks its
+     own five, reusing the state colours for the first two so a "bad" bar and a
+     "bad" badge are the same red, plus a muted categorical set for series that
+     carry no meaning. */
+  --chart-1: #e11d48;
+  --chart-2: #059669;
+  --chart-3: #4e79a7;
+  --chart-4: #f59e0b;
+  --chart-5: #2563eb;
+  --chart-category-blue: #4e79a7;
+  --chart-category-purple: #b07aa1;
+  --chart-category-brown: #9c755f;
+  --chart-category-teal: #499894;
 
   /* The theme's own spacing aliases, alongside the kit's --space-N scale. */
   --spacing-xs: 0.25rem;  --spacing-sm: 0.5rem;   --spacing-md: 1rem;
@@ -95,21 +125,39 @@
   --transition-slow: 300ms;
   --transition-slower: 500ms;
 
-  /* State colours */
-  --error: hsl(346.8 77.2% 49.8%);
-  --warning: hsl(32.1 94.6% 43.7%);
-  --success: hsl(161.4 93.5% 30.4%);
-  --info: hsl(200.4 98% 39.4%);
+  /* State colours. The shipped theme carries a second, darker tone for each —
+     the fill is the colour, the -foreground is what stays legible as TEXT on a
+     pale tint of it. --error is this file's older name for --destructive. */
+  --error: var(--destructive);
+  --danger: #e11d48;
+  --danger-foreground: #be123c;
+  --warning: #f59e0b;
+  --warning-foreground: #92400e;
+  --success: #059669;
+  --success-foreground: #047857;
+  --info: #2563eb;
 
-  /* Radius scale. Flatter than the kit's own derivation on purpose — these are
-     the shell's values, and the shell's theme is what actually paints the
-     product at runtime (themeRegistry.apply writes them onto :root). */
+  /* Radius scale, rebuilt around the shipped --radius: 10px. The old scale was
+     far flatter (2/4/8px) and it read as a different product next to the real
+     shell — cards there are visibly rounded. --radius-md is the 8px the nav
+     items and buttons use, --radius-lg the 10px base for cards and inputs,
+     --radius-xl the 12px for the large panels. */
+  --radius: 10px;
   --radius-none: 0;
-  --radius-sm: 0.125rem;
-  --radius-md: 0.25rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 1rem;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: var(--radius);
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
   --radius-full: 9999px;
+
+  /* Motion. One ease and four durations, the shipped shell's own — chrome that
+     slides (rail, panel) is slower than colour that just swaps (hover, tab). */
+  --motion-micro: 0.12s;
+  --motion-standard: 0.18s;
+  --motion-tab: 0.24s;
+  --motion-panel: 0.22s;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
@@ -121,17 +169,21 @@
      the shell inherits but does not restate. */
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  --text-body-size: 0.9375rem;
+  --text-body-size: 0.875rem;
   --text-body-line-height: 1.25rem;
-  --text-heading-1-size: 1.25rem;
-  --text-heading-1-line-height: 1.75rem;
+  /* Heading 1 is the shipped PageTitle: 26px/32px semibold at -0.02em. It was
+     20px here, which is why every screen read as a settings pane rather than a
+     page — the product leads with a genuinely large title and then drops
+     straight to 12px for the description under it. */
+  --text-heading-1-size: 1.625rem;
+  --text-heading-1-line-height: 2rem;
   --text-heading-1-weight: 600;
-  --text-heading-1-tracking: -0.2px;
+  --text-heading-1-tracking: -0.02em;
   --text-heading-2-size: 1rem;
   --text-heading-2-line-height: 1.5rem;
   --text-heading-2-weight: 600;
   --text-heading-2-tracking: -0.1px;
-  --text-label-size: 0.8125rem;
+  --text-label-size: 0.75rem;
   --text-label-line-height: 1rem;
   --text-label-weight: 500;
   --text-meta-size: 0.75rem;
@@ -196,15 +248,28 @@ h2 {
    the portal ships this image and nothing else as its logo, so inventing a
    monogram here was the one piece of branding the two could not share. It is a
    full-bleed square, hence object-fit rather than padding. */
+/* The mark is now a transparent SVG, so the rounding and the cover-crop that
+   the old full-bleed raster needed are gone: there is no square to round off,
+   and `contain` keeps the knot from being cropped at sizes the artwork was not
+   drawn for. 28px in the bar — the deployed portal sets it a little smaller
+   than the 40px control beside it so the wordmark, not the symbol, leads. */
 .logo {
-  width: 34px; height: 34px; border-radius: var(--radius-lg);
-  object-fit: cover; flex: none; display: block;
+  width: 28px; height: 28px;
+  object-fit: contain; flex: none; display: block;
 }
 
+/* The page header. Geometry is the shipped PageHeader's `route` variant: a
+   64px band closed by a rule, with the title and the actions pushed apart and
+   never allowed to wrap into each other (min-width:0 on the title side so the
+   truncation happens there, shrink:0 on the actions so they always fit). */
 .topbar {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 0.5rem;
+  display: flex; justify-content: space-between; align-items: center; gap: 1.5rem;
+  min-height: 4rem; flex: none; min-width: 0;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
 }
+.topbar > :first-child { min-width: 0; }
+.topbar h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity { display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: 13px; }
 .identity code {
   background: var(--accent); color: var(--primary);
@@ -215,12 +280,20 @@ h2 {
 .subtitle a { color: var(--primary); text-decoration: none; }
 .subtitle a:hover { text-decoration: underline; }
 
+/* The shipped Card: rounded-xl, --card-spacing of 16px on every side, and a
+   RING rather than a border or a shadow — `ring-1 ring-foreground/10`, which is
+   the foreground colour at a tenth rather than the solid --border every other
+   surface uses. That is not a rounding error in the design: a translucent edge
+   tracks whatever it sits on, so the same card reads correctly on --background
+   and on a tinted well, and it survives the dark theme where --background,
+   --card and --muted are all #0f172a and a solid border would be the only thing
+   visible. box-shadow is gone with it — the product does not lift its cards. */
 .card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: 1.25rem 1.4rem;
+  border: none;
+  border-radius: var(--radius-xl);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent);
+  padding: 1rem;
   margin-top: 1rem;
 }
 .card.launcher { background: linear-gradient(180deg, var(--accent), var(--card) 60%); }
@@ -238,13 +311,25 @@ ul.rows .grow { flex: 1; min-width: 0; }
 ul.rows .name { font-weight: 600; }
 ul.rows .sub { color: var(--muted-foreground); font-size: 13px; }
 
+/* The shipped Badge: a pill at text-xs/medium with 8px/2px of inset, and no
+   letter-spacing. The fill is the state colour at a tenth over whatever is
+   behind it, and the LABEL is not that colour straight — it is the colour
+   walked 14% toward --foreground, because primary-on-primary/10 is too light
+   to read at 12px. Dark walks it 40%, for the same reason in the other
+   direction. */
 .badge {
-  display: inline-block; padding: 2px 9px; border-radius: var(--radius-full);
-  font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
-  background: var(--accent); color: var(--primary);
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border: 1px solid transparent; border-radius: var(--radius-full);
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: color-mix(in oklch, var(--primary), var(--foreground) 14%);
 }
-.badge.workspace { background: var(--success-soft); color: var(--success); }
-.badge.selfmanaged { background: var(--warning-soft); color: var(--warning); }
+:root[data-theme="dark"] .badge {
+  color: color-mix(in oklch, var(--primary), var(--foreground) 40%);
+}
+.badge.workspace { background: var(--success-soft); color: var(--success-foreground); border-color: transparent; }
+.badge.selfmanaged { background: var(--warning-soft); color: var(--warning-foreground); border-color: transparent; }
 
 button {
   font: inherit; font-size: 13.5px; font-weight: 600;
@@ -403,7 +488,31 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
    This is the product's layout (studio-frontend's app/layout/Layout.tsx) — two
    permanent columns flanking the content was the last structural tell that the
    prototype and the portal were different applications. */
-.shell { display: flex; flex-direction: column; min-height: 100vh; }
+.shell {
+  display: flex; flex-direction: column;
+  height: 100dvh; min-height: 100dvh;
+  background: var(--background);
+  /* clip, not auto: the shipped .studio-shell owns the viewport and lets the
+     work area do its own scrolling, so the rail can never be scrolled off. */
+  overflow: clip;
+}
+/* The grid under the bar: navigation | work | assistant.
+
+   The two flanks behave differently on purpose, and the shipped
+   .studio-shell-body does the same. The FIRST track is the nav rail's
+   FOOTPRINT, not its width — it stays 48px while the panel grows over the
+   content, so a hover never reflows the screen. The THIRD track is the real
+   width of the AI dock, which is why it animates: opening the assistant is a
+   deliberate act and the work is expected to make room for it. */
+.shell-body {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px;
+  position: relative;
+  transition: grid-template-columns var(--motion-panel) var(--ease-standard);
+}
+.shell-body[data-ai="open"] { grid-template-columns: 48px minmax(0, 1fr) 368px; }
+.shell-body[data-ai="none"] { grid-template-columns: 48px minmax(0, 1fr) 0; }
+.shell-body > .screen { min-width: 0; position: relative; z-index: 0; }
 
 .appbar {
   display: flex; align-items: center;
@@ -443,70 +552,108 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 16px; cursor: pointer;
 }
 .pill:hover:not(:disabled) { background: var(--muted); color: var(--foreground); }
+/* Pressed reads as the brand tint rather than a darker grey — this control has
+   a persistent state (the dock stays open), unlike the rest of the cluster. */
+.pill[aria-pressed="true"] { background: var(--studio-selection-subtle); color: var(--primary); }
+/* The assistant's glyph carries the same blue→violet sweep as the dock's mark,
+   so the two are recognisably one thing. */
+.pill-ai span {
+  background: linear-gradient(135deg, var(--primary), var(--studio-ai-violet));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 
 /* Everything below the bar. The IDE host and the portal content are siblings
    here, so the bar stays put while either one is showing. */
-.screen { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* .shell owns the viewport and clips, so something below it has to scroll or
+   the content below the fold is unreachable. It is .content, NOT .screen: the
+   project section band is a sibling above .content, and a scroller on .screen
+   would carry the band off the top of the work area on the first wheel event. */
+.screen { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* The work area takes the full width under the bar; cards inside cap their own
    line lengths, the shell itself no longer caps anything. */
-.content { flex: 1; min-width: 0; padding: 1.75rem 2.25rem 4rem; }
+.content { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 1.75rem 2.25rem 4rem; }
 
-/* ── Overlay drawer ─────────────────────────────────────────────────────────
-   Over the top bar too: the drawer is the whole navigation, not a column
-   beside it. The scrim covers everything to the right of the panel, which
-   itself stays at full brightness. */
-.drawer-scrim {
-  position: fixed; inset: 0 0 0 320px; z-index: 50;
-  border: none; padding: 0; cursor: default;
-  background: rgb(15 18 24 / 0.48);
-}
+/* ── Navigation rail ────────────────────────────────────────────────────────
+   The shipped .context-navigation-rail, to the pixel: 48px of icons pinned to
+   the left edge of the work area, widening to 240px on hover, on focus, or
+   when the bar's control pins it. It is a WHITE column separated by a hairline
+   — chrome you read past, not a tinted well you read into — and it clips
+   rather than scrolls, so the labels are simply not painted at rest.
+
+   Absolute inside .shell-body: the open panel lies OVER the content instead of
+   pushing it, which is what stops every screen from reflowing on a hover. */
 .drawer {
-  position: fixed; top: 0; bottom: 0; left: 0; width: 320px; z-index: 51;
-  display: flex; flex-direction: column; overflow-y: auto;
-  /* --left-menu, not --card. The kit's own Sidebar paints itself on this token
-     and its menu rows draw hover and active from the matching
-     --left-menu-hover / --left-menu-active; the shell's Menu.tsx overrides the
-     panel to bg-card, where in the light theme those two states land
-     white-on-white and only the label darkens. Keeping the token the states
-     were designed against costs a barely perceptible tint (#f1f5f9 against
-     #ffffff) and keeps the row feedback the product intends. */
+  position: absolute; inset: 0 auto 0 0; z-index: 40;
+  width: 48px; height: 100%; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--left-menu);
+  color: var(--left-menu-foreground);
   border-right: 1px solid var(--left-menu-border);
-  box-shadow: var(--shadow-lg);
+  transition:
+    width var(--motion-panel) var(--ease-standard),
+    box-shadow var(--motion-standard) var(--ease-standard);
 }
-/* The panel's own header, mirroring the bar it covers: the close control sits
-   exactly where the burger was. */
-.drawer-head {
-  height: 56px; flex: none; display: flex; align-items: center;
-  padding: 0 7px; border-bottom: 1px solid var(--left-menu-border);
+.drawer:hover,
+.drawer:focus-within,
+.drawer[data-expanded="true"] { width: 240px; box-shadow: var(--shadow-lg); }
+/* The list keeps its full width at all times and lets the rail crop it. Sizing
+   the list with the rail would re-wrap every row mid-animation. */
+.drawer nav {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 240px; flex: 1; min-height: 0; overflow-y: auto;
+  padding: 10px 0 14px;
 }
-.drawer-head strong {
-  margin-left: 0.75rem; font-size: 16px; font-weight: 600; line-height: 1.5rem;
-  white-space: nowrap; color: var(--foreground);
-}
-.drawer nav { display: flex; flex-direction: column; gap: 6px; padding: 14px 11px; }
-/* Row metrics are the kit's SidebarMenuButton: 38px, rounded-lg, a 10px inset,
-   a 10px gap, medium weight on the body role. */
+/* Row metrics are the shipped .context-navigation-item: a 40px square at rest
+   that grows into a 232px row, 4px off each edge, glyph and label 9px apart. */
 .drawer nav button {
   text-align: left; border: none; background: transparent;
-  min-height: 38px; padding: 0 10px; border-radius: var(--radius-lg);
+  width: 232px; height: 40px; min-height: 40px; max-height: 40px; flex: none;
+  margin-inline: 4px; padding-inline: 10px;
+  border-radius: var(--radius-md);
   font-weight: 500; font-size: var(--text-body-size);
   color: var(--left-menu-foreground);
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  display: flex; align-items: center; gap: 9px;
+  white-space: nowrap; overflow: hidden;
+  transition:
+    color var(--motion-micro) var(--ease-standard),
+    background-color var(--motion-micro) var(--ease-standard);
 }
-.drawer nav button .ico { width: 18px; min-width: 18px; text-align: center; flex: none; }
+.drawer nav button .ico {
+  width: 20px; min-width: 20px; height: 20px; flex: none;
+  display: grid; place-items: center; text-align: center;
+}
 .drawer nav button:hover {
-  background: color-mix(in oklab, var(--left-menu-hover) 65%, transparent);
+  background: var(--left-menu-hover);
   color: var(--left-menu-active-foreground);
 }
+/* Selected is a neutral fill with BLUE text — the shipped rail tints the whole
+   row, label included, rather than only the glyph. */
 .drawer nav button.active {
   background: var(--left-menu-active);
-  color: var(--left-menu-active-foreground);
+  color: var(--primary);
 }
-/* The brand colour lands on the active item's glyph, not on its label — the kit
-   tints SidebarMenuIcon with --primary and leaves the text alone. */
 .drawer nav button.active .ico { color: var(--primary); }
+/* Labels fade instead of sliding: at 48px they are clipped anyway, and fading
+   them keeps the glyphs from appearing to drift sideways as the rail opens.
+
+   Fading is done by COLOUR, not opacity, and that is not a style choice. These
+   rows carry their label as a bare text node beside .ico — `<span class="ico">
+   ←</span> Back to Studio` — and a text node cannot be selected, so there is
+   nothing for an opacity rule to bite on. The ~9px of label that clears the
+   48px crop would stay lit. Colouring the row transparent and handing .ico its
+   colour back reaches the text nodes, because colour inherits and opacity does
+   not. Keep it that way unless every label gets wrapped in an element. */
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) nav button,
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .nav-section-title,
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .org-select-name {
+  color: transparent;
+}
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) nav button .ico {
+  color: var(--left-menu-foreground);
+}
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) nav button.active .ico {
+  color: var(--primary);
+}
 
 /* ── Console-style nav sections, account menu, home hub ── */
 .nav-section { margin-top: 6px; }
@@ -669,7 +816,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   padding: 3rem 2.75rem 2.25rem;
   display: flex; flex-direction: column; gap: 12px;
 }
-.login-logo { width: 48px; height: 48px; border-radius: var(--radius-lg); margin-bottom: 8px; }
+.login-logo { width: 48px; height: 48px; margin-bottom: 8px; }
 .login-title { font-size: 2.1rem; margin: 0; }
 .login-sso { width: 100%; padding: 12px; font-size: 15px; margin-top: 10px; }
 .login-providers { display: flex; gap: 10px; }
@@ -693,6 +840,8 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
    tenant band. */
 .drawer-products {
   margin-top: auto;
+  width: 240px; flex: none;
+  padding-top: 8px;
   border-top: 1px solid var(--left-menu-border);
 }
 .drawer-products .check { margin-left: auto; color: var(--primary); }
@@ -794,11 +943,26 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .dirty-dot { color: var(--warning); margin-left: 6px; font-size: 10px; }
 .content > h1 { margin-bottom: 0.25rem; }
 /* Narrow viewports: the bar keeps its shape, so only the context slot has to
-   give — the drawer and the filter panel are overlays at every width. */
+   give. The rail gives up its footprint entirely — 48px of permanent chrome is
+   a tenth of a phone — and opens over the content when it is pinned, which is
+   the one width where it behaves like the overlay it used to be everywhere. */
 @media (max-width: 720px) {
   .appbar .bar-context, .appbar .bar-sep { display: none; }
-  .drawer { width: min(320px, 86vw); }
-  .drawer-scrim { left: min(320px, 86vw); }
+  /* Both flanks give up their footprint: 96px of permanent chrome is a quarter
+     of a phone. The assistant opens over the content here, full width. */
+  .shell-body,
+  .shell-body[data-ai="open"],
+  .shell-body[data-ai="none"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .studio-ai.collapsed { display: none; }
+  .shell-body[data-ai="open"] .studio-ai {
+    position: absolute; inset: 0 0 0 auto; z-index: 45;
+    width: min(368px, 100%); box-shadow: var(--shadow-lg);
+  }
+  .drawer { width: 0; border-right: none; }
+  /* Hover cannot open what has no footprint, so on touch only the pin does. */
+  .drawer:hover, .drawer:focus-within { width: 0; box-shadow: none; }
+  .drawer[data-expanded="true"] { width: min(280px, 86vw); border-right: 1px solid var(--left-menu-border); box-shadow: var(--shadow-lg); }
+  .drawer[data-expanded="true"]:hover, .drawer[data-expanded="true"]:focus-within { width: min(280px, 86vw); box-shadow: var(--shadow-lg); }
 }
 
 /* ── Right panel: context-aware filters ── */
@@ -866,38 +1030,58 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 
 
 /* ── Dark theme ──────────────────────────────────────────────────────────────
-   A snapshot of the real frontend's dark theme (studio-frontend's
-   app/themes/dark.ts), the same way :root above snapshots default.ts. It is a
-   cool near-black with the violet primary carried over — not the old Theia
-   grey — because the portal is judged against the product, and the embedded
-   IDE brings its own palette anyway.
+   A snapshot of the SHIPPED dark theme (the .dark block of the deployed
+   assets/index-*.css), the same way :root above snapshots its light half.
+
+   Two things about it are worth knowing before touching a value. The primary
+   does NOT darken: #0065e3 is the brand in both themes, so a blue button is
+   the same blue in either. And the surfaces barely separate — --background,
+   --card, --popover, --secondary and --muted are ALL #0f172a, and the layering
+   is done entirely by --border (#334155). That is deliberate there; do not
+   "fix" it by tinting the cards, or this stops matching.
 
    Switched via Profile → theme preference, which sets data-theme on <html> and
    is broadcast to every IDE iframe (App.tsx MutationObserver). */
 :root[data-theme="dark"] {
-  --background: hsl(222.9 28% 4.9%);
-  --foreground: hsl(220 20% 97.1%);
-  --card: hsl(218.8 33.3% 10%);
-  --card-foreground: hsl(220 20% 97.1%);
-  --popover: hsl(222.4 30.9% 10.8%);
-  --popover-foreground: hsl(220 20% 97.1%);
-  --primary: hsl(258.9 68.4% 59%);
-  --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(217.2 32.6% 17.5%);
-  --secondary-foreground: hsl(210 40% 98%);
-  --muted: hsl(217.2 32.6% 17.5%);
-  --muted-foreground: hsl(220 13.4% 60.6%);
-  --accent: hsl(261.2 72.6% 22.9%);
-  --accent-foreground: hsl(251.4 91.3% 95.5%);
-  --destructive: hsl(349.7 65.8% 52.9%);
-  --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(218.2 24.4% 17.6%);
-  --input: hsl(219.3 23.2% 24.5%);
-  --ring: hsl(258.9 68.4% 59%);
-  --error: hsl(349.7 65.8% 52.9%);
-  --warning: hsl(43.3 96.4% 56.3%);
-  --success: hsl(158.1 64.4% 51.6%);
-  --info: hsl(187.9 85.7% 53.3%);
+  --background: #0f172a;
+  --foreground: #fff;
+  --card: #0f172a;
+  --card-foreground: #fff;
+  --popover: #0f172a;
+  --popover-foreground: #fff;
+  --primary: #0065e3;
+  --primary-foreground: #fff;
+  --secondary: #0f172a;
+  --secondary-foreground: #fff;
+  --muted: #0f172a;
+  --muted-foreground: #94a3b8;
+  /* The one token whose ROLE differs from the shipped theme — see the light
+     block. There --accent is #26384b, a raised slate used as the selected
+     surface, which is exactly what this file wants --accent to mean, so here
+     the two happen to agree. */
+  --studio-control-selected: #26384b;
+  --studio-control-selected-border: var(--border);
+  --studio-selection-subtle: var(--studio-control-selected);
+  --studio-control-hover-neutral: #1e293b;
+  --studio-control-selected-neutral: #334155;
+  --studio-icon-subtle: #94a3b8;
+  --studio-icon-selected: #cbd5e1;
+  --studio-ai-violet: oklch(75% 0.17 300);
+  --accent: var(--studio-selection-subtle);
+  --accent-foreground: #fff;
+  --destructive: #fb7185;
+  --destructive-foreground: #fff;
+  --border: #334155;
+  --input: #334155;
+  --ring: #0065e3;
+  --error: var(--destructive);
+  --danger: #fb7185;
+  --danger-foreground: #fb7185;
+  --warning: #f6c453;
+  --warning-foreground: #f6c453;
+  --success: #34d399;
+  --success-foreground: #34d399;
+  --info: #60a5fa;
   /* Categorical palette, dark counterpart — lighter and less saturated so the
      same twelve roles stay apart on a near-black ground. */
   --avatar-yellow: hsl(40 100% 42.4%);
@@ -913,17 +1097,20 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   --avatar-red: hsl(4.3 100% 69.8%);
   --avatar-green: hsl(119 53.2% 46.1%);
   --avatar-foreground: hsl(0 0% 6.7%);
-  --left-menu: hsl(220 27.3% 6.5%);
-  --left-menu-foreground: hsl(220 13.4% 60.6%);
-  --left-menu-hover: hsl(220.7 37.8% 14.5%);
-  --left-menu-active: hsl(220.7 37.8% 14.5%);
-  --left-menu-active-foreground: hsl(220 20% 97.1%);
-  --left-menu-border: hsl(218.2 24.4% 17.6%);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  --left-menu: var(--card);
+  --left-menu-foreground: var(--studio-icon-subtle);
+  --left-menu-hover: var(--studio-control-hover-neutral);
+  --left-menu-active: var(--studio-selection-subtle);
+  --left-menu-active-foreground: var(--foreground);
+  --left-menu-border: var(--border);
+  /* Dark counterparts of the shipped five. Note --chart-3 becomes the brand
+     blue here rather than the muted #4e79a7, which is too close to the ground
+     to read. */
+  --chart-1: #fb7185;
+  --chart-2: #34d399;
+  --chart-3: #0065e3;
+  --chart-4: #f6c453;
+  --chart-5: #60a5fa;
   /* Deeper than the light scale: the same geometry over a dark ground needs
      more shadow to separate a card from the gutter at all. */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -1039,7 +1226,48 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .badge.ok { background: var(--success-soft); color: var(--success); }
 .badge.warn { background: var(--warning-soft); color: var(--warning); }
 
-/* Project tabs: everything a project owns, on the project's own page. */
+/* Project sections: the band across the top of the work area, the shipped
+   .studio-project-sections to the pixel — 44px minimum (--studio-section-height,
+   a token rather than a number because other chrome aligns to it), on --card
+   rather than --background, closed by a rule, 24px of side inset and 6px of
+   vertical padding.
+
+   It WRAPS rather than scrolling. That is the shipped behaviour (the inner list
+   carries `flex-wrap`) and it is the right one for labels: a section that has
+   scrolled out of sight is a section nobody clicks, whereas a second line costs
+   44px once and shows all of them.
+
+   The 72px of padding-right is the shipped value and it is load-bearing — it
+   keeps the last section clear of the controls that sit at the end of the band
+   so the two never overlap at the width where the row starts to fill up. */
+.project-sections {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  min-height: var(--studio-section-height); flex: none;
+  padding: 6px 72px 6px 1.5rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+/* 28px rows — the shipped link's `project` variant is h-7, noticeably shorter
+   than the 36px default, which is what lets seven of them sit in a 44px band. */
+.psection {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 12px; flex: none;
+  border: none; background: none; border-radius: var(--radius-md);
+  font: inherit; font-size: var(--text-body-size); font-weight: 500;
+  color: var(--muted-foreground); white-space: nowrap; cursor: pointer;
+  transition:
+    color var(--motion-micro) var(--ease-standard),
+    background-color var(--motion-micro) var(--ease-standard);
+}
+.psection .ico { display: grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.psection:hover { color: var(--foreground); background: var(--studio-control-hover-neutral); }
+/* Selected is the same pair the navigation rail uses — neutral fill, blue text
+   — and not an underline. The product moved off underlined tabs; a fill reads
+   at a glance in a band this short, where a 2px rule under 28px of text does
+   not. */
+.psection.on { color: var(--primary); background: var(--studio-selection-subtle); }
+
+/* Older in-page tab strips (spec-quality and friends) keep the underline look. */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0.9rem 0 1rem;
         border-bottom: 1px solid var(--border); }
 .tab {
@@ -1065,27 +1293,48 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 /* Status pills — soft pastel fill + darker text, one accent per state, exactly
    the mockup vocabulary. Tone class names cover both our derived tones
    (ok/warn/danger/info/neutral) and the mockup's status words. */
+/* This block is the one that actually paints: it is appended after the base
+   .badge above at equal specificity, so it wins. Geometry and weight come from
+   the shipped Badge (pill, 8px/2px, 12px, medium, no tracking); the tones keep
+   this prototype's wider vocabulary, which the product has no counterpart for.
+   Each tone reads its own -foreground where one exists — the state colour at
+   full strength is a FILL, and too light to be text on a tint of itself. */
 .badge {
-  padding: 3px 10px; border-radius: var(--radius-full);
-  font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em;
-  line-height: 1.5; white-space: nowrap;
-  background: var(--accent); color: var(--primary);
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border: 1px solid transparent; border-radius: var(--radius-full);
+  font-size: 12px; font-weight: 500; letter-spacing: normal;
+  line-height: 1.33; white-space: nowrap;
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: color-mix(in oklch, var(--primary), var(--foreground) 14%);
 }
-.badge.ok, .badge.monitoring, .badge.active, .badge.healthy { background: var(--success-soft); color: var(--success); }
-.badge.warn, .badge.review, .badge.setup, .badge.draft { background: var(--warning-soft); color: var(--warning); }
-.badge.danger, .badge.critical, .badge.blocked, .badge.failed { background: var(--destructive-soft); color: var(--destructive); }
+:root[data-theme="dark"] .badge {
+  color: color-mix(in oklch, var(--primary), var(--foreground) 40%);
+}
+.badge.ok, .badge.monitoring, .badge.active, .badge.healthy { background: var(--success-soft); color: var(--success-foreground); }
+.badge.warn, .badge.review, .badge.setup, .badge.draft { background: var(--warning-soft); color: var(--warning-foreground); }
+.badge.danger, .badge.critical, .badge.blocked, .badge.failed { background: var(--destructive-soft); color: var(--danger-foreground); }
 .badge.info, .badge.measuring, .badge.benchmark, .badge.syncing { background: var(--info-soft); color: var(--info); }
 .badge.neutral, .badge.archived { background: var(--muted); color: var(--muted-foreground); }
 .badge.workspace { background: var(--success-soft); color: var(--success); }
 .badge.selfmanaged { background: var(--warning-soft); color: var(--warning); }
 
-/* Table headers: tiny, uppercase, tracked and muted — the mockup's column row. */
+/* Table headers, the shipped TableHead exactly: 10px uppercase in the MONO
+   face at normal weight. The mono is the whole trick — it is what makes a
+   column row read as a label for the data rather than as a small bold heading,
+   and it needs no letter-spacing because the face is already even. Tracking it
+   as well, which is what this used to do with a proportional face, double-spaces
+   it and it stops lining up over the values. */
 .ptable thead th {
-  font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--muted-foreground); font-weight: 600; padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px; line-height: 1rem; letter-spacing: normal; text-transform: uppercase;
+  color: var(--muted-foreground); font-weight: 400; padding: 8px 12px;
   border-bottom: 1px solid var(--border); text-align: left;
 }
-.ptable tbody td { padding: 13px 10px; }
+/* Rows are a 64px band in the product, which is what gives its tables their
+   air; the cell's own padding only has to clear the text inside that band. */
+.ptable tbody tr { height: 4rem; transition: background-color var(--motion-micro) var(--ease-standard); }
+.ptable tbody td { padding: 8px 12px; font-size: 12px; line-height: 1rem; }
 .ptable tbody tr:hover td { background: var(--muted); }
 .pname { font-weight: 600; color: var(--foreground); }
 .pname:hover { color: var(--primary); }
@@ -1120,34 +1369,70 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   background: linear-gradient(90deg, color-mix(in oklab, var(--primary) 78%, white), var(--primary)); }
 .coverage .count { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
 
-/* Floating "Studio AI" assistant, bottom-right, like every mockup. */
+/* "Studio AI" — the shell's third column, not a floating card. It fills its
+   grid track, so the track (see .shell-body) is what animates; the panel itself
+   has no width of its own and no shadow, because a docked column is separated
+   by its border the way the nav rail is. */
 .studio-ai {
-  position: fixed; right: 20px; bottom: 20px; z-index: 60;
-  width: 320px; background: var(--card);
-  border: 1px solid var(--border); border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg); overflow: hidden;
+  grid-column: 3; min-width: 0; height: 100%; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
 }
-.studio-ai .sa-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; }
+.studio-ai .sa-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 0 8px 0 14px; min-height: var(--studio-section-height); flex: none;
+  border-bottom: 1px solid var(--border);
+}
+/* The assistant's mark is the one place the product spends a second hue: a
+   blue→violet sweep, --primary into --studio-ai-violet. Everything else in the
+   shell is brand blue alone, which is what makes this read as "AI" at a glance
+   rather than as another button. */
 .studio-ai .sa-mark {
-  width: 26px; height: 26px; border-radius: var(--radius-lg); display: grid; place-items: center;
-  background: linear-gradient(135deg, color-mix(in oklab, var(--primary) 78%, white), var(--primary)); color: var(--primary-foreground); font-size: 13px;
+  width: 24px; height: 24px; border-radius: var(--radius-md);
+  display: grid; place-items: center; flex: none;
+  background: linear-gradient(135deg, var(--primary), var(--studio-ai-violet));
+  color: var(--primary-foreground); font-size: 13px;
 }
 .studio-ai .sa-title { font-weight: 600; font-size: 14px; flex: 1; }
-.studio-ai .sa-ctx { padding: 0 14px 6px; }
+.studio-ai .sa-ctx {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 10px 14px 6px;
+}
+/* The thread takes the column that is left. Pre-wrap because the gear answers
+   in plain text with its own line breaks. */
+.studio-ai .sa-thread {
+  margin-top: 8px; font-size: 13px; line-height: 1.5;
+  white-space: pre-wrap; color: var(--foreground);
+}
+.studio-ai .sa-thread[data-error="true"] { color: var(--destructive); }
 .studio-ai .sa-ctx-label { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
 .studio-ai .sa-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
   background: var(--accent); color: var(--primary);
   border-radius: var(--radius-full); padding: 6px 11px; font-size: 12.5px; font-weight: 500;
 }
-.studio-ai .sa-input { display: flex; gap: 8px; align-items: center; padding: 10px 14px 14px; }
+.studio-ai .sa-input {
+  display: flex; gap: 8px; align-items: center; flex: none;
+  padding: 10px 14px 14px; border-top: 1px solid var(--border);
+}
 .studio-ai .sa-input input { flex: 1; border-radius: var(--radius-full); }
 .studio-ai .sa-send {
   width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto; padding: 0;
   background: var(--primary); border-color: var(--primary); color: var(--primary-foreground);
 }
-.studio-ai.collapsed { width: auto; }
-.studio-ai.collapsed .sa-ctx, .studio-ai.collapsed .sa-input { display: none; }
+/* Railed: 48px holding one control. The head's own padding would push the mark
+   off-centre in a column this narrow, so the rail draws its own. */
+.studio-ai.collapsed { align-items: center; padding-top: 10px; }
+.sa-rail-open {
+  width: 40px; height: 40px; flex: none; padding: 0;
+  display: grid; place-items: center;
+  border: none; background: none; border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--motion-micro) var(--ease-standard);
+}
+.sa-rail-open:hover { background: var(--studio-control-hover-neutral); }
 
 /* Overlapping member avatars in the portfolio People column. */
 .avatars { display: inline-flex; align-items: center; }

@@ -1,19 +1,32 @@
 /**
- * Studio AI — the floating assistant shown in every product mockup.
+ * Studio AI — the assistant docked to the right edge of the shell.
  *
  * Real, not a mock: it talks to the mini-chat gear (createChat + streamMessage).
  * A single chat is created lazily on first question and reused, so the widget
  * keeps a short thread without spamming the backend. Read-only context for now —
  * it answers about what the portal shows; it does not act on the user's behalf.
  *
- * Styling lives in styles.css under `.studio-ai`. Mounted once in the app shell
- * (App.tsx) so it floats bottom-right over whatever screen is open.
+ * It used to float over the bottom-right corner of whatever screen was open.
+ * The product docks it instead, as the third column of the shell grid — 48px of
+ * rail at rest, 368px open — so it takes room from the content rather than
+ * covering it. That is why `open` is a PROP and not state: the grid track lives
+ * on .shell-body, so the shell has to know the panel's width, and two copies of
+ * that boolean would drift apart the first time either side changed it.
+ *
+ * Styling lives in styles.css under `.studio-ai`.
  */
 import { useState } from "react";
 import { api } from "./api";
 
-export function StudioAI({ token }: { token: string }) {
-  const [open, setOpen] = useState(true);
+export function StudioAI({
+  token,
+  open,
+  onOpenChange,
+}: {
+  token: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [q, setQ] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,22 +62,38 @@ export function StudioAI({ token }: { token: string }) {
   };
 
   if (!open) {
+    // The rail: one control in a 48px column, nothing else. It is a button
+    // rather than a clickable div because at this width the mark IS the whole
+    // affordance, and it has to be reachable from the keyboard.
     return (
-      <div className="studio-ai collapsed">
-        <div className="sa-head" style={{ cursor: "pointer" }} onClick={() => setOpen(true)}>
+      <aside className="studio-ai collapsed" aria-label="Studio AI">
+        <button
+          className="sa-rail-open"
+          aria-label="Open Studio AI"
+          aria-expanded={false}
+          title="Studio AI"
+          onClick={() => onOpenChange(true)}
+        >
           <span className="sa-mark" aria-hidden>✦</span>
-          <span className="sa-title">Studio AI</span>
-        </div>
-      </div>
+        </button>
+      </aside>
     );
   }
 
   return (
-    <div className="studio-ai">
+    <aside className="studio-ai" aria-label="Studio AI">
       <div className="sa-head">
         <span className="sa-mark" aria-hidden>✦</span>
         <span className="sa-title">Studio AI</span>
-        <button className="ghost" title="Minimise" onClick={() => setOpen(false)}>—</button>
+        <button
+          className="ghost"
+          aria-label="Collapse Studio AI"
+          aria-expanded
+          title="Collapse"
+          onClick={() => onOpenChange(false)}
+        >
+          ›
+        </button>
       </div>
 
       <div className="sa-ctx">
@@ -75,17 +104,11 @@ export function StudioAI({ token }: { token: string }) {
             ✦ What should I look at first?
           </button>
         ) : (
-          <div
-            style={{
-              marginTop: 8,
-              maxHeight: 220,
-              overflowY: "auto",
-              fontSize: 13.5,
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-              color: err ? "var(--destructive)" : "var(--foreground)",
-            }}
-          >
+          // No maxHeight any more: the dock is full-height, so the thread takes
+          // whatever the head and the composer leave it (.sa-ctx is the flex
+          // child that grows) instead of capping itself at 220px and stranding
+          // empty column below.
+          <div className="sa-thread" data-error={err ? "true" : "false"}>
             {err ?? (answer || (busy ? "…" : ""))}
           </div>
         )}
@@ -108,6 +131,6 @@ export function StudioAI({ token }: { token: string }) {
           ↑
         </button>
       </form>
-    </div>
+    </aside>
   );
 }
