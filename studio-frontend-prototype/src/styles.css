@@ -817,6 +817,24 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .proj-content { min-width: 0; }
 /* Project switcher reuses the org switcher shell; mark the current project. */
 .org-menu button.on { color: var(--primary); font-weight: 600; }
+/* The Documents section's view switch — the documents themselves, or the
+   detector console that writes their findings. A segmented control rather than
+   two tabs with a rule under them: these are two ways of looking at one thing,
+   not two sections, and the section band above already owns the tab idiom. */
+.doc-views {
+  display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 12px;
+  background: var(--muted); border-radius: var(--radius-md);
+}
+.doc-view {
+  border: none; background: none; border-radius: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 500;
+  color: var(--muted-foreground); cursor: pointer;
+  transition: background-color var(--motion-micro) var(--ease-standard),
+              color var(--motion-micro) var(--ease-standard);
+}
+.doc-view:hover:not(.on) { color: var(--foreground); background: none; }
+.doc-view.on { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-sm); }
+
 /* ── Sign-in ─────────────────────────────────────────────────────────────────
    The deployed portal's own screen, read off the .initial-auth-* block that its
    index.html inlines for the first paint — so these are the product's numbers,

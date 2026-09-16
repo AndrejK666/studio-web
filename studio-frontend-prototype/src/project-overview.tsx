@@ -45,22 +45,29 @@ import { errText, initials, relTime } from "./format";
  * screen "Spec Quality" is a prototype of a different product.
  *
  * Three of these were renamed rather than rebuilt: "kits" is Components,
- * "analyze" is Findings, "people" is Team. The screens behind them did not
- * change. Two — activity and timeline — have NO screen behind them yet and say
- * so on the page; they are in the list because the list is the thing being
- * matched, and quietly omitting them would make the nav wrong in the one way
- * that is being checked. "documents" and "automation" have no counterpart in
- * the product's list and are kept after Team rather than dropped, because
- * dropping them would delete working screens to win a screenshot comparison. */
+ * "people" is Team. The screens behind them did not change. Two — activity and
+ * timeline — have NO screen behind them yet and say so on the page; they are in
+ * the list because the list is the thing being matched, and quietly omitting
+ * them would make the nav wrong in the one way that is being checked.
+ * "automation" has no counterpart in the product's list and is kept after Team
+ * rather than dropped, because dropping it would delete a working screen to win
+ * a screenshot comparison.
+ *
+ * FINDINGS IS NOT A SECTION. The product lists it beside Artifacts, and that is
+ * the thing we are deliberately not copying: every finding is about a document,
+ * carries that document's node id as its subject, and is unreadable without it
+ * — the product's own Findings table spends a whole column re-stating which
+ * document each row belongs to. So the documents list carries the count and the
+ * document carries its findings, and "Findings" occupies the slot Documents is
+ * in. Reintroducing it as a section means reintroducing that column. */
 export type ProjTab =
   | "overview"
   | "components"
   | "artifacts"
-  | "findings"
+  | "documents"
   | "activity"
   | "timeline"
   | "people"
-  | "documents"
   | "automation";
 
 /** What the dashboard needs to know about the project it is showing — the
@@ -455,7 +462,7 @@ export function ProjectOverview({
           value={missed("spec-quality findings") ? "—" : findingTotal}
           sub={highFindings ? `${highFindings} high severity` : findingTotal ? "none high" : "not analysed"}
           tone={highFindings ? "danger" : undefined}
-          onClick={() => onOpenTab("findings")}
+          onClick={() => onOpenTab("documents")}
         />
         <Stat
           label="Team"
@@ -707,7 +714,7 @@ export function ProjectOverview({
           <div className="card">
             <div className="card-head">
               <h2>Spec quality</h2>
-              <button className="ghost" onClick={() => onOpenTab("findings")}>
+              <button className="ghost" onClick={() => onOpenTab("documents")}>
                 Analyse →
               </button>
             </div>

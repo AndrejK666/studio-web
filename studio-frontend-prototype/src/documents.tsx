@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 
 import {
@@ -41,6 +42,7 @@ import {
   MIN_SPEC_SHARE,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
+import { relTime } from "./format";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -65,6 +67,7 @@ export function DocumentsTab({
   workspaceId,
   projectTenantId,
   onOpenFile,
+  analysis,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
@@ -74,9 +77,15 @@ export function DocumentsTab({
   /** Open one document where documents are edited: the project's IDE, at that
    *  file. The path is repo-relative, which is what the IDE's opener wants. */
   onOpenFile: (path: string) => void;
+  /** The detector console, which used to be a section of its own called
+   *  Findings. It is a second VIEW here rather than a second section: a
+   *  detector run is something you do to the documents in this list, and its
+   *  output is the Status column beside them. */
+  analysis?: ReactNode;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [view, setView] = useState<"documents" | "analysis">("documents");
 
   useEffect(() => {
     let alive = true;
@@ -96,13 +105,43 @@ export function DocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      <IngestedDocumentsView
-        token={token}
-        workspaceId={workspaceId}
-        projectTenantId={projectTenantId}
-        types={types}
-        onOpenFile={onOpenFile}
-      />
+      {/* The product puts a list/tree switch in this corner; ours switches
+          between the documents and the analysis that produced their findings.
+          Rendered only when there is an analysis view to switch to, so the
+          workspace-level callers that pass none are unchanged. */}
+      {analysis && (
+        <div className="doc-views" role="tablist" aria-label="Documents view">
+          <button
+            role="tab"
+            aria-selected={view === "documents"}
+            className={view === "documents" ? "doc-view on" : "doc-view"}
+            onClick={() => setView("documents")}
+          >
+            Documents
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "analysis"}
+            className={view === "analysis" ? "doc-view on" : "doc-view"}
+            onClick={() => setView("analysis")}
+          >
+            Analysis
+          </button>
+        </div>
+      )}
+      {/* Both stay mounted. The console holds a detector run in progress and
+          the results of the last one, and unmounting it to glance at the list
+          would throw away a run somebody is waiting on. */}
+      <div hidden={view !== "documents"}>
+        <IngestedDocumentsView
+          token={token}
+          workspaceId={workspaceId}
+          projectTenantId={projectTenantId}
+          types={types}
+          onOpenFile={onOpenFile}
+        />
+      </div>
+      {analysis && <div hidden={view !== "analysis"}>{analysis}</div>}
     </div>
   );
 }
@@ -704,6 +743,31 @@ const FINDING_TONE: Record<string, { bg: string; fg: string }> = {
 const findingTone = (severity?: string | null) =>
   FINDING_TONE[severity ?? ""] ?? { bg: "var(--muted)", fg: "var(--muted-foreground)" };
 
+/** What the Status column says: how many findings are open on this document.
+ *
+ *  Counted, not listed. The old column printed one chip per detector, which
+ *  made the row as tall as the document's worst day and told the reader four
+ *  detector names they cannot act on from a list. The names are one click
+ *  away, in the panel beside it. */
+function findingLabel(found: SpecFinding[] | undefined): string {
+  const n = found?.length ?? 0;
+  if (n === 0) return "No findings";
+  return `${n} finding${n === 1 ? "" : "s"}`;
+}
+
+/** The dot beside that count. Findings outrank conformance: a document can
+ *  satisfy its template exactly and still be the one with an unresolved
+ *  placeholder in it, and that is the more useful thing to colour for. */
+function findingDotTone(found: SpecFinding[] | undefined, conforms?: boolean | null): string {
+  if (found?.length) {
+    const worst = found.some((f) => f.severity === "high" || f.severity === "gate-failed");
+    return worst ? "var(--destructive)" : "var(--warning)";
+  }
+  if (conforms === false) return "var(--warning)";
+  if (conforms === true) return "var(--success)";
+  return "var(--muted-foreground)";
+}
+
 type BindingFilter = "review" | "bound" | "ignored" | "all";
 
 /** The files Studio pulled out of the repository, and what we think each is. */
@@ -736,6 +800,15 @@ function IngestedDocumentsView({
   const [contentByNode, setContentByNode] = useState<Record<string, string>>({});
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
+  /** Which repository each document came from, keyed by its graph node id.
+   *
+   *  Read from the file nodes rather than inferred from the path: a binding
+   *  carries a repo-RELATIVE path and nothing else, so two repositories with a
+   *  `docs/prd.md` each are indistinguishable by path alone. The node knows,
+   *  because ingest wrote `value.repo` when it pulled the file. This listing is
+   *  metadata only — it never asks for the text — so it costs a page walk, not
+   *  a clone. */
+  const [repoByNode, setRepoByNode] = useState<Record<string, string>>({});
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -774,6 +847,24 @@ function IngestedDocumentsView({
       setFindings(byNode);
     } catch {
       // Leave whatever was already read; the column simply shows nothing.
+    }
+    // Which repository each file came from. Paged to the end rather than
+    // capped: a project whose documents live past the first page would
+    // otherwise show "—" for exactly the files furthest down the list, which
+    // reads as "no repository" rather than "not asked".
+    try {
+      const byNode: Record<string, string> = {};
+      let cursor: string | undefined;
+      do {
+        const page = await api.listArtifactNodes(token, "file", projectTenantId, cursor, 200);
+        for (const n of page.nodes) {
+          if (n.value.repo) byNode[n.instance_id] = n.value.repo;
+        }
+        cursor = page.next_cursor;
+      } while (cursor);
+      setRepoByNode(byNode);
+    } catch {
+      // The column falls back to "—"; it is provenance, not identity.
     }
   }, [token, workspaceId, projectTenantId]);
 
@@ -1329,11 +1420,13 @@ function IngestedDocumentsView({
     <div className="ingested">
       <style>{INGESTED_CSS}</style>
       <div className="ing-head">
-        <h2>Documents already in the repository</h2>
+        <h2>Documents</h2>
         <p>
           Studio reads the files the repository sync pulled in and works out which template each
           one was written against — from a type declared in its front matter, or by matching its
-          sections, path and title. Anything it cannot decide waits here for you.
+          sections, path and title. Anything it cannot decide waits here for you. The Status column
+          counts what the detectors found open on each document; the analysis that produced those
+          findings is the other view.
         </p>
       </div>
 
@@ -1421,12 +1514,19 @@ function IngestedDocumentsView({
       ) : (
         <div className="ing-split">
           <div className="ing-table">
+            {/* The product's artifact table, column for column: what the thing
+                is called, what type it was written against, where it came from,
+                where it sits, what is open on it, and when it last moved. The
+                old header named the pipeline's own vocabulary — "Why",
+                "Conforms", "Analysis" — which describes how Studio decided
+                rather than what the reader is looking at. */}
             <div className="ing-row ing-row-head">
-              <span>File</span>
-              <span>Document type</span>
-              <span>Why</span>
-              <span>Conforms</span>
-              <span>Analysis</span>
+              <span>Name</span>
+              <span>Type</span>
+              <span>Repository</span>
+              <span>Path</span>
+              <span>Status</span>
+              <span>Updated</span>
               <span />
             </div>
             {shown.map((b) => (
@@ -1435,8 +1535,14 @@ function IngestedDocumentsView({
                 className={selectedId === b.id ? "ing-row on" : "ing-row"}
                 onClick={() => setSelectedId(b.id)}
               >
-                <span className="ing-path" title={b.path}>
-                  {b.path}
+                {/* Name is the basename. The full path has its own column now,
+                    so repeating it here cost the widest column in the table to
+                    say the same thing twice. */}
+                <span className="ing-name" title={basename(b.path)}>
+                  <span className="ing-doc-ic" aria-hidden>
+                    ▤
+                  </span>
+                  {basename(b.path)}
                 </span>
                 <span onClick={(e) => e.stopPropagation()}>
                   <select
@@ -1456,48 +1562,43 @@ function IngestedDocumentsView({
                     ))}
                   </select>
                 </span>
-                <span className="ing-why">
+                <span className="ing-repo" title={repoByNode[b.node_id] ?? ""}>
+                  {repoByNode[b.node_id] ?? <span className="ing-dash">—</span>}
+                </span>
+                <span className="ing-path" title={b.path}>
+                  {b.path}
+                </span>
+                {/* Status is what is OPEN on the document, which is the one
+                    thing a reader scanning this list is looking for. How the
+                    type was decided, and how confidently, moved to a title —
+                    it matters while triaging and never afterwards. */}
+                <span
+                  className="ing-status"
+                  title={[
+                    `${STATE_LABEL[b.state]}${
+                      b.confidence != null && b.state === "detected"
+                        ? ` · ${Math.round(b.confidence * 100)}%`
+                        : ""
+                    }`,
+                    b.source ? (SOURCE_LABEL[b.source] ?? b.source) : "",
+                    b.conforms == null
+                      ? "not validated"
+                      : b.conforms
+                        ? "conforms to its type"
+                        : `${b.validation?.issues.length ?? 0} conformance issue(s)`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                >
                   <span
-                    className="ing-state"
-                    style={{
-                      background: STATE_TONE[b.state].bg,
-                      color: STATE_TONE[b.state].fg,
-                    }}
-                  >
-                    {STATE_LABEL[b.state]}
-                  </span>
-                  {b.confidence != null && b.state === "detected" && (
-                    <span className="ing-conf">{Math.round(b.confidence * 100)}%</span>
-                  )}
-                  {b.source && <span className="ing-src">{SOURCE_LABEL[b.source] ?? b.source}</span>}
+                    className="ing-dot"
+                    style={{ background: findingDotTone(findings[b.node_id], b.conforms) }}
+                    aria-hidden
+                  />
+                  {findingLabel(findings[b.node_id])}
                 </span>
-                <span>
-                  {b.conforms == null ? (
-                    <span className="ing-dash">—</span>
-                  ) : (
-                    <span className={b.conforms ? "ing-ok" : "ing-bad"}>
-                      {b.conforms ? "✓" : `${b.validation?.issues.length ?? 0} issue(s)`}
-                    </span>
-                  )}
-                </span>
-                <span className="ing-findings">
-                  {(findings[b.node_id] ?? []).length === 0 ? (
-                    <span className="ing-dash">—</span>
-                  ) : (
-                    (findings[b.node_id] ?? []).map((f) => (
-                      <span
-                        key={f.detector}
-                        className="ing-state"
-                        title={f.summary ?? f.detector}
-                        style={{
-                          background: findingTone(f.severity).bg,
-                          color: findingTone(f.severity).fg,
-                        }}
-                      >
-                        {f.detector}
-                      </span>
-                    ))
-                  )}
+                <span className="ing-updated" title={b.updated_at}>
+                  {relTime(b.updated_at)}
                 </span>
                 <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
                   {b.state === "detected" && (
@@ -1536,6 +1637,29 @@ function IngestedDocumentsView({
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
                     {typeName(selected.type_key)}
+                  </div>
+                  {/* How the type was decided, and how sure. This used to be a
+                      column ("Why"); it belongs here, because it is a question
+                      you ask about ONE document while deciding what to do with
+                      it, and never while scanning the list. */}
+                  <div className="ing-why" style={{ marginTop: 8 }}>
+                    <span
+                      className="ing-state"
+                      style={{
+                        background: STATE_TONE[selected.state].bg,
+                        color: STATE_TONE[selected.state].fg,
+                      }}
+                    >
+                      {STATE_LABEL[selected.state]}
+                    </span>
+                    {selected.confidence != null && selected.state === "detected" && (
+                      <span className="ing-conf">{Math.round(selected.confidence * 100)}%</span>
+                    )}
+                    {selected.source && (
+                      <span className="ing-src">
+                        {SOURCE_LABEL[selected.source] ?? selected.source}
+                      </span>
+                    )}
                   </div>
                   {/* The file lives in the repository, so the repository's
                       editor is where it is changed. Studio reports on it. */}
@@ -2048,14 +2172,38 @@ const INGESTED_CSS = `
 .ing-filter { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); background: transparent; cursor: pointer; }
 .ing-filter.on { background: var(--accent); border-color: var(--accent-foreground); }
 .ing-count { opacity: 0.6; margin-left: 4px; }
+/* The detail panel sits beside the table only while the table can still afford
+   it. Seven columns need ~1040px before Name starts ellipsising to nothing, so
+   below 1500px the panel goes under the table and gives that width back —
+   measured: at 1280 the side-by-side split left Name 66px wide. */
 .ing-split { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 12px; align-items: start; }
-.ing-table { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.ing-row { display: grid; grid-template-columns: minmax(0,2fr) 150px minmax(0,1.2fr) 100px minmax(0,1fr) 150px; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+@media (max-width: 1500px) { .ing-split { grid-template-columns: minmax(0,1fr); } }
+/* overflow-x, not hidden: when the columns below cannot all fit at their
+   minimums the table scrolls sideways, the way the product's does
+   (its Table is overflow-x-auto). Clipping instead would simply delete the
+   Updated column and the row's own actions off the right edge.
+   No backticks in this comment — the whole block is a template literal. */
+.ing-table { border: 1px solid var(--border); border-radius: var(--radius-xl); overflow-x: auto; background: var(--card); }
+/* Name | Type | Repository | Path | Status | Updated | row actions.
+   Every flexible column carries a floor. minmax(0,...) let the four of them be
+   squeezed to nothing by the four fixed ones — at 1280px that produced a 66px
+   Name and a 37px Repository, which is a row of ellipses. The floors add up to
+   970px plus 72px of gaps, and .ing-table scrolls past that rather than
+   shrinking anything below it. */
+.ing-row { display: grid; grid-template-columns: minmax(180px,1.6fr) 140px minmax(110px,0.9fr) minmax(160px,1.4fr) 130px 110px 140px; gap: 12px; align-items: center; padding: 10px 14px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
 .ing-row:first-child { border-top: none; }
 .ing-row.on { background: var(--accent); }
-.ing-row-head { font-weight: 600; cursor: default; background: var(--surface-raised); }
+/* The column row is the shipped TableHead: 10px uppercase in the mono face at
+   normal weight, not a small bold heading. */
+.ing-row-head { font-family: var(--font-mono); font-size: 10px; line-height: 16px; font-weight: 400; text-transform: uppercase; color: var(--muted-foreground); cursor: default; background: transparent; padding-top: 8px; padding-bottom: 8px; }
 .ing-row select { width: 100%; font-size: 12px; }
-.ing-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.ing-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ing-doc-ic { flex: none; color: var(--primary); font-size: 13px; }
+.ing-repo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); }
+.ing-updated { color: var(--muted-foreground); white-space: nowrap; }
+.ing-status { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.ing-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.ing-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: var(--muted-foreground); }
 .ing-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ing-state { padding: 1px 7px; border-radius: 20px; font-size: 11px; white-space: nowrap; }
 .ing-conf { opacity: 0.7; }
