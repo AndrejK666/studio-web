@@ -422,10 +422,34 @@ describe("waitForStudioSessionReady", () => {
     ).rejects.toThrow("stopped before it became ready");
   });
 
-  it("waits on the backend's probe run instead of polling, and reads the record once", async () => {
+  it("takes the backend's probe run as soon as it ends, and stops watching it", async () => {
     const starting = { ...session("starting"), ready_run_id: "run-1" };
-    let refreshes = 0;
     let followed = "";
+    let aborted = false;
+    const ready = await waitForStudioSessionReady(starting, async () => session("running"), {
+      follow: async (runId, signal) => {
+        followed = runId;
+        signal.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return { state: "succeeded" };
+      },
+      // The poll runs alongside; it must never be the thing that answers here.
+      sleep: async () => new Promise<void>(() => {}),
+    });
+    expect(followed).toBe("run-1");
+    expect(ready.state).toBe("running");
+    // The subscription is dropped rather than left to run out its own timeout.
+    expect(aborted).toBe(true);
+  });
+
+  it("still becomes ready when the run's terminal event never arrives", async () => {
+    // The subscription opens after the session was created, so a run that
+    // finishes in between delivers nothing to it. Waiting on the stream alone
+    // then sits out the follower's timeout — minutes for a launch that was
+    // ready in seconds.
+    const starting = { ...session("starting"), ready_run_id: "run-3" };
+    let refreshes = 0;
     const ready = await waitForStudioSessionReady(
       starting,
       async () => {
@@ -433,19 +457,27 @@ describe("waitForStudioSessionReady", () => {
         return session("running");
       },
       {
-        follow: async (runId) => {
-          followed = runId;
-          return { state: "succeeded" };
-        },
-        // Any use of these would mean it fell back to polling.
-        sleep: async () => {
-          throw new Error("must not poll when a probe run is being followed");
-        },
+        follow: () => new Promise(() => {}), // never settles
+        sleep: async () => undefined,
       },
     );
-    expect(followed).toBe("run-1");
     expect(ready.state).toBe("running");
     expect(refreshes).toBe(1);
+  });
+
+  it("keeps asking when the run ends a moment before the record catches up", async () => {
+    const starting = { ...session("starting"), ready_run_id: "run-4" };
+    const states = ["starting", "running"] as const;
+    let refreshes = 0;
+    const ready = await waitForStudioSessionReady(
+      starting,
+      async () => session(states[Math.min(refreshes++, states.length - 1)]),
+      {
+        follow: async () => ({ state: "succeeded" }),
+        sleep: async () => undefined,
+      },
+    );
+    expect(ready.state).toBe("running");
   });
 
   it("reports a failed probe run rather than waiting for a state that is not coming", async () => {
