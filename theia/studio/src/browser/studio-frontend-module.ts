@@ -4,6 +4,7 @@ import { StudioContribution } from './studio-contribution';
 import { ApplicationShell, bindViewContribution, FrontendApplicationContribution, LabelProviderContribution, OpenHandler, SaveableService, WidgetFactory, WebSocketConnectionProvider } from '@theia/core/lib/browser';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
+import { PerspectiveContribution } from '@theia/core/lib/browser/perspective-service';
 import { ResourceResolver } from '@theia/core/lib/common/resource';
 import { StudioRuntimeService, studioRuntimeServicePath } from '../common/studio-protocol';
 import { FilesystemSaveableService } from '@theia/filesystem/lib/browser/filesystem-saveable-service';
@@ -47,6 +48,7 @@ import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { StudioDocumentOpener } from './studio-document-opener';
+import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 
 import '../../src/browser/style/index.css';
@@ -93,6 +95,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(StudioSaveableService).toSelf().inSingletonScope();
     rebind(SaveableService).toService(StudioSaveableService);
     rebind(FilesystemSaveableService).toService(StudioSaveableService);
+    // Workbench modes. Registering these is also what makes Theia's own
+    // "Select a perspective" command visible — it hides itself while only one
+    // perspective exists.
+    bind(StudioPerspectiveContribution).toSelf().inSingletonScope();
+    bind(PerspectiveContribution).toService(StudioPerspectiveContribution);
     bind(MarkdownEditorOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownEditorOpenHandler);
     // Portal documents as editable resources (`studio-doc:`). Without the

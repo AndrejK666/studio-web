@@ -1,8 +1,10 @@
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { Disposable, DisposableCollection } from '@theia/core';
 import { NavigatableWidgetOpenHandler, NavigatableWidgetOptions, OpenWithService, OpenWithHandler, WidgetOpenerOptions } from '@theia/core/lib/browser';
 import URI from '@theia/core/lib/common/uri';
+import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { isStudioDocumentUri } from '../../common/studio-document-uri';
+import { DOCUMENTS_PERSPECTIVE_ID, MARKDOWN_PRIORITY } from '../../common/studio-modes';
 import { MarkdownEditorWidget } from './markdown-editor-widget';
 
 @injectable()
@@ -11,6 +13,11 @@ export class MarkdownEditorOpenHandler extends NavigatableWidgetOpenHandler<Mark
     static readonly LABEL = 'Markdown WYSIWYG Editor';
 
     readonly id = MarkdownEditorOpenHandler.ID;
+
+    // Optional so the handler still works in a shell that has no perspective
+    // service at all — a test harness, or an application built without it.
+    @inject(PerspectiveService) @optional()
+    protected readonly perspectives: PerspectiveService | undefined;
 
     protected openWithDisposable: { dispose(): void } | undefined;
     protected readonly toDispose = new DisposableCollection();
@@ -21,7 +28,17 @@ export class MarkdownEditorOpenHandler extends NavigatableWidgetOpenHandler<Mark
     }
 
     canHandle(uri: URI): number {
-        return this.canOpen(uri) ? 600 : 0;
+        // A portal document is not a file: only this extension's resolver can
+        // read one, in any mode. See MARKDOWN_PRIORITY.
+        if (isStudioDocumentUri(uri)) {
+            return MARKDOWN_PRIORITY.preferred;
+        }
+        if (!this.canOpen(uri)) {
+            return 0;
+        }
+        return this.perspectives?.getActivePerspectiveId() === DOCUMENTS_PERSPECTIVE_ID
+            ? MARKDOWN_PRIORITY.deferred
+            : MARKDOWN_PRIORITY.preferred;
     }
 
     async registerOpenWith(openWithService: OpenWithService): Promise<void> {

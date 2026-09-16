@@ -15,7 +15,12 @@ import { OrcaWidget } from './orca-widget';
 
 export const StudioCommand: Command = { id: 'studio:command' };
 
-const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' | 'right' | 'bottom' }> = [
+/** Where the Studio views go in the normal workbench.
+ *
+ *  Exported because it is now two things at once: what a fresh session lays
+ *  out, and the "Workbench" perspective's placement map. Writing it twice is
+ *  how the two would drift apart. */
+export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' | 'right' | 'bottom' }> = [
     { id: StudioWidget.ID, area: 'left' },
     { id: WorkspaceGraphWidget.ID, area: 'main' },
     { id: ObjectDetailsWidget.ID, area: 'right' },
