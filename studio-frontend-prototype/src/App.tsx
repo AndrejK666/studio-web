@@ -181,6 +181,10 @@ export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [expired, setExpired] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  /** The one pending renewal timer. Every successful renewal schedules the
+   *  next, and a 401 renews too — without replacing the timer, a busy session
+   *  accumulates one more of them every time, all firing forever. */
+  const renewTimer = useRef<number | undefined>(undefined);
 
   /** Renew the access token silently; returns true when the session lives on. */
   const renew = useCallback(async (): Promise<boolean> => {
@@ -193,12 +197,18 @@ export function App() {
       setMe(who);
       // Renew a minute before expiry; the IdP keeps the SSO session alive far
       // longer than one access token, so this is invisible to the user.
-      window.setTimeout(() => void renew(), Math.max(30, session.expiresIn - 60) * 1000);
+      window.clearTimeout(renewTimer.current);
+      renewTimer.current = window.setTimeout(
+        () => void renew(),
+        Math.max(30, session.expiresIn - 60) * 1000,
+      );
       return true;
     } catch {
       return false;
     }
   }, []);
+
+  useEffect(() => () => window.clearTimeout(renewTimer.current), []);
 
   // Page load: restore a session from the stored refresh token (survives F5).
   useEffect(() => {
@@ -255,6 +265,7 @@ export function App() {
       onLogout={() => {
         setToken(null);
         setMe(null);
+        forgetPlace();
         // Ends the Keycloak session too (RP-initiated logout) — otherwise
         // the SSO cookie silently signs the same user back in and there is
         // no way to switch accounts. Static-token logins clear locally.
@@ -613,22 +624,83 @@ function OrganizationAccessGate({
   );
 }
 
+/** Where the person was, as little of it as restores the screen.
+ *
+ *  Ids and enum tags only — no fetched records. Anything else would be a cache
+ *  with no way to tell when it went stale, and every one of these is re-read
+ *  from the backend on the way back in. */
+interface Place {
+  view: View;
+  crumb: Crumb;
+  projectTab: ProjTab;
+  workspaceTab: WorkspaceTab;
+  projectLabel?: string;
+  activeOrgId: string | null;
+  adminOpen: boolean;
+  adminView: AdminView;
+}
+
+const PLACE_KEY = "studio.place";
+const SPACES_KEY = "studio.spaces";
+
+/** Forget where the last person was.
+ *
+ *  Signing out has to, or the next sign-in on this tab opens somebody else's
+ *  project — the names of their organization and workspace included, drawn
+ *  from storage before a single call is authorized. */
+function forgetPlace(): void {
+  try {
+    sessionStorage.removeItem(PLACE_KEY);
+    sessionStorage.removeItem(SPACES_KEY);
+  } catch {
+    /* nothing readable to forget */
+  }
+}
+
+/** Read the stored place, or nothing at all.
+ *
+ *  Every field is checked because this is storage the user can edit and a
+ *  previous version of the app wrote: a `view` that no longer exists would
+ *  render an empty shell with no way back, which is worse than starting at
+ *  the default. */
+function readPlace(): Partial<Place> {
+  try {
+    const raw = sessionStorage.getItem(PLACE_KEY);
+    if (!raw) return {};
+    const saved = JSON.parse(raw) as Partial<Place>;
+    return saved && typeof saved === "object" ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
 function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () => void }) {
-  const [view, setView] = useState<View>("projects");
+  // Restored once, as the initial state: setting it from an effect afterwards
+  // would flash the default screen first and fight any navigation the person
+  // made in between.
+  const restoredPlace = useRef<Partial<Place>>(readPlace()).current;
+  const [view, setView] = useState<View>(restoredPlace.view ?? "projects");
   /** Position in the project → nested project drill-down. Two levels, one noun. */
-  const [crumb, setCrumb] = useState<Crumb>({});
+  const [crumb, setCrumb] = useState<Crumb>(restoredPlace.crumb ?? {});
   /** Name of the opened nested project, kept for the crumb: the record is not
    *  in any list the shell holds, and refetching it for a label would be silly. */
-  const [projectLabel, setProjectLabel] = useState<string | undefined>();
+  const [projectLabel, setProjectLabel] = useState<string | undefined>(restoredPlace.projectLabel);
   // The open project's active tab. Lifted here so the sidebar is the project's
   // nav (see the PROJECT section below); opening a different project resets it.
-  const [projectTab, setProjectTab] = useState<ProjTab>("overview");
+  const [projectTab, setProjectTab] = useState<ProjTab>(restoredPlace.projectTab ?? "overview");
   /** The open workspace's section. Lives here beside projectTab and for the
    *  same reason: the band that switches it is chrome above the work area, not
    *  part of the screen it switches. */
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("projects");
-  // Opening a different project starts on its Overview.
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(
+    restoredPlace.workspaceTab ?? "projects",
+  );
+  // Opening a different project starts on its Overview — but a reload is not
+  // "opening a different project", and resetting there would undo the restore
+  // on the very first render.
+  const tabbedProject = useRef(restoredPlace.crumb?.nestedId);
   useEffect(() => {
+    if (tabbedProject.current === crumb.nestedId) return;
+    tabbedProject.current = crumb.nestedId;
     setProjectTab("overview");
   }, [crumb.nestedId]);
   // And a different workspace starts on its Projects, for the same reason: the
@@ -642,11 +714,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // Active organization — the top context, now that the level above projects is
   // back. Lifted to the shell so the sidebar switcher (where "Home" used to be)
   // and the portfolio share one selection. null = "resolve a sensible default".
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(restoredPlace.activeOrgId ?? null);
   // Admin area (console pattern): a separate mode with its own sidebar for
   // organizations / members / workspaces administration.
-  const [adminOpen, setAdminOpen] = useState(false);
-  const [adminView, setAdminView] = useState<AdminView>("people");
+  const [adminOpen, setAdminOpen] = useState(restoredPlace.adminOpen ?? false);
+  const [adminView, setAdminView] = useState<AdminView>(restoredPlace.adminView ?? "people");
   // Which organization the admin area is scoped to ("__new__" = create hero).
   // Concept v2 resolves it implicitly; the picker only appears under the flag.
   const [adminOrgId, setAdminOrgId] = useState<string | null>(null);
@@ -790,10 +862,31 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
   }, [activeSpace]);
 
+  // Remember where the person is, so a reload puts them back rather than at
+  // the default screen. Per-tab on purpose: two tabs are two places, and the
+  // login session (localStorage) deliberately outlives both.
+  useEffect(() => {
+    const place: Place = {
+      view,
+      crumb,
+      projectTab,
+      workspaceTab,
+      projectLabel,
+      activeOrgId,
+      adminOpen,
+      adminView,
+    };
+    try {
+      sessionStorage.setItem(PLACE_KEY, JSON.stringify(place));
+    } catch {
+      /* private mode etc. — the screen just opens at the default next time */
+    }
+  }, [view, crumb, projectTab, workspaceTab, projectLabel, activeOrgId, adminOpen, adminView]);
+
   useEffect(() => {
     try {
       sessionStorage.setItem(
-        "studio.spaces",
+        SPACES_KEY,
         JSON.stringify(spaces.map((s) => ({ wsId: s.wsId, wsName: s.wsName }))),
       );
     } catch {
@@ -822,7 +915,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     void (async () => {
       let saved: { wsId: string; wsName: string }[] = [];
       try {
-        const raw = JSON.parse(sessionStorage.getItem("studio.spaces") ?? "[]") as unknown[];
+        const raw = JSON.parse(sessionStorage.getItem(SPACES_KEY) ?? "[]") as unknown[];
         saved = raw
           .map((e) =>
             typeof e === "string"
