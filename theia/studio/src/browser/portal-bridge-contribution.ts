@@ -22,7 +22,7 @@
 // to the sender's origin — never `*` broadcasts with data beyond status.
 // Standalone (non-embedded) sessions skip all of this.
 
-import { inject, injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { ThemeService } from '@theia/core/lib/browser/theming';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
@@ -32,6 +32,8 @@ import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { ArtifactGraphCommand } from './artifact-graph-contribution';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
 import { StudioApi } from './studio-api';
+import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
+import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 
@@ -83,6 +85,11 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
 
     @inject(StudioDocumentResourceResolver)
     protected readonly documentResources: StudioDocumentResourceResolver;
+
+    // Optional: an application without perspectives still opens documents, it
+    // just does not rearrange itself around them.
+    @inject(PerspectiveService) @optional()
+    protected readonly perspectives: PerspectiveService | undefined;
 
     protected readonly toDispose = new DisposableCollection();
     /** See [`openWhenLayoutReady`]. */
@@ -153,7 +160,13 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // and the IDE edit one row rather than two copies.
                 const ref = { workspaceId: msg.workspaceId, documentId: msg.documentId };
                 const title = msg.title;
-                this.openWhenLayoutReady(() => void this.documentOpener.open(ref, title));
+                // Asking to edit a document IS the request for the documents
+                // mode — the portal does not have to say both, and a person
+                // who came to write should not have to rearrange the workbench
+                // first. Switching before the open also decides which editor
+                // takes the file: the handlers arbitrate on the active
+                // perspective (see MARKDOWN_PRIORITY).
+                this.openWhenLayoutReady(() => void this.openDocumentInMode(ref, title));
             }
         };
         window.addEventListener('message', onMessage);
@@ -185,6 +198,23 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
 
     onStop(): void {
         this.toDispose.dispose();
+    }
+
+    /** Put the workbench in the documents mode, then open the document. */
+    protected async openDocumentInMode(
+        ref: { workspaceId: string; documentId: string },
+        title: string | undefined,
+    ): Promise<void> {
+        try {
+            if (this.perspectives && this.perspectives.getActivePerspectiveId() !== DOCUMENTS_PERSPECTIVE_ID) {
+                await this.perspectives.switchPerspective(DOCUMENTS_PERSPECTIVE_ID);
+            }
+        } catch (error) {
+            // A layout that would not rearrange is no reason to withhold the
+            // document the person asked for.
+            console.warn('studio: could not switch to the documents perspective', error);
+        }
+        await this.documentOpener.open(ref, title);
     }
 
     /**
