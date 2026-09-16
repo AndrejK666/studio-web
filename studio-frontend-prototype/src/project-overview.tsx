@@ -37,15 +37,31 @@ import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync
 import { errText, initials, relTime } from "./format";
 
 /** The sections of an open project. Lives here because Overview is the screen
- *  that links to all of them; the shell's sidebar renders the list. */
+ *  that links to all of them; the shell's rail renders the list.
+ *
+ * The names and the order are the product's, not ours — the shipped
+ * project-sidebar lists Overview, Components, Artifacts, Findings, Activity,
+ * Timeline, Team, then Project settings, and a prototype that calls the same
+ * screen "Spec Quality" is a prototype of a different product.
+ *
+ * Three of these were renamed rather than rebuilt: "kits" is Components,
+ * "analyze" is Findings, "people" is Team. The screens behind them did not
+ * change. Two — activity and timeline — have NO screen behind them yet and say
+ * so on the page; they are in the list because the list is the thing being
+ * matched, and quietly omitting them would make the nav wrong in the one way
+ * that is being checked. "documents" and "automation" have no counterpart in
+ * the product's list and are kept after Team rather than dropped, because
+ * dropping them would delete working screens to win a screenshot comparison. */
 export type ProjTab =
   | "overview"
+  | "components"
   | "artifacts"
+  | "findings"
+  | "activity"
+  | "timeline"
+  | "people"
   | "documents"
-  | "kits"
-  | "analyze"
-  | "automation"
-  | "people";
+  | "automation";
 
 /** What the dashboard needs to know about the project it is showing — the
  *  project tenant, plus the organization it hangs under. */
@@ -439,7 +455,7 @@ export function ProjectOverview({
           value={missed("spec-quality findings") ? "—" : findingTotal}
           sub={highFindings ? `${highFindings} high severity` : findingTotal ? "none high" : "not analysed"}
           tone={highFindings ? "danger" : undefined}
-          onClick={() => onOpenTab("analyze")}
+          onClick={() => onOpenTab("findings")}
         />
         <Stat
           label="Team"
@@ -691,7 +707,7 @@ export function ProjectOverview({
           <div className="card">
             <div className="card-head">
               <h2>Spec quality</h2>
-              <button className="ghost" onClick={() => onOpenTab("analyze")}>
+              <button className="ghost" onClick={() => onOpenTab("findings")}>
                 Analyse →
               </button>
             </div>
@@ -734,7 +750,7 @@ export function ProjectOverview({
           <div className="card">
             <div className="card-head">
               <h2>Kits{kits.length ? ` · ${kits.length}` : ""}</h2>
-              <button className="ghost" onClick={() => onOpenTab("kits")}>
+              <button className="ghost" onClick={() => onOpenTab("components")}>
                 Kits →
               </button>
             </div>

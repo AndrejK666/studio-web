@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- The product's own mark, byte-identical to studio-frontend/public/favicon.png
-         — the portal and the prototype must not be two different tabs. -->
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- Matches --background, so a mobile browser's own chrome continues the
+         page instead of framing it. Same value the deployed portal sets. -->
+    <meta name="theme-color" content="#f1f5f9" />
+    <!-- Both icons byte-identical to what the deployed portal serves, and
+         declared in the same order it declares them — the portal and the
+         prototype must not be two different tabs. The .ico carries the small
+         raster sizes a tab strip actually asks for; the SVG is what anything
+         resolution-independent (pinned tabs, PWA surfaces) picks up. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/constructor-symbol.svg" type="image/svg+xml" sizes="any" />
     <title>Constructor Studio</title>
   </head>
   <body>
