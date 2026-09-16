@@ -49,6 +49,7 @@
           "dark": "dark"
         },
         "preferences": {
+          "window.menuBarVisibility": "hidden",
           "security.workspace.trust.enabled": false,
           "security.workspace.trust.startupPrompt": "never"
         }
