@@ -7,8 +7,16 @@
 // tenant UUID (validated server-side by the oidc-authn-plugin gear).
 //
 // Session handling: access tokens are short-lived (Keycloak default 1 h), so
-// the refresh token is kept in sessionStorage and used to renew silently —
-// both on a timer and after a 401. That also survives a page reload.
+// the refresh token is kept in storage and used to renew silently — both on a
+// timer and after a 401.
+//
+// It lives in localStorage, not sessionStorage, so the session survives a
+// reload AND a second tab. That is a deliberate trade: a refresh token in
+// localStorage is readable by any script that gets into the page, and it
+// outlives the tab. The alternative was signing people out every time they
+// opened the portal beside the one they were already using, which is what
+// sessionStorage does. The PKCE verifier stays per-tab, where it belongs — it
+// is one login attempt, not a session.
 
 import { env } from "./env";
 
@@ -25,6 +33,36 @@ function applicationUrl(): string {
 const VERIFIER_KEY = "studio.oidc.verifier";
 const REFRESH_KEY = "studio.oidc.refresh";
 const ID_TOKEN_KEY = "studio.oidc.id";
+
+/** Session storage that degrades instead of throwing.
+ *
+ *  Private mode and blocked site data make every access throw, and an
+ *  exception here would take down sign-in itself rather than the convenience
+ *  it provides. A session that cannot be stored simply does not survive a
+ *  reload. */
+const store = {
+  get(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* nothing to do — the session lives only in memory */
+    }
+  },
+  remove(key: string): void {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* already gone as far as anyone can tell */
+    }
+  },
+};
 
 export interface SsoSession {
   accessToken: string;
@@ -51,11 +89,11 @@ function storeSession(body: {
   expires_in?: number;
 }): SsoSession {
   if (!body.access_token) throw new Error("SSO: no access_token in the token response");
-  if (body.refresh_token) sessionStorage.setItem(REFRESH_KEY, body.refresh_token);
+  if (body.refresh_token) store.set(REFRESH_KEY, body.refresh_token);
   // Kept for RP-initiated logout (id_token_hint) — lets Sign out end the
   // IdP session too, so the next login shows the account form instead of
   // silently reusing the Keycloak SSO cookie.
-  if (body.id_token) sessionStorage.setItem(ID_TOKEN_KEY, body.id_token);
+  if (body.id_token) store.set(ID_TOKEN_KEY, body.id_token);
   return { accessToken: body.access_token, expiresIn: body.expires_in ?? 300 };
 }
 
@@ -109,41 +147,80 @@ export async function completeSsoLogin(): Promise<SsoSession | null> {
   return storeSession(await res.json());
 }
 
+/** The renewal currently in flight, if any — see [`refreshSsoSession`]. */
+let inFlight: Promise<SsoSession | null> | null = null;
+
 /**
  * Renew the access token with the stored refresh token. Returns null when no
  * refresh token is stored or the IdP declines (then a full login is needed).
+ *
+ * **Single-flight, and that is the point.** A refresh token is single-use when
+ * the realm rotates them: the first exchange invalidates it. The portal fires
+ * many calls at once, so a burst of 401s used to start a renewal each — one
+ * won, the rest were told their token was already spent, and each of those
+ * deleted the session that had just been renewed. A signed-in user was thrown
+ * back to the login screen seconds after arriving. Everyone now waits on the
+ * same exchange.
  */
-export async function refreshSsoSession(): Promise<SsoSession | null> {
-  const refreshToken = sessionStorage.getItem(REFRESH_KEY);
+export function refreshSsoSession(): Promise<SsoSession | null> {
+  if (!inFlight) {
+    inFlight = exchangeRefreshToken().finally(() => {
+      inFlight = null;
+    });
+  }
+  return inFlight;
+}
+
+async function exchangeRefreshToken(): Promise<SsoSession | null> {
+  const refreshToken = store.get(REFRESH_KEY);
   if (!refreshToken) return null;
-  const res = await fetch(tokenEndpoint(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: refreshToken,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(tokenEndpoint(), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: CLIENT_ID,
+        refresh_token: refreshToken,
+      }),
+    });
+  } catch {
+    // The IdP was unreachable — a network blip, not a verdict on the session.
+    // Keep the token; the next 401 or the renewal timer tries again.
+    return null;
+  }
   if (!res.ok) {
-    sessionStorage.removeItem(REFRESH_KEY);
+    discardIfStillOurs(refreshToken);
     return null;
   }
   try {
     return storeSession(await res.json());
   } catch {
-    sessionStorage.removeItem(REFRESH_KEY);
+    discardIfStillOurs(refreshToken);
     return null;
   }
 }
 
+/** Forget the session only if nobody has replaced it meanwhile.
+ *
+ *  Another TAB shares this storage and rotates the same token, so a refusal
+ *  can arrive for a token that has already been succeeded by a good one. This
+ *  is the cross-tab half of the race the single-flight above closes within
+ *  one tab. */
+function discardIfStillOurs(attempted: string): void {
+  if (store.get(REFRESH_KEY) === attempted) {
+    store.remove(REFRESH_KEY);
+  }
+}
+
 export function hasSsoSession(): boolean {
-  return Boolean(sessionStorage.getItem(REFRESH_KEY));
+  return Boolean(store.get(REFRESH_KEY));
 }
 
 export function clearSsoSession(): void {
-  sessionStorage.removeItem(REFRESH_KEY);
-  sessionStorage.removeItem(ID_TOKEN_KEY);
+  store.remove(REFRESH_KEY);
+  store.remove(ID_TOKEN_KEY);
 }
 
 /**
@@ -156,7 +233,7 @@ export function clearSsoSession(): void {
  * clear locally.
  */
 export function endSsoSession(): boolean {
-  const idToken = sessionStorage.getItem(ID_TOKEN_KEY);
+  const idToken = store.get(ID_TOKEN_KEY);
   const hadSso = hasSsoSession() || Boolean(idToken);
   clearSsoSession();
   if (!hadSso) return false;
