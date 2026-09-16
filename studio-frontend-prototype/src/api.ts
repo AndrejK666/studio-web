@@ -832,6 +832,10 @@ interface SessionWaitOptions {
  * Without them it polls, exactly as it used to — a GET is still what refreshes
  * the server-side probe, which is what a deployment with no task queue has.
  */
+/** Thrown by the poll loop when the caller has stopped caring. Never surfaces:
+ *  a cancelled poll is always the loser of a race that has already settled. */
+const POLL_CANCELLED = "studio session poll cancelled";
+
 export async function waitForStudioSessionReady(
   initial: StudioSession,
   refresh: () => Promise<StudioSession>,
@@ -845,10 +849,21 @@ export async function waitForStudioSessionReady(
     ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const deadline = now() + timeoutMs;
 
-  /** Ask the record until it stops saying `starting`, or the deadline passes. */
-  const poll = async (from: StudioSession): Promise<StudioSession> => {
+  /** Ask the record until it stops saying `starting`, the deadline passes, or
+   *  the caller gives up on it.
+   *
+   *  `signal` is not decoration. This loop is one half of a `Promise.race`, and
+   *  a race only settles its winner — the loser keeps running. When the run
+   *  stream reported a FAILED launch, this poll went on asking `refresh()` once
+   *  a second for the rest of the 120-second deadline: two minutes of
+   *  authenticated requests about a session everyone had already been told was
+   *  dead, continuing long after the error was on screen. The signal is checked
+   *  on both sides of the sleep so cancelling costs at most one tick and never
+   *  an extra request. */
+  const poll = async (from: StudioSession, signal?: AbortSignal): Promise<StudioSession> => {
     let session = from;
     while (session.state === "starting") {
+      if (signal?.aborted) throw new Error(POLL_CANCELLED);
       const remaining = deadline - now();
       if (remaining <= 0) {
         throw new Error(
@@ -856,6 +871,7 @@ export async function waitForStudioSessionReady(
         );
       }
       await sleep(Math.min(pollIntervalMs, remaining));
+      if (signal?.aborted) throw new Error(POLL_CANCELLED);
       session = await refresh();
     }
     return session;
@@ -885,8 +901,12 @@ export async function waitForStudioSessionReady(
     // that fails after the poll already succeeded — surfaces as an unhandled
     // rejection.
     watched.catch(() => undefined);
+    const polled = poll(session, controller.signal);
+    // Same reason as `watched` above: whichever of the two loses the race still
+    // settles, and a cancelled poll rejects.
+    polled.catch(() => undefined);
     try {
-      session = await Promise.race([watched, poll(session)]);
+      session = await Promise.race([watched, polled]);
     } finally {
       controller.abort();
     }
