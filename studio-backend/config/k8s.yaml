@@ -45,6 +45,46 @@ logging:
     file: "logs/account-management.log"
     file_level: debug
 
+# OpenTelemetry — metrics and traces pushed to the cluster's collector.
+#
+# No code change was needed for this: the api-gateway gear installs its
+# HttpMetrics layer unconditionally and emits `http.server.request.duration`
+# (histogram, seconds) and `http.server.active_requests` with OTel semconv
+# attributes — `http.request.method`, `http.route` (the matched route TEMPLATE,
+# never the raw path, which is what keeps cardinality bounded) and
+# `http.response.status_code`. Without a meter provider those instruments are
+# no-ops, so this block is the switch, and its default is off.
+#
+# Turned on per environment by the Helm chart (backend.telemetry.metrics), which
+# sets STUDIO_OTEL_METRICS. The expansion is textual and happens over the raw
+# YAML before it is parsed, so `${VAR:-false}` yields a real boolean here.
+#
+# TRAP: this section is `deny_unknown_fields`. An extra key does not fall back to
+# a default — it fails the boot.
+opentelemetry:
+  resource:
+    service_name: "studio-backend"
+    attributes:
+      deployment.environment: "${STUDIO_ENVIRONMENT:-local}"
+  exporter:
+    kind: "otlp_grpc"
+    endpoint: "${STUDIO_OTLP_ENDPOINT:-http://alloy-metrics.studio-monitoring.svc.cluster.local:4317}"
+    timeout_ms: 5000
+  metrics:
+    enabled: ${STUDIO_OTEL_METRICS:-false}
+    # One series per distinct attribute set. `http.route` is a template and the
+    # method set is small, so the ceiling is generous rather than tight — it is
+    # here to bound a bug, not to shape normal traffic.
+    cardinality_limit: 2000
+  tracing:
+    # Off until Tempo exists: spans with nowhere to go are a batch processor
+    # filling up and dropping them, which costs CPU and answers nothing.
+    enabled: ${STUDIO_OTEL_TRACING:-false}
+    sampler:
+      # parent_based_always_on | parent_based_ratio | always_on | always_off
+      parent_based_ratio:
+        ratio: 0.1
+
 gears:
   # Wrapper over the external spec-quality detector service (bloat / purpose /
   # leak / traceability). The service has its OWN bearer secret; it lives here

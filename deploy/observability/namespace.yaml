@@ -1,0 +1,10 @@
+# The observability stack lives in its own namespace, outside the per-environment
+# application namespaces (studio-dev, studio-test). One stack serves the whole
+# cluster: series carry `cluster` (external label, set by Alloy) and `env`
+# (derived from the source namespace), so dev and test never collide.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: studio-monitoring
+  labels:
+    app.kubernetes.io/part-of: studio-web

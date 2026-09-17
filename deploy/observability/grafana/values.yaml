@@ -1,0 +1,99 @@
+# Grafana — the only UI, and none of its state is authoritative.
+#
+# Persistence is off on purpose: datasources and dashboards are provisioned from
+# this file and from the `studio-dashboards` ConfigMap, so a pod that is deleted
+# comes back identical. Nothing that matters is allowed to live only in
+# `grafana.db` — an edit made in the browser survives exactly until the next
+# restart, which is the point.
+#
+# To change a dashboard: edit the JSON in `grafana/dashboards/`, run
+# `make grafana`, reload. The UI's save button is a scratchpad, not a store.
+#
+# chart: grafana/grafana 10.5.15
+
+persistence:
+  enabled: false
+
+# No ingress. Grafana has no SSO in front of it here, and the cluster's one
+# public entry point serves the product. Reach it with:
+#   kubectl -n studio-monitoring port-forward svc/grafana 3000:80
+service:
+  type: ClusterIP
+  port: 80
+
+# The chart generates an admin password into the `grafana` Secret on first
+# install and keeps it across upgrades:
+#   kubectl -n studio-monitoring get secret grafana \
+#     -o jsonpath='{.data.admin-password}' | base64 -d
+adminUser: admin
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Fixed UID `vm`: every dashboard JSON references the datasource by this UID,
+# so it must not change. Helm replaces this list wholesale — an overlay that
+# adds a datasource has to restate this one.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: VictoriaMetrics
+        uid: vm
+        type: prometheus
+        access: proxy
+        url: http://vm-victoria-metrics-single-server.studio-monitoring.svc.cluster.local:8428
+        isDefault: true
+        jsonData:
+          timeInterval: 30s
+          # VM answers PromQL but is not Prometheus; declaring a low version
+          # keeps Grafana from sending query features VM does not implement.
+          prometheusType: Prometheus
+          prometheusVersion: 2.24.0
+
+# Dashboards are MOUNTED, not watched.
+#
+# The chart's sidecar would discover labelled ConfigMaps through the Kubernetes
+# API, and on this cluster it cannot: the API server's CA carries no Authority
+# Key Identifier, which current OpenSSL rejects outright
+# (`CERTIFICATE_VERIFY_FAILED ... Missing Authority Key Identifier`). Rather than
+# disabling certificate verification to get a file into a pod, the ConfigMap is
+# mounted straight into the dashboards path and a file provider reads it. Fewer
+# moving parts, no API dependency, and the same as-code guarantee.
+#
+# `make dashboards` rebuilds `studio-dashboards` from ./dashboards; a Grafana
+# restart is not needed — the file provider re-reads the directory.
+sidecar:
+  dashboards:
+    enabled: false
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: studio
+        orgId: 1
+        folder: Studio
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards/studio
+
+dashboardsConfigMaps:
+  studio: studio-dashboards
+
+grafana.ini:
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+  news:
+    news_feed_enabled: false
+  users:
+    # No self-service signup on an unauthenticated-ingress-free instance.
+    allow_sign_up: false

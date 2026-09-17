@@ -1,0 +1,40 @@
+# VictoriaMetrics single-node — the metrics store.
+#
+# Prometheus-compatible (PromQL in, remote_write out), one pod, one PVC. There
+# is no Prometheus server and no Alertmanager in this cluster: Alloy does the
+# scraping and VM does the storing, which is the same split Insight runs.
+#
+# chart: vm/victoria-metrics-single 0.45.0
+
+server:
+  # 30 days. The unit suffix is required — a bare number means MONTHS to VM.
+  retentionPeriod: 30d
+
+  persistentVolume:
+    enabled: true
+    # cinder-default is the cluster's default class (WaitForFirstConsumer,
+    # expansion allowed), so growing this later is a PVC edit, not a migration.
+    storageClassName: cinder-default
+    size: 20Gi
+
+  # Sized for ~6 nodes of cAdvisor + kube-state-metrics + the studio services.
+  # VM is memory-hungry on ingestion spikes; the limit is deliberately well
+  # above the request so a burst throttles on CPU rather than getting OOMKilled.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  # Deduplicate samples that arrive with the same timestamp — cheap insurance
+  # once a target is scraped by more than one path.
+  extraArgs:
+    dedup.minScrapeInterval: 30s
+
+  statefulSet:
+    enabled: true
+
+# No ingress: Grafana and Alloy reach VM in-cluster. Access from a laptop is
+# `kubectl -n studio-monitoring port-forward svc/<vm-service> 8428:8428`.

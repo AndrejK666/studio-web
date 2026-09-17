@@ -1,0 +1,234 @@
+{
+  "uid": "studio-postgres",
+  "title": "Studio — Postgres (CloudNativePG)",
+  "description": "The stores behind the platform. Every studio gear keeps its state in one of these databases, so a slow query here surfaces as a slow product everywhere.",
+  "tags": ["studio", "postgres", "cnpg"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "vm" },
+        "query": "label_values(cnpg_collector_up, namespace)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "studio-dev", "value": "studio-dev" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Instances up",
+      "description": "The exporter's own view. A primary that stops answering is indistinguishable from one that was never scraped — this panel is the difference.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(cnpg_collector_up{namespace=~\"$namespace\"})",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Backends",
+      "description": "Open server connections. Against the pool sizes in the gear configs, this is how close the platform is to exhausting them.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(cnpg_backends_total{namespace=~\"$namespace\"})"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Cache hit ratio",
+      "description": "Share of block reads served from shared buffers. A sustained drop usually means the working set outgrew memory, not that a query got worse.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.9 },
+              { "color": "green", "value": 0.98 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(cnpg_cache_hits{namespace=~\"$namespace\"}) / clamp_min(sum(cnpg_cache_hits{namespace=~\"$namespace\"}) + sum(cnpg_cache_miss{namespace=~\"$namespace\"}), 1)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Longest transaction",
+      "description": "The oldest open transaction. A long one holds back vacuum and pins WAL, so this climbing is an early warning for disk, not just for a slow request.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "max(cnpg_backends_max_tx_duration_seconds{namespace=~\"$namespace\"})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Transactions/s",
+      "description": "Commits and rollbacks side by side: a rollback rate that tracks the commit rate is an application problem wearing a database costume.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (datname) (rate(cnpg_pg_stat_database_xact_commit{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "commit {{datname}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (datname) (rate(cnpg_pg_stat_database_xact_rollback{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "rollback {{datname}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Database size",
+      "description": "One line per database — studio keeps a separate one per gear, so this is also the per-gear growth curve.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (datname) (cnpg_pg_database_size_bytes{namespace=~\"$namespace\"})",
+          "legendFormat": "{{datname}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication lag",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "max by (pod) (cnpg_pg_replication_lag{namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Waiting backends and deadlocks",
+      "description": "Lock contention, the thing that turns a fast query into a timeout without any single query looking slow.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod) (cnpg_backends_waiting_total{namespace=~\"$namespace\"})",
+          "legendFormat": "waiting {{pod}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (datname) (rate(cnpg_pg_stat_database_deadlocks{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "deadlocks {{datname}}"
+        }
+      ]
+    }
+  ]
+}

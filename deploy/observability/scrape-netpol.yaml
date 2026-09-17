@@ -1,0 +1,64 @@
+# Let the collector reach the application namespaces.
+#
+# studio-dev and studio-test carry a hand-applied `default-deny-ingress`, so
+# nothing outside the namespace can open a connection into it — including Alloy,
+# which lives in studio-monitoring. Without this, CloudNativePG's :9187 scrapes
+# fail as `up == 0` while discovery still reports the targets, which reads like a
+# broken exporter rather than a dropped packet.
+#
+# Deliberately narrow in two directions:
+#
+#   * source — only pods in the studio-monitoring namespace,
+#   * port   — only the container port *named* `metrics`.
+#
+# The named port is the same handle Alloy's discovery keeps on, so a pod becomes
+# scrapable exactly when it declares it is exporting metrics, and no other port
+# is reachable across the namespace boundary. A workload that does not export
+# anything stays as unreachable as it is today.
+#
+# Nothing here loosens egress: the backend's OTLP push out to the collector is
+# an outbound connection, and only ingress is denied by default.
+#
+#   kubectl apply -f scrape-netpol.yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: studio-dev
+  labels:
+    app.kubernetes.io/part-of: studio-web
+    app.kubernetes.io/component: observability
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: studio-monitoring
+      ports:
+        - protocol: TCP
+          port: metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: studio-test
+  labels:
+    app.kubernetes.io/part-of: studio-web
+    app.kubernetes.io/component: observability
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: studio-monitoring
+      ports:
+        - protocol: TCP
+          port: metrics

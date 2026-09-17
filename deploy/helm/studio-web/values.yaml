@@ -97,6 +97,23 @@ backend:
     fetchResources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 256Mi }
+  # OpenTelemetry push to the cluster's collector (deploy/observability).
+  #
+  # The instruments already exist in the binary — the api-gateway gear installs
+  # its HttpMetrics layer unconditionally — and stay no-ops until a meter
+  # provider is initialized. These flags are that provider's switch, wired into
+  # config/k8s.yaml's `opentelemetry` block as STUDIO_OTEL_* env vars.
+  #
+  # Default off, so an environment without a collector is unaffected: the
+  # toolkit installs a no-op provider and nothing is exported or buffered.
+  telemetry:
+    # RED metrics: http.server.request.duration + http.server.active_requests,
+    # keyed on the matched route template.
+    metrics: false
+    # Traces need a Tempo to arrive at. Until then, spans would be batched and
+    # dropped — CPU spent to answer nothing.
+    tracing: false
+    endpoint: "http://alloy-metrics.studio-monitoring.svc.cluster.local:4317"
   # S3-backed file-storage data plane. The sidecar binary is built from the
   # exact gears-rust revision pinned by studio-backend/Cargo.lock. Secrets are
   # synchronized by deploy.yml from the selected GitHub Environment.
