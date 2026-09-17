@@ -60,7 +60,14 @@ class ViewerCredentialsClient {
         // one shared by everyone who is momentarily signed out.
         if (!record || record.unresolved || !record.key) { return undefined; }
         try {
-            const home = await this.service.setViewer(record.key);
+            /* The name and address go with the key because the session commits
+             * as this person: `.gitconfig` is written into the home the key
+             * names, and a home with no identity in it is what made the IDE's
+             * own Commit answer "configure your user.name and user.email". */
+            const home = await this.service.setViewer(record.key, {
+                name: record.name,
+                email: record.email
+            });
             this.home = home;
             return home;
         } catch (error) {

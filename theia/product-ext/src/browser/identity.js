@@ -238,7 +238,7 @@ function uniqueLocalId(base) {
  * earlier work is isSelf()'s job instead, where the display name can be
  * required to match as well (see localMintedIds).
  */
-function portalProvider(sub, name, kind) {
+function portalProvider(sub, name, kind, email) {
     return {
         id: 'oidc',
         canSetName: false,
@@ -250,6 +250,11 @@ function portalProvider(sub, name, kind) {
         current() {
             const record = makeRecord('oidc', sub, name || UNNAMED, kind || 'person');
             if (!name) { record.unnamed = true; }
+            /* Carried, not identified by: two accounts can share an address
+             * over time and one account can change its own, which is the whole
+             * reason the id is the subject. It is here because the session
+             * commits as this person — see viewer-credentials.js. */
+            if (email) { record.email = email; }
             return record;
         },
 
@@ -318,10 +323,11 @@ class Identity {
         if (!sub) { return this.current(); }
         const name = String((viewer && viewer.name) || '').trim();
         const kind = (viewer && viewer.kind) || 'person';
+        const email = String((viewer && viewer.email) || '').trim();
         const before = this.current();
-        this.provider_ = portalProvider(sub, name, kind);
+        this.provider_ = portalProvider(sub, name, kind, email);
         const after = this.current();
-        if (before.id !== after.id || before.name !== after.name) { this.fireChanged(); }
+        if (before.id !== after.id || before.name !== after.name || before.email !== after.email) { this.fireChanged(); }
         return after;
     }
 

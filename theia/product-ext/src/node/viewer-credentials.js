@@ -38,7 +38,7 @@ const crypto = require('crypto');
 const { ContainerModule } = require('inversify');
 const { ConnectionContainerModule } = require('@theia/core/lib/node/messaging/connection-container-module');
 const { PluginHostEnvironmentVariable } = require('@theia/plugin-ext/lib/common/plugin-protocol');
-const { assistantEnvironment } = require('./viewer-credentials-env');
+const { assistantEnvironment, gitIdentityConfig } = require('./viewer-credentials-env');
 const { AssistantAuth } = require('./assistant-auth');
 
 const VIEWER_CREDENTIALS_PATH = '/services/studio-viewer-credentials';
@@ -78,6 +78,53 @@ function ensureDirectory(directory) {
     return directory;
 }
 
+
+/*
+ * A git identity in the viewer's home, because that home IS `$HOME` for the
+ * plugin host.
+ *
+ * THE DEFECT THIS FIXES, measured in a running session. The entrypoint writes a
+ * global git identity with `git config --global`, which lands in the container
+ * user's `~/.gitconfig`. This class then repoints `HOME` for the plugin host so
+ * one viewer's assistant credentials cannot be another's — and the plugin host
+ * is where the built-in git extension runs. With `HOME` moved, git looks for a
+ * global config in a directory that has none, and the IDE's own Commit answers
+ * "Make sure you configure your user.name and user.email in git". Reported from
+ * use; confirmed by reading the plugin host's own environ and finding no
+ * `.gitconfig` in any credential home.
+ *
+ * So each home gets one. It `include`s the container's config first, so
+ * whatever the session was launched with still applies, and then states the
+ * person on top — which is the part worth having: before this, every commit
+ * made from the IDE was authored by a shared "Constructor Studio" whoever made
+ * it, in a product whose whole point is telling collaborators apart.
+ *
+ * The address is only written when the identity provider stated one. Git needs
+ * an address to commit at all, and the include supplies the session's default,
+ * so a person with no address on their account commits under their own name and
+ * the session's address rather than not at all.
+ */
+function writeGitConfig(directory, person) {
+    const target = path.join(directory, '.gitconfig');
+    const body = gitIdentityConfig(path.join(os.homedir(), '.gitconfig'), person);
+    try {
+        // Rewritten only when it would change: this runs on every plugin-host
+        // fork, and a file whose mtime moves for nothing invites a watcher
+        // somewhere to act on it.
+        if (fs.readFileSync(target, 'utf8') === body) { return; }
+    } catch (error) {
+        /* absent or unreadable — write it */
+    }
+    try {
+        fs.writeFileSync(target, body, { mode: 0o600 });
+    } catch (error) {
+        // A home that cannot hold a git config still holds credentials, and the
+        // IDE falls back to the message this exists to remove rather than
+        // failing to start.
+        console.warn('[studio] could not write a git identity for this viewer', error);
+    }
+}
+
 /**
  * Per-connection state: which viewer this browser session belongs to, and the
  * directory their assistant credentials live in.
@@ -88,6 +135,8 @@ class ViewerCredentials {
         // Anonymous until the frontend says otherwise, and unique either way.
         this.connectionId = crypto.randomUUID();
         this.viewerKey = undefined;
+        /** Name and address, as the identity provider stated them. */
+        this.person = undefined;
     }
 
     /*
@@ -109,9 +158,23 @@ class ViewerCredentials {
      * use, when somebody actually talks to one, which is long after startup.
      * The redirect happens within a second of page load.
      */
-    async setViewer(viewerKey) {
+    async setViewer(viewerKey, person) {
         const key = String(viewerKey || '').trim();
-        if (!key || key === this.viewerKey) { return this.home(); }
+        this.person = person && typeof person === 'object'
+            ? {
+                name: typeof person.name === 'string' ? person.name.slice(0, 120) : undefined,
+                email: typeof person.email === 'string' ? person.email.slice(0, 200) : undefined
+            }
+            : undefined;
+        // The person can arrive, or change, without the key changing — a rename
+        // keeps the subject — so the config is rewritten before the early
+        // return rather than after it.
+        if (key && key === this.viewerKey) {
+            const home = this.home();
+            writeGitConfig(home, this.person);
+            return home;
+        }
+        if (!key) { return this.home(); }
 
         const anonymous = path.join(credentialsRoot(), 'session-' + this.connectionId);
         const stable = ensureDirectory(path.join(credentialsRoot(), directoryNameFor(key)));
@@ -148,7 +211,13 @@ class ViewerCredentials {
         const name = this.viewerKey
             ? directoryNameFor(this.viewerKey)
             : 'session-' + this.connectionId;
-        return ensureDirectory(path.join(credentialsRoot(), name));
+        const directory = ensureDirectory(path.join(credentialsRoot(), name));
+        // Even an anonymous home gets one. The include alone is enough for git
+        // to find an identity, which is what stops the plugin host's Commit
+        // failing in the seconds before a viewer has announced themselves —
+        // and for a standalone session, for good.
+        writeGitConfig(directory, this.person);
+        return directory;
     }
 
     /** Whether the home is stable across sessions or only for this one. */
