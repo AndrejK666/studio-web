@@ -68,6 +68,8 @@ import {
   ViewToggle,
   useViewMode,
 } from "./view-mode";
+import { olderThanWindow, repoActivity, type RepoActivity } from "./source-activity";
+import { ActivityView } from "./activity-view";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
@@ -3832,11 +3834,7 @@ function ProjectScreen({
             reading an empty project, and somebody will eventually report that
             as a bug against the backend. */}
         {tab === "activity" && (
-          <NotBuiltYet
-            title="Activity"
-            what="a feed of what changed in this project — commits, runs, document transitions, findings opened and closed"
-            why="the events exist (studio-events carries them) but nothing here subscribes to them yet"
-          />
+          <ActivityView token={token} projectTenantId={proj.id} workspaceId={workspace.id} />
         )}
         {tab === "timeline" && (
           <NotBuiltYet
@@ -5709,6 +5707,58 @@ function ProjectFiles({
   );
 }
 
+/** One page of the activity walk, and the most it will ever read.
+ *
+ *  The cap is a bound on cost, not a claim about the repository: a project
+ *  with more than two thousand pull requests gets a count over the two
+ *  thousand most recently touched, which is every one that has moved this year
+ *  in any repository anybody is looking at. */
+const ACTIVITY_PAGE = 200;
+const ACTIVITY_MAX = 2000;
+
+/** The product's source glyph: a branch forking off a trunk. Inline rather
+ *  than in the shared icon set, because nothing else asks for it. */
+function GitBranchIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="7" cy="5" r="2.2" />
+      <circle cx="7" cy="19" r="2.2" />
+      <circle cx="17" cy="9" r="2.2" />
+      <path d="M7 7.2v9.6M17 11.2c0 3-2.6 4.4-5.6 4.8" />
+    </svg>
+  );
+}
+
+/** Seven bars, one per day, oldest on the left.
+ *
+ *  Drawn rather than charted: the question is "is anything happening here",
+ *  and a library that answers it costs more than the answer. Heights are
+ *  relative to this row's own busiest day — a repository with one commit a day
+ *  should look steady, not flat next to one with forty. */
+function Spark({ days }: { days: number[] }) {
+  const peak = Math.max(1, ...days);
+  const total = days.reduce((a, b) => a + b, 0);
+  return (
+    <span
+      className="spark"
+      role="img"
+      aria-label={`${total} pull request${total === 1 ? "" : "s"} moved in the last ${days.length} days`}
+      title={days.map((n, i) => `${days.length - i}d ago: ${n}`).join("\n")}
+    >
+      {days.map((n, i) => (
+        <span key={i} className="spark-col">
+          {/* An empty day keeps a 1px rule rather than nothing, so the axis
+              stays visible and a quiet week reads as quiet, not as missing. */}
+          <span
+            className={n > 0 ? "spark-bar" : "spark-bar none"}
+            style={{ height: n > 0 ? `${Math.max(18, (n / peak) * 100)}%` : "1px" }}
+          />
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function ProjectSources({
   token,
   workspace: ws,
@@ -5728,6 +5778,15 @@ function ProjectSources({
   /** The `repo` nodes the graph holds for this project — what a sync left
    *  behind, keyed by full path rather than by name. */
   const [repoNodes, setRepoNodes] = useState<import("./api").ArtifactNode[]>([]);
+  /** A week of pull-request and commit movement per repo node id, folded out
+   *  of the graph. Empty until the walk below finishes, and empty for good on
+   *  a project whose sources have never been synced. */
+  const [activity, setActivity] = useState<Record<string, RepoActivity>>({});
+  /** How many of the project's specs came out of each repository, keyed by
+   *  repo node id. A binding carries a repo-RELATIVE path and nothing else, so
+   *  this is joined through the file node, which knows where it came from. */
+  const [specsPerRepo, setSpecsPerRepo] = useState<Record<string, number>>({});
+  const [view, setView] = useViewMode("sources.view");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Per-repo artifact-sync progress, keyed by repo name.
@@ -5763,7 +5822,78 @@ function ProjectSources({
       // cannot say when it was last pulled.
       setRepoNodes([]);
     }
-  }, [token, ws.id]);
+
+    // A week of movement, read newest-first and stopped at the window's edge.
+    // Commits outnumber everything else in a repository, and paging all of
+    // them to count seven days is a lot of requests for a number that stops
+    // changing after the first page or two.
+    try {
+      const now = Date.now();
+      const walk = async (type: "pull_request" | "commit") => {
+        const out: import("./api").ArtifactNode[] = [];
+        for (let offset = 0; offset < ACTIVITY_MAX; offset += ACTIVITY_PAGE) {
+          const page = await api.listArtifactNodes(token, type, ws.id, undefined, ACTIVITY_PAGE, {
+            sort: "updated",
+            offset,
+          });
+          const nodes = page.nodes ?? [];
+          out.push(...nodes);
+          // The page is newest-first, so the LAST node decides: once it is
+          // outside the window every remaining page is too.
+          if (nodes.length < ACTIVITY_PAGE) break;
+          if (olderThanWindow(nodes[nodes.length - 1], now)) break;
+        }
+        return out;
+      };
+      // An open pull request may be arbitrarily old, so the pull-request walk
+      // cannot stop at the window \u2014 `open` is the number people come to this
+      // table for. Capped instead, which is a bound on cost and not a claim.
+      const [pulls, commits] = await Promise.all([
+        api
+          .listArtifactNodes(token, "pull_request", ws.id, undefined, ACTIVITY_MAX, {
+            sort: "updated",
+          })
+          .then((r) => r.nodes ?? []),
+        walk("commit"),
+      ]);
+      setActivity(repoActivity(pulls, commits, now));
+    } catch {
+      // The columns read as "—" rather than as zero: nothing was counted, and
+      // nothing counted is not the same as nothing happened.
+      setActivity({});
+    }
+
+    // Specs per source. Two listings rather than one join, because the graph
+    // does not hold the binding: the documents gear does, and the only thing
+    // tying them together is the file node's id.
+    try {
+      const repoOfNode: Record<string, string> = {};
+      let cursor: string | undefined;
+      do {
+        const page = await api.listArtifactNodes(token, "file", ws.id, cursor, ACTIVITY_PAGE);
+        for (const n of page.nodes ?? []) {
+          if (typeof n.value.repo === "string") repoOfNode[n.instance_id] = n.value.repo;
+        }
+        cursor = page.next_cursor;
+      } while (cursor);
+      const bindings = await api.docBindings(token, parentWorkspaceId ?? ws.id, ws.id, {
+        limit: 500,
+      });
+      const counts: Record<string, number> = {};
+      for (const b of bindings.items ?? []) {
+        // Only a file somebody decided about counts. A scanner's guess is not
+        // a spec, and `not_a_document` is a decision that it never was.
+        if (b.state !== "confirmed" && b.state !== "manual") continue;
+        const repo = repoOfNode[b.node_id];
+        if (repo) counts[repo] = (counts[repo] ?? 0) + 1;
+      }
+      setSpecsPerRepo(counts);
+    } catch {
+      // The columns read as "\u2014" rather than as zero: nothing was counted, and
+      // nothing counted is not the same as nothing happened.
+      setActivity({});
+    }
+  }, [token, ws.id, parentWorkspaceId]);
 
   /** Matched on the parsed full path, not on the directory name: the name is a
    *  local choice, the full path is the repository's identity. */
@@ -5800,11 +5930,14 @@ function ProjectSources({
     <div className="card">
       <div className="card-head">
         <h2>From repositories{count > 0 ? ` · ${count}` : ""}</h2>
-        {count > 0 && onOpenStudio && (
-          <button className="primary" onClick={() => onOpenStudio(ws)}>
-            Open in IDE
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <ViewToggle mode={view} onChange={setView} />
+          {count > 0 && onOpenStudio && (
+            <button className="primary" onClick={() => onOpenStudio(ws)}>
+              Open in IDE
+            </button>
+          )}
+        </div>
       </div>
       <p className="hint">
         Repositories cloned into the workspace when a session launches. Add one by picking it from a
@@ -5815,6 +5948,90 @@ function ProjectSources({
         <p className="empty">Loading sources…</p>
       ) : repos.length === 0 ? (
         <p className="empty">No repositories attached yet — pick one from a connector below.</p>
+      ) : view === "table" ? (
+        /* The product's Sources table, column for column — with one
+           difference that matters: the deployment labels its activity numbers
+           "demo values", and these are folded out of the pull_request and
+           commit nodes a sync actually wrote. A source nobody has synced shows
+           a dash, not a plausible seven. */
+        <table className="ptable src-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Role</th>
+              <th className="pnum">Specs</th>
+              <th>Pull requests · 7 days</th>
+              <th className="pnum">Commits · 7 days</th>
+              <th>Last sync</th>
+              <th aria-label="actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {repos.map((r) => {
+              const node = graphRepo(r);
+              const live = sync[r.name];
+              const act = node ? activity[node.instance_id] : undefined;
+              const syncedAt = node?.value.synced_at as string | undefined;
+              return (
+                <tr key={r.name}>
+                  <td className="acell-lead">
+                    <span className="src-ico" aria-hidden>
+                      <GitBranchIcon />
+                    </span>
+                    <span>
+                      <span className="src-name">{r.name}</span>
+                      <span className="sub">
+                        Repository{r.branch ? ` · ${r.branch}` : ""}
+                      </span>
+                    </span>
+                  </td>
+                  {/* The product shows a role here. We do not have one on a
+                      source — nothing in the model assigns it — so this says
+                      what the source IS, which is the fact we hold. */}
+                  <td>
+                    <span className="src-dot" aria-hidden />
+                    {r.source}
+                  </td>
+                  <td className="pnum">{rollupText(specsPerRepo[node?.instance_id ?? ""] ?? null)}</td>
+                  <td>
+                    {act ? (
+                      <div className="src-prs">
+                        <div className="src-pr-counts">
+                          <span className="src-open">{act.open} open</span>
+                          <span className="sub">{act.merged} merged</span>
+                        </div>
+                        <Spark days={act.days} />
+                      </div>
+                    ) : (
+                      <span className="ing-dash">—</span>
+                    )}
+                  </td>
+                  <td className="pnum">{act ? act.commits : <span className="ing-dash">—</span>}</td>
+                  <td className="sub">
+                    {live?.running ? live.line : syncedAt ? relTime(syncedAt) : "never"}
+                  </td>
+                  <td className="pactions">
+                    <button
+                      className="ghost"
+                      title="Clone this source and pull its issues, pull requests and files into the graph"
+                      disabled={!!live?.running}
+                      onClick={() => void syncRepo(r)}
+                    >
+                      {live?.running ? "…" : node ? "Re-sync" : "Sync"}
+                    </button>
+                    <button
+                      className="ghost"
+                      disabled={busy === r.name}
+                      onClick={() => void detach(r.name)}
+                    >
+                      {busy === r.name ? "…" : "Detach"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       ) : (
         <ul className="rows">
           {repos.map((r) => {

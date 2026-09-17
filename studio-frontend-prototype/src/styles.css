@@ -1807,3 +1807,38 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
    would have highlighted a row; "attn" is the card with something open on it. */
 .vtile.on { border-color: var(--primary); background: var(--accent); }
 .vtile.attn { border-color: color-mix(in oklab, var(--warning) 45%, var(--border)); }
+
+/* ── Sources table ───────────────────────────────────────────────────────────
+   The product's shape: what the source is, what it holds, and a week of
+   movement beside it. The activity columns are wide because a number and a
+   sparkline have to sit side by side without either wrapping. */
+.src-table td { vertical-align: middle; }
+.src-ico { display: inline-flex; color: var(--muted-foreground); flex: none; }
+.src-name { display: block; font-weight: 600; }
+.src-table .sub { display: block; font-size: 11.5px; color: var(--muted-foreground); }
+/* The product's small status dot before the role. Ours states the source
+   flavour instead, which is the fact we actually hold. */
+.src-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); margin-right: 7px; vertical-align: middle; }
+.src-prs { display: flex; align-items: center; gap: 16px; min-width: 210px; }
+.src-pr-counts { min-width: 72px; line-height: 1.35; }
+.src-open { display: block; font-weight: 600; }
+
+/* Seven columns of equal width, so the bars line up down the table however
+   busy each row is. */
+.spark { display: inline-flex; align-items: flex-end; gap: 3px; height: 22px; flex: 1; min-width: 96px; }
+.spark-col { display: flex; align-items: flex-end; justify-content: stretch; flex: 1; height: 100%; }
+.spark-bar { width: 100%; border-radius: 2px; background: var(--primary); }
+.spark-bar.none { background: var(--border); border-radius: 0; }
+
+/* ── Activity ────────────────────────────────────────────────────────────────
+   The product's layout: a filter control on the left, a search box on the
+   right, and the table under both. */
+.act-controls { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; }
+.act-filters { position: relative; }
+.act-filter-menu { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; min-width: 160px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.act-filter-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 5px 8px; border-radius: var(--radius-md); cursor: pointer; }
+.act-filter-opt:hover { background: var(--accent); }
+.act-search { margin-left: auto; min-width: 240px; }
+/* The subject is the one column worth a colour: it is what the row is about,
+   and it is where the eye lands after the event name. */
+.act-table .act-subject { color: var(--primary); }
