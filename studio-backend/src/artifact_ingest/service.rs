@@ -41,6 +41,13 @@ const MAX_FILES: usize = 10_000;
 /// graph" guard as files. Hitting one is logged (not silent truncation).
 const MAX_COMMENTS: usize = 20_000;
 const MAX_COMMITS: usize = 20_000;
+/// How many open pull requests the review-thread query walks.
+///
+/// Not a flood guard — the query stores nothing per pull request beyond one
+/// integer. It is a cost guard: each pull request asks for up to a hundred
+/// threads, and a repository with more than two hundred open pull requests has
+/// a review backlog no metric is going to summarise anyway.
+const MAX_THREAD_PULLS: u32 = 200;
 /// Chunk sizes for flushing to the graph store. graph-storage caps a single
 /// ingest at ~10k nodes / 20k edges (and a per-payload ceiling), so we upsert
 /// in bounded batches instead of one giant call — this also bounds memory and
@@ -81,6 +88,15 @@ pub struct SyncSummary {
     pub comments: usize,
     #[serde(default)]
     pub commits: usize,
+    /// Unresolved review threads across the repository's open pull requests,
+    /// or `None` when the provider cannot report them.
+    ///
+    /// Unlike its neighbours this is not a running total: it is the review
+    /// state of the repository, read once before the pull-request walk and
+    /// unchanged by it. It is therefore absent from the live progress ticks
+    /// and present on the run's final result.
+    #[serde(default)]
+    pub open_review_threads: Option<usize>,
     /// Nodes already flushed to the graph store — the objects that are
     /// queryable right now, mid-sync.
     #[serde(default)]
@@ -334,6 +350,34 @@ impl IngestService {
             .await?;
         }
 
+        // Review threads before the pull requests themselves: the count belongs
+        // ON each pull-request node, so it has to be in hand before the nodes
+        // are built. Best-effort — a provider that cannot answer, or one that
+        // errors, leaves the metric unset and costs the sync nothing else.
+        progress.set("reading review threads…");
+        let threads = match driver
+            .open_review_threads(&auth, repo_full_path, MAX_THREAD_PULLS)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: review threads unavailable — metric left unset"
+                );
+                None
+            }
+        };
+        let open_review_threads = threads
+            .as_ref()
+            .map(|list| list.iter().map(|t| t.open).sum::<usize>());
+        let threads_by_number: std::collections::HashMap<i64, usize> = threads
+            .into_iter()
+            .flatten()
+            .map(|t| (t.number, t.open))
+            .collect();
+
         progress.set("pulling pull requests…");
         let mut pull_requests = 0usize;
         for page in 1..=MAX_PAGES {
@@ -347,8 +391,18 @@ impl IngestService {
             for p in batch {
                 let author = p.author.clone();
                 let number = p.number;
-                let node =
-                    gts::pull_request_node(source_scope, &repo_id, connector_id, repo_full_path, p);
+                // Only an open pull request has threads worth counting; a
+                // merged one is nobody's queue, so its count stays unset
+                // rather than being reported as zero.
+                let open_threads = threads_by_number.get(&number).copied();
+                let node = gts::pull_request_node(
+                    source_scope,
+                    &repo_id,
+                    connector_id,
+                    repo_full_path,
+                    p,
+                    open_threads,
+                );
                 let pr_id = node.instance_id.clone();
                 edges.push(gts::artifact_of_edge(&pr_id, &repo_id));
                 author_edge(&mut edges, &mut users, &pr_id, author.as_deref());
@@ -752,6 +806,7 @@ impl IngestService {
                 files,
                 comments,
                 commits,
+                open_review_threads,
             },
         ));
         self.flush_and_report(
@@ -801,6 +856,7 @@ impl IngestService {
             files,
             comments,
             commits,
+            open_review_threads,
             stored: total_nodes,
         })
     }
@@ -988,6 +1044,9 @@ impl IngestService {
                 files,
                 comments,
                 commits,
+                // Not a running count — see the field. The final result
+                // carries it; a mid-sync tick has nothing new to say about it.
+                open_review_threads: None,
                 stored: *flushed,
             }
             .as_detail(),

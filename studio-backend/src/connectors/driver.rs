@@ -182,6 +182,23 @@ pub struct RemotePullRequest {
     pub updated_at: Option<String>,
 }
 
+/// Unresolved review conversations on one open pull request.
+///
+/// A review thread is not a comment: it is a chain somebody has to either
+/// answer or mark resolved. A pull request with forty comments and nothing
+/// unresolved is waiting on no one, and a pull request with one open thread
+/// is blocked — which is why this is counted separately from
+/// [`RemoteComment`] rather than derived from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullRequestThreads {
+    /// The pull request's number in its repository.
+    pub number: i64,
+    /// Threads nobody has resolved yet.
+    pub open: usize,
+    /// Every thread on the pull request, resolved or not.
+    pub total: usize,
+}
+
 /// One comment on an issue or pull request. GitHub returns comments for both
 /// from a single repo-wide endpoint; `target_number` is the issue/PR number the
 /// comment belongs to, so the ingest can link it to that node.
@@ -600,6 +617,25 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             "{} cannot open pull requests through this connection",
             self.display_name()
         ))
+    }
+
+    /// Unresolved review threads on the repository's open pull requests, at
+    /// most `max_pulls` of them, most recently updated first.
+    ///
+    /// `None` is "this provider cannot say", which is not the same fact as
+    /// `Some(vec![])` — "nothing is open". Resolution state is absent from
+    /// every REST API we speak; only GitHub's GraphQL schema carries it. So
+    /// this is defaulted to `None` rather than to an error: a driver that
+    /// cannot answer leaves the metric unset, and the sync that asked carries
+    /// on with everything else.
+    async fn open_review_threads(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        max_pulls: u32,
+    ) -> anyhow::Result<Option<Vec<PullRequestThreads>>> {
+        let _ = (auth, repo_full_path, max_pulls);
+        Ok(None)
     }
 
     /// The top contributors to a repository (up to `max`), for the

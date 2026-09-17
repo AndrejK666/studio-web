@@ -792,7 +792,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     router = OperationBuilder::get("/spec-quality/v1/capabilities")
-        .operation_id("spec_quality.capabilities")
+        .operation_id("spec_quality.get_capabilities")
         .summary("Detectors and document types the upstream service declares")
         .description(
             "Read from the service's own OpenAPI document, so the portal does \

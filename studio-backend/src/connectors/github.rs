@@ -8,8 +8,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
-    OpenedPullRequest, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RepoTree, RepoTreeEntry, WrittenFile,
+    OpenedPullRequest, PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue,
+    RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -224,6 +224,110 @@ struct GitHubPull {
     created_at: Option<String>,
     #[serde(default)]
     updated_at: Option<String>,
+}
+
+/// How many open pull requests one GraphQL page asks about.
+///
+/// The query's cost is roughly `pulls × threads`, so a page of 100 pull
+/// requests each asking for 100 threads is 10,000 nodes in one request —
+/// under GitHub's limit, but a lot to lose to one timeout. Fifty keeps a page
+/// cheap enough to retry and still walks a busy repository in a few calls.
+const THREAD_PAGE: u32 = 50;
+
+/// Unresolved review threads on the open pull requests of one repository.
+///
+/// `$after` pages; `reviewThreads` is capped at 100 per pull request, and
+/// `totalCount` is asked for alongside so the caller can tell a pull request
+/// whose threads were all read from one whose tail was cut off.
+const OPEN_THREADS_QUERY: &str = r"
+query($owner:String!,$name:String!,$pulls:Int!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:$pulls,after:$after,orderBy:{field:UPDATED_AT,direction:DESC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{number reviewThreads(first:100){totalCount nodes{isResolved}}}
+    }
+  }
+}";
+
+/// The GraphQL endpoint for an installation, given its REST root.
+///
+/// github.com serves the two side by side (`https://api.github.com/graphql`).
+/// Enterprise Server puts REST under `/api/v3` and GraphQL *beside* it at
+/// `/api/graphql` — not under it — so the version segment is dropped rather
+/// than appended to.
+fn graphql_url(root: &str) -> String {
+    match root.strip_suffix("/api/v3") {
+        Some(host) => format!("{host}/api/graphql"),
+        None => format!("{root}/graphql"),
+    }
+}
+
+/// GraphQL answers 200 with an `errors` array, so the HTTP status alone never
+/// says whether a query worked.
+#[derive(Deserialize)]
+// `#[serde(default)]` on `data` would otherwise make the derive demand
+// `T: Default`, which the payload types have no reason to implement.
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+struct GraphQlReply<T> {
+    #[serde(default = "Option::default")]
+    data: Option<T>,
+    #[serde(default)]
+    errors: Vec<GraphQlError>,
+}
+
+#[derive(Deserialize)]
+struct GraphQlError {
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct ThreadsData {
+    #[serde(default)]
+    repository: Option<ThreadsRepo>,
+}
+
+#[derive(Deserialize)]
+struct ThreadsRepo {
+    #[serde(rename = "pullRequests")]
+    pull_requests: ThreadsPage,
+}
+
+#[derive(Deserialize)]
+struct ThreadsPage {
+    #[serde(rename = "pageInfo")]
+    page_info: ThreadsPageInfo,
+    #[serde(default)]
+    nodes: Vec<ThreadsPull>,
+}
+
+#[derive(Deserialize)]
+struct ThreadsPageInfo {
+    #[serde(rename = "hasNextPage", default)]
+    has_next_page: bool,
+    #[serde(rename = "endCursor", default)]
+    end_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ThreadsPull {
+    number: i64,
+    #[serde(rename = "reviewThreads")]
+    review_threads: ReviewThreads,
+}
+
+#[derive(Deserialize)]
+struct ReviewThreads {
+    #[serde(rename = "totalCount", default)]
+    total_count: usize,
+    #[serde(default)]
+    nodes: Vec<ReviewThread>,
+}
+
+#[derive(Deserialize)]
+struct ReviewThread {
+    #[serde(rename = "isResolved", default)]
+    is_resolved: bool,
 }
 
 impl GitHubDriver {
@@ -929,6 +1033,88 @@ impl ConnectorDriver for GitHubDriver {
         );
     }
 
+    /// Unresolved review threads, per open pull request, from the GraphQL API.
+    ///
+    /// REST has no answer here at all: `/pulls/{n}/comments` returns review
+    /// comments and their reply chains, but not whether anyone resolved the
+    /// conversation, so counting them would report a settled pull request as
+    /// blocked. GraphQL's `reviewThreads.isResolved` is the only place the
+    /// state exists.
+    ///
+    /// Two caps, both visible in the result rather than hidden: `max_pulls`
+    /// stops the walk, and `reviewThreads(first:100)` means a pull request
+    /// with more than a hundred threads has only its first hundred read —
+    /// `total` comes from `totalCount`, so a reader can see `open` was
+    /// computed over a prefix.
+    async fn open_review_threads(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        max_pulls: u32,
+    ) -> anyhow::Result<Option<Vec<PullRequestThreads>>> {
+        let Some((owner, name)) = repo_full_path.split_once('/') else {
+            anyhow::bail!("expected owner/repo, got {repo_full_path}");
+        };
+        let url = graphql_url(auth.root());
+        let mut out: Vec<PullRequestThreads> = Vec::new();
+        let mut after: Option<String> = None;
+        while (out.len() as u32) < max_pulls {
+            let want = THREAD_PAGE.min(max_pulls - out.len() as u32);
+            let body = serde_json::json!({
+                "query": OPEN_THREADS_QUERY,
+                "variables": { "owner": owner, "name": name, "pulls": want, "after": after },
+            });
+            let res = self
+                .headers(self.http.post(&url), auth)
+                .json(&body)
+                .send()
+                .await?;
+            let status = res.status();
+            if !status.is_success() {
+                let text = res.text().await.unwrap_or_default();
+                anyhow::bail!(
+                    "GitHub GraphQL {status}: {}",
+                    text.chars().take(200).collect::<String>()
+                );
+            }
+            let reply: GraphQlReply<ThreadsData> = res.json().await?;
+            if let Some(first) = reply.errors.first() {
+                anyhow::bail!("GitHub GraphQL: {}", first.message);
+            }
+            // A repository the token cannot see comes back as `data.repository:
+            // null` with no error. Nothing to count, and nothing to complain
+            // about either — the sync that asked has already logged what it
+            // could reach.
+            let Some(page) = reply
+                .data
+                .and_then(|d| d.repository)
+                .map(|r| r.pull_requests)
+            else {
+                return Ok(Some(out));
+            };
+            for pull in page.nodes {
+                out.push(PullRequestThreads {
+                    number: pull.number,
+                    open: pull
+                        .review_threads
+                        .nodes
+                        .iter()
+                        .filter(|t| !t.is_resolved)
+                        .count(),
+                    total: pull.review_threads.total_count,
+                });
+            }
+            match page.page_info {
+                ThreadsPageInfo {
+                    has_next_page: true,
+                    end_cursor: Some(cursor),
+                } => after = Some(cursor),
+                _ => break,
+            }
+        }
+        Ok(Some(out))
+    }
+
     async fn contributors(
         &self,
         auth: &ConnectionAuth,
@@ -1049,6 +1235,7 @@ mod tests {
     /// not only on the reply that came back.
     #[derive(Default)]
     struct Seen {
+        graphql_bodies: Vec<Value>,
         put_body: Option<Value>,
         probe_query: Option<String>,
         ref_body: Option<Value>,
@@ -1161,7 +1348,45 @@ mod tests {
             }))
         }
 
+        /// Two pages of open pull requests, so the test proves the walk
+        /// follows `endCursor` instead of stopping at the first page.
+        async fn graphql(
+            State((seen, _)): State<FakeState>,
+            Json(body): Json<Value>,
+        ) -> Json<Value> {
+            let after = body["variables"]["after"].as_str().map(str::to_owned);
+            seen.lock().unwrap().graphql_bodies.push(body);
+            let (nodes, has_next, cursor) = match after.as_deref() {
+                None => (
+                    json!([
+                        { "number": 7, "reviewThreads": { "totalCount": 3, "nodes": [
+                            { "isResolved": false }, { "isResolved": true }, { "isResolved": false }
+                        ] } },
+                        { "number": 9, "reviewThreads": { "totalCount": 1, "nodes": [
+                            { "isResolved": true }
+                        ] } }
+                    ]),
+                    true,
+                    "cursor-1",
+                ),
+                Some(_) => (
+                    json!([
+                        { "number": 11, "reviewThreads": { "totalCount": 2, "nodes": [
+                            { "isResolved": false }, { "isResolved": false }
+                        ] } }
+                    ]),
+                    false,
+                    "cursor-2",
+                ),
+            };
+            Json(json!({ "data": { "repository": { "pullRequests": {
+                "pageInfo": { "hasNextPage": has_next, "endCursor": cursor },
+                "nodes": nodes,
+            } } } }))
+        }
+
         let app = Router::new()
+            .route("/graphql", post(graphql))
             .route("/repos/{owner}/{repo}", get(repo))
             .route(
                 "/repos/{owner}/{repo}/git/ref/heads/{*branch}",
@@ -1425,5 +1650,101 @@ mod tests {
     fn separators_survive_encoding_and_the_rest_is_escaped() {
         assert_eq!(encode_path("docs/my file.md"), "docs/my%20file.md");
         assert_eq!(encode_path("docs/adr/0001-a_b.md"), "docs/adr/0001-a_b.md");
+    }
+
+    /// github.com serves GraphQL next to REST; Enterprise Server puts REST
+    /// under `/api/v3` and GraphQL beside it, which is the case a naive
+    /// concatenation gets wrong.
+    #[test]
+    fn the_graphql_endpoint_sits_beside_rest_not_under_it() {
+        assert_eq!(
+            graphql_url("https://api.github.com"),
+            "https://api.github.com/graphql"
+        );
+        assert_eq!(
+            graphql_url("https://ghe.example.test/api/v3"),
+            "https://ghe.example.test/api/graphql"
+        );
+    }
+
+    /// The count is of UNRESOLVED threads, paged to the end, and `total` keeps
+    /// the provider's own count so a truncated thread list stays visible.
+    #[tokio::test]
+    async fn open_review_threads_counts_only_the_unresolved_ones() {
+        let (base, seen) = fake_github(Fixture::default()).await;
+        let (driver, auth) = driver_and_auth(base);
+
+        let got = driver
+            .open_review_threads(&auth, "acme/specs", 200)
+            .await
+            .expect("the query succeeds")
+            .expect("GitHub reports threads");
+
+        assert_eq!(
+            got,
+            vec![
+                PullRequestThreads {
+                    number: 7,
+                    open: 2,
+                    total: 3
+                },
+                PullRequestThreads {
+                    number: 9,
+                    open: 0,
+                    total: 1
+                },
+                PullRequestThreads {
+                    number: 11,
+                    open: 2,
+                    total: 2
+                },
+            ]
+        );
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.graphql_bodies.len(), 2, "the second page was fetched");
+        assert_eq!(seen.graphql_bodies[0]["variables"]["after"], Value::Null);
+        assert_eq!(seen.graphql_bodies[1]["variables"]["after"], "cursor-1");
+        assert_eq!(seen.graphql_bodies[0]["variables"]["owner"], "acme");
+        assert_eq!(seen.graphql_bodies[0]["variables"]["name"], "specs");
+    }
+
+    /// `max_pulls` stops the walk rather than being a hint — one page only,
+    /// and the cursor is never followed.
+    #[tokio::test]
+    async fn the_pull_request_cap_stops_the_walk() {
+        let (base, seen) = fake_github(Fixture::default()).await;
+        let (driver, auth) = driver_and_auth(base);
+
+        let got = driver
+            .open_review_threads(&auth, "acme/specs", 2)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(got.len(), 2);
+        assert_eq!(seen.lock().unwrap().graphql_bodies.len(), 1);
+    }
+
+    /// A GraphQL error arrives with HTTP 200, so the status alone would report
+    /// a failed query as an empty one.
+    #[tokio::test]
+    async fn a_graphql_error_is_an_error_even_though_the_status_is_200() {
+        async fn errors() -> Json<Value> {
+            Json(json!({ "data": null, "errors": [{ "message": "Bad credentials" }] }))
+        }
+        let app = Router::new().route("/graphql", post(errors));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let (driver, auth) = driver_and_auth(format!("http://{addr}"));
+
+        let err = driver
+            .open_review_threads(&auth, "acme/specs", 10)
+            .await
+            .expect_err("a GraphQL error is not a successful read");
+        assert!(err.to_string().contains("Bad credentials"), "{err}");
     }
 }

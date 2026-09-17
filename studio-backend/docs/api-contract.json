@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 174,
+  "open_violations": 175,
   "operations": [
     {
       "method": "DELETE",
@@ -252,6 +252,21 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/spec-quality/v1/capabilities",
+      "operation_id": "spec_quality.get_capabilities",
+      "tag": "SpecQuality",
+      "summary": "Detectors and document types the upstream service declares",
+      "authenticated": true,
+      "responses": [
+        "SpecQualityCapabilitiesDto"
+      ],
+      "errors": [
+        "401",
         "500"
       ]
     },
