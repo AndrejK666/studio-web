@@ -103,15 +103,33 @@ Do **not** reach for `npm run build:packages` here: that belongs to
 ## Layer 4 — the stand, with two people
 
 Everything above is arithmetic. The product is two people in one document, and
-that needs two identities: sign in as yourself in one browser, and as a second
-Keycloak user in a private window. **Two tabs of the same account is not a
-second person** — and proving that is itself one of the checks.
+that needs two identities. **Two tabs of the same account is not a second
+person** — and proving that is itself one of the checks.
 
 ```bash
 scripts/dev-up.sh
 #   Portal:   http://localhost:8080
 #   API/docs: http://localhost:8090/cf/docs
 ```
+
+The realm ships with exactly the two people this needs, which is why no account
+has to be created first:
+
+| | username | password |
+| --- | --- | --- |
+| A | `admin` | `studio` |
+| B | `demo` | `studio` |
+
+Sign in as `admin` in your ordinary window and as `demo` in a private one.
+
+Two files in this checkout are called `realm-studio.json` and they do not agree.
+The one compose mounts is **`docker/keycloak/realm-studio.json`**, and it is the
+one with `demo` in it; `keycloak/realm-studio.json` is the deployment's, whose
+`admin` password is `change-me-on-first-login` and which has no second person at
+all. If `demo` does not exist, that is which file came up.
+
+Keycloak's own console is separate again — `admin`/`admin` on
+<https://localhost:8443>, the bootstrap account, not a Studio identity.
 
 ### 1. Identity — the one that has to pass first
 
