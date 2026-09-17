@@ -44,6 +44,7 @@ import { WorkspaceSourcesContribution } from './workspace-sources-contribution';
 import { WorkspaceSourcesWidget } from './workspace-sources-widget';
 import { WorkspaceSourceRootDecorator, WorkspaceSourceRootService } from './workspace-source-root-decorator';
 import { PortalBridgeContribution } from './portal-bridge-contribution';
+import { PortalPresenceContribution } from './portal-presence-contribution';
 import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
@@ -157,6 +158,12 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // no parent window.
     bind(PortalBridgeContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(PortalBridgeContribution);
+
+    // Reports this session into the portal's presence gear, and shows the
+    // notes that come back. Bound after the bridge because it reads what the
+    // bridge stores from the handshake.
+    bind(PortalPresenceContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(PortalPresenceContribution);
     bindViewContribution(bind, StudioContribution);
     bind(FrontendApplicationContribution).toService(StudioContribution);
     bindViewContribution(bind, GitOperationsContribution);

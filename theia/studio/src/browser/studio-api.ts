@@ -27,6 +27,17 @@ const MAX_PAGE = 200;
  * browser widgets that call backend gears through the session gate. */
 export const StudioApi = {
     token: '' as string,
+    /**
+     * The person the portal signed in, from the same handshake as the token.
+     *
+     * Here rather than only inside the bridge because presence needs it: a
+     * session may call a gear on a token alone, but it may only claim to BE
+     * somebody when the portal has said who that is. `sub` present means the
+     * identity was authenticated; absent means the IDE is running with the
+     * product extension's self-declared name, which is not a person as far as
+     * any list of people is concerned.
+     */
+    viewer: undefined as { sub?: string; name?: string; kind?: string } | undefined,
     /** Tenant scope from the portal handshake (`studio.init` workspaceId). */
     scope: '' as string,
     scoped(path: string): string {

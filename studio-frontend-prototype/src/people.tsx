@@ -34,6 +34,8 @@ interface Person {
   rootIds: string[];
 }
 
+import { OnlineDot, useOnline } from "./presence";
+
 export function PeopleView({
   token,
   org,
@@ -51,6 +53,7 @@ export function PeopleView({
   query: string;
   onOpenProject: (rootId: string) => void;
 }) {
+  const online = useOnline(token);
   const [people, setPeople] = useState<Person[] | null>(null);
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
   const [username, setUsername] = useState("");
@@ -250,6 +253,17 @@ export function PeopleView({
                 : "Nobody matches the current filters."}
             </p>
           ) : (
+            <>
+            {/* A dot that never lights cannot be told apart from an empty
+                office, so the one case where the join could be wrong says so
+                rather than showing nothing. */}
+            {online.reported > 0 && !filtered.some((p) => online.ids.has(p.user.id)) && (
+              <p className="hint">
+                {online.reported} {online.reported === 1 ? "person is" : "people are"} in Studio
+                right now, but none of them matched this list — presence is keyed by the sign-in
+                subject and these rows by account id.
+              </p>
+            )}
             <table className="ptable people">
               <thead>
                 <tr>
@@ -268,7 +282,10 @@ export function PeopleView({
                         <div className="pcell">
                           <span className="account-avatar small">{initials(name)}</span>
                           <div>
-                            <div className="pname plain">{name}</div>
+                            <div className="pname plain">
+                              {name}
+                              <OnlineDot online={online.ids.has(p.user.id)} />
+                            </div>
                             <div className="sub">{p.user.email ?? p.user.username}</div>
                           </div>
                         </div>
@@ -298,6 +315,7 @@ export function PeopleView({
                 })}
               </tbody>
             </table>
+            </>
           )}
 
           <form className="inline" onSubmit={invite} style={{ marginTop: 14 }}>
@@ -382,7 +400,10 @@ export function PeopleView({
                         <div className="pcell">
                           <span className="account-avatar small">{initials(name)}</span>
                           <div>
-                            <div className="pname plain">{name}</div>
+                            <div className="pname plain">
+                              {name}
+                              <OnlineDot online={online.ids.has(g.subjectId)} />
+                            </div>
                             <div className="sub">{person?.user.email ?? ""}</div>
                           </div>
                         </div>

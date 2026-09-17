@@ -186,6 +186,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             }
             if ((msg.type === 'studio.init' || msg.type === 'studio.token') && msg.apiToken) {
                 StudioApi.token = msg.apiToken;
+                // Alongside the token, and from the same message, so nothing
+                // can call a gear as a person the portal has not named.
+                StudioApi.viewer = msg.viewer;
                 void this.configureTheiaAi(msg.apiToken);
             }
             if ((msg.type === 'studio.init' || msg.type === 'studio.token') && typeof msg.workspaceId === 'string') {

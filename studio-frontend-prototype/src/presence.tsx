@@ -85,6 +85,60 @@ export function usePresence(
   return { messages, dismiss, online };
 }
 
+/** Who is online, for a list that is about people rather than about presence.
+ *
+ *  Returns the set of ids reported online, and the number reported at all. The
+ *  second is what lets a caller tell "nobody is here" from "people are here
+ *  but none of them matched the rows I am drawing" — see [`OnlineDot`]'s
+ *  caveat about which id each side is keyed by.
+ */
+export function useOnline(token: string): { ids: Set<string>; reported: number } {
+  const [state, setState] = useState<{ ids: Set<string>; reported: number }>({
+    ids: new Set(),
+    reported: 0,
+  });
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await api.presenceOnline(token);
+        if (!alive) return;
+        setState({ ids: new Set(r.items.map((p) => p.user_id)), reported: r.items.length });
+      } catch {
+        // A backend without the gear, or a blip. A missing dot is a missing
+        // dot; it must not take a list of people down with it.
+      }
+    };
+    void load();
+    // The gear's own cadence: polling faster returns the same answer.
+    const timer = setInterval(() => void load(), BEAT_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [token]);
+
+  return state;
+}
+
+/** The green dot beside somebody who is in Studio right now.
+ *
+ *  Absent, not grey, when they are not: a list of twenty people with twenty
+ *  grey dots says nothing and costs a column's worth of attention.
+ *
+ *  KEYED BY THE SIGN-IN SUBJECT. The gear records whoever the token says is
+ *  calling, and these rows are keyed by the account id the directory returns.
+ *  Those are the same value in this deployment and need not be in another, so
+ *  a caller that draws these should also say when the gear reported people and
+ *  none of them matched — a dot that never lights is worse than no dot,
+ *  because nobody can tell it apart from an empty office.
+ */
+export function OnlineDot({ online }: { online: boolean }) {
+  if (!online) return null;
+  return <span className="online-dot" title="In Studio right now" aria-label="online" />;
+}
+
 /** Notes that arrived, stacked in the corner until they are dismissed.
  *
  *  Nothing auto-hides: the note was not stored anywhere, so a toast that
