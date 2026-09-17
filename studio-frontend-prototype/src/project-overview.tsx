@@ -20,9 +20,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { coverage, pipelineRows } from "./spec-pipeline";
 import type {
   ArtifactNode,
   Doc,
+  DocBinding,
   JourneyStage,
   DocType,
   DocValidation,
@@ -179,6 +181,8 @@ export function ProjectOverview({
   // it now, so the dashboard asks instead of assuming (ADR-0014 s7).
   const [stageCatalogue, setStageCatalogue] = useState<JourneyStage[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
+  /** Repository files joined to a document type. */
+  const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [repoNodes, setRepoNodes] = useState<ArtifactNode[]>([]);
   const [counts, setCounts] = useState<{ issue: number; pull_request: number; file: number }>({
     issue: 0,
@@ -209,6 +213,7 @@ export function ProjectOverview({
         typePage,
         stagePage,
         docPage,
+        bindingPage,
         repoPage,
         issue,
         prs,
@@ -232,6 +237,16 @@ export function ProjectOverview({
             "documents",
             api.projectDocuments(token, parentWorkspaceId, project.id),
             { items: [] as Doc[] },
+            misses,
+          ),
+          // The repository's side of the same question. A file bound to a type
+          // is a document of that type, and reading only the authored ones is
+          // why this screen used to say "not started" about types the Specs
+          // table was already listing fourteen documents under.
+          optional(
+            "document bindings",
+            api.docBindings(token, parentWorkspaceId, project.id, { limit: 500 }),
+            { items: [] as DocBinding[], total: 0 },
             misses,
           ),
           optional(
@@ -259,6 +274,7 @@ export function ProjectOverview({
       setTypes(typePage.items ?? []);
       setStageCatalogue(stagePage.items ?? []);
       setDocs(docPage.items ?? []);
+      setBindings(bindingPage.items ?? []);
       setRepoNodes(repoPage.nodes ?? []);
       setCounts({ issue, pull_request: prs, file: files });
       setFindings(findingPage.nodes ?? []);
@@ -313,19 +329,12 @@ export function ProjectOverview({
   const artifactTotal = counts.issue + counts.pull_request + counts.file;
   const artifactsKnown = !["issues", "pull requests", "files"].some(missed);
 
-  /** Documents grouped under their type — the pipeline's rows. */
-  const byType = useMemo(() => {
-    const m = new Map<string, Doc[]>();
-    for (const d of docs) {
-      const list = m.get(d.type_key) ?? [];
-      list.push(d);
-      m.set(d.type_key, list);
-    }
-    return m;
-  }, [docs]);
+  /** Every document the project has of each type — written here and found in
+   *  the repository both. */
+  const rows = useMemo(() => pipelineRows(types, docs, bindings), [types, docs, bindings]);
 
-  const started = types.filter((t) => (byType.get(t.key)?.length ?? 0) > 0);
-  const notStarted = types.filter((t) => (byType.get(t.key)?.length ?? 0) === 0);
+  const started = rows.filter((r) => !r.untouched);
+  const notStarted = rows.filter((r) => r.untouched);
   /** `conforms` on the record is the verdict from the document's last save; a
    *  validation run on this screen supersedes it with a fresh one. */
   const conformsOf = (d: Doc) => checks[d.id]?.conforms ?? d.conforms;
@@ -490,10 +499,12 @@ export function ProjectOverview({
               </div>
             </div>
             <p className="hint">
-              One row per document type the workspace defines. A type with documents shows how they
-              stand and how many satisfy the type's required sections; the rest is what this project
-              has not written yet. “Validate all” re-checks every document and lists what the
-              checker objects to.
+              One row per document type the workspace defines, counting documents written here and
+              repository files bound to that type alike. A type with documents shows how they stand
+              and how many satisfy the type's required sections; the rest is what this project has
+              neither written nor found. A file a scan only guessed at is shown as unconfirmed and
+              left out of the count — a guess is not coverage. “Validate all” re-checks every
+              document and lists what the checker objects to.
             </p>
 
             {stages.length > 0 && (
@@ -518,21 +529,25 @@ export function ProjectOverview({
                   </tr>
                 </thead>
                 <tbody>
-                  {started.map((t) => {
-                    const list = byType.get(t.key) ?? [];
-                    const ok = list.filter(conformsOf).length;
+                  {started.map((row) => {
+                    const { valid, total } = coverage(row, conformsOf);
+                    // Titles first, then repository paths: an authored
+                    // document has a name somebody chose, a bound file has a
+                    // path, and mixing them without order makes the line read
+                    // as neither.
+                    const names = [
+                      ...row.authored.map((d) => d.title),
+                      ...row.bound.map((b) => b.path.split("/").pop() ?? b.path),
+                    ];
                     return (
-                      <tr key={t.key} className="prow root">
+                      <tr key={row.type.key} className="prow root">
                         <td>
                           <div className="pcell">
                             <div>
-                              <div className="name">{t.name}</div>
+                              <div className="name">{row.type.name}</div>
                               <div className="sub">
-                                {list
-                                  .slice(0, 3)
-                                  .map((d) => d.title)
-                                  .join(", ")}
-                                {list.length > 3 ? ` +${list.length - 3}` : ""}
+                                {names.slice(0, 3).join(", ")}
+                                {names.length > 3 ? ` +${names.length - 3}` : ""}
                               </div>
                             </div>
                           </div>
@@ -540,22 +555,47 @@ export function ProjectOverview({
                         <td>
                           <div className="dash-mix">
                             {(["approved", "review", "draft"] as Doc["status"][]).map((st) => {
-                              const n = list.filter((d) => d.status === st).length;
+                              const n = row.authored.filter((d) => d.status === st).length;
                               return n > 0 ? (
                                 <span key={st} className={`badge ${STATUS_TONE[st]}`}>
                                   {n} {st}
                                 </span>
                               ) : null;
                             })}
+                            {row.bound.length > 0 && (
+                              <span
+                                className="badge ok"
+                                title="Repository files bound to this type"
+                              >
+                                {row.bound.length} in repo
+                              </span>
+                            )}
+                            {/* A guess is not coverage, so it is shown and not
+                                counted — and it is shown, because it is the
+                                one thing on this row somebody can act on. */}
+                            {row.proposed.length > 0 && (
+                              <span
+                                className="badge warn"
+                                title="Detected by a scan, waiting for someone to confirm the type"
+                              >
+                                {row.proposed.length} unconfirmed
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
-                          <Meter done={ok} total={list.length} unit="docs" />
+                          {total > 0 ? (
+                            <Meter done={valid} total={total} unit="docs" />
+                          ) : (
+                            <button className="ghost" onClick={() => onOpenTab("specs")}>
+                              Review →
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
                   })}
-                  {notStarted.map((t) => (
+                  {notStarted.map(({ type: t }) => (
                     <tr key={t.key} className="prow nested">
                       <td>
                         <div className="pcell">
