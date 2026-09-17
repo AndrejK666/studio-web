@@ -824,6 +824,21 @@ const WIDGET_CSS = `
 .studio-thread-head { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 9px; }
 .studio-thread-quote { flex: 1; min-width: 0; }
 .studio-thread-tools { display: flex; gap: 1px; flex: none; }
+/* --- picking a component to comment on (requirement 22) ------------------- *
+ *
+ * OUTLINE, NEVER A FILL. The point of picking is to read the thing you are
+ * about to comment on, and a tint over a table makes it unreadable at the one
+ * moment it matters most. The same reason quality-marks.js gives for using an
+ * underline rather than a background on duplicated prose.
+ *
+ * The cursor says the click will not place a caret, which is the one thing a
+ * person expects a click in an editor to do. */
+.studio-picking-component, .studio-picking-component * { cursor: crosshair !important; }
+.studio-component-target {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
 .studio-thread-note { font-size: 11.5px; color: var(--studio-accent); margin: 0 0 8px 31px; }
 /* What came of this comment. Indented to the thread's own text column, and in
    the muted ink rather than the accent: the note above is a question waiting

@@ -73,6 +73,7 @@ const { messageHtml, quoteLineHtml } = require('./comment-ui');
 const { identity, authorRecord, isSelf } = require('./identity');
 const { signature, mergeFolded } = require('./comment-log');
 const taskScan = require('./task-scan');
+const elementAnchor = require('./element-anchor');
 const { loaderMarkup, loadingMarkup, showLoading } = require('./loader');
 const {
     requestChange, openAiPrompt,
@@ -1928,6 +1929,7 @@ class MarkdownEditorWidget extends Widget {
             this.disposables.push({ dispose: () => this.pageObserver.disconnect() });
         }
 
+        this.watchComponentPicker();
         this.reanchorThreads();
         this.renderRail();
         this.watchRightPanel();
@@ -3866,10 +3868,19 @@ class MarkdownEditorWidget extends Widget {
         const marks = [];
         for (const th of this.threads) {
             if (th.scope === 'document' || th.orphaned) { continue; }
-            const el = root.querySelector('.studio-comment-mark[data-comment-id="' + th.id + '"]');
+            // An element thread was anchored to a block, so the block IS its
+            // mark; a text thread's is the span reanchorThreads painted.
+            const el = th.scope === 'element'
+                ? th.el
+                : root.querySelector('.studio-comment-mark[data-comment-id="' + th.id + '"]');
             if (!el) { continue; }
             const revealResolved = th.resolved && th.id === this.openResolvedThreadId;
-            el.classList.toggle('studio-comment-resolved', th.resolved && !revealResolved);
+            // Only a comment span carries the resolved treatment; dimming a
+            // heading because a thread about it is settled would be editing the
+            // document's own appearance.
+            if (th.scope !== 'element') {
+                el.classList.toggle('studio-comment-resolved', th.resolved && !revealResolved);
+            }
             if (th.resolved) { continue; }
             // offsetTop is relative to the nearest positioned ancestor, which
             // is the page; the gutter shares that origin, so no conversion.
@@ -4125,8 +4136,22 @@ class MarkdownEditorWidget extends Widget {
         const { text, map } = buildTextIndex(this.editor.state.doc);
         const tr = this.editor.state.tr;
         let applied = false;
+        const root = this.editor.view.dom;
         for (const th of this.threads) {
             if (th.scope === 'document') { continue; }
+            if (th.scope === 'element') {
+                /*
+                 * A path, not a quote, and no ProseMirror mark: marks are
+                 * text-range things and a table is not a text range. The
+                 * resolved element is kept on the thread for the gutter, which
+                 * reads a position off laid-out DOM — the same way it does for
+                 * a comment mark, so reflow is followed for free.
+                 */
+                const el = elementAnchor.resolvePath(th.anchor && th.anchor.path, root);
+                th.el = el;
+                th.orphaned = !el;
+                continue;
+            }
             if (!th.quote) { th.orphaned = true; continue; }
             const positions = [];
             let idx = text.indexOf(th.quote);
@@ -4162,6 +4187,119 @@ class MarkdownEditorWidget extends Widget {
         this.threads.push(thread);
         this.editor.chain().command(({ tr }) => { tr.setMeta('studio-internal', true); return true; })
             .setMark('comment', { commentId: thread.id }).run();
+        this.focusThread(thread.id);
+    }
+
+    /*
+     * The pointer, while a component is being picked.
+     *
+     * Attached once to the page rather than to the editor's own node, and in
+     * the CAPTURE phase: ProseMirror handles mousedown itself to place the
+     * caret, and a bubbling listener would run after it had already moved the
+     * selection and focused the document. Capturing lets the pick happen
+     * instead of the click, which is what a mode means.
+     *
+     * Everything is a no-op while the mode is off, so nothing here costs a
+     * document that never uses it more than a branch per pointer move.
+     */
+    watchComponentPicker() {
+        if (!this.pageEl) { return; }
+        const onMove = event => {
+            if (!this.componentCommentMode) { return; }
+            this.highlightComponent(this.componentAt(event.target));
+        };
+        const onDown = event => {
+            if (!this.componentCommentMode) { return; }
+            const el = this.componentAt(event.target);
+            if (!el) { return; }
+            // Before ProseMirror sees it: no caret moves, no selection changes,
+            // and the document is not focused out from under the rail.
+            event.preventDefault();
+            event.stopPropagation();
+            this.createElementThread(el);
+        };
+        const onKey = event => {
+            // Escape leaves the mode, the way it leaves every other transient
+            // surface in this editor.
+            if (event.key === 'Escape' && this.componentCommentMode) {
+                event.preventDefault();
+                this.setComponentCommentMode(false);
+            }
+        };
+        this.pageEl.addEventListener('mousemove', onMove, true);
+        this.pageEl.addEventListener('mousedown', onDown, true);
+        document.addEventListener('keydown', onKey, true);
+        this.disposables.push({
+            dispose: () => {
+                this.pageEl.removeEventListener('mousemove', onMove, true);
+                this.pageEl.removeEventListener('mousedown', onDown, true);
+                document.removeEventListener('keydown', onKey, true);
+            }
+        });
+    }
+
+    /*
+     * Requirement 22: comment on a rendered component — a heading, a table, an
+     * image, a diagram — without selecting any text.
+     *
+     * A MODE, because in an editor a click means "put the caret here". The HTML
+     * viewer has the same toggle for the same reason; this is the same gesture
+     * on the surface most documents are actually read in.
+     *
+     * The mode ends on the first pick. Requirement 22 is one comment on one
+     * component, and a mode that stayed on would turn the next ordinary click
+     * into a second thread nobody asked for.
+     */
+    toggleComponentCommentMode() {
+        this.setComponentCommentMode(!this.componentCommentMode);
+    }
+
+    setComponentCommentMode(on) {
+        this.componentCommentMode = !!on && !this.readOnly && this.mode !== 'raw';
+        const root = this.editor && this.editor.view.dom;
+        if (root) { root.classList.toggle('studio-picking-component', this.componentCommentMode); }
+        if (!this.componentCommentMode) { this.highlightComponent(undefined); }
+        this.renderRail();
+    }
+
+    /** The block under the pointer, or nothing when the pointer is not on one. */
+    componentAt(target) {
+        const root = this.editor && this.editor.view.dom;
+        if (!root || !target || target.nodeType !== 1) { return undefined; }
+        let node = target;
+        while (node && node.parentElement && node.parentElement !== root) { node = node.parentElement; }
+        return node && node.parentElement === root ? node : undefined;
+    }
+
+    /* Outlined rather than filled: the point of picking is to read what you are
+     * about to comment on, and a fill over a table makes it unreadable at the
+     * moment it matters most. */
+    highlightComponent(el) {
+        if (this.highlightedComponent === el) { return; }
+        if (this.highlightedComponent) {
+            this.highlightedComponent.classList.remove('studio-component-target');
+        }
+        this.highlightedComponent = el;
+        if (el) { el.classList.add('studio-component-target'); }
+    }
+
+    /**
+     * Anchor a thread to a rendered block.
+     *
+     * The anchor is `element-anchor`'s, computed against the editor's own
+     * content element — the same model the HTML viewer stores, so a thread
+     * written on one surface is readable on the other.
+     */
+    createElementThread(el) {
+        const root = this.editor && this.editor.view.dom;
+        const anchor = elementAnchor.anchorFor(el, root);
+        if (!anchor || !anchor.path.length) { return; }
+        const thread = {
+            id: newId(), scope: 'element', anchor, resolved: false, messages: []
+        };
+        this.threads.push(thread);
+        this.setComponentCommentMode(false);
+        this.reanchorThreads();
         this.focusThread(thread.id);
     }
 
@@ -4301,12 +4439,21 @@ class MarkdownEditorWidget extends Widget {
         delete this.drafts[threadId];
         this.persistComments(store => first
             ? store.openThread(this.uri, {
-                id: th.id, scope: th.scope, quote: th.quote, occurrence: th.occurrence, body: text
+                id: th.id, scope: th.scope, quote: th.quote, occurrence: th.occurrence,
+                // Carried for an element thread and undefined for the others,
+                // which is what `openThread` already expects. Without it the
+                // anchor lived only in this session and the thread came back
+                // from the sidecar pointing at nothing.
+                anchor: th.anchor, body: text
             })
             : store.reply(this.uri, th.id, text));
         this.historyStore.record(this.uri, {
             kind: 'comment',
-            title: (th.scope === 'document' ? 'Commented on the document' : 'Commented on “' + String(th.quote).slice(0, 40) + '”'),
+            title: th.scope === 'document'
+                ? 'Commented on the document'
+                : th.scope === 'element'
+                    ? 'Commented on ' + elementAnchor.lostText(th.anchor)
+                    : 'Commented on “' + String(th.quote).slice(0, 40) + '”',
             detail: body.trim().slice(0, 120),
             commentId: th.id
         }).then(entries => { this.historyEntries = entries; });
@@ -4638,6 +4785,10 @@ class MarkdownEditorWidget extends Widget {
 
         this.railHeadEl.innerHTML =
             '<span class="studio-rail-title">Comments</span>' +
+            '<button class="studio-icon-btn' + (this.componentCommentMode ? ' active' : '') +
+            '" data-act="comment-on-component" title="' +
+            (this.componentCommentMode ? 'Stop picking a component' : 'Comment on a heading, table or image') +
+            '" aria-label="Comment on a component">' + ICONS.figure + '</button>' +
             '<button class="studio-icon-btn" data-act="new-document-comment" title="Comment on the whole document" ' +
             'aria-label="Comment on the whole document">' + ICONS.docComment + '</button>';
 
@@ -4722,7 +4873,15 @@ class MarkdownEditorWidget extends Widget {
         const messages = th.messages.map(m => messageHtml(m, 'studio-msg')).join('');
         const resolveTitle = th.resolved ? 'Reopen thread' : 'Mark resolved';
         const deleteArmed = th.id === this.armedDeleteId;
-        const quote = quoteLineHtml({ text: th.quote, scope: th.scope, orphaned: th.orphaned });
+        /* An element thread has no quote to show, so it shows what it is
+         * attached to — the shape and, when there is one, the words inside it.
+         * That is also exactly what a reader needs when the anchor is lost and
+         * the thread has to be put back somewhere by hand. */
+        const quote = quoteLineHtml({
+            text: th.scope === 'element' ? elementAnchor.lostText(th.anchor) : th.quote,
+            scope: th.scope,
+            orphaned: th.orphaned
+        });
 
         return '<div class="studio-thread' + (th.resolved ? ' resolved' : '') +
             (th.id === this.activeThreadId ? ' active' : '') +
@@ -7038,6 +7197,7 @@ class MarkdownEditorWidget extends Widget {
                 case 'unlock': this.unlock(); break;
                 case 'save-now': this.save(); break;
                 case 'toggle-autosave': this.toggleAutosave(); break;
+                case 'comment-on-component': this.toggleComponentCommentMode(); break;
                 case 'new-document-comment': this.createDocumentThread(); break;
                 case 'toggle-resolved-threads': this.toggleResolvedThreads(); break;
                 case 'show-resolved-thread': this.showResolvedThread(id); break;
