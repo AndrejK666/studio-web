@@ -120,6 +120,28 @@
       "secret": "studio-admin-dev-secret",
       "standardFlowEnabled": false,
       "serviceAccountsEnabled": true
+    },
+    {
+      "clientId": "grafana",
+      "name": "Grafana (observability)",
+      "description": "Login for the metrics UI in the studio-monitoring namespace. Public client with PKCE, exactly like studio-portal: Grafana holds no secret, so there is none to seal, rotate or leak. Add the public host to redirectUris/webOrigins once DNS exists; the localhost entries are for `kubectl port-forward svc/grafana 3000:80`.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/login/generic_oauth",
+        "http://127.0.0.1:3000/login/generic_oauth"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      }
     }
   ],
   "components": {
