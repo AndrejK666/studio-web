@@ -72,6 +72,7 @@ const { MEASURES_CSS } = require('./quality-measures');
 const { QUALITY_MARKS_CSS } = require('./quality-marks');
 const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
 const { CollaborationWidget, COLLAB_CSS, COLLAB_WIDGET_ID } = require('./collab-view');
+const { CollaborationStrip, COLLAB_STRIP_CSS, COLLAB_STRIP_ID } = require('./collab-strip');
 const { QualityStore } = require('./quality-store');
 /*
  * The green-field flow. Four modules and a hard rule: with no
@@ -1550,7 +1551,7 @@ class ProductChromeContribution {
              * the rail's own CSS must land after EDITOR_CSS's .studio-rail-*
              * geometry it builds on.
              */
-            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS +
+            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS + COLLAB_STRIP_CSS +
             /* The flow's one surface: the rail's column. */
             FLOW_RAIL_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
@@ -1717,7 +1718,15 @@ class ProductChromeContribution {
         // The shell is not attached yet under onDidInitializeLayout, and mounting
         // reaches into its DOM, so it waits for the current tick to finish. Same
         // reason the rail-foot cluster this replaces did.
-        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); this.mountCollabRail(); }, 0);
+        setTimeout(() => {
+            slotStrip.mount();
+            welcomeView.mount();
+            this.mountSearchRail();
+            this.mountQualityRail();
+            this.mountCollabRail();
+            this.mountCollabStrip(app.shell).catch(e =>
+                console.warn('[studio] could not mount the collaboration strip', e));
+        }, 0);
 
         this.watchFeatureSettings(app.shell);
     }
@@ -1915,7 +1924,7 @@ class ProductChromeContribution {
     }
 
     /*
-     * Open (or re-reveal) the Collaboration tab. openSearch's shape, including
+     * Open (or re-reveal) the Collaboration page. openSearch's shape, including
      * the staleness guard, and for the same reason (constraint 27).
      */
     async openCollaboration(shell) {
@@ -1937,12 +1946,33 @@ class ProductChromeContribution {
         shell.activateWidget(widget.id);
     }
 
-    /*
-     * The rail's Collaboration button, in the ACTIONS group beside Search and
-     * Quality. Unconditional, unlike Quality's — see COLLAB_COMMAND for why
-     * this one is not behind a setting, and rail-nav.js for why `actions` is
-     * the append-friendly group.
+    /**
+     * The one line above the documents.
+     *
+     * Mounted once, always, into the shell's top panel — the 32px row the menu
+     * bar is already in, so it costs no height. `area: 'top'` is the shell's own
+     * contribution point for exactly this; nothing here reaches into Lumino's
+     * geometry, which is absolute and recomputed on every resize.
      */
+    async mountCollabStrip(shell) {
+        if (!shell || shell.widgets.find(w => w.id === COLLAB_STRIP_ID)) { return; }
+        const strip = new CollaborationStrip({
+            workspaceService: this.container.get(WorkspaceService),
+            fileService: this.container.get(FileService),
+            commandRegistry: this.container.get(CommandRegistry)
+        });
+        await shell.addWidget(strip, { area: 'top' });
+        /*
+         * Theia creates the top panel hidden and lets whatever lands in it ask
+         * to be seen — the menu bar is what normally does. This product shows a
+         * menu bar today, so the row is already visible; the line is here so the
+         * strip does not vanish the day somebody hides it.
+         */
+        try {
+            if (shell.topPanel && shell.topPanel.isHidden) { shell.topPanel.setHidden(false); }
+        } catch (e) { /* a shell without a top panel simply has no strip */ }
+    }
+
     mountCollabRail() {
         if (this.collabRailNode) { return; }
         const button = document.createElement('button');

@@ -1254,8 +1254,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    * `sub` is the subject id, not the display name: it survives a rename, and
    * it is what the comment and change logs are partitioned by on disk. */
   const viewer = useMemo(
-    () => ({ sub: me.subject_id, name: userName, kind: "person" }),
-    [me.subject_id, userName],
+    // The address rides along because the IDE commits as this person: git
+    // refuses a commit without one, and the session's fallback is a shared
+    // "Constructor Studio" that attributes everybody's work to nobody.
+    () => ({ sub: me.subject_id, name: userName, email: userEmail ?? undefined, kind: "person" }),
+    [me.subject_id, userName, userEmail],
   );
   /* Read by the studio.init retry, for tokenRef's reason: that timer keeps
      firing the closure it was created with for up to five minutes, and the

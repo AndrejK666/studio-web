@@ -56,6 +56,9 @@ export interface PortalViewer {
     sub?: string;
     /** Display only. */
     name?: string;
+    /** What the IDE commits as. Absent when the identity provider states no
+     *  address, and then the session keeps its own default. */
+    email?: string;
     /** `person` unless the portal is driving the IDE as something else. */
     kind?: string;
 }

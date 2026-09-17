@@ -76,4 +76,41 @@ function assistantEnvironment(home, base = process.env) {
 }
 
 
-module.exports = { assistantEnvironment, readStoredKey, CREDENTIAL_STORE, HOME_IS_MOVABLE };
+
+/*
+ * The git config a viewer's home carries, as text.
+ *
+ * Pure, and in this module rather than beside the code that writes it, for the
+ * reason this module exists at all: the part with a rule in it is the part
+ * worth testing, and `viewer-credentials.js` cannot be loaded without a
+ * dependency-injection container.
+ *
+ * `include` comes FIRST and the person SECOND, because git applies the last
+ * value it reads: the session's own config still supplies everything nobody
+ * here states, and the person still wins over its default identity.
+ *
+ * The address is written only when the identity provider stated one. Git needs
+ * one to commit at all, and the include supplies the session's, so a person
+ * whose account carries no address commits under their own name rather than not
+ * at all.
+ */
+function gitIdentityConfig(containerConfigPath, person) {
+    const lines = [
+        '# Written by Constructor Studio. This directory is the plugin host HOME,',
+        '# so this is the global git config every tool running in it reads.',
+        '[include]',
+        '\tpath = ' + containerConfigPath
+    ];
+    const name = person && typeof person.name === 'string' ? person.name.trim() : '';
+    const email = person && typeof person.email === 'string' ? person.email.trim() : '';
+    if (name || email) {
+        lines.push('[user]');
+        if (name) { lines.push('\tname = ' + name); }
+        if (email) { lines.push('\temail = ' + email); }
+    }
+    return lines.join('\n') + '\n';
+}
+
+module.exports = {
+    assistantEnvironment, gitIdentityConfig, readStoredKey, CREDENTIAL_STORE, HOME_IS_MOVABLE
+};

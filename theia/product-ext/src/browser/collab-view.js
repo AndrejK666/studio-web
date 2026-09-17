@@ -1,13 +1,22 @@
 /*
- * Collaboration — the project tab. Who is here, what is being discussed, and
- * what is waiting for a decision.
+ * Collaboration — the detail. Who is here, what is being discussed, and what is
+ * waiting for a decision, at length.
  *
- * WHY A MAIN-DOCK TAB AND NOT A PANEL. Same arithmetic as the Quality tab, and
- * the same reason: every fact on this page is about a PROJECT rather than about
- * the document somebody happens to have open. Opening `prd.md` tells you
- * nothing about the thread waiting on you in `architecture.md`, and a 257px
- * rail cannot hold a path, a quote, an author and an age on one line — measured
- * twice already in this product, by Search and by Quality.
+ * WHY THIS IS A PAGE, AND WHAT SITS ABOVE THE TABS INSTEAD. Reported from use:
+ * a tab is somewhere you GO, and every fact here is about work happening while
+ * you are looking at something else — a colleague editing the next file, a
+ * thread that now mentions you. A surface you have to remember to open tells you
+ * about those late or not at all.
+ *
+ * The answer is not to move this page up there. Measured in the running IDE:
+ * Theia's top panel is a 32px flex ROW shared with the menu bar, its height set
+ * by the shell's own box layout, and a path, a quote, an author and an age do
+ * not fit in 32px any more than they fit in a 257px rail. Making it taller means
+ * fighting Lumino's geometry, which is absolute and recomputed on every resize.
+ *
+ * So the two surfaces split by what they are for. `collab-strip.js` is one line
+ * in that row, always there, saying what changed; this page is where you go when
+ * that line makes you want the whole list. The strip opens it.
  *
  * WHAT IT SHOWS, and why each part is here rather than somewhere that already
  * exists:
@@ -125,7 +134,6 @@ class CollaborationWidget extends Widget {
         this.countEl = this.node.querySelector('[data-collab-count]');
         this.bodyEl = this.node.querySelector('[data-collab-body]');
         this.honestyEl = this.node.querySelector('[data-collab-honesty]');
-
         this.bodyEl.addEventListener('click', event => this.onActivateRow(event.target));
         /* The rows carry role="button", so Enter and Space have to work or the
          * role is a claim the page does not honour. Space is prevented as well
@@ -423,7 +431,7 @@ class CollaborationWidget extends Widget {
 }
 
 const COLLAB_CSS = `
-/* --- the collaboration tab ------------------------------------------------ *
+/* --- the collaboration page ----------------------------------------------- *
  * A reading page, so it borrows the document's measure rather than the dense
  * grid the rails use: one column capped at 760px, three sections with the same
  * heading weight, and rows whose hit area is the whole card. Everything here
