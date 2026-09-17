@@ -1984,6 +1984,37 @@ export const api = {
       body: JSON.stringify(value),
     }),
 
+  /* ── Per-user UI choices (studio-user gear) ──
+   *
+   * Separate from `userSettings` below on purpose: that gear stores exactly
+   * `theme` and `language`, two declared columns with no room for anything
+   * else. These are the portal's own remembered choices — which lists read as
+   * a table and which as tiles — and they live with the profile, bounded to
+   * 64 short entries so the map stays a preference store. */
+
+  uiPreferences: async (token: string): Promise<Record<string, string>> => {
+    try {
+      const r = await request<{ preferences?: Record<string, string> }>(
+        "/studio-user/v1/me/ui-preferences",
+        token,
+      );
+      return r.preferences ?? {};
+    } catch (e) {
+      // An older backend has no such route. Nothing remembered is a state the
+      // caller already handles; a 404 here must not break the session.
+      if (e instanceof ApiError && e.status === 404) return {};
+      throw e;
+    }
+  },
+
+  /** Replace the whole set. Whole rather than merged: an absent key has to be
+   *  able to mean "forget this one". */
+  saveUiPreferences: (token: string, preferences: Record<string, string>) =>
+    request<{ preferences: Record<string, string> }>("/studio-user/v1/me/ui-preferences", token, {
+      method: "PUT",
+      body: JSON.stringify({ preferences }),
+    }),
+
   /* ── Per-user settings (simple-user-settings gear: fixed theme/language) ── */
 
   userSettings: async (token: string): Promise<UserPrefs> => {

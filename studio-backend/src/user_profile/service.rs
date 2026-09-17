@@ -123,6 +123,74 @@ pub struct UserProfile {
     pub merged_into: Option<String>,
 }
 
+/// What a person has chosen about how Studio looks to them.
+///
+/// A flat map of short strings, and nothing more. The portal owns the meaning
+/// of every key here — `projects.view` is `table` or `tiles` and the backend
+/// has no opinion on either — but it does not own the size: an unbounded bag
+/// keyed by the client is a database with no schema and no migration path, and
+/// it grows until somebody stores a document in it. The limits below are what
+/// keeps this a preferences store.
+pub type UiPreferences = std::collections::BTreeMap<String, String>;
+
+/// At most this many remembered choices per person. Sixty-four is far more
+/// screens than Studio has; a client asking for more has a bug, not a user.
+pub const MAX_UI_PREFERENCES: usize = 64;
+/// Longest key. Long enough for `organization.projects.view`, short enough
+/// that no one mistakes it for a place to put content.
+pub const MAX_UI_PREFERENCE_KEY: usize = 64;
+/// Longest value. A choice, not a payload.
+pub const MAX_UI_PREFERENCE_VALUE: usize = 128;
+
+/// Why a preferences map was refused. Returned as a sentence, because it goes
+/// straight to a 400 and the caller is a developer reading a log.
+pub fn check_ui_preferences(prefs: &UiPreferences) -> Result<(), String> {
+    if prefs.len() > MAX_UI_PREFERENCES {
+        return Err(format!(
+            "at most {MAX_UI_PREFERENCES} preferences, got {}",
+            prefs.len()
+        ));
+    }
+    for (key, value) in prefs {
+        if key.is_empty() {
+            return Err("a preference key may not be empty".to_owned());
+        }
+        if key.len() > MAX_UI_PREFERENCE_KEY {
+            return Err(format!(
+                "preference key '{key}' is longer than {MAX_UI_PREFERENCE_KEY} characters"
+            ));
+        }
+        // A closed charset, so a key is always safe to put in a log line, a
+        // URL or a CSS selector without anyone having to wonder.
+        if !key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(format!(
+                "preference key '{key}' may use only a-z, 0-9, '.', '_' and '-'"
+            ));
+        }
+        if value.len() > MAX_UI_PREFERENCE_VALUE {
+            return Err(format!(
+                "preference '{key}' is longer than {MAX_UI_PREFERENCE_VALUE} characters"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Read a stored document back into a map.
+///
+/// Tolerant on purpose: a row written by a future version of this code, or by
+/// a hand at the psql prompt, reads as "no preferences" rather than as a 500
+/// on every page load. Losing a remembered choice is a nuisance; a profile
+/// endpoint that refuses to answer is not.
+pub fn parse_ui_preferences(stored: Option<&str>) -> UiPreferences {
+    stored
+        .and_then(|raw| serde_json::from_str::<UiPreferences>(raw).ok())
+        .unwrap_or_default()
+}
+
 /// A sign-in method resolved to a user.
 #[derive(Clone, Debug)]
 pub struct LoginView {
@@ -448,6 +516,42 @@ impl IdentityService {
         profile.updated_at_epoch_ms = now_ms();
         self.store.upsert_user(&profile).await?;
         Ok(profile)
+    }
+
+    /// What this person has chosen about how Studio looks to them.
+    pub async fn ui_preferences(&self, user_id: &str) -> Result<UiPreferences> {
+        Ok(parse_ui_preferences(
+            self.store.ui_preferences_of(user_id).await?.as_deref(),
+        ))
+    }
+
+    /// Replace them wholesale, and answer with what is now stored.
+    ///
+    /// Wholesale rather than merged: the client holds the whole map anyway,
+    /// and a merge gives no way to forget a preference — the key would live
+    /// forever because removing it would read as "did not mention it".
+    pub async fn set_ui_preferences(
+        &self,
+        user_id: &str,
+        prefs: UiPreferences,
+    ) -> Result<UiPreferences> {
+        check_ui_preferences(&prefs).map_err(|why| anyhow!("{why}"))?;
+        // An empty map stores NULL, not "{}": a person who cleared every
+        // choice is back to never having made one, which is the same state and
+        // should not be two rows apart.
+        let json = if prefs.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&prefs)?)
+        };
+        if !self
+            .store
+            .set_ui_preferences(user_id, json.as_deref())
+            .await?
+        {
+            return Err(anyhow!("user {user_id} does not exist"));
+        }
+        Ok(prefs)
     }
 
     /// Every sign-in method that resolves to this user.
@@ -1401,6 +1505,12 @@ mod idp_channel_tests {
 
     #[async_trait::async_trait]
     impl IdentityStore for Logins {
+        async fn ui_preferences_of(&self, _user_id: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn set_ui_preferences(&self, _user_id: &str, _json: Option<&str>) -> Result<bool> {
+            Ok(true)
+        }
         async fn logins_of(&self, _user_id: &str) -> Result<Vec<LoginView>> {
             Ok(self
                 .logins
@@ -1619,6 +1729,85 @@ mod idp_channel_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prefs(pairs: &[(&str, &str)]) -> UiPreferences {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn an_ordinary_set_of_choices_is_accepted() {
+        assert!(
+            check_ui_preferences(&prefs(&[
+                ("projects.view", "tiles"),
+                ("organization.workspaces.view", "table"),
+                ("specs.view", "tiles"),
+            ]))
+            .is_ok()
+        );
+        // Nothing chosen is a state, not a mistake.
+        assert!(check_ui_preferences(&UiPreferences::new()).is_ok());
+    }
+
+    #[test]
+    fn a_key_outside_the_charset_is_refused() {
+        // The charset is closed so a key is always safe in a log line, a URL
+        // or a CSS selector without anyone having to wonder.
+        for bad in ["Projects.View", "projects view", "projects/view", "проекты"] {
+            assert!(
+                check_ui_preferences(&prefs(&[(bad, "tiles")])).is_err(),
+                "{bad} should be refused"
+            );
+        }
+        assert!(check_ui_preferences(&prefs(&[("", "tiles")])).is_err());
+    }
+
+    #[test]
+    fn the_bag_may_not_grow_into_a_database() {
+        let many: UiPreferences = (0..=MAX_UI_PREFERENCES)
+            .map(|i| (format!("k{i}"), "x".to_owned()))
+            .collect();
+        assert!(check_ui_preferences(&many).is_err());
+
+        let long_key = "k".repeat(MAX_UI_PREFERENCE_KEY + 1);
+        assert!(check_ui_preferences(&prefs(&[(&long_key, "x")])).is_err());
+
+        let long_value = "v".repeat(MAX_UI_PREFERENCE_VALUE + 1);
+        assert!(check_ui_preferences(&prefs(&[("projects.view", &long_value)])).is_err());
+    }
+
+    #[test]
+    fn the_limits_are_stated_in_the_refusal() {
+        // The message goes straight to a 400 and the reader is a developer.
+        let long_value = "v".repeat(MAX_UI_PREFERENCE_VALUE + 1);
+        let why =
+            check_ui_preferences(&prefs(&[("projects.view", &long_value)])).expect_err("too long");
+        assert!(why.contains("projects.view"), "{why}");
+        assert!(why.contains(&MAX_UI_PREFERENCE_VALUE.to_string()), "{why}");
+    }
+
+    #[test]
+    fn a_stored_document_nobody_can_read_is_no_preferences_rather_than_an_error() {
+        // A row written by a future version, or by a hand at the psql prompt,
+        // must not make the profile endpoint refuse to answer: losing a
+        // remembered choice is a nuisance, a 500 on every page load is not.
+        assert_eq!(parse_ui_preferences(None), UiPreferences::new());
+        assert_eq!(parse_ui_preferences(Some("not json")), UiPreferences::new());
+        assert_eq!(parse_ui_preferences(Some("[1,2,3]")), UiPreferences::new());
+        assert_eq!(
+            parse_ui_preferences(Some(r#"{"projects.view":{"nested":true}}"#)),
+            UiPreferences::new()
+        );
+    }
+
+    #[test]
+    fn a_stored_document_round_trips() {
+        let chosen = prefs(&[("projects.view", "tiles"), ("sources.view", "table")]);
+        let stored = serde_json::to_string(&chosen).expect("serializes");
+        assert_eq!(parse_ui_preferences(Some(&stored)), chosen);
+    }
 
     #[test]
     fn an_alias_key_is_normalized_before_it_is_stored() {

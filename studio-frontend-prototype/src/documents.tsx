@@ -45,6 +45,7 @@ import {
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { relTime } from "./format";
+import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -807,6 +808,7 @@ function IngestedDocumentsView({
    *  extra listing turns the column from an id into "owner/name". A repository
    *  missing from the map keeps its id: unnamed provenance still beats none. */
   const [repoNames, setRepoNames] = useState<Record<string, string>>({});
+  const [view, setView] = useViewMode("specs.view");
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -1625,6 +1627,7 @@ function IngestedDocumentsView({
           ))}
           <option value="-">Undetermined</option>
         </select>
+        <ViewToggle mode={view} onChange={setView} />
       </div>
 
       {shown.length === 0 ? (
@@ -1635,6 +1638,48 @@ function IngestedDocumentsView({
         </p>
       ) : (
         <div className="ing-split">
+          {view === "tiles" ? (
+            /* The type picker does not come with. It is a <select> per row,
+               and a dropdown is the one control that has to line up down a
+               column to be worth anything: deciding a type is what the table
+               and the side panel are for, and tiles answer "what have we
+               got". */
+            <TileGrid>
+              {shown.map((b) => {
+                const open = (findings[b.node_id] ?? []).length;
+                const repoId = repoByNode[b.node_id];
+                return (
+                  <Tile
+                    key={b.id}
+                    icon={
+                      <span className="ing-doc-ic" aria-hidden>
+                        ▤
+                      </span>
+                    }
+                    title={basename(b.path)}
+                    subtitle={b.path}
+                    tone={selectedId === b.id ? "on" : undefined}
+                    onClick={() => setSelectedId(b.id)}
+                    stats={[
+                      { label: "type", value: typeName(b.type_key) },
+                      {
+                        label: "findings",
+                        value: open > 0 ? <span className="pnum-attn">{open}</span> : "—",
+                      },
+                    ]}
+                    footer={
+                      <>
+                        <span title={repoId ?? ""}>
+                          {repoId ? (repoNames[repoId] ?? repoId) : "—"}
+                        </span>
+                        <span style={{ marginLeft: "auto" }}>{relTime(b.updated_at)}</span>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </TileGrid>
+          ) : (
           <div className="ing-table">
             {/* The product's artifact table, column for column: what the thing
                 is called, what type it was written against, where it came from,
@@ -1751,6 +1796,7 @@ function IngestedDocumentsView({
               </div>
             ))}
           </div>
+          )}
 
           <div className="ing-side">
             {!selected ? (

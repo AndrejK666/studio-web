@@ -61,6 +61,13 @@ import {
   waitForStudioSessionReady,
   uploadProjectArtifact,
 } from "./api";
+import {
+  TileGrid,
+  Tile as VTile,
+  ViewModePreferences,
+  ViewToggle,
+  useViewMode,
+} from "./view-mode";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
@@ -261,6 +268,9 @@ export function App() {
     );
   }
   return (
+    // Wrapped at the top so one read of the gear serves every list below, and
+    // so a choice made on one screen is already in hand when another mounts.
+    <ViewModePreferences token={token}>
     <Shell
       token={token}
       me={me}
@@ -274,6 +284,7 @@ export function App() {
         void import("./oidc").then(({ endSsoSession }) => endSsoSession());
       }}
     />
+    </ViewModePreferences>
   );
 }
 
@@ -3007,6 +3018,7 @@ function WorkspaceProjects({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [projectView, setProjectView] = useViewMode("projects.view");
 
   const reload = useCallback(async () => {
     setErr(null);
@@ -3518,6 +3530,7 @@ function WorkspaceProjects({
       <div className="card">
         <div className="card-head">
           <h2>Projects{projects ? ` · ${projects.length}` : ""}</h2>
+          <ViewToggle mode={projectView} onChange={setProjectView} />
         </div>
         {projects === null ? (
           <p className="empty">Loading…</p>
@@ -3531,6 +3544,34 @@ function WorkspaceProjects({
               New project
             </button>
           </div>
+        ) : projectView === "tiles" ? (
+          /* The same three rollups the columns carry. Renaming stays a table
+             affordance: an inline edit inside a card is a form pretending to
+             be a tile. */
+          <TileGrid>
+            {projects.map((p) => (
+              <VTile
+                key={p.id}
+                icon={<span aria-hidden>▦</span>}
+                title={p.name}
+                subtitle={<code>{p.id.slice(0, 8)}…</code>}
+                onClick={() => onOpenProject(p)}
+                tone={rollups[p.id]?.findings ? "attn" : undefined}
+                stats={[
+                  { label: "documents", value: rollupText(rollups[p.id]?.documents ?? null) },
+                  {
+                    label: "findings",
+                    value: rollups[p.id]?.findings ? (
+                      <span className="pnum-attn">{rollups[p.id]!.findings}</span>
+                    ) : (
+                      rollupText(rollups[p.id]?.findings ?? null)
+                    ),
+                  },
+                  { label: "repos", value: rollupText(rollups[p.id]?.repos ?? null) },
+                ]}
+              />
+            ))}
+          </TileGrid>
         ) : (
           <table className="ptable">
             <thead>
@@ -5280,6 +5321,7 @@ function IngestedArtifacts({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<ArtTab>("issue");
+  const [view, setView] = useViewMode("artifacts.view");
 
   const load = useCallback(
     (nextOffset: number) => {
@@ -5331,7 +5373,8 @@ function IngestedArtifacts({
     <div className="card">
       <div className="card-head">
         <h2>Ingested{total != null ? ` · ${total}` : ""}</h2>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <ViewToggle mode={view} onChange={setView} />
           {/* Launches the session if none is running — the graph is one click
               from here whether or not the IDE is already open. */}
           <button
@@ -5417,6 +5460,38 @@ function IngestedArtifacts({
         <p className="empty">
           Nothing ingested yet — hit Sync on a repository above to pull its {emptyLabel}.
         </p>
+      ) : view === "tiles" ? (
+        /* Driven by the same ART_COLUMNS as the table, for the same reason:
+           the first column is what the thing is called, the second is the one
+           fact under it, and the rest are the numbers. A tile per kind would
+           be six more places to forget a column. */
+        <TileGrid>
+          {rows.map((n) => {
+            const v = n.value;
+            const url = typeof v.url === "string" ? v.url : undefined;
+            const path = typeof v.path === "string" ? v.path : "";
+            const [lead, second, ...rest] = ART_COLUMNS[tab];
+            return (
+              <VTile
+                key={n.instance_id}
+                title={lead.render(v)}
+                subtitle={second?.render(v)}
+                stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(v) }))}
+                footer={
+                  tab === "file" && path ? (
+                    <button className="ghost" onClick={() => void studio?.openFile(target, path)}>
+                      Open in IDE
+                    </button>
+                  ) : url ? (
+                    <a className="ghost" href={url} target="_blank" rel="noreferrer">
+                      Open ↗
+                    </a>
+                  ) : null
+                }
+              />
+            );
+          })}
+        </TileGrid>
       ) : (
         /* One table driven by ART_COLUMNS rather than a branch per kind. Six
            kinds x a bespoke row each is six places to forget a column; the

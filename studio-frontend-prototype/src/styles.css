@@ -1770,3 +1770,40 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 }
 .handoff p { margin: 0; }
 .handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Table / tiles ───────────────────────────────────────────────────────────
+   One control and one card shape, shared by every list that offers both. The
+   toggle is a segmented pair the width of a single button, so it can sit in a
+   card head next to a real action without looking like one. */
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--card); flex: none; }
+.view-toggle button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; padding: 0; border: none; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease); }
+.view-toggle button + button { border-left: 1px solid var(--border); }
+.view-toggle button:hover { background: var(--accent); color: var(--foreground); }
+.view-toggle button.on { background: var(--accent); color: var(--primary); }
+.view-toggle button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+
+/* Visually gone, still announced. The toggle is icon-only and the titles are
+   not read by every assistive technology. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* auto-fill, not auto-fit: three repositories should stay three cards wide,
+   not stretch into three columns the width of the screen. */
+.vtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; margin-top: 12px; }
+.vtile { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; transition: border-color var(--motion-fast) var(--ease), box-shadow var(--motion-fast) var(--ease); }
+.vtile.clickable { cursor: pointer; }
+.vtile.clickable:hover { border-color: color-mix(in oklab, var(--primary) 45%, var(--border)); box-shadow: var(--shadow-sm); }
+.vtile.clickable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.vtile-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vtile-icon { flex: none; display: inline-flex; color: var(--muted-foreground); }
+.vtile-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.vtile-sub { font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Four across at most: a tile with five numbers on it is a table row that has
+   not admitted what it is. */
+.vtile-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); gap: 8px; margin-top: auto; padding-top: 4px; }
+.vtile-stat-v { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.vtile-stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); margin-top: 1px; }
+.vtile-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+/* Tones a list can put on a tile. "on" is the selected one, where the table
+   would have highlighted a row; "attn" is the card with something open on it. */
+.vtile.on { border-color: var(--primary); background: var(--accent); }
+.vtile.attn { border-color: color-mix(in oklab, var(--warning) 45%, var(--border)); }

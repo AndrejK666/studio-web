@@ -21,7 +21,7 @@ use super::alias_policy::Confidence;
 use super::leaving;
 use super::service::{
     AliasOutcome, ConfirmReport, IdentityService, LoginView, MembershipView, Offered, ProfilePatch,
-    UserProfile,
+    UserProfile, check_ui_preferences,
 };
 
 #[resource_error(gts_id!("cf.studio.user.profile.v1~"))]
@@ -57,6 +57,26 @@ pub struct UpdateProfileRequest {
     pub email: Option<String>,
     pub avatar_url: Option<String>,
     pub locale: Option<String>,
+}
+
+/// The caller's remembered UI choices.
+///
+/// A flat map of short strings whose keys the portal owns — `projects.view`
+/// is `table` or `tiles`, and this gear has no opinion on either. What it does
+/// own is the size: see `check_ui_preferences`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct UiPreferencesDto {
+    pub preferences: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct UpdateUiPreferencesRequest {
+    /// The complete set. Sent whole, stored whole — a merge would leave no way
+    /// to forget a preference, because an absent key would mean "unchanged"
+    /// rather than "drop it".
+    pub preferences: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -468,6 +488,36 @@ async fn update_me(
         .await
         .map_err(internal)?;
     Ok(Json(to_dto(updated)))
+}
+
+async fn get_my_ui_preferences(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<UiPreferencesDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let preferences = service.ui_preferences(&user_id).await.map_err(internal)?;
+    Ok(Json(UiPreferencesDto { preferences }))
+}
+
+async fn update_my_ui_preferences(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<UpdateUiPreferencesRequest>,
+) -> ApiResult<JsonBody<UiPreferencesDto>> {
+    let service = configured(service)?;
+    // Refused before the caller is resolved would be tidier, but resolving is
+    // what provisions a first-time user — and a person whose very first act is
+    // to change a view should not have to sign in twice for it to stick.
+    let user_id = caller_user_id(&ctx, &service).await?;
+    if let Err(why) = check_ui_preferences(&req.preferences) {
+        return Err(invalid(anyhow::anyhow!("{why}")));
+    }
+    let preferences = service
+        .set_ui_preferences(&user_id, req.preferences)
+        .await
+        .map_err(internal)?;
+    Ok(Json(UiPreferencesDto { preferences }))
 }
 
 async fn get_my_logins(
@@ -957,6 +1007,57 @@ pub fn register_routes(
         .json_request::<UpdateProfileRequest>(openapi, "Profile fields to change")
         .handler(update_me)
         .json_response_with_schema::<UserProfileDto>(openapi, StatusCode::OK, "The updated profile")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::get("/studio-user/v1/me/ui-preferences")
+        .operation_id("studio_user.get_my_ui_preferences")
+        .summary("The caller's remembered UI choices")
+        .description(
+            "Returns what the caller has chosen about how Studio looks to them \
+             — which screens they read as a table and which as tiles, and \
+             anything else the portal decides to remember. An empty map is a \
+             person who has changed nothing, which is not an error.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(get_my_ui_preferences)
+        .json_response_with_schema::<UiPreferencesDto>(
+            openapi,
+            StatusCode::OK,
+            "The caller's UI preferences",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::put("/studio-user/v1/me/ui-preferences")
+        .operation_id("studio_user.update_my_ui_preferences")
+        .summary("Replace the caller's remembered UI choices")
+        .description(
+            "Replaces the whole set. The portal holds it all anyway, and a \
+             merge would give no way to forget a preference: an absent key \
+             would read as \"unchanged\" rather than \"drop it\". Bounded — at \
+             most 64 entries, keys of a-z 0-9 . _ - up to 64 characters, \
+             values up to 128 — because a bag the client can key freely is a \
+             schema-less table that grows until somebody stores a document in \
+             it.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<UpdateUiPreferencesRequest>(openapi, "The complete set of preferences")
+        .handler(update_my_ui_preferences)
+        .json_response_with_schema::<UiPreferencesDto>(
+            openapi,
+            StatusCode::OK,
+            "The preferences as now stored",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

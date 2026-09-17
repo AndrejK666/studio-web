@@ -1299,6 +1299,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/me/ui-preferences",
+      "operation_id": "studio_user.get_my_ui_preferences",
+      "tag": "StudioUser",
+      "summary": "The caller's remembered UI choices",
+      "authenticated": true,
+      "responses": [
+        "UiPreferencesDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/organizations/{org_id}/invitations",
       "operation_id": "studio_user.list_organization_invitations",
       "tag": "StudioUser",
@@ -2640,6 +2655,23 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/me/ui-preferences",
+      "operation_id": "studio_user.update_my_ui_preferences",
+      "tag": "StudioUser",
+      "summary": "Replace the caller's remembered UI choices",
+      "authenticated": true,
+      "request": "UpdateUiPreferencesRequest",
+      "responses": [
+        "UiPreferencesDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },

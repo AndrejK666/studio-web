@@ -42,6 +42,14 @@ pub(crate) trait IdentityStore: Send + Sync {
     async fn find_login(&self, provider: &str, subject: &str) -> Result<Option<LoginView>>;
     async fn get_user(&self, id: &str) -> Result<Option<UserProfile>>;
     async fn upsert_user(&self, profile: &UserProfile) -> Result<()>;
+    /// The user's remembered UI choices, as the JSON document last stored.
+    /// `None` when they have made none.
+    async fn ui_preferences_of(&self, user_id: &str) -> Result<Option<String>>;
+    /// Replace them wholesale. Deliberately not part of [`Self::upsert_user`]:
+    /// that runs on every sign-in from a profile assembled out of the identity
+    /// provider's claims, which knows nothing about UI choices and would blank
+    /// them on each login.
+    async fn set_ui_preferences(&self, user_id: &str, json: Option<&str>) -> Result<bool>;
     async fn upsert_login(&self, login: &LoginView) -> Result<()>;
     async fn logins_of(&self, user_id: &str) -> Result<Vec<LoginView>>;
     async fn upsert_membership(&self, m: &MembershipView) -> Result<()>;
@@ -207,6 +215,9 @@ impl IdentityStore for PgStore {
             email: ActiveValue::Set(profile.email.clone()),
             avatar_url: ActiveValue::Set(profile.avatar_url.clone()),
             locale: ActiveValue::Set(profile.locale.clone()),
+            // Untouched here, and absent from `update_columns` below, so a
+            // sign-in never clears what the person chose in the UI.
+            ui_preferences: ActiveValue::NotSet,
             merged_into: ActiveValue::Set(merged),
             created_at: ActiveValue::Set(from_ms(profile.created_at_epoch_ms)),
             updated_at: ActiveValue::Set(from_ms(profile.updated_at_epoch_ms)),
@@ -230,6 +241,45 @@ impl IdentityStore for PgStore {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    async fn ui_preferences_of(&self, user_id: &str) -> Result<Option<String>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        Ok(entity::user::Entity::find()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::user::Column::Id.eq(parse_uuid(user_id)?)))
+            .one(&conn)
+            .await?
+            .and_then(|m| m.ui_preferences))
+    }
+
+    async fn set_ui_preferences(&self, user_id: &str, json: Option<&str>) -> Result<bool> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        // A targeted UPDATE rather than a read-modify-write: two tabs saving
+        // different preferences should leave one of them winning, not a row
+        // rebuilt from whichever read happened first.
+        let result = entity::user::Entity::update_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(Condition::all().add(entity::user::Column::Id.eq(parse_uuid(user_id)?)))
+            .col_expr(
+                entity::user::Column::UiPreferences,
+                sea_orm::sea_query::Expr::value(json.map(str::to_owned)),
+            )
+            .col_expr(
+                entity::user::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(OffsetDateTime::now_utc()),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 
     async fn upsert_login(&self, login: &LoginView) -> Result<()> {
