@@ -388,22 +388,9 @@ h3.group { margin: 1.1rem 0 0.2rem; font-size: 13px; text-transform: uppercase;
 .chip.on { border-color: var(--primary); color: var(--primary); }
 .chip-n { opacity: 0.6; margin-left: 4px; }
 
-/* One card per connection. */
-.conn-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
-.conn {
-  padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg);
-  background: rgba(127, 127, 127, 0.05);
-}
-.conn-head { display: flex; gap: 10px; align-items: flex-start; }
-.conn-ico {
-  width: 34px; height: 34px; flex: none; border-radius: var(--radius-lg);
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--muted); border: 1px solid var(--border);
-  font-weight: 700; font-size: 15px;
-}
-.conn-badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
-.conn .row { margin-top: 0.6rem; }
-.conn .nested { margin-top: 0.7rem; }
+/* The one-card-per-connection block is gone — connections are a table now,
+   see .conn-table below. `.conn`, `.conn-grid`, `.conn-ico`, `.conn-head` and
+   `.conn-badges` went with it; nothing renders those class names any more. */
 
 /* Workspace rows unfold in place; the caret is the only affordance needed. */
 .caret { display: inline-block; width: 12px; color: var(--muted-foreground); }
@@ -1502,6 +1489,44 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 /* A non-zero finding count is the one number on these tables that is a reason
    to act, so it is the one that carries the state colour. */
 .pnum-attn { color: var(--warning-foreground); font-weight: 600; }
+/* ── Connector brand marks ── */
+/* A fixed slot, so the names line up whether a provider has a glyph or a
+   letter disc. Muted at rest and brand-agnostic: these are monochrome marks in
+   currentColor (see connector-logos.tsx for why), so the row decides the
+   colour and a logo never shouts over the name beside it. */
+.conn-logo-slot {
+  display: inline-grid; place-items: center;
+  width: 20px; height: 20px; flex: none; margin-right: 10px;
+  color: var(--muted-foreground); vertical-align: -4px;
+}
+.rows li:hover .conn-logo-slot,
+.ptable tbody tr:hover .conn-logo-slot { color: var(--foreground); }
+.conn-logo { display: block; }
+/* The fallback for a provider this build has no mark for — a driver plugin can
+   register anything. A disc rather than a blank, so an unknown provider reads
+   as "no logo for this one" and not as a broken image. */
+.conn-logo-fallback {
+  display: grid; place-items: center;
+  border-radius: 50%; background: var(--muted); color: var(--muted-foreground);
+  font-size: 10px; font-weight: 700;
+}
+/* The URL is the widest and least-read column, so it is the one that gives.
+   The max-width is a CEILING THE TABLE MAY IGNORE — on an auto-layout table
+   the column algorithm wins, and measured at 1600px this cell takes 349px
+   against the 260 asked for. That is fine: nothing overflows and nothing is
+   cut. The rule earns its place by capping the cell when the table IS under
+   pressure, and by making the URL quiet either way. */
+.conn-table td.conn-url {
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground);
+}
+/* The editor and the repository browser open UNDER their row, full width. They
+   are panels, not cells: no row height, no hover tint, and the padding is
+   theirs rather than the table's. */
+.conn-table tr.conn-expand { height: auto; }
+.conn-table tr.conn-expand:hover td { background: none; }
+.conn-table tr.conn-expand > td { padding: 0 12px 14px; }
+
 /* The first column of the artifacts table — the title, path or comment body.
    It is the one the eye lands on, and the one that has to be allowed to stay
    long: the cells are pre-truncated, so clamping here is belt-and-braces

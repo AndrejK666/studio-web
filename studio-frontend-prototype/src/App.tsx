@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv } from "./env";
 import { errText, matches, relTime } from "./format";
 import { ProjectsPortfolio } from "./projects";
+import { ConnectorLogo } from "./connector-logos";
 import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
@@ -2104,7 +2105,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
-        {view === "system" && <SystemView token={token} filters={filters} />}
+        {view === "system" && (
+          <SystemView token={token} filters={filters} tenant={orgAsSpace} />
+        )}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
         )}
@@ -4389,7 +4392,46 @@ function FilesView({ token, filters }: { token: string; filters: Filters }) {
 
 /* ── System (observability across platform gears) ── */
 
-function SystemView({ token, filters }: { token: string; filters: Filters }) {
+function SystemView({
+  token,
+  filters,
+  tenant,
+}: {
+  token: string;
+  filters: Filters;
+  /** The shared-catalogue tenant a notification is sent from and to. Absent
+   *  until one exists, and the panels then say so rather than rendering a form
+   *  with nowhere to post. */
+  tenant?: Workspace | null;
+}) {
+  const [notifyProviders, setNotifyProviders] = useState<ConnectorProvider[]>([]);
+  const [notifyConnections, setNotifyConnections] = useState<Connection[]>([]);
+
+  // The chat connectors the send panel needs. Tolerated failures: a build with
+  // no connector driver answers 503, and that means "no chat targets", which
+  // the panel already knows how to say.
+  useEffect(() => {
+    if (!tenant) return;
+    let alive = true;
+    void Promise.all([
+      api.connectorProviders(token).then(
+        (r) => r.items,
+        () => [] as ConnectorProvider[],
+      ),
+      api.connections(token, tenant.id).then(
+        (r) => r.items,
+        () => [] as Connection[],
+      ),
+    ]).then(([p, c]) => {
+      if (!alive) return;
+      setNotifyProviders(p);
+      setNotifyConnections(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [token, tenant]);
+
   const [gears, setGears] = useState<unknown>(null);
   const [upstreams, setUpstreams] = useState<unknown>(null);
   const [entities, setEntities] = useState<unknown>(null);
@@ -4528,6 +4570,30 @@ function SystemView({ token, filters }: { token: string; filters: Filters }) {
     <>
       <h1>System</h1>
       <p className="subtitle">Live observability over the platform gears of this assembly.</p>
+
+      {/* Poking the assembly and watching what comes out belongs with watching
+          it: a notification is the one gear behaviour you can trigger by hand
+          and then see land. It used to sit on Connectors, next to the chat
+          connector that makes it work — which explained the dependency and
+          misfiled the action. */}
+      {tenant ? (
+        <Notifications
+          token={token}
+          tenantId={tenant.id}
+          projectId={tenant.id}
+          projectName={tenant.name}
+          connections={notifyConnections}
+          providers={notifyProviders}
+        />
+      ) : (
+        <div className="card">
+          <h2>Send a notification</h2>
+          <p className="empty">
+            No shared catalogue tenant yet, so there is nowhere to send from. One appears with the
+            first organization.
+          </p>
+        </div>
+      )}
 
       <div className="card">
         <h2>Privileges ({permissions.length} permissions registered)</h2>
@@ -5987,20 +6053,11 @@ function ConnectorsView({
         />
       )}
 
-      {/* What the notification connectors are FOR, next to the connectors
-          themselves: a message, the two ways to send it, and the examples of
-          what Studio has reason to send. Not filtered by the search box — this
-          is a form, not a list. */}
-      {!disabled && (
-        <Notifications
-          token={token}
-          tenantId={ws.id}
-          projectId={ws.id}
-          projectName={ws.name}
-          connections={connections ?? []}
-          providers={providers ?? []}
-        />
-      )}
+      {/* The send-a-notification and show-it-in-the-IDE panels moved to System.
+          They were here because a chat connector is what makes the first one
+          work, but they are not connector CONFIGURATION — they are a way to
+          poke the running assembly and watch what comes out, which is what
+          System is. This page is now only about what is connected. */}
     </>
   );
 }
@@ -6068,6 +6125,9 @@ function AddConnector({
               <ul className="rows">
                 {group.map((p) => (
                   <li key={p.provider}>
+                    <span className="conn-logo-slot" aria-hidden>
+                      <ConnectorLogo provider={p.provider} label={p.display_name} />
+                    </span>
                     <div className="grow">
                       <div className="name">{p.display_name}</div>
                       <div className="sub">
@@ -6127,6 +6187,9 @@ function AddConnector({
       <h2>Add connector</h2>
       <ul className="rows">
         <li>
+          <span className="conn-logo-slot" aria-hidden>
+            <ConnectorLogo provider={picked.provider} label={picked.display_name} />
+          </span>
           <div className="grow">
             <div className="name">{picked.display_name}</div>
             <div className="sub">
@@ -6329,7 +6392,25 @@ function ConnectionList({
         return (
           <div key={key}>
             <h3 className="group">{title}</h3>
-            <div className="conn-grid">
+            {/* A table, not a grid of cards. Two GitHub accounts side by side
+                were two boxes whose only differences — the account, the scope,
+                whether anyone had tested it — sat at a different height in
+                each box, so comparing them meant reading both. In columns the
+                eye goes down one. The expandable editor and repository browser
+                keep working: each becomes a full-width row under its own. */}
+            <table className="ptable conn-table">
+              <thead>
+                <tr>
+                  <th>Connector</th>
+                  <th>Account</th>
+                  <th>Label</th>
+                  <th>URL</th>
+                  <th>Health</th>
+                  <th>Scope</th>
+                  <th aria-label="actions" />
+                </tr>
+              </thead>
+              <tbody>
               {group.map((c) => {
                 const browsable = categoryOf(c.provider) === "source_code";
                 // A row stored on an ancestor is shared with sibling workspaces —
@@ -6337,45 +6418,45 @@ function ConnectionList({
                 const inherited = c.owner_tenant_id !== workspace.id;
                 const h = health[c.id];
                 return (
-                  <div className="conn" key={c.id}>
-                    <div className="conn-head">
-                      <span className="conn-ico" aria-hidden="true">
-                        {nameOf(c.provider).slice(0, 1)}
+                  <Fragment key={c.id}>
+                  <tr>
+                    <td className="acell-lead">
+                      <span className="conn-logo-slot" aria-hidden>
+                        <ConnectorLogo provider={c.provider} label={nameOf(c.provider)} />
                       </span>
-                      <div className="grow">
-                        <div className="name">
-                          {nameOf(c.provider)}
-                          {c.account ? ` · ${c.account}` : ""}
-                        </div>
-                        <div className="sub">
-                          {c.label} · {c.base_url}
-                        </div>
-                      </div>
-                      <div className="conn-badges">
-                        <span
-                          className={`badge ${h === "ok" ? "workspace" : ""}`}
-                          title={
-                            h
-                              ? undefined
-                              : "Health is not cached — press Test connection to check it now"
-                          }
-                        >
-                          {h === "ok"
-                            ? "healthy"
-                            : h === "bad"
-                              ? "failing"
-                              : h === "testing"
-                                ? "testing…"
-                                : "not checked"}
-                        </span>
-                        <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
-                          {inherited ? `${c.scope} · shared` : c.scope}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="row">
+                      {nameOf(c.provider)}
+                    </td>
+                    <td>{c.account || <span className="ing-dash">—</span>}</td>
+                    <td>{c.label}</td>
+                    <td className="conn-url" title={c.base_url}>
+                      {c.base_url}
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${h === "ok" ? "ok" : h === "bad" ? "danger" : ""}`}
+                        title={
+                          h
+                            ? undefined
+                            : "Health is not cached — press Test connection to check it now"
+                        }
+                      >
+                        {h === "ok"
+                          ? "healthy"
+                          : h === "bad"
+                            ? "failing"
+                            : h === "testing"
+                              ? "testing…"
+                              : "not checked"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
+                        {inherited ? `${c.scope} · shared` : c.scope}
+                      </span>
+                    </td>
+                    <td className="pactions">
                       <button type="button" onClick={() => test(c)}>
-                        Test connection
+                        Test
                       </button>
                       <button
                         type="button"
@@ -6391,14 +6472,17 @@ function ConnectionList({
                       </button>
                       {browsable && (
                         <button type="button" onClick={() => setOpen(open === c.id ? null : c.id)}>
-                          {open === c.id ? "Hide repositories" : "Repositories"}
+                          {open === c.id ? "Hide repos" : "Repos"}
                         </button>
                       )}
-                      <span className="grow" />
-                      <button type="button" onClick={() => remove(c, inherited)}>
+                      <button className="ghost" type="button" onClick={() => remove(c, inherited)}>
                         Remove
                       </button>
-                    </div>
+                    </td>
+                  </tr>
+                  {(editing === c.id || (open === c.id && browsable)) && (
+                  <tr className="conn-expand">
+                    <td colSpan={7}>
                     {editing === c.id && (
                       <EditConnection
                         token={token}
@@ -6430,10 +6514,14 @@ function ConnectionList({
                         onNote={onNote}
                       />
                     )}
-                  </div>
+                    </td>
+                  </tr>
+                  )}
+                  </Fragment>
                 );
               })}
-            </div>
+              </tbody>
+            </table>
           </div>
         );
       })}
