@@ -255,6 +255,11 @@ hyper = { version = "1.11.0", features = ["client", "http1"] }
 [dev-dependencies]
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
+# For `atexit`, and for nothing else. The test PostgreSQL lives in a `static`,
+# which Rust never drops, so testcontainers' own removal-on-drop never runs --
+# see `src/test_pg.rs`. An exit hook is the one place left to stop it, and the
+# C runtime's is the only exit hook there is.
+libc = "0.2"
 
 [patch."https://github.com/constructorfabric/gears-rust"]
 cf-gears-account-management = { git = "https://github.com/vasylcf/gears-rust", tag = "cf-gears-graph-storage-v0.1.1" }
