@@ -39,6 +39,14 @@ const STYLE_ID = 'studio-chrome-mode';
 const CHROME_CSS = `
 body[data-studio-mode="documents"] #theia-top-panel { display: none !important; }
 body[data-studio-mode="workbench"] #theia-top-panel { display: flex !important; }
+/* Source Control. The product hides its activity-bar tab along with Debug,
+   Test, Search and Explorer — "a product keeps only the ones it wants" — which
+   is right for someone writing a document and wrong for someone who has just
+   edited code and wants to commit it. The workbench is the mode that wants it.
+
+   Only this one is restored. Explorer stays hidden because Projects replaces
+   it, and Debug, Test and Search are not part of the question being answered. */
+body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex !important; }
 `;
 
 @injectable()

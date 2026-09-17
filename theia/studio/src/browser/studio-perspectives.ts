@@ -39,12 +39,13 @@ export class StudioPerspectiveContribution implements PerspectiveContribution {
             // the same order `StudioContribution.initializeLayout` establishes
             // when it builds a fresh session's layout.
             primaryViews: { right: OrcaWidget.ID },
-            // The desktop collapses its side panels on start; this workbench
-            // had no equivalent, and #167 recorded the result — a fresh session
-            // opening with a wide strip of unclaimed right panel beside the
-            // editor. Collapsed is not hidden: the Agents dock is one click on
-            // its tab, and the panel stays where the person leaves it.
-            chromeOptions: { collapseAreas: ['right', 'bottom'] },
+            // Nothing is collapsed here, and that is a correction. The flanks
+            // were collapsed to answer a strip of unclaimed right panel — but
+            // the bottom is where Git Operations, Analyze and Audit live, so
+            // collapsing it put the commit surface out of reach to fix a
+            // cosmetic gap somewhere else. `initializeLayout` already decides
+            // what a fresh session reveals, and the product hides its own right
+            // column at the Lumino level.
         });
 
         service.registerPerspective({

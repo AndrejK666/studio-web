@@ -58,6 +58,20 @@ describe('the chrome a mode implies', () => {
         expect(preferences.set).toHaveBeenLastCalledWith('window.menuBarVisibility', 'hidden', expect.anything());
     });
 
+    it('gives Source Control back to the workbench and not to writing', () => {
+        const { contribution } = chrome('default');
+        contribution.onDidInitializeLayout();
+        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+        // The product hides the SCM tab along with Debug, Test, Search and
+        // Explorer. Right for a document, wrong for someone who just edited
+        // code and wants to commit it.
+        expect(css).toContain('body[data-studio-mode="workbench"] #shell-tab-scm-view-container');
+        // Explorer stays hidden — Projects replaces it — and the others are not
+        // part of this question.
+        expect(css).not.toContain('explorer-view-container');
+        expect(css).not.toContain('shell-tab-debug');
+    });
+
     it('beats the product’s paint rule on specificity, not on order', () => {
         const { contribution } = chrome('default');
         contribution.onDidInitializeLayout();
