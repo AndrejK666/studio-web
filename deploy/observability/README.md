@@ -74,6 +74,67 @@ Two things this arrangement buys, both learned the hard way elsewhere:
   Grafana wants it instead of being helm-escaped. (Insight, which embeds
   dashboards inline in a values file, has to escape every one of them.)
 
+## Access: SSO over a port-forward
+
+Grafana is `ClusterIP` only. The way in is
+
+```bash
+kubectl -n studio-monitoring port-forward svc/grafana 3000:80
+# admin; password:
+kubectl -n studio-monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+**SSO is live.** That login page offers a Keycloak button next to the local
+admin form: the `grafana` client exists in the studio realm, and the redirect
+URIs cover the port-forward, so the whole flow works today without any public
+hostname. The client is **public, with PKCE** — the same shape `studio-portal`
+uses — so there is no client secret anywhere to seal, rotate, or leak.
+
+**The Ingress is not**, and cannot be from this repository. Both routes out are
+blocked by things the cluster owns:
+
+- *A subdomain* needs a Cloudflare record. There is no wildcard DNS — of
+  `grafana.studio-dev.cfabric.org`, `grafana-dev.cfabric.org` and
+  `monitoring.cfabric.org`, none resolve; only `studio-dev.cfabric.org` does,
+  through Cloudflare, where TLS also terminates. The cluster has no cert-manager
+  `Issuer` and the product's own Ingress carries no `tls` block, which is why
+  the ingress values here have neither.
+- *A path on the existing host* looked free, since Keycloak already answers at
+  `/auth` on that very hostname. It is not: Traefik runs with
+  `--providers.kubernetesingress.namespaces=studio-dev,studio-test`. An Ingress
+  in `studio-monitoring` is simply invisible to it, an Ingress cannot point at a
+  Service in another namespace, and `allowExternalNameServices` is off. The
+  symptom is worth remembering — the frontend SPA answers `200` on every path,
+  so `/grafana/api/health` returned HTML and looked like a working route.
+
+When one of them is unblocked, set `ingress.hosts` **and**
+`grafana.ini.server.domain` to the host, and add the matching redirect URI to
+the `grafana` client. Setting only one of the two sends the OAuth round trip to
+a URL nobody serves.
+
+### Keeping the realm and this repository in step
+
+The deployed realm comes from the `studio-web-keycloak-realm` Secret, not from
+the image and not from this file — `studio-delivery.yml` only checks that the
+Secret exists. The client was therefore created twice: through the Admin API, so
+the running Keycloak has it now, and in the Secret, so a Keycloak that starts
+against an empty database imports it too. `keycloak/realm-studio.json` is the
+source both were built from.
+
+One constraint the file cannot show: Keycloak stores `client.description` in a
+`varchar(255)`. A longer one fails with a Postgres error rather than a
+validation message, and it fails the realm import the same way.
+
+Everyone who authenticates gets **Viewer**. Dashboards are provisioned with
+`allowUiUpdates: false`, so Editor would grant the right to change nothing that
+survives a restart; Admin stays the local account, which also keeps a way in for
+the case where the IdP is the thing that broke.
+
+> The `grafana/grafana` chart is flagged `deprecated: true` upstream, yet 10.5.15
+> is its newest release and carries the current Grafana (12.3.1). The successor
+> is `grafana-operator`, a CRD-based rewrite — not worth it for one instance.
+> Noted here so the flag is a known fact rather than a surprise at upgrade time.
+
 ## Reaching the application namespaces
 
 `studio-dev` and `studio-test` carry a hand-applied `default-deny-ingress`.
