@@ -8,6 +8,7 @@ import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
 import { IdentityDirectory } from "./identity-directory";
 import { BackgroundWork } from "./tasks";
+import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
 import { SpecQuality } from "./spec-quality";
@@ -1174,6 +1175,33 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       if (origin) f.contentWindow?.postMessage({ type: "studio.token", apiToken: token }, origin);
     });
   }, [token]);
+  /* ── What finished ──
+     One source, two destinations. The channel says a background run ended; the
+     bell in the bar is where a person notices it, and any session they have
+     open is told the same thing through the bridge — the IDE is a place they
+     may be looking at instead of the portal, and it is inside this very page. */
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const tellOpenSessions = useCallback(
+    (run: CompletedRun) => {
+      for (const space of spacesRef.current) {
+        postToSpace(space.wsId, {
+          type: "studio.notify",
+          level: run.state === "succeeded" ? "info" : "warn",
+          source: taskLabel(run.taskType),
+          message:
+            run.state === "succeeded"
+              ? "finished"
+              : run.state === "failed"
+                ? "failed"
+                : "was cancelled",
+          detail: run.line,
+        });
+      }
+    },
+    [postToSpace],
+  );
+  const completed = useCompletedWork(token, tellOpenSessions);
+
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [componentCategories, setComponentCategories] = useState<string[]>([]);
   /** The filter panel, opened from the funnel in the top bar. Same reasoning
@@ -1473,6 +1501,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               <span aria-hidden>✦</span>
             </button>
           )}
+          <WorkInbox
+            runs={completed.runs}
+            unread={completed.unread}
+            open={inboxOpen}
+            onOpen={() => {
+              setInboxOpen(true);
+              completed.markRead();
+            }}
+            onClose={() => setInboxOpen(false)}
+            onSeeAll={() => {
+              setInboxOpen(false);
+              setAdminOpen(false);
+              setActiveSpace(null);
+              setView("tasks");
+            }}
+          />
           {!activeSpace && (
             <button
               className="pill"

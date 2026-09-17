@@ -30,6 +30,7 @@ import { Saveable } from '@theia/core/lib/browser/saveable';
 import { CommandService, Disposable, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { ArtifactGraphCommand } from './artifact-graph-contribution';
+import { NotifyEditorFrontendController } from './notify-editor-controller';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
 import { StudioApi } from './studio-api';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
@@ -56,6 +57,14 @@ interface PortalMessage {
      *  tab shows. */
     documentId?: string;
     title?: string;
+    /** `studio.notify`: a message the portal wants shown here — the same
+     *  shape the S2S `notifyEditor` call carries, so both routes end up in
+     *  one place. */
+    level?: 'info' | 'warn' | 'error';
+    message?: string;
+    detail?: string;
+    source?: string;
+    link?: string;
     /** What the portal calls this session. The IDE opens `/workspace`, so
      *  without this every surface names the project after the container's
      *  directory. */
@@ -87,6 +96,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
 
     @inject(StudioDocumentOpener)
     protected readonly documentOpener: StudioDocumentOpener;
+
+    @inject(NotifyEditorFrontendController)
+    protected readonly notifier: NotifyEditorFrontendController;
 
     @inject(StudioDocumentResourceResolver)
     protected readonly documentResources: StudioDocumentResourceResolver;
@@ -163,6 +175,25 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // against the first workspace root by the controller.
                 const relativePath = msg.path;
                 this.openWhenLayoutReady(() => void this.opener.onOpenInEditor({ relativePath }));
+            }
+            if (msg.type === 'studio.notify' && msg.message) {
+                // Background work finished, and the person may be looking at
+                // this editor rather than at the portal that told it — the
+                // session runs inside that very page.
+                //
+                // NOT gated on the layout, unlike the opens: a notification
+                // moves nothing and steals no focus, and holding it back would
+                // only make it arrive after the thing it is about is stale.
+                //
+                // The same controller the backend's notifyEditor uses (ADR-0010
+                // §4). Two ways to ask, one way to show.
+                void this.notifier.onNotifyEditor({
+                    level: msg.level ?? 'info',
+                    message: msg.message,
+                    detail: msg.detail,
+                    source: msg.source,
+                    link: msg.link,
+                });
             }
             if (msg.type === 'studio.openDocument' && msg.workspaceId && msg.documentId) {
                 // A portal DOCUMENT — not a file in any checkout. It opens in
