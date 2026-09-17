@@ -8,6 +8,7 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use super::comment_threads::ThreadCounts;
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::driver::{
     RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
@@ -379,6 +380,14 @@ pub struct RepoSyncStats {
     /// and often wrong, statement. The key is simply omitted, so a reader
     /// distinguishes "none open" from "never asked".
     pub open_review_threads: Option<usize>,
+    /// Unresolved comment threads the repository carries in `.studio/comments`,
+    /// across every document — the conversation about the work, where
+    /// `open_review_threads` is the conversation about the code under review.
+    ///
+    /// Absent when the sync had no checkout to read, for the same reason as its
+    /// neighbour: a repository listed through a connector's tree API has no
+    /// sidecars in hand, and `0` would claim it has none.
+    pub open_document_threads: Option<usize>,
 }
 
 /// The repository node re-stated once a sync has finished: same instance id as
@@ -403,6 +412,9 @@ pub fn repo_synced_node(
         obj.insert("commits".to_string(), json!(stats.commits));
         if let Some(open) = stats.open_review_threads {
             obj.insert("open_review_threads".to_string(), json!(open));
+        }
+        if let Some(open) = stats.open_document_threads {
+            obj.insert("open_document_threads".to_string(), json!(open));
         }
     }
     node
@@ -457,6 +469,12 @@ pub fn file_node(
 /// A File node built from a real checkout on disk: same identity as the
 /// tree-API node (keyed on path, so the two channels upsert the same instance),
 /// but carrying the snapshot `commit` and, for text files, their `text`.
+///
+/// `threads` is the conversation the repository carries about this file in
+/// `.studio/comments/` (see [`super::comment_threads`]), and is `None` for a
+/// file nobody has commented on. Absent rather than zero, for
+/// `open_review_threads`'s reason: "no open threads" and "never commented on"
+/// are different states, and a reader is entitled to tell them apart.
 #[allow(clippy::too_many_arguments)]
 pub fn file_node_cloned(
     scope_key: &str,
@@ -467,8 +485,9 @@ pub fn file_node_cloned(
     size: u64,
     text: Option<String>,
     commit: Option<&str>,
+    threads: Option<ThreadCounts>,
 ) -> GtsNode {
-    GtsNode {
+    let mut node = GtsNode {
         type_id: FILE_TYPE,
         instance_id: anon_id(&[scope_key, connector_id, repo_full_path, "file", path]),
         value: json!({
@@ -480,7 +499,12 @@ pub fn file_node_cloned(
             "has_text": text.is_some(),
             "text": text,
         }),
+    };
+    if let (Some(counts), Some(obj)) = (threads, node.value.as_object_mut()) {
+        obj.insert("open_threads".to_string(), json!(counts.open));
+        obj.insert("resolved_threads".to_string(), json!(counts.resolved));
     }
+    node
 }
 
 /// One pull request. `open_threads` is its unresolved review conversations,
@@ -785,11 +809,53 @@ mod tests {
             42,
             Some("# ADR".to_string()),
             Some("deadbeef"),
+            None,
         );
         assert_eq!(
             node.instance_id,
             file_instance_id("scope", "connector", "acme/specs", "docs/adr/0007.md"),
         );
+    }
+
+    /// A file nobody has commented on carries no thread keys at all, and one
+    /// that has been carries both.
+    ///
+    /// Absent rather than zero, for `open_review_threads`'s reason: a reader
+    /// has to be able to tell "this document's conversation is settled" from
+    /// "this document has never been discussed", and a `0` that means either
+    /// says neither.
+    #[test]
+    fn thread_counts_are_absent_until_there_are_threads() {
+        let plain = file_node_cloned(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            "docs/prd.md",
+            42,
+            None,
+            None,
+            None,
+        );
+        assert!(plain.value.get("open_threads").is_none());
+        assert!(plain.value.get("resolved_threads").is_none());
+
+        let discussed = file_node_cloned(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            "docs/prd.md",
+            42,
+            None,
+            None,
+            Some(ThreadCounts {
+                open: 0,
+                resolved: 3,
+            }),
+        );
+        assert_eq!(discussed.value.get("open_threads"), Some(&json!(0)));
+        assert_eq!(discussed.value.get("resolved_threads"), Some(&json!(3)));
     }
 
     /// And the tree-API node keys on the same thing, so a repository ingested

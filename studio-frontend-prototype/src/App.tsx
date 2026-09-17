@@ -6135,21 +6135,28 @@ function ProjectSources({
             const node = graphRepo(r);
             const live = sync[r.name];
             const syncedAt = node?.value.synced_at as string | undefined;
-            // Unresolved review threads are the one number here that is a
-            // claim about the present rather than about the last sync, so 0 is
-            // worth printing: "nothing is waiting on review" is the answer
-            // somebody came to this row for. Absent means the provider does
-            // not report them (only GitHub does), which is not the same as
-            // none, so the phrase is left off entirely.
-            const openThreads = node?.value.open_review_threads as number | undefined;
+            // The two thread counts are the only numbers here that are claims
+            // about the present rather than about the last sync, so 0 is worth
+            // printing for both: "nothing is waiting" is the answer somebody
+            // came to this row for. Absent is not none — review threads are
+            // only reported by GitHub, and document threads only when the sync
+            // had a checkout to read `.studio/comments` from — so an unknown
+            // count leaves its phrase off entirely rather than printing zero.
+            //
+            // Both are named, rather than one being "open threads" and the
+            // other qualified: they are two different conversations — one about
+            // the code under review, one about the documents — and a row that
+            // called one of them simply "threads" would make the reader guess
+            // which.
+            const reviewThreads = node?.value.open_review_threads as number | undefined;
+            const documentThreads = node?.value.open_document_threads as number | undefined;
             const pulled = node
               ? [
                   node.value.issues ? `${node.value.issues} issues` : "",
                   node.value.pull_requests ? `${node.value.pull_requests} PRs` : "",
                   node.value.files ? `${node.value.files} files` : "",
-                  openThreads != null
-                    ? `${openThreads} open ${openThreads === 1 ? "thread" : "threads"}`
-                    : "",
+                  reviewThreads != null ? `${reviewThreads} open on reviews` : "",
+                  documentThreads != null ? `${documentThreads} open in documents` : "",
                 ]
                   .filter(Boolean)
                   .join(" · ")

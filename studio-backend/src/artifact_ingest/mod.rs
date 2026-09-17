@@ -12,6 +12,7 @@
 //! `hypothesis/graph-storage` adapter lands).
 
 mod clone;
+mod comment_threads;
 mod graph;
 #[cfg(feature = "graph")]
 mod graph_backend;
