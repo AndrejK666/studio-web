@@ -46,6 +46,7 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { relTime } from "./format";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
+import { inFilter, specCounts, specRows, type SpecFilter } from "./spec-rows";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -71,7 +72,7 @@ const slug = (s: string) =>
  *  So this tab has three views of one subject. A document can reach a project
  *  two ways — written from a type here, or found in the repository by a scan —
  *  and the third view is the detector run that judges either. */
-type DocView = "repository" | "authored" | "analysis";
+type DocView = "specs" | "authored" | "analysis";
 
 export function DocumentsTab({
   token,
@@ -99,7 +100,11 @@ export function DocumentsTab({
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [view, setView] = useState<DocView>("repository");
+  const [view, setView] = useState<DocView>("specs");
+  /** An authored document the list asked the editor to open. Held here because
+   *  the list and the editor are siblings: the list knows which row was
+   *  clicked, the editor knows what to do about it. */
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -119,18 +124,21 @@ export function DocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      {/* Named for where a document CAME FROM, not "Documents" and "the other
-          one": the two lists hold different things and the old label claimed
-          the whole subject for the first of them. "In the repository" keeps
-          the landing view it had. */}
+      {/* One list, not two. "In the repository" and "Authored" split the specs
+          by where their bytes live, which is our implementation detail, and it
+          made the question a reader actually has — what specs do we have, and
+          are they any good — answerable only by reading both and merging them
+          by eye. The Origin column keeps the difference visible where it
+          belongs: on the row. What is left beside the list is the EDITOR, a
+          place rather than a second inventory. */}
       <div className="doc-views" role="tablist" aria-label="Specs view">
         <button
           role="tab"
-          aria-selected={view === "repository"}
-          className={view === "repository" ? "doc-view on" : "doc-view"}
-          onClick={() => setView("repository")}
+          aria-selected={view === "specs"}
+          className={view === "specs" ? "doc-view on" : "doc-view"}
+          onClick={() => setView("specs")}
         >
-          In the repository
+          Specs
         </button>
         <button
           role="tab"
@@ -138,7 +146,7 @@ export function DocumentsTab({
           className={view === "authored" ? "doc-view on" : "doc-view"}
           onClick={() => setView("authored")}
         >
-          Authored
+          Editor
         </button>
         {analysis && (
           <button
@@ -154,13 +162,17 @@ export function DocumentsTab({
       {/* All of them stay mounted. The console holds a detector run in progress
           and the results of the last one, and the editor holds an unsaved
           draft — unmounting either to glance at a list would throw that away. */}
-      <div hidden={view !== "repository"}>
+      <div hidden={view !== "specs"}>
         <IngestedDocumentsView
           token={token}
           workspaceId={workspaceId}
           projectTenantId={projectTenantId}
           types={types}
           onOpenFile={onOpenFile}
+          onOpenDoc={(id) => {
+            setOpenDoc(id);
+            setView("authored");
+          }}
         />
       </div>
       <div hidden={view !== "authored"}>
@@ -170,6 +182,7 @@ export function DocumentsTab({
           projectTenantId={projectTenantId}
           types={types}
           studioTarget={studioTarget}
+          openDocId={openDoc}
         />
       </div>
       {analysis && <div hidden={view !== "analysis"}>{analysis}</div>}
@@ -255,6 +268,7 @@ function DocumentsView({
   projectTenantId,
   types,
   studioTarget,
+  openDocId,
 }: {
   token: string;
   workspaceId: string;
@@ -268,6 +282,10 @@ function DocumentsView({
   projectTenantId: string;
   types: DocType[];
   studioTarget?: StudioTarget;
+  /** A document the Specs list asked to open. Selecting it here rather than
+   *  keeping a second list means one inventory and one editor, which is the
+   *  whole point of merging the two tabs. */
+  openDocId?: string | null;
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -288,6 +306,12 @@ function DocumentsView({
   const hasQuestionnaire = (newTypeObj?.questionnaire?.length ?? 0) > 0;
 
   const selected = useMemo(() => docs.find((d) => d.id === selectedId) ?? null, [docs, selectedId]);
+
+  // The list asked for one. Honoured on every change of `openDocId`, not only
+  // the first: clicking two rows in a row must open the second.
+  useEffect(() => {
+    if (openDocId) setSelectedId(openDocId);
+  }, [openDocId]);
   const editable = !!selected && !selected.inherited;
 
   /* ── Editing in the IDE ──
@@ -691,7 +715,6 @@ const CLASSIFY_BATCH = 25;
 const NODE_PAGE = 200;
 
 /** Only these need a person: everything else is either settled or not a doc. */
-const NEEDS_REVIEW: DocBindingState[] = ["detected", "unknown"];
 
 const STATE_LABEL: Record<DocBindingState, string> = {
   detected: "proposed",
@@ -759,7 +782,6 @@ function findingDotTone(found: SpecFinding[] | undefined, conforms?: boolean | n
   return "var(--muted-foreground)";
 }
 
-type BindingFilter = "review" | "bound" | "ignored" | "all";
 
 /** The files Studio pulled out of the repository, and what we think each is. */
 function IngestedDocumentsView({
@@ -768,6 +790,7 @@ function IngestedDocumentsView({
   projectTenantId,
   types,
   onOpenFile,
+  onOpenDoc,
 }: {
   token: string;
   workspaceId: string;
@@ -775,9 +798,16 @@ function IngestedDocumentsView({
   types: DocType[];
   /** Editing a document is the IDE's job — this hands it the file. */
   onOpenFile: (path: string) => void;
+  /** An authored row was clicked. The editor is where such a document is read
+   *  and written; this list is an inventory, not a second editor. */
+  onOpenDoc: (id: string) => void;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
-  const [filter, setFilter] = useState<BindingFilter>("review");
+  const [filter, setFilter] = useState<SpecFilter>("needs-review");
+  /** "any" = both origins. Kept apart from the queue filter because they ask
+   *  different questions: one is "what state is it in", the other "where did
+   *  it come from". */
+  const [originFilter, setOriginFilter] = useState<"any" | "repository" | "authored">("any");
   /** "" = every type, "-" = the ones with no type yet. */
   const [typeFilter, setTypeFilter] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -809,6 +839,10 @@ function IngestedDocumentsView({
    *  missing from the map keeps its id: unnamed provenance still beats none. */
   const [repoNames, setRepoNames] = useState<Record<string, string>>({});
   const [view, setView] = useViewMode("specs.view");
+  /** The documents written here. Read alongside the bindings so both origins
+   *  land in one list; failing separately, because losing one must not empty
+   *  the other. */
+  const [authored, setAuthored] = useState<Doc[]>([]);
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -826,6 +860,12 @@ function IngestedDocumentsView({
       setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
     } catch (e) {
       setErr(errText(e));
+    }
+    try {
+      setAuthored((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
+    } catch {
+      // The list still holds what the repository has. An authored document
+      // missing from it is a gap; an empty screen would be a bigger one.
     }
     // Findings are their own nodes in the graph and outlive this tab, the
     // session and the detector run that produced them. A failure to read them
@@ -1488,48 +1528,41 @@ function IngestedDocumentsView({
     }
   };
 
-  const counts = useMemo(() => {
-    const review = bindings.filter((b) => NEEDS_REVIEW.includes(b.state)).length;
-    const bound = bindings.filter((b) => b.state === "confirmed" || b.state === "manual").length;
-    const ignored = bindings.filter((b) => b.state === "not_a_document").length;
-    return { review, bound, ignored, all: bindings.length };
-  }, [bindings]);
+  /** Every spec the project has, from both origins, newest first. */
+  const rows = useMemo(() => specRows(bindings, authored), [bindings, authored]);
+  const counts = useMemo(() => specCounts(rows), [rows]);
 
   /** The types this project's documents actually are, for the picker. Offering
    *  the whole catalogue would list types nothing here has. */
   const presentTypes = useMemo(() => {
     const keys = new Set<string>();
-    for (const b of bindings) if (b.type_key) keys.add(b.type_key);
+    for (const row of rows) if (row.typeKey) keys.add(row.typeKey);
     return [...keys].sort((a, b) => typeName(a).localeCompare(typeName(b)));
-  }, [bindings, typeName]);
+  }, [rows, typeName]);
 
   const shown = useMemo(() => {
-    const list = bindings.filter((b) => {
-      if (typeFilter === "-" && b.type_key) return false;
-      if (typeFilter && typeFilter !== "-" && b.type_key !== typeFilter) return false;
-      switch (filter) {
-        case "review":
-          return NEEDS_REVIEW.includes(b.state);
-        case "bound":
-          return b.state === "confirmed" || b.state === "manual";
-        case "ignored":
-          return b.state === "not_a_document";
-        default:
-          return true;
-      }
+    const list = rows.filter((row) => {
+      if (typeFilter === "-" && row.typeKey) return false;
+      if (typeFilter && typeFilter !== "-" && row.typeKey !== typeFilter) return false;
+      if (originFilter !== "any" && row.origin !== originFilter) return false;
+      return inFilter(row, filter);
     });
     return [...list].sort((a, b) => a.path.localeCompare(b.path));
   }, [bindings, filter, typeFilter]);
 
+  /** The row the side panel is about — always a repository one. An authored
+   *  document opens in the editor instead, where it can be changed; a panel
+   *  that only says what its type expects would be a worse answer than the
+   *  place that lets you do something about it. */
   const selected = useMemo(
-    () => shown.find((b) => b.id === selectedId) ?? null,
+    () => shown.find((row) => row.id === selectedId)?.binding ?? null,
     [shown, selectedId],
   );
 
-  const FILTERS: { id: BindingFilter; label: string; count: number }[] = [
-    { id: "review", label: "Needs review", count: counts.review },
+  const FILTERS: { id: SpecFilter; label: string; count: number }[] = [
+    { id: "needs-review", label: "Needs review", count: counts["needs-review"] },
     { id: "bound", label: "Bound", count: counts.bound },
-    { id: "ignored", label: "Not documents", count: counts.ignored },
+    { id: "not-documents", label: "Not documents", count: counts["not-documents"] },
     { id: "all", label: "All", count: counts.all },
   ];
 
@@ -1553,7 +1586,7 @@ function IngestedDocumentsView({
         </button>
         <button
           onClick={refineWithSpecQuality}
-          disabled={busy || counts.review === 0}
+          disabled={busy || counts["needs-review"] === 0}
           title="Ask the Spec Quality purpose detector about the documents scoring could not place"
         >
           Refine undetermined with Spec Quality
@@ -1627,6 +1660,19 @@ function IngestedDocumentsView({
           ))}
           <option value="-">Undetermined</option>
         </select>
+        {/* Where it came from, as a filter rather than as a tab. The two
+            origins belong in one list; wanting to see only one of them is a
+            question about this list, not a different list. */}
+        <select
+          value={originFilter}
+          onChange={(e) => setOriginFilter(e.target.value as typeof originFilter)}
+          title="Show one origin"
+          style={{ fontSize: 12 }}
+        >
+          <option value="any">Any origin</option>
+          <option value="repository">From the repository</option>
+          <option value="authored">Authored here</option>
+        </select>
         <ViewToggle mode={view} onChange={setView} />
       </div>
 
@@ -1645,23 +1691,25 @@ function IngestedDocumentsView({
                and the side panel are for, and tiles answer "what have we
                got". */
             <TileGrid>
-              {shown.map((b) => {
-                const open = (findings[b.node_id] ?? []).length;
-                const repoId = repoByNode[b.node_id];
+              {shown.map((row) => {
+                const open = row.nodeId ? (findings[row.nodeId] ?? []).length : 0;
+                const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
                 return (
                   <Tile
-                    key={b.id}
+                    key={row.id}
                     icon={
                       <span className="ing-doc-ic" aria-hidden>
                         ▤
                       </span>
                     }
-                    title={basename(b.path)}
-                    subtitle={b.path}
-                    tone={selectedId === b.id ? "on" : undefined}
-                    onClick={() => setSelectedId(b.id)}
+                    title={row.name}
+                    subtitle={row.path || "not in a repository yet"}
+                    tone={selectedId === row.id ? "on" : undefined}
+                    onClick={() =>
+                      row.origin === "authored" ? onOpenDoc(row.id) : setSelectedId(row.id)
+                    }
                     stats={[
-                      { label: "type", value: typeName(b.type_key) },
+                      { label: "type", value: typeName(row.typeKey) },
                       {
                         label: "findings",
                         value: open > 0 ? <span className="pnum-attn">{open}</span> : "—",
@@ -1669,10 +1717,17 @@ function IngestedDocumentsView({
                     ]}
                     footer={
                       <>
+                        {/* Where it came from, which on a card has to be
+                            written out: there is no column header above it to
+                            say what the name means. */}
                         <span title={repoId ?? ""}>
-                          {repoId ? (repoNames[repoId] ?? repoId) : "—"}
+                          {row.origin === "authored"
+                            ? "Authored here"
+                            : repoId
+                              ? (repoNames[repoId] ?? repoId)
+                              : "—"}
                         </span>
-                        <span style={{ marginLeft: "auto" }}>{relTime(b.updated_at)}</span>
+                        <span style={{ marginLeft: "auto" }}>{relTime(row.updatedAt)}</span>
                       </>
                     }
                   />
@@ -1690,56 +1745,75 @@ function IngestedDocumentsView({
             <div className="ing-row ing-row-head">
               <span>Name</span>
               <span>Type</span>
-              <span>Repository</span>
+              <span>Origin</span>
               <span>Path</span>
               <span>Status</span>
               <span>Updated</span>
               <span />
             </div>
-            {shown.map((b) => (
+            {shown.map((row) => {
+              const b = row.binding;
+              const open = row.nodeId ? findings[row.nodeId] : undefined;
+              const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
+              return (
               <div
-                key={b.id}
-                className={selectedId === b.id ? "ing-row on" : "ing-row"}
-                onClick={() => setSelectedId(b.id)}
+                key={row.id}
+                className={selectedId === row.id ? "ing-row on" : "ing-row"}
+                onClick={() =>
+                  row.origin === "authored" ? onOpenDoc(row.id) : setSelectedId(row.id)
+                }
               >
-                {/* Name is the basename. The full path has its own column now,
-                    so repeating it here cost the widest column in the table to
-                    say the same thing twice. */}
-                <span className="ing-name" title={basename(b.path)}>
+                {/* Name is the basename for a file and the title for a written
+                    document. The full path has its own column, so repeating it
+                    here cost the widest column in the table to say the same
+                    thing twice. */}
+                <span className="ing-name" title={row.path || row.name}>
                   <span className="ing-doc-ic" aria-hidden>
                     ▤
                   </span>
-                  {basename(b.path)}
+                  {row.name}
                 </span>
-                <span onClick={(e) => e.stopPropagation()}>
-                  <select
-                    value={b.type_key ?? ""}
-                    disabled={busy}
-                    onChange={(e) =>
-                      e.target.value
-                        ? void decide(b, { action: "set", type_key: e.target.value })
-                        : void decide(b, { action: "reset" })
-                    }
-                  >
-                    <option value="">— undetermined —</option>
-                    {types.map((t) => (
-                      <option key={t.key} value={t.key}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </span>
-                {/* The name, with the id kept on the title: the name is what
-                    a reader recognises, the id is what an API call wants. */}
-                <span className="ing-repo" title={repoByNode[b.node_id] ?? ""}>
-                  {repoByNode[b.node_id] ? (
-                    repoNames[repoByNode[b.node_id]] ?? repoByNode[b.node_id]
+                {/* A picker only where there is something to pick. An authored
+                    document's type was chosen before a word of it was written,
+                    and offering to change it here would offer to rewrite the
+                    document against a different template. */}
+                {b ? (
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={row.typeKey ?? ""}
+                      disabled={busy}
+                      onChange={(e) =>
+                        e.target.value
+                          ? void decide(b, { action: "set", type_key: e.target.value })
+                          : void decide(b, { action: "reset" })
+                      }
+                    >
+                      <option value="">— undetermined —</option>
+                      {types.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                ) : (
+                  <span>{typeName(row.typeKey)}</span>
+                )}
+                {/* Where it came from. For a repository file that is the
+                    repository, named rather than hashed — the id stays on the
+                    title, because the name is what a reader recognises and the
+                    id is what an API call wants. */}
+                <span className="ing-repo" title={repoId ?? ""}>
+                  {row.origin === "authored" ? (
+                    <span className="ing-origin">Authored</span>
+                  ) : repoId ? (
+                    (repoNames[repoId] ?? repoId)
                   ) : (
                     <span className="ing-dash">—</span>
                   )}
                 </span>
-                <span className="ing-path" title={b.path}>
-                  {b.path}
+                <span className="ing-path" title={row.path}>
+                  {row.path || <span className="ing-dash">not committed</span>}
                 </span>
                 {/* Status is what is OPEN on the document, which is the one
                     thing a reader scanning this list is looking for. How the
@@ -1748,53 +1822,68 @@ function IngestedDocumentsView({
                 <span
                   className="ing-status"
                   title={[
-                    `${STATE_LABEL[b.state]}${
-                      b.confidence != null && b.state === "detected"
-                        ? ` · ${Math.round(b.confidence * 100)}%`
-                        : ""
-                    }`,
-                    b.source ? (SOURCE_LABEL[b.source] ?? b.source) : "",
-                    b.conforms == null
+                    b
+                      ? `${STATE_LABEL[b.state]}${
+                          b.confidence != null && b.state === "detected"
+                            ? ` · ${Math.round(b.confidence * 100)}%`
+                            : ""
+                        }`
+                      : `written here · ${row.doc?.status ?? "draft"}`,
+                    b?.source ? (SOURCE_LABEL[b.source] ?? b.source) : "",
+                    row.conforms == null
                       ? "not validated"
-                      : b.conforms
+                      : row.conforms
                         ? "conforms to its type"
-                        : `${b.validation?.issues.length ?? 0} conformance issue(s)`,
+                        : `${b?.validation?.issues.length ?? 0} conformance issue(s)`,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
                 >
                   <span
                     className="ing-dot"
-                    style={{ background: findingDotTone(findings[b.node_id], b.conforms) }}
+                    style={{ background: findingDotTone(open, row.conforms) }}
                     aria-hidden
                   />
-                  {findingLabel(findings[b.node_id])}
+                  {/* An authored document has no detector verdicts of its own
+                      until it is committed and scanned, so it reports its
+                      editorial status instead of a finding count it cannot
+                      have. */}
+                  {row.origin === "authored" ? (row.doc?.status ?? "draft") : findingLabel(open)}
                 </span>
-                <span className="ing-updated" title={b.updated_at}>
-                  {relTime(b.updated_at)}
+                <span className="ing-updated" title={row.updatedAt}>
+                  {relTime(row.updatedAt)}
                 </span>
                 <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
-                  {b.state === "detected" && (
-                    <button onClick={() => void decide(b, { action: "confirm" })} disabled={busy}>
-                      Confirm
-                    </button>
-                  )}
-                  {b.state === "not_a_document" ? (
-                    <button onClick={() => void decide(b, { action: "reset" })} disabled={busy}>
-                      Reconsider
-                    </button>
+                  {b ? (
+                    <>
+                      {b.state === "detected" && (
+                        <button onClick={() => void decide(b, { action: "confirm" })} disabled={busy}>
+                          Confirm
+                        </button>
+                      )}
+                      {b.state === "not_a_document" ? (
+                        <button onClick={() => void decide(b, { action: "reset" })} disabled={busy}>
+                          Reconsider
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void decide(b, { action: "reject" })}
+                          disabled={busy}
+                          title="This file is not a document — stop proposing types for it"
+                        >
+                          Not a doc
+                        </button>
+                      )}
+                    </>
                   ) : (
-                    <button
-                      onClick={() => void decide(b, { action: "reject" })}
-                      disabled={busy}
-                      title="This file is not a document — stop proposing types for it"
-                    >
-                      Not a doc
+                    <button onClick={() => onOpenDoc(row.id)} title="Open in the editor">
+                      Open
                     </button>
                   )}
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
           )}
 
@@ -2385,6 +2474,10 @@ const INGESTED_CSS = `
 .ing-ok { color: var(--success); }
 .ing-bad { color: var(--warning); }
 .ing-dash { opacity: 0.4; }
+/* Authored, said in the Origin column where every other row names a
+   repository. A chip rather than plain text: it is a different KIND of answer
+   from the ones around it, not another repository with an odd name. */
+.ing-origin { border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; font-size: 11px; color: var(--muted-foreground); }
 .ing-findings { display: flex; gap: 4px; flex-wrap: wrap; }
 .jr-stages { display: flex; flex-direction: column; gap: 6px; }
 .jr-stage { display: grid; grid-template-columns: 14px minmax(120px, 200px) minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12px; }
