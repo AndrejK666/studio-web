@@ -28,7 +28,10 @@
 //! plaintext" — need it, because a shared table makes that assertion about
 //! whatever else happened to be running.
 
+use std::sync::OnceLock;
+
 use testcontainers::ContainerAsync;
+use testcontainers::core::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tokio::sync::OnceCell;
@@ -36,16 +39,85 @@ use uuid::Uuid;
 
 static SERVER: OnceCell<Server> = OnceCell::const_new();
 
+/// The name of the container this process started, for [`remove_at_exit`].
+static CONTAINER_NAME: OnceLock<String> = OnceLock::new();
+
+/// Prefix every container this harness starts carries, so a leftover can be
+/// recognised from outside — `scripts/backend-check.sh` sweeps by it.
+const NAME_PREFIX: &str = "cf-studio-test-pg";
+
 struct Server {
     /// DSN of the database the container comes up with.
     dsn: String,
     /// Everything up to the database name, so another one can be addressed on
     /// the same server.
     base: String,
-    /// Held, never read: dropping the handle stops PostgreSQL. `None` when
-    /// `STUDIO_TEST_PG_DSN` pointed us at a server somebody else owns.
+    /// Held so the borrow checker keeps the container alive for the process.
+    ///
+    /// It used to say "dropping the handle stops PostgreSQL", which was an
+    /// intention this code could not carry out: the handle lives in a `static`,
+    /// and **Rust never drops a `static`**. So `ContainerAsync::drop` — the
+    /// only thing that removes the container — never ran, and every `cargo
+    /// test` process that touched Postgres left a `postgres:11-alpine` running
+    /// for good. Eighteen of them had accumulated on one machine before anybody
+    /// noticed, because nothing about a passing test run says it leaked.
+    ///
+    /// [`remove_at_exit`] is what actually stops it now. `None` when
+    /// `STUDIO_TEST_PG_DSN` pointed us at a server somebody else owns — and
+    /// then nothing here removes anything, which is the point of pointing at
+    /// one.
     _container: Option<ContainerAsync<Postgres>>,
 }
+
+/// Remove the container this process started.
+///
+/// Registered with the C runtime's exit hook, which the test harness reaches
+/// (libtest ends in `std::process::exit`), and which is the only place left to
+/// do this once the handle is in a `static`.
+///
+/// Everything about it is deliberately primitive. An exit hook runs after the
+/// tokio runtimes are gone, so testcontainers' own async client is not
+/// available to it; and the image the tests run in mounts the Docker socket but
+/// ships no `docker` CLI (`scripts/backend-check.sh`), so shelling out would
+/// silently do nothing. That leaves one synchronous HTTP request written by
+/// hand onto the socket, which needs no dependency at all.
+///
+/// Best effort throughout: a failure here costs a stray container that the
+/// sweep in `backend-check.sh` collects, while a panic in an exit hook would
+/// turn a green test run red.
+#[cfg(unix)]
+extern "C" fn remove_at_exit() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let Some(name) = CONTAINER_NAME.get() else {
+        return;
+    };
+    let socket = std::env::var("DOCKER_HOST")
+        .ok()
+        .and_then(|host| host.strip_prefix("unix://").map(str::to_string))
+        .unwrap_or_else(|| "/var/run/docker.sock".to_string());
+    let Ok(mut stream) = UnixStream::connect(socket) else {
+        return;
+    };
+    let request = format!(
+        "DELETE /containers/{name}?force=1&v=1 HTTP/1.1\r\n\
+         Host: docker\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return;
+    }
+    // Read the answer out rather than dropping the socket on an unread reply:
+    // the daemon does the removal while we are still connected, and hanging up
+    // early is how "force=1" becomes "sometimes".
+    let mut answer = Vec::new();
+    let _ = stream.read_to_end(&mut answer);
+}
+
+/// Windows cannot run these tests at all (no Docker socket to speak of), so
+/// there is nothing to clean up and nothing to register.
+#[cfg(not(unix))]
+extern "C" fn remove_at_exit() {}
 
 async fn server() -> &'static Server {
     SERVER
@@ -53,10 +125,47 @@ async fn server() -> &'static Server {
             let (dsn, container) = match std::env::var("STUDIO_TEST_PG_DSN") {
                 Ok(dsn) => (dsn, None),
                 Err(_) => {
-                    let container = Postgres::default().start().await.expect(
-                        "start a PostgreSQL container -- these tests need a Docker daemon, \
-                         or set STUDIO_TEST_PG_DSN to a database you already have",
+                    /*
+                     * Named, and named uniquely.
+                     *
+                     * The name is what lets anything outside this process
+                     * recognise the container as ours -- the exit hook below
+                     * addresses it by name, and the sweep in
+                     * `scripts/backend-check.sh` matches the prefix. The
+                     * nanosecond suffix is not decoration: a stale container
+                     * from a run that was killed would otherwise collide with a
+                     * new process that happened to be given the same pid, and
+                     * the collision surfaces as `start()` failing with "name
+                     * already in use" -- a test failure with nothing to do with
+                     * the test.
+                     */
+                    let name = format!(
+                        "{NAME_PREFIX}-{}-{}",
+                        std::process::id(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |since| since.subsec_nanos())
                     );
+                    let container = Postgres::default()
+                        .with_container_name(&name)
+                        .start()
+                        .await
+                        .expect(
+                            "start a PostgreSQL container -- these tests need a Docker daemon, \
+                             or set STUDIO_TEST_PG_DSN to a database you already have",
+                        );
+                    // Registered only once there is something to remove, and
+                    // only after the container exists: an exit hook that fires
+                    // against a name nothing answers to is a wasted connection
+                    // on every test run that never needed a database.
+                    let _ = CONTAINER_NAME.set(name);
+                    // SAFETY: `atexit` takes a plain `extern "C" fn` with no
+                    // arguments and no captured state; ours reads one
+                    // `OnceLock` and talks to a socket. Called once, because
+                    // `get_or_init` runs this block once.
+                    unsafe {
+                        libc::atexit(remove_at_exit);
+                    }
                     // Ask the container where it is rather than assuming
                     // localhost: when the tests themselves run inside a
                     // container, the published port is on the host, not on

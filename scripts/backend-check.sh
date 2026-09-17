@@ -94,6 +94,29 @@ RUN rustup component add clippy rustfmt
 DOCKERFILE
 fi
 
+# Test PostgreSQL containers that outlived the run that started them.
+#
+# `src/test_pg.rs` now removes its own on the way out, which covers every
+# ordinary run — passing, failing or panicking. What an exit hook cannot cover
+# is a run that never reaches it: ^C, a timeout, `docker kill` on this
+# container. Those leak one container each, and until this existed they simply
+# accumulated: eighteen `postgres:11-alpine` servers were found running on one
+# developer machine, the oldest from the previous day.
+#
+# Two rules keep this from reaching into somebody else's work. Only the
+# harness's own name prefix is matched, so a `postgres:11-alpine` started by
+# hand is not ours to remove. And only containers that have been around for an
+# hour or more are taken — no gate here runs that long, so anything older has
+# been abandoned, while a container minutes old may well belong to a check
+# running right now in another worktree.
+listed=$(docker ps -a --filter "name=^/cf-studio-test-pg-" --format '{{.ID}} {{.Status}}' 2>/dev/null)
+stale=$(echo "$listed" | awk '$0 ~ /hours|days|weeks|months/ { print $1 }')
+if [ -n "$stale" ]; then
+    echo "[backend-check] removing $(echo "$stale" | wc -l | tr -d ' ') abandoned test database container(s)"
+    # shellcheck disable=SC2086
+    docker rm -f $stale >/dev/null 2>&1 || true
+fi
+
 echo "[backend-check] $gate on rust:${toolchain} (same as CI)"
 exec docker run --rm -i \
     -v "${root}:/w" \

@@ -2503,6 +2503,7 @@ dependencies = [
  "json-patch",
  "k8s-openapi",
  "kube",
+ "libc",
  "mimalloc",
  "reqwest 0.12.28",
  "rustls",
