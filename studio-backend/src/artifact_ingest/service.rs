@@ -23,6 +23,7 @@ use file_parser_sdk::{Detection, FileParserClientV1, ParseBytesRequest};
 use toolkit_security::SecurityContext;
 
 use super::clone;
+use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
 use crate::connectors::driver::{ConnectionAuth, ConnectorDriver};
@@ -97,6 +98,14 @@ pub struct SyncSummary {
     /// and present on the run's final result.
     #[serde(default)]
     pub open_review_threads: Option<usize>,
+    /// Unresolved comment threads across the repository's own documents, or
+    /// `None` when this sync had no checkout to read them from.
+    ///
+    /// Its neighbour above counts the conversation about the code under
+    /// review; this counts the conversation about the work. Also not a running
+    /// total, and so also absent from the progress ticks.
+    #[serde(default)]
+    pub open_document_threads: Option<usize>,
     /// Nodes already flushed to the graph store — the objects that are
     /// queryable right now, mid-sync.
     #[serde(default)]
@@ -369,6 +378,9 @@ impl IngestService {
                 None
             }
         };
+        // Set by the checkout walk below, which is the only place that can
+        // know: the sidecars are files in the repository.
+        let mut open_document_threads: Option<usize> = None;
         let open_review_threads = threads
             .as_ref()
             .map(|list| list.iter().map(|t| t.open).sum::<usize>());
@@ -480,6 +492,23 @@ impl IngestService {
             None
         };
 
+        // The conversation the repository carries about its own documents.
+        //
+        // Read from the same walk, before anything is consumed from it: the
+        // sidecars and the documents they belong to are both ordinary files in
+        // this list, and a count has to be in hand before the document's node
+        // is built. `None` when there was no checkout — a repository listed
+        // through a connector's tree API has no sidecars to read, and claiming
+        // it has no threads would be a different statement from not knowing.
+        let mut document_threads = std::collections::BTreeMap::new();
+        if let Some((_, list, _)) = on_disk.as_ref() {
+            document_threads = comment_threads::fold_repository(
+                list.iter()
+                    .filter_map(|wf| wf.text.as_deref().map(|text| (wf.path.as_str(), text))),
+            );
+            open_document_threads = Some(document_threads.values().map(|counts| counts.open).sum());
+        }
+
         match on_disk {
             Some((dir, list, commit)) => {
                 for wf in list.into_iter().take(MAX_FILES) {
@@ -516,6 +545,7 @@ impl IngestService {
                         wf.size,
                         text,
                         commit.as_deref(),
+                        document_threads.get(&wf.path).copied(),
                     ));
                 }
             }
@@ -807,6 +837,7 @@ impl IngestService {
                 comments,
                 commits,
                 open_review_threads,
+                open_document_threads,
             },
         ));
         self.flush_and_report(
@@ -857,6 +888,7 @@ impl IngestService {
             comments,
             commits,
             open_review_threads,
+            open_document_threads,
             stored: total_nodes,
         })
     }
@@ -1047,6 +1079,7 @@ impl IngestService {
                 // Not a running count — see the field. The final result
                 // carries it; a mid-sync tick has nothing new to say about it.
                 open_review_threads: None,
+                open_document_threads: None,
                 stored: *flushed,
             }
             .as_detail(),

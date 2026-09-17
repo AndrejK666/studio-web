@@ -84,6 +84,12 @@ const TEXT_EXT: &[&str] = &[
     "less",
     "json",
     "jsonc",
+    // Studio's own comment logs are `.jsonl` (comment-log.js), and the sync
+    // counts the threads in them (`comment_threads.rs`). Without this the file
+    // is walked but never read, so every document's conversation reads as
+    // empty — the count would be wrong, and wrong in the direction nobody
+    // checks.
+    "jsonl",
     "yaml",
     "yml",
     "toml",
@@ -314,4 +320,25 @@ pub fn walk(dir: &Path) -> anyhow::Result<Vec<WalkedFile>> {
 
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The sync counts a document's comment threads by reading the logs the IDE
+    /// writes beside it, and it can only read what the walk read.
+    ///
+    /// This is here rather than in `comment_threads.rs` because the dependency
+    /// runs the other way: that module is correct whatever this list says, and
+    /// silently useless if `jsonl` leaves it. A reader trimming the extension
+    /// list has no reason to suspect the connection, which is what a test is
+    /// for.
+    #[test]
+    fn a_comment_log_is_read_as_text() {
+        assert!(is_text_path(Path::new(
+            ".studio/comments/docs/prd.md/oidc-sub-1.jsonl"
+        )));
+        assert!(is_text_path(Path::new(".studio/comments/docs/prd.md.json")));
+    }
 }
