@@ -17,6 +17,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiUrl } from "./api";
+import { duplicationByDocument, weightedMixture } from "./analysis";
 import type { ArtifactNode } from "./api";
 import { currentCursor, followRun } from "./studio-events";
 
@@ -1577,6 +1578,9 @@ function BloatView({ view }: { view: TaskView }) {
   const m = r.metrics ?? {};
   const clusters: any[] = Array.isArray(r.clusters) ? r.clusters : [];
   const [onlyCross, setOnlyCross] = useState(false);
+  const byDoc = useMemo(() => duplicationByDocument(clusters), [clusters]);
+  const worst = byDoc[0]?.words ?? 0;
+  const scanned = Array.isArray(r.paths) ? r.paths.length : null;
   const shown = useMemo(() => {
     const list = onlyCross ? clusters.filter((c) => c.cross_section) : clusters;
     return [...list].sort((a, b) => (b.occurrences?.length ?? 0) - (a.occurrences?.length ?? 0));
@@ -1595,7 +1599,58 @@ function BloatView({ view }: { view: TaskView }) {
         <Tile label="semantic" value={m.semantic_clusters ?? "—"} />
         <Tile label="paragraphs" value={m.n_paragraphs ?? "—"} />
       </div>
-      <div className="sq-opts" style={{ marginTop: 8 }}>
+      {/* Which document, before which passage. The clusters below say what
+          repeats; this says where the work is, and it is the only view here
+          that a reader can act on without reading every cluster first. */}
+      {byDoc.length > 0 && (
+        <>
+          <div className="sq-section-title">
+            {byDoc.length}
+            {scanned != null ? ` of ${scanned}` : ""} document{byDoc.length === 1 ? "" : "s"} repeat
+            text found elsewhere
+          </div>
+          <table className="sq-table">
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Duplicated words</th>
+                <th>Clusters</th>
+                <th>Occurrences</th>
+                <th>Shares with</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byDoc.map((row) => (
+                <tr key={row.path}>
+                  <td title={row.path}>{basename(row.path)}</td>
+                  <td style={{ minWidth: 150 }}>
+                    <span className="sq-share">
+                      <span className="sq-share-track">
+                        <span
+                          className="sq-share-fill warn"
+                          style={{ width: worst > 0 ? `${(row.words / worst) * 100}%` : "0%" }}
+                        />
+                      </span>
+                      <span className="sq-share-num">{row.words}</span>
+                    </span>
+                  </td>
+                  <td>{row.clusters}</td>
+                  <td>{row.occurrences}</td>
+                  {/* No partners means the document only repeats itself, which
+                      is a lesser complaint and says so rather than showing a
+                      dash that reads as missing data. */}
+                  <td className="sq-muted" title={row.partners.join("\n")}>
+                    {row.partners.length === 0
+                      ? "itself only"
+                      : row.partners.map(basename).join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      <div className="sq-opts" style={{ marginTop: 16 }}>
         <label className="sq-opt sq-check">
           <input type="checkbox" checked={onlyCross} onChange={(e) => setOnlyCross(e.target.checked)} />
           only cross-section
@@ -1642,16 +1697,64 @@ function TraceView({ view }: { view: TaskView }) {
   if (!Array.isArray(nodes) && !Array.isArray(edges)) {
     return <GenericResult title="Traceability result" view={view} />;
   }
+  // Whether the result carried any key this reader knows. Without the flag an
+  // unfamiliar shape and a genuinely unreferenced doc-set both render as
+  // "0 edges" — and the first is a bug here while the second is a fact about
+  // the documents. The service does not declare this response in its OpenAPI,
+  // so the shape can change under us without warning.
+  const recognised =
+    Array.isArray(r.edges || r.links || r.references || r.pairs) ||
+    Array.isArray(r.nodes || r.ids);
+  // Which documents nothing points at, and which point at nothing. This is the
+  // finding a traceability run exists to produce, and counting edges never
+  // surfaces it.
+  const referenced = new Set<string>();
+  const referencing = new Set<string>();
+  for (const e of Array.isArray(edges) ? edges : []) {
+    const from = e?.from ?? e?.source ?? e?.src ?? e?.a;
+    const to = e?.to ?? e?.target ?? e?.dst ?? e?.b;
+    if (typeof from === "string") referencing.add(from);
+    if (typeof to === "string") referenced.add(to);
+  }
+  const known: string[] = Array.isArray(r.paths)
+    ? r.paths.filter((x: unknown): x is string => typeof x === "string")
+    : [];
+  const orphans = known.filter((path) => !referenced.has(path));
+  const leaves = known.filter((path) => !referencing.has(path));
   return (
     <div className="card">
       <div className="card-head">
         <h2>Traceability</h2>
       </div>
       <Warnings view={view} />
+      {!recognised && (
+        <p className="sq-warn">
+          The service answered in a shape this screen does not know — the counts below are
+          not "nothing found", they are "nothing read". The raw result is at the bottom.
+        </p>
+      )}
       <div className="sq-tiles">
         <Tile label="nodes" value={Array.isArray(nodes) ? nodes.length : "—"} />
         <Tile label="edges" value={Array.isArray(edges) ? edges.length : "—"} />
+        {known.length > 0 && (
+          <Tile
+            label="nothing points at"
+            value={orphans.length}
+            tone={orphans.length > 0 ? "warn" : "ok"}
+          />
+        )}
+        {known.length > 0 && <Tile label="points at nothing" value={leaves.length} />}
       </div>
+      {orphans.length > 0 && (
+        <div className="sq-roles">
+          <span className="sq-muted">Unreferenced:</span>
+          {orphans.map((path) => (
+            <span key={path} className="sq-chip" title={path}>
+              {basename(path)}
+            </span>
+          ))}
+        </div>
+      )}
       {Array.isArray(edges) && edges.length > 0 && (
         <table className="sq-table">
           <thead>
@@ -1679,6 +1782,15 @@ function TraceView({ view }: { view: TaskView }) {
 
 /* ── Batch view (purpose/leak over every file) ── */
 
+/** Rows for `purpose` and `leak`, which run once per file.
+ *
+ *  The two are split because their results share almost nothing. `purpose`
+ *  answers with a `gate` and a role `mixture`; `leak` answers with
+ *  `leak_share`, `leak_tokens` and the sections it found foreign content in,
+ *  and has neither of the other two. One table for both printed a permanently
+ *  empty Mixture column and a Gate column reading "…" on every leak row —
+ *  which looks like a detector that never finished rather than a column that
+ *  was never going to be filled. */
 function BatchView({
   detector,
   rows,
@@ -1686,18 +1798,50 @@ function BatchView({
   detector: Detector;
   rows: { path: string; view?: TaskView; error?: string }[];
 }) {
+  if (detector === "leak") return <LeakBatchView rows={rows} />;
+  return <PurposeBatchView rows={rows} />;
+}
+
+type BatchRow = { path: string; view?: TaskView; error?: string };
+
+function PurposeBatchView({ rows }: { rows: BatchRow[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const done = rows.filter((r) => r.view).length;
   const failed = rows.filter((r) => r.error).length;
   const gatesFailed = rows.filter((r) => r.view?.result?.gate && !r.view.result.gate.passed).length;
+  const { mixture, tokens } = useMemo(
+    () => weightedMixture(rows.map((r) => r.view?.result)),
+    [rows],
+  );
+  const sections = rows.reduce((n, r) => n + (Number(r.view?.result?.n_sections) || 0), 0);
   return (
     <div className="card">
       <div className="card-head">
-        <h2>{detector === "purpose" ? "Purpose" : "Leak"} · {rows.length} files</h2>
+        <h2>Purpose · {rows.length} files</h2>
         <span className="sq-muted">
           {done} ok · {failed} errored · {gatesFailed} gate-fail
         </span>
       </div>
+      {/* What the set is made of, before what each file is made of. The
+          per-file rows below answer "which document"; this answers "what have
+          we actually written", which is the question a whole-set run was
+          started to ask. */}
+      {done > 0 && (
+        <>
+          <div className="sq-tiles">
+            <Tile label="documents" value={done} />
+            <Tile label="sections" value={sections || "—"} />
+            <Tile label="tokens" value={tokens || "—"} />
+            <Tile
+              label="gate failures"
+              value={gatesFailed}
+              tone={gatesFailed > 0 ? "err" : "ok"}
+            />
+          </div>
+          <div className="sq-section-title">Role mixture across the set, weighted by length</div>
+          <MixtureBar mixture={mixture} />
+        </>
+      )}
       <table className="sq-table">
         <thead>
           <tr>
@@ -1739,11 +1883,7 @@ function BatchView({
                       {row.error ? (
                         <span className="sq-err">{row.error}</span>
                       ) : row.view ? (
-                        detector === "purpose" ? (
-                          <PurposeInline view={row.view} />
-                        ) : (
-                          <RawJson value={row.view.result} open />
-                        )
+                        <PurposeInline view={row.view} />
                       ) : null}
                     </td>
                   </tr>
@@ -1754,6 +1894,214 @@ function BatchView({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** `leak` over every file: how much of each document belongs to some other
+ *  kind of document, and which kinds.
+ *
+ *  The verdict column is the detector's own `passed`, not a threshold applied
+ *  here — the gate lives in the service and the UI must not invent a second
+ *  one. `null` renders as "…" rather than as a pass, because an answer that
+ *  did not arrive is not an answer that said yes. */
+function LeakBatchView({ rows }: { rows: BatchRow[] }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const done = rows.filter((r) => r.view).length;
+  const failed = rows.filter((r) => r.error).length;
+  const leaking = rows.filter((r) => r.view?.result?.passed === false).length;
+  // The set's foreign share is over WORDS, not over files: one long document
+  // half-full of foreign content matters more than three clean stubs, and
+  // averaging the per-file shares would say the opposite.
+  const { leaked, total } = rows.reduce(
+    (acc, r) => {
+      const result = r.view?.result;
+      if (!result) return acc;
+      return {
+        leaked: acc.leaked + (Number(result.leak_tokens) || 0),
+        total: acc.total + (Number(result.n_tokens) || 0),
+      };
+    },
+    { leaked: 0, total: 0 },
+  );
+  // Which foreign kinds turned up, and in how many documents — the answer to
+  // "what is leaking into what", which no single row can give.
+  const foreign = useMemo(() => {
+    const tally = new Map<string, number>();
+    for (const row of rows) {
+      for (const role of (row.view?.result?.foreign_roles ?? []) as string[]) {
+        tally.set(role, (tally.get(role) ?? 0) + 1);
+      }
+    }
+    return [...tally.entries()].sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Leak · {rows.length} files</h2>
+        <span className="sq-muted">
+          {done} read · {failed} errored · {leaking} leaking
+        </span>
+      </div>
+      {done > 0 && (
+        <>
+          <div className="sq-tiles">
+            <Tile label="documents" value={done} />
+            <Tile label="leaking" value={leaking} tone={leaking > 0 ? "err" : "ok"} />
+            <Tile
+              label="foreign words"
+              value={total > 0 ? pct(leaked / total) : "—"}
+              tone={total > 0 && leaked / total > 0.1 ? "warn" : ""}
+            />
+            <Tile label="words read" value={total || "—"} />
+          </div>
+          {foreign.length > 0 ? (
+            <div className="sq-roles">
+              <span className="sq-muted">Foreign kinds found:</span>
+              {foreign.map(([role, count]) => (
+                <span
+                  key={role}
+                  className="sq-chip"
+                  style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
+                  title={`${role} content in ${count} document${count === 1 ? "" : "s"}`}
+                >
+                  {role} · {count}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="sq-muted">
+              No foreign content in any document — every section read as its own document's kind.
+            </p>
+          )}
+        </>
+      )}
+      <table className="sq-table">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Doc type</th>
+            <th>Verdict</th>
+            <th>Foreign share</th>
+            <th>Foreign words</th>
+            <th>Foreign kinds</th>
+            <th>Sections</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const r = row.view?.result;
+            const share = typeof r?.leak_share === "number" ? r.leak_share : null;
+            const roles: string[] = Array.isArray(r?.foreign_roles) ? r.foreign_roles : [];
+            return (
+              <Fragment key={row.path}>
+                <tr className="sq-row" onClick={() => setOpen(open === row.path ? null : row.path)}>
+                  <td title={row.path}>{basename(row.path)}</td>
+                  <td>{r?.doc_type ?? (row.error ? "—" : "…")}</td>
+                  <td>
+                    {row.error ? (
+                      <span className="sq-badge err">error</span>
+                    ) : r?.passed === true ? (
+                      <span className="sq-badge ok">clean</span>
+                    ) : r?.passed === false ? (
+                      <span className="sq-badge err">leaking</span>
+                    ) : (
+                      "…"
+                    )}
+                  </td>
+                  <td style={{ minWidth: 140 }}>
+                    {share == null ? (
+                      "—"
+                    ) : (
+                      <ShareBar value={share} tone={r?.passed === false ? "err" : "ok"} />
+                    )}
+                  </td>
+                  <td className="sq-muted">
+                    {r ? `${r.leak_tokens ?? 0} / ${r.n_tokens ?? "?"}` : "—"}
+                  </td>
+                  <td>
+                    {roles.length === 0
+                      ? "—"
+                      : roles.map((role) => (
+                          <span
+                            key={role}
+                            className="sq-chip"
+                            style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
+                          >
+                            {role}
+                          </span>
+                        ))}
+                  </td>
+                  <td>{r?.n_sections ?? "—"}</td>
+                </tr>
+                {open === row.path && (
+                  <tr>
+                    <td colSpan={7}>
+                      {row.error ? (
+                        <span className="sq-err">{row.error}</span>
+                      ) : row.view ? (
+                        <LeakInline view={row.view} />
+                      ) : null}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** One leak result opened up: what the document is allowed to contain, and
+ *  the evidence for everything in it that was not.
+ *
+ *  `leaks` goes through [`ArrayTable`], which reads whatever keys are there.
+ *  The service does not declare this shape in its OpenAPI — that document
+ *  carries the four request bodies and nothing else — so a reader that named
+ *  the columns would quietly show blanks the day one is renamed. */
+function LeakInline({ view }: { view: TaskView }) {
+  const r = view.result ?? {};
+  const native: string[] = Array.isArray(r.native_roles) ? r.native_roles : [];
+  const leaks: any[] = Array.isArray(r.leaks) ? r.leaks : [];
+  return (
+    <div className="sq-inline">
+      {native.length > 0 && (
+        <div className="sq-roles">
+          <span className="sq-muted">This document type may contain:</span>
+          {native.map((role) => (
+            <span
+              key={role}
+              className="sq-chip"
+              style={{ borderColor: ROLE_COLORS[role], color: ROLE_COLORS[role] }}
+            >
+              {role}
+            </span>
+          ))}
+        </div>
+      )}
+      {leaks.length > 0 ? (
+        <ArrayTable name="leaks" items={leaks} />
+      ) : (
+        <p className="sq-muted">Nothing foreign found — no section belongs to another kind.</p>
+      )}
+      <RawJson value={view.result} />
+    </div>
+  );
+}
+
+/** One proportion, drawn. Used where a percentage is the answer and the number
+ *  alone makes rows impossible to compare down a column. */
+function ShareBar({ value, tone }: { value: number; tone?: string }) {
+  const width = `${Math.min(100, Math.max(0, value * 100))}%`;
+  return (
+    <span className="sq-share" title={pct(value)}>
+      <span className="sq-share-track">
+        <span className={`sq-share-fill ${tone ?? ""}`} style={{ width }} />
+      </span>
+      <span className="sq-share-num">{pct(value)}</span>
+    </span>
   );
 }
 
@@ -1974,6 +2322,13 @@ function SqStyles() {
    --muted with the product's mono face, rather than staying a dark slab inside
    a light page. The IDE keeps its own colours; this is a JSON dump. */
 .sq .sq-raw pre { background: var(--muted); color: var(--foreground); font-family: var(--font-mono); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: auto; max-height: 360px; font-size: 12px; margin-top: 8px; }
+.sq .sq-roles { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+.sq .sq-share { display: inline-flex; align-items: center; gap: 8px; }
+.sq .sq-share-track { flex: 1; min-width: 60px; height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.sq .sq-share-fill { display: block; height: 100%; background: var(--primary); }
+.sq .sq-share-fill.ok { background: var(--success); }
+.sq .sq-share-fill.err { background: var(--destructive); }
+.sq .sq-share-num { font-size: 12px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .sq .sq-arr { margin-top: 14px; }
 .sq .sq-inline { padding: 8px 0; }
 `}</style>
