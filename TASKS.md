@@ -31,15 +31,20 @@
   reading it first and comparing is one extra read, and only an increase
   notifies.
 
-- [ ] Port the collaboration work in `theia/product-ext` upstream @andrejk666
+- [x] Decide where `theia/product-ext` lives, rather than port it @andrejk666
 
-  That package is vendored — its README says a change made only here is lost on
-  the next sync, and upstream is `studio-desktop`'s `app/product-ext`. Most of
-  what landed today lives in it. The repository is not reachable from this
-  account (`gh repo list constructorfabric` does not show it, and neither
-  `studio` nor `studio-internal` carries a `product-ext`), so whoever has it has
-  to do the port, translating `theia/product-ext/src/…` here to
-  `app/product-ext/lib/…` there.
+  This was written as a port: the package was vendored from `studio-desktop`'s
+  `app/product-ext`, its README said a change made only here was lost on the
+  next sync, and most of what landed that day lived in it. What made it a debt
+  rather than a task is that there was no sync — no `SOURCE.json`, no script,
+  and the repository is not reachable from this account — so it was not a
+  deadline anybody was keeping, it was one waiting for the next manual copy.
+
+  Settled the other way instead: **the source lives here.** The three places
+  that said otherwise now say that, and the package's README explains the one
+  thing that looks like vendoring and is not — `flow-backend.js` probing for the
+  MCP server under `lib/`, which is a packaged application's layout and must
+  survive any later tidying.
 
 # 2026-07-29
 

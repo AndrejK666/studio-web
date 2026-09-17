@@ -557,9 +557,9 @@ npm run start:electron
 
 `product-ext/` is the opposite: hand-written JavaScript with **no build step**,
 so its `src/` is the code that runs and is edited directly. It has its own
-`README.md`; read that before changing anything in it, because the package is
-vendored from `studio-desktop` and an unported change here is lost on the next
-sync.
+`README.md`; read that before changing anything in it. It used to say the
+package was vendored from `studio-desktop` and that an unported change here was
+lost on the next sync — that is no longer true. The source lives here.
 
 The frontend contains browser UI only. Filesystem, process, Git, and other
 host integrations remain in the Node backend and are exposed through typed
