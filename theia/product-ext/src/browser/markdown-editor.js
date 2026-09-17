@@ -94,6 +94,7 @@ const qualityAnchor = require('./quality-anchor');
 const qualityView = require('./quality-view');
 const qualityMeasures = require('./quality-measures');
 const { qualityMarksExtension, refreshQualityMarks } = require('./quality-marks');
+const { linkCardExtension, refreshLinkCards } = require('./link-card-marks');
 const qualityMove = require('./quality-move');
 const { previewBase } = require('./preview-url');
 const { statusLine } = require('./status-line');
@@ -719,6 +720,14 @@ function buildExtensions(widget) {
          * marks are off, which is every document nobody has checked.
          */
         qualityMarksExtension(() => (widget && widget.qualityRanges ? widget.qualityRanges() : [])),
+        /*
+         * Cards for recognised links, on the same callback shape: the plugin
+         * asks per transaction, so turning the feature on in the Project page
+         * reaches an open document without the extension knowing the settings
+         * file exists. `false` is how it is off, which is every project that has
+         * not asked for it.
+         */
+        linkCardExtension(() => (widget && widget.linkCardKinds ? widget.linkCardKinds() : false)),
         ...TABLE_EXTENSIONS
     ];
 }
@@ -1432,6 +1441,10 @@ class MarkdownEditorWidget extends Widget {
 
         fileTypeSettings.onChanged(() => {
             if (this.isDisposed) { return; }
+            /* Link cards can be turned on or off from the Project page while
+             * this document is open. The plugin asks per transaction, and a
+             * document nobody is typing in produces none — so it is nudged. */
+            refreshLinkCards(this.editor);
             if (!fileTypeSettings.authoringModesForFile(this.uri) && this.mode !== 'rich') { this.setMode('rich'); }
             else { this.renderSegmented(); }
             /*
@@ -5715,6 +5728,18 @@ class MarkdownEditorWidget extends Widget {
      * has one card with sixteen jump targets; fifteen of them are links to other
      * documents, and this method is only about the one on screen.
      */
+    /**
+     * Which link kinds this document draws cards for, asked once per
+     * transaction by the plugin.
+     *
+     * Read fresh from the project's settings rather than cached, so turning the
+     * feature on in the Project page reaches a document that is already open —
+     * the plugin has no idea a settings file exists and should not need one.
+     */
+    linkCardKinds() {
+        return fileTypeSettings.linkCardsForFile(this.uri);
+    }
+
     qualityRanges() {
         if (!this.editor || !this.qualityFindings.length) { return []; }
         const resolved = this.qualityIndex();

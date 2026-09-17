@@ -284,6 +284,11 @@ class ProjectPageWidget extends Widget {
             'title="Gear-based development for this project">Gear-based development off</button>' +
             '        <span class="studio-settings-note" data-page-gear-flow-note></span>' +
             '      </div>' +
+            '      <div class="studio-settings-row">' +
+            '        <button class="studio-switch" data-act="toggle-link-cards" aria-pressed="false" ' +
+            'title="Cards for recognised links in this project">Link cards off</button>' +
+            '        <span class="studio-settings-note" data-page-link-cards-note></span>' +
+            '      </div>' +
             '    </section>' +
             '  </div>' +
             '</div>';
@@ -304,6 +309,8 @@ class ProjectPageWidget extends Widget {
         this.qualityEl = this.node.querySelector('[data-act="toggle-quality"]');
         this.qualityNoteEl = this.node.querySelector('[data-page-quality-note]');
         this.gearFlowEl = this.node.querySelector('[data-act="toggle-gear-flow"]');
+        this.linkCardsEl = this.node.querySelector('[data-act="toggle-link-cards"]');
+        this.linkCardsNoteEl = this.node.querySelector('[data-page-link-cards-note]');
         this.gearFlowNoteEl = this.node.querySelector('[data-page-gear-flow-note]');
         this.identityEl = this.node.querySelector('[data-act="display-name"]');
         this.identityAvatarEl = this.node.querySelector('[data-page-identity-avatar]');
@@ -668,9 +675,12 @@ class ProjectPageWidget extends Widget {
         if (!root) { return; }
         const on = feature === 'quality'
             ? fileTypeSettings.qualitySignalsFor(root.resource)
-            : fileTypeSettings.gearFlowFor(root.resource);
+            : feature === 'link-cards'
+                ? !!fileTypeSettings.linkCardsFor(root.resource)
+                : fileTypeSettings.gearFlowFor(root.resource);
         try {
             if (feature === 'quality') { await fileTypeSettings.setQualitySignals(root.resource, !on); }
+            else if (feature === 'link-cards') { await fileTypeSettings.setLinkCards(root.resource, !on); }
             else { await fileTypeSettings.setGearFlow(root.resource, !on); }
         } catch (e) {
             console.error('[studio] could not persist the ' + feature + ' feature setting', e);
@@ -706,6 +716,23 @@ class ProjectPageWidget extends Widget {
             ? 'A Flow tab appears beside Projects, and the palette gains “New project from an idea…” and the four ' +
               'commands that go with it — the interview an assistant runs from an idea to a plan.'
             : 'Hidden. A .studio/flow directory that already exists is kept, and starting a flow turns this back on.';
+
+        const cards = root ? !!fileTypeSettings.linkCardsFor(root.resource) : false;
+        if (this.linkCardsEl) {
+            this.linkCardsEl.textContent = cards ? 'Link cards on' : 'Link cards off';
+            this.linkCardsEl.setAttribute('aria-pressed', String(cards));
+        }
+        if (this.linkCardsNoteEl) {
+            /* Both sentences say what is NOT happening, because that is the
+             * question a person actually has about a feature that rewrites how
+             * their documents look: nothing is fetched, and nothing is
+             * replaced. */
+            this.linkCardsNoteEl.textContent = cards
+                ? 'A link on its own line says what it points at — a pull request, an issue, a ticket, a ' +
+                  'repository — read from the address itself. Nothing is fetched and the link stays editable.'
+                : 'Off. Links are shown exactly as written, which is also what happens to any link this ' +
+                  'does not recognise.';
+        }
     }
 
     // -- disconnect ----------------------------------------------------------
@@ -776,6 +803,8 @@ class ProjectPageWidget extends Widget {
             void this.toggleFeature('quality');
         } else if (act === 'toggle-gear-flow') {
             void this.toggleFeature('gear-flow');
+        } else if (act === 'toggle-link-cards') {
+            void this.toggleFeature('link-cards');
         }
     }
 }
