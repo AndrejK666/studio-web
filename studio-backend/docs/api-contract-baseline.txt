@@ -24,6 +24,7 @@ description	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{projec
 # --- domain-prefix (9) ---------------------------------------------------
 # Rule A1. `spec-quality` predates the `studio-` prefix. The rename is a
 # path change with a deprecation window (rule G1).
+domain-prefix	GET /spec-quality/v1/capabilities
 domain-prefix	GET /spec-quality/v1/health
 domain-prefix	GET /spec-quality/v1/status
 domain-prefix	GET /spec-quality/v1/tasks

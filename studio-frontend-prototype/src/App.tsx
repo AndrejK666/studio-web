@@ -5216,6 +5216,18 @@ const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
     { key: "state", label: "State", render: (v) => (v.merged ? "merged" : String(v.state ?? "—")) },
     { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
     { key: "branches", label: "Branches", render: (v) => (v.source_branch ? `${v.source_branch} → ${v.target_branch ?? "?"}` : "—") },
+    // Only open pull requests carry a count — a merged one is nobody's queue,
+    // and the sync leaves it unset rather than writing a zero that would read
+    // as "reviewed and clear".
+    {
+      key: "open_threads",
+      label: "Open threads",
+      num: true,
+      render: (v) => {
+        const open = (v as Record<string, unknown>).open_threads;
+        return typeof open === "number" ? String(open) : "—";
+      },
+    },
     { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
   ],
   commit: [
@@ -5734,11 +5746,21 @@ function ProjectSources({
             const node = graphRepo(r);
             const live = sync[r.name];
             const syncedAt = node?.value.synced_at as string | undefined;
+            // Unresolved review threads are the one number here that is a
+            // claim about the present rather than about the last sync, so 0 is
+            // worth printing: "nothing is waiting on review" is the answer
+            // somebody came to this row for. Absent means the provider does
+            // not report them (only GitHub does), which is not the same as
+            // none, so the phrase is left off entirely.
+            const openThreads = node?.value.open_review_threads as number | undefined;
             const pulled = node
               ? [
                   node.value.issues ? `${node.value.issues} issues` : "",
                   node.value.pull_requests ? `${node.value.pull_requests} PRs` : "",
                   node.value.files ? `${node.value.files} files` : "",
+                  openThreads != null
+                    ? `${openThreads} open ${openThreads === 1 ? "thread" : "threads"}`
+                    : "",
                 ]
                   .filter(Boolean)
                   .join(" · ")

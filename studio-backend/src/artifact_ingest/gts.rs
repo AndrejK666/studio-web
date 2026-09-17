@@ -371,6 +371,14 @@ pub struct RepoSyncStats {
     pub files: usize,
     pub comments: usize,
     pub commits: usize,
+    /// Unresolved review threads across the repository's open pull requests,
+    /// or `None` when the provider cannot say.
+    ///
+    /// Absent rather than zero. A GitLab source has no answer here, and
+    /// writing `0` would claim nothing is waiting on review — a different,
+    /// and often wrong, statement. The key is simply omitted, so a reader
+    /// distinguishes "none open" from "never asked".
+    pub open_review_threads: Option<usize>,
 }
 
 /// The repository node re-stated once a sync has finished: same instance id as
@@ -393,6 +401,9 @@ pub fn repo_synced_node(
         obj.insert("files".to_string(), json!(stats.files));
         obj.insert("comments".to_string(), json!(stats.comments));
         obj.insert("commits".to_string(), json!(stats.commits));
+        if let Some(open) = stats.open_review_threads {
+            obj.insert("open_review_threads".to_string(), json!(open));
+        }
     }
     node
 }
@@ -472,12 +483,16 @@ pub fn file_node_cloned(
     }
 }
 
+/// One pull request. `open_threads` is its unresolved review conversations,
+/// or `None` when the provider does not report them and for a pull request
+/// that is no longer open — nothing is waiting on a merged branch.
 pub fn pull_request_node(
     scope_key: &str,
     repo_id: &str,
     connector_id: &str,
     repo_full_path: &str,
     p: RemotePullRequest,
+    open_threads: Option<usize>,
 ) -> GtsNode {
     GtsNode {
         type_id: PULL_REQUEST_TYPE,
@@ -500,6 +515,7 @@ pub fn pull_request_node(
             "source_branch": p.source_branch,
             "target_branch": p.target_branch,
             "merged": p.merged,
+            "open_threads": open_threads,
             "created_at": p.created_at,
             "updated_at": p.updated_at,
         }),
