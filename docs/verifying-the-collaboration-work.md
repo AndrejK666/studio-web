@@ -84,12 +84,19 @@ is exactly why the test for the extension lives next to the fold.
 
 ## Layer 3 — the prototype
 
+The portal work (#267, #268, #270) is in `studio-frontend-prototype`, which is a
+self-contained app with its own dependencies — not the workspace-and-packages
+build that `studio-frontend` next door needs:
+
 ```bash
-npm run build:packages   # first, or the per-package suites cannot resolve
-npm run test:unit
+cd studio-frontend-prototype
+npm ci && npm test        # vitest, 131 tests in 13 files
 ```
 
-Four `connections-mfe` tests already fail on `main`; they are not yours.
+`work-inbox.test.ts` is the one that covers what is waiting on you.
+
+Do **not** reach for `npm run build:packages` here: that belongs to
+`studio-frontend`, the other application, and nothing in this work is in it.
 
 ---
 
