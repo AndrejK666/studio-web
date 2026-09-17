@@ -63,6 +63,7 @@ const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
 const sidecarScan = require('./sidecar-scan');
 const scan = require('./collab-scan');
+const taskScan = require('./task-scan');
 
 const COLLAB_WIDGET_ID = 'studio-collaboration';
 
@@ -78,6 +79,21 @@ const RESCAN_DEBOUNCE_MS = 400;
 /* How many documents' comment logs one refresh will fold. A project can hold
  * more, and the honesty line says when it did. */
 const MAX_DOCUMENTS = 400;
+
+/* Caps on the task walk, which is the one read here that touches the whole
+ * project rather than just `.studio`. Generous enough for any document set a
+ * person reads, small enough that a repository with a vendored tree does not
+ * turn opening this page into a file-server workout. */
+const MAX_TASK_FILES = 600;
+const MAX_TASK_DEPTH = 12;
+/* Directories that hold no prose anybody wrote. `.studio` is the sidecar home
+ * and its own contents are read by name elsewhere. */
+const TASK_SKIP = new Set(['.studio', '.git', 'node_modules', 'target', 'dist', 'lib']);
+
+/** The inverse of relativePath: a project path back to the uri it names. */
+function uriIn(rootString, path) {
+    return rootString ? rootString + '/' + path : path;
+}
 
 function relativePath(rootString, uriString) {
     return uriString.startsWith(rootString)
@@ -101,6 +117,13 @@ class CollaborationWidget extends Widget {
         // -- state -----------------------------------------------------------
         this.roster = { people: [], anonymous: 0 };
         this.result = { items: [], truncated: 0, threadsSeen: 0, resolved: 0, mentions: 0, waiting: 0, open: 0 };
+        this.tasks = { items: [], truncated: 0, total: 0, documents: 0, mine: 0, open: 0, done: 0 };
+        /* When the task walk last ran, so the section can say how old it is.
+         * Unlike the threads, tasks are NOT re-read on every file change: they
+         * live in the documents themselves, so keeping them live would mean
+         * walking the project on every save. The section states its age instead
+         * — the same bargain the Quality tab makes, and for the same reason. */
+        this.tasksAt = 0;
         this.pending = { available: false, files: [] };
         this.stats = { documents: 0, projects: 0, unreadable: 0 };
         /* The root every path on the page is stated relative to. Held rather
@@ -150,14 +173,14 @@ class CollaborationWidget extends Widget {
     onAfterAttach(msg) {
         super.onAfterAttach(msg);
         this.start();
-        void this.refresh();
+        void this.refresh({ tasks: true });
     }
 
     onActivateRequest(msg) {
         super.onActivateRequest(msg);
         // Re-reveal means "tell me again", not "show me what you had": the
         // whole subject of this page is what other people have done since.
-        void this.refresh();
+        void this.refresh({ tasks: true });
     }
 
     onCloseRequest(msg) {
@@ -178,7 +201,7 @@ class CollaborationWidget extends Widget {
                 this.rescanTimer = setTimeout(() => void this.refresh(), RESCAN_DEBOUNCE_MS);
             }));
         }
-        this.disposables.push(activeProject.onChanged(() => void this.refresh()));
+        this.disposables.push(activeProject.onChanged(() => void this.refresh({ tasks: true })));
         /*
          * NOT SUBSCRIBED TO identity.onChanged, although a sign-in changes
          * every "you" on this page — which threads mention you, which are
@@ -223,7 +246,7 @@ class CollaborationWidget extends Widget {
      * can fire while a fold is still reading, and two interleaved scans writing
      * `this.result` is how a panel ends up showing half of one project.
      */
-    async refresh() {
+    async refresh(options = {}) {
         if (this.isDisposed) { return; }
         if (this.token) { this.token.cancelled = true; }
         const token = { cancelled: false };
@@ -236,6 +259,8 @@ class CollaborationWidget extends Widget {
             this.roster = { people: [], anonymous: 0 };
             this.result = { items: [], truncated: 0, threadsSeen: 0, resolved: 0, mentions: 0, waiting: 0, open: 0 };
             this.pending = { available: false, files: [] };
+            this.tasks = { items: [], truncated: 0, total: 0, documents: 0, mine: 0, open: 0, done: 0 };
+            this.tasksAt = 0;
             this.stats = { documents: 0, projects: 0, unreadable: 0 };
             this.render();
             return;
@@ -274,6 +299,10 @@ class CollaborationWidget extends Widget {
         if (token.cancelled) { return; }
 
         this.result = scan.inbox(files, identity.current());
+        if (options.tasks) {
+            await this.scanTasks(root, token);
+            if (token.cancelled) { return; }
+        }
         try {
             this.pending = await this.changesStore.pendingFilesStatus(root);
         } catch (e) {
@@ -291,6 +320,51 @@ class CollaborationWidget extends Widget {
         this.render();
     }
 
+    /**
+     * Every task the project's documents carry.
+     *
+     * Its own pass, and its own trigger: this is the one read here that touches
+     * the whole project rather than `.studio`, so it runs when somebody opens
+     * or returns to the page — not on the file watcher, which fires on every
+     * save and would turn one keystroke's autosave into a project walk.
+     */
+    async scanTasks(root, token) {
+        const files = [];
+        await this.walkDocuments(root, root.toString(), files, token, 0);
+        if (token.cancelled) { return; }
+        this.tasks = taskScan.tasks(files, identity.current());
+        this.tasksAt = Date.now();
+    }
+
+    /** Depth-first, Markdown only, capped. Unreadable entries are skipped. */
+    async walkDocuments(dir, rootString, into, token, depth) {
+        if (token.cancelled || depth > MAX_TASK_DEPTH || into.length >= MAX_TASK_FILES) { return; }
+        let stat;
+        try {
+            stat = await this.fileService.resolve(dir);
+        } catch (e) {
+            return;
+        }
+        for (const child of (stat && stat.children) || []) {
+            if (token.cancelled || into.length >= MAX_TASK_FILES) { return; }
+            const base = child.resource.path.base;
+            if (child.isDirectory) {
+                if (TASK_SKIP.has(base) || base.startsWith('.')) { continue; }
+                await this.walkDocuments(child.resource, rootString, into, token, depth + 1);
+                continue;
+            }
+            if (!base.toLowerCase().endsWith('.md')) { continue; }
+            try {
+                const content = await this.fileService.read(child.resource);
+                into.push({
+                    path: relativePath(rootString, child.resource.toString()),
+                    uri: child.resource.toString(),
+                    text: content.value
+                });
+            } catch (e) { /* one unreadable document is not the project */ }
+        }
+    }
+
     // -- paint ---------------------------------------------------------------
 
     render() {
@@ -299,6 +373,7 @@ class CollaborationWidget extends Widget {
         this.bodyEl.innerHTML =
             this.rosterSection() +
             this.threadsSection() +
+            this.tasksSection() +
             this.pendingSection();
         this.honestyEl.textContent = scan.honestyLine({
             documents: this.stats.documents,
@@ -405,6 +480,48 @@ class CollaborationWidget extends Widget {
         return this.sectionHtml('Waiting for review', '', '<ul class="studio-collab-pendings">' + rows + '</ul>');
     }
 
+    /*
+     * Tasks the documents carry (requirement 18).
+     *
+     * A row opens the document; the box is ticked there, because the box IS the
+     * document — there is no task store to write to and that is the point. A
+     * checkbox here would be a second place to change one sentence, and the two
+     * would disagree the first time somebody edited the file directly.
+     */
+    tasksSection() {
+        const note = this.tasksAt
+            ? 'read ' + scan.agoText(new Date(this.tasksAt).toISOString(), Date.now())
+            : '';
+        if (this.tasks.total === 0) {
+            return this.sectionHtml('Tasks', note, this.emptyHtml(
+                this.scanning
+                    ? 'Reading the project…'
+                    : 'No task items in this project’s documents yet. Write one as ' +
+                      '“- [ ] something @someone”.'));
+        }
+        const rows = this.tasks.items.map(item => {
+            const mine = taskScan.assignedTo(item.assignees, identity.current());
+            const who = item.assignees.length
+                ? item.assignees.map(a =>
+                    '<span class="studio-collab-who' + (a.kind === 'agent' ? ' is-agent' : '') + '">' +
+                    esc(a.raw) + '</span>').join(' ')
+                : '<span class="studio-collab-unassigned">unassigned</span>';
+            return '<li class="studio-collab-task' + (item.done ? ' is-done' : '') +
+                (mine ? ' is-flagged' : '') + '" ' +
+                'data-open-uri="' + esc(uriIn(this.rootString, item.path)) + '" tabindex="0" role="button">' +
+                '<span class="studio-collab-box" aria-hidden="true">' + (item.done ? '☑' : '☐') + '</span>' +
+                '<span class="studio-collab-task-body">' + esc(item.body) + '</span>' +
+                '<span class="studio-collab-task-where">' + esc(item.path) +
+                (item.heading ? ' · ' + esc(item.heading) : '') + '</span>' +
+                who +
+                '</li>';
+        }).join('');
+        return this.sectionHtml('Tasks', note,
+            '<p class="studio-collab-count">' + esc(taskScan.countText(this.tasks)) + '</p>' +
+            '<ul class="studio-collab-tasks">' + rows + '</ul>' +
+            '<p class="studio-collab-subhonesty">' + esc(taskScan.honestyLine(this.tasks)) + '</p>');
+    }
+
     emptyHtml(text) {
         return '<p class="studio-collab-empty">' + esc(text) + '</p>';
     }
@@ -480,6 +597,35 @@ const COLLAB_CSS = `
 .studio-collab-preview { color: var(--studio-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-collab-replies { margin-left: auto; font-size: 12px; color: var(--studio-muted); white-space: nowrap; }
 .studio-collab-pending { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+
+/* --- tasks ---------------------------------------------------------------- *
+ * One line each, in the order the ranking put them: box, sentence, where it
+ * came from, who it is addressed to. The sentence takes the space that is left
+ * because it is the only part that says what to do. */
+.studio-collab-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.studio-collab-task {
+  display: flex; align-items: baseline; gap: 8px; font-size: 13px;
+  border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; cursor: pointer;
+}
+.studio-collab-task:hover, .studio-collab-task:focus-visible { border-color: var(--studio-line); outline: none; }
+.studio-collab-task.is-flagged { border-left: 3px solid var(--studio-accent); border-radius: 3px 6px 6px 3px; }
+/* A done task is still listed — "what has been done" is half of what a task
+   list is read for — but it stops competing with what has not. */
+.studio-collab-task.is-done .studio-collab-task-body { text-decoration: line-through; color: var(--studio-muted); }
+.studio-collab-box { flex: none; color: var(--studio-muted); }
+.studio-collab-task-body { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-collab-task-where { flex: none; font-family: var(--studio-mono); font-size: 11px; color: var(--studio-muted); }
+.studio-collab-task .studio-collab-who { flex: none; font-weight: 600; }
+/* An agent is marked, not hidden: "this one is already with Claude" is the
+   whole reason to look at the column. */
+.studio-collab-task .studio-collab-who.is-agent { font-style: italic; font-weight: 500; }
+.studio-collab-unassigned { flex: none; color: var(--studio-muted); font-style: italic; }
+/* The section's own note, smaller than the page's footer and in the same ink:
+   it is about this list, not about the page. */
+.studio-collab-subhonesty {
+  margin: 8px 0 0; font-family: var(--studio-mono); font-size: 11px; line-height: 1.5;
+  color: var(--studio-muted);
+}
 .studio-collab-pending-count { margin-left: auto; color: var(--studio-accent); font-weight: 600; }
 
 .studio-collab-honesty {
