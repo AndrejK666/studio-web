@@ -122,7 +122,7 @@ export function DocumentsTab({
           one": the two lists hold different things and the old label claimed
           the whole subject for the first of them. "In the repository" keeps
           the landing view it had. */}
-      <div className="doc-views" role="tablist" aria-label="Documents view">
+      <div className="doc-views" role="tablist" aria-label="Specs view">
         <button
           role="tab"
           aria-selected={view === "repository"}
@@ -1510,7 +1510,7 @@ function IngestedDocumentsView({
     <div className="ingested">
       <style>{INGESTED_CSS}</style>
       <div className="ing-head">
-        <h2>Documents</h2>
+        <h2>Specs</h2>
         <p>
           Studio reads the files the repository sync pulled in and works out which template each
           one was written against — from a type declared in its front matter, or by matching its

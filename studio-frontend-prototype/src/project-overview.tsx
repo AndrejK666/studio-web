@@ -39,33 +39,39 @@ import { errText, initials, relTime } from "./format";
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
  *
- * The names and the order are the product's, not ours — the shipped
- * project-sidebar lists Overview, Components, Artifacts, Findings, Activity,
- * Timeline, Team, then Project settings, and a prototype that calls the same
- * screen "Spec Quality" is a prototype of a different product.
+ * The names and the order are the product's, not ours. Read off the shipped
+ * project-sidebar on 2026-09-17, which lists:
  *
- * Three of these were renamed rather than rebuilt: "kits" is Components,
- * "people" is Team. The screens behind them did not change. Two — activity and
- * timeline — have NO screen behind them yet and say so on the page; they are in
- * the list because the list is the thing being matched, and quietly omitting
- * them would make the nav wrong in the one way that is being checked.
- * "automation" has no counterpart in the product's list and is kept after Team
- * rather than dropped, because dropping it would delete a working screen to win
- * a screenshot comparison.
+ *     Overview · Components · Artifacts · Specs · Sources · Findings ·
+ *     Activity · Timeline · Team · Project settings
  *
- * FINDINGS IS NOT A SECTION. The product lists it beside Artifacts, and that is
- * the thing we are deliberately not copying: every finding is about a document,
- * carries that document's node id as its subject, and is unreadable without it
- * — the product's own Findings table spends a whole column re-stating which
- * document each row belongs to. So the documents list carries the count and the
- * document carries its findings, and "Findings" occupies the slot Documents is
- * in. Reintroducing it as a section means reintroducing that column. */
+ * A prototype that calls the same screen "Spec Quality", or "Documents" where
+ * the product says "Specs", is a prototype of a different product.
+ *
+ * Renamed rather than rebuilt, screens unchanged: "kits" is Components,
+ * "people" is Team, "documents" is Specs. Two — activity and timeline — have
+ * NO screen behind them yet and say so on the page; they are in the list
+ * because the list is the thing being matched, and quietly omitting them would
+ * make the nav wrong in the one way that is being checked. "automation" has no
+ * counterpart in the product's list and is kept after Team rather than dropped,
+ * because dropping it would delete a working screen to win a screenshot
+ * comparison.
+ *
+ * SOURCES was ours first and the product has since grown it, in the same place
+ * and under the same name — worth knowing before anyone "aligns" it away.
+ *
+ * FINDINGS IS NOT A SECTION HERE, and that is the one deliberate departure.
+ * Every finding is about a document, carries that document's node id as its
+ * subject, and is unreadable without it — the product's own Findings table
+ * spends a whole column re-stating which document each row belongs to. So the
+ * Specs list carries the count and the document carries its findings.
+ * Reintroducing it as a section means reintroducing that column. */
 export type ProjTab =
   | "overview"
   | "components"
   | "artifacts"
+  | "specs"
   | "sources"
-  | "documents"
   | "activity"
   | "timeline"
   | "people"
@@ -424,17 +430,17 @@ export function ProjectOverview({
       {/* The project in six numbers. Each one opens the tab that owns it. */}
       <div className="dash-stats">
         <Stat
-          label="Documents"
+          label="Specs"
           value={missed("documents") ? "—" : docs.length}
           sub={docs.length ? `${conforming} valid · ${approved} approved` : "none yet"}
           tone={docs.length > 0 && conforming < docs.length ? "warn" : undefined}
-          onClick={() => onOpenTab("documents")}
+          onClick={() => onOpenTab("specs")}
         />
         <Stat
           label="Pipeline"
           value={missed("document types") ? "—" : `${started.length}/${types.length}`}
           sub={notStarted.length ? `${notStarted.length} type${notStarted.length === 1 ? "" : "s"} not started` : "every type covered"}
-          onClick={() => onOpenTab("documents")}
+          onClick={() => onOpenTab("specs")}
         />
         <Stat
           label="Repositories"
@@ -457,7 +463,7 @@ export function ProjectOverview({
           value={missed("spec-quality findings") ? "—" : findingTotal}
           sub={highFindings ? `${highFindings} high severity` : findingTotal ? "none high" : "not analysed"}
           tone={highFindings ? "danger" : undefined}
-          onClick={() => onOpenTab("documents")}
+          onClick={() => onOpenTab("specs")}
         />
         <Stat
           label="Team"
@@ -478,7 +484,7 @@ export function ProjectOverview({
                 <button className="ghost" disabled={validating || docs.length === 0} onClick={() => void validateAll()}>
                   {validating ? "Validating…" : "Validate all"}
                 </button>
-                <button className="ghost" onClick={() => onOpenTab("documents")}>
+                <button className="ghost" onClick={() => onOpenTab("specs")}>
                   Documents →
                 </button>
               </div>
@@ -563,7 +569,7 @@ export function ProjectOverview({
                       </td>
                       <td className="sub">not started</td>
                       <td className="pactions">
-                        <button className="ghost" onClick={() => onOpenTab("documents")}>
+                        <button className="ghost" onClick={() => onOpenTab("specs")}>
                           Write it
                         </button>
                       </td>
@@ -637,7 +643,7 @@ export function ProjectOverview({
           <div className="card">
             <div className="card-head">
               <h2>Spec quality</h2>
-              <button className="ghost" onClick={() => onOpenTab("documents")}>
+              <button className="ghost" onClick={() => onOpenTab("specs")}>
                 Analyse →
               </button>
             </div>
