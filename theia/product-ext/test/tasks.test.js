@@ -181,6 +181,57 @@ test('the honesty line owns up to the filter requirement 18 asks for', () => {
     assert.ok(line.includes('Who wrote a task is not recorded'), line);
 });
 
+
+// -- writing one back --------------------------------------------------------
+
+test('a task goes under a Tasks section, made if the document has none', () => {
+    const out = scan.appendTask('# Brief\n\nProse.\n', 'ask legal', 'roma');
+    assert.strictEqual(out, '# Brief\n\nProse.\n\n## Tasks\n\n- [ ] ask legal @roma\n');
+});
+
+test('and at the END of an existing one, so the order is the order asked for', () => {
+    const before = '# Brief\n\n## Tasks\n\n- [ ] one\n\n## Scope\n\nmore\n';
+    const out = scan.appendTask(before, 'two', '@ana');
+    assert.ok(out.includes('- [ ] one\n- [ ] two @ana'), JSON.stringify(out));
+    // Still inside its own section, not pushed past the next heading.
+    assert.ok(out.indexOf('- [ ] two') < out.indexOf('## Scope'), JSON.stringify(out));
+});
+
+test('the mention is written however it was given', () => {
+    assert.ok(scan.appendTask('x', 'a', 'roma').includes('@roma'));
+    assert.ok(scan.appendTask('x', 'a', '@roma').includes('@roma'));
+    assert.ok(!scan.appendTask('x', 'a', '@roma').includes('@@roma'));
+});
+
+test('a task with no assignee is still a task', () => {
+    assert.ok(scan.appendTask('x', 'decide the pricing').endsWith('- [ ] decide the pricing\n'));
+});
+
+test('an empty task changes nothing at all', () => {
+    // The popover can be submitted empty, and a document must not grow a blank
+    // checkbox because somebody pressed Enter.
+    const before = '# Brief\n';
+    assert.strictEqual(scan.appendTask(before, '   '), before);
+    assert.strictEqual(scan.appendTask(before, undefined), before);
+});
+
+test('the document does not grow a gap on every task', () => {
+    let doc = '# Brief\n';
+    for (let i = 0; i < 3; i++) { doc = scan.appendTask(doc, 'task ' + i); }
+    assert.ok(!/\n\n\n/.test(doc), JSON.stringify(doc));
+    assert.strictEqual((doc.match(/## Tasks/g) || []).length, 1, JSON.stringify(doc));
+});
+
+test('what is written back is what the list reads', () => {
+    // The loop that matters: append, then parse, and get the task out again.
+    const doc = scan.appendTask('# Brief\n', 'ask legal about retention', '@roma');
+    const [task] = scan.parseTasks('docs/prd.md', doc);
+    assert.strictEqual(task.body, 'ask legal about retention @roma');
+    assert.strictEqual(task.heading, 'Tasks');
+    assert.strictEqual(task.assignees[0].name, 'roma');
+    assert.strictEqual(task.done, false);
+});
+
 if (failures) {
     console.error(failures + ' failing');
     process.exit(1);

@@ -72,6 +72,7 @@ const { ICONS } = require('./icons');
 const { messageHtml, quoteLineHtml } = require('./comment-ui');
 const { identity, authorRecord, isSelf } = require('./identity');
 const { signature, mergeFolded } = require('./comment-log');
+const taskScan = require('./task-scan');
 const { loaderMarkup, loadingMarkup, showLoading } = require('./loader');
 const {
     requestChange, openAiPrompt,
@@ -4398,6 +4399,53 @@ class MarkdownEditorWidget extends Widget {
      */
 
     /** Requirement 10: turn this thread's feedback into a proposed change. */
+    /**
+     * Turn a comment into a task, in one click.
+     *
+     * The task's text IS the comment's first message. Requirement 7 asks for
+     * "comment → task in one click", and a popover asking what to call it would
+     * be a second click asking a person to retype a sentence they just wrote.
+     * Any `@name` in that sentence comes along with it, because the mention is
+     * part of the text — which is the whole benefit of tasks being Markdown.
+     * If the wording needs work, the line is now in the document, where editing
+     * a sentence is the native act.
+     *
+     * WHERE IT GOES is `task-scan.appendTask`'s decision: the end of the
+     * document's `## Tasks` section, or a new one at the foot. Never beside the
+     * quoted sentence — that is the one paragraph the thread is discussing, and
+     * editing it out from under the discussion is the failure this avoids.
+     *
+     * THE LINK IS ONE-WAY, and that is a choice rather than an oversight. The
+     * thread records the task it asked for; the task is an ordinary Markdown
+     * item with nothing hidden in it. A back-reference would have to live in
+     * that line — an HTML comment or a marker — and this editor's round trip
+     * does not promise to preserve either, so the link would break silently
+     * while corrupting somebody's sentence. The thread is the side that can
+     * hold it, so the thread holds it.
+     */
+    async makeTaskFromComment(threadId) {
+        const th = this.threads.find(t => t.id === threadId);
+        if (!th) { return; }
+        if (this.readOnly || this.reviewing) {
+            this.messageService.info(this.readOnly
+                ? 'This document is open read-only, so a task cannot be written into it.'
+                : 'Finish reviewing the pending changes first — a task would be written into the document under review.');
+            return;
+        }
+        const first = (th.messages[0] || {}).body || '';
+        const text = taskScan.clip(first, 160);
+        if (!text) { return; }
+
+        const body = taskScan.appendTask(this.currentBody(), text);
+        this.setBody(body);
+        this.markDirty();
+        await this.save();
+        // Recorded after the write, so a thread never claims a task the
+        // document does not carry.
+        await this.persistComments(store => store.noteTask(this.uri, threadId, text));
+        this.renderRail();
+    }
+
     requestChangeFromComment(threadId, anchorEl) {
         const th = this.threads.find(t => t.id === threadId);
         if (!th) { return; }
@@ -4681,6 +4729,7 @@ class MarkdownEditorWidget extends Widget {
             (th.pendingResolution ? ' awaiting' : '') + '" data-thread="' + th.id + '">' +
             '<div class="studio-thread-head">' + quote +
             '<div class="studio-thread-tools">' +
+            '<button class="studio-icon-btn" data-act="comment-make-task" data-id="' + th.id + '" title="Make a task from this comment" aria-label="Make a task from this comment">' + ICONS.taskList + '</button>' +
             '<button class="studio-icon-btn" data-act="comment-request-change" data-id="' + th.id + '" title="Ask AI to change this" aria-label="Ask AI to change this">' + ICONS.spark + '</button>' +
             '<button class="studio-icon-btn' + (th.resolved ? ' resolved' : '') + '" data-act="comment-resolve" data-id="' + th.id + '" title="' + resolveTitle + '" aria-label="' + resolveTitle + '">' +
             (th.resolved ? ICONS.checkCircle : ICONS.circle) + '</button>' +
@@ -4690,6 +4739,9 @@ class MarkdownEditorWidget extends Widget {
             (th.pendingResolution
                 ? '<div class="studio-thread-note">The change from this comment was applied. Resolve the thread?</div>'
                 : '') +
+            (th.tasks || []).map(task =>
+                '<div class="studio-thread-task">' + ICONS.taskList +
+                '<span>' + escapeHtml(task.text) + '</span></div>').join('') +
             messages +
             '<div class="studio-thread-compose' + (th.messages.length ? ' studio-compose-indent' : '') + '">' +
             '<textarea rows="1" placeholder="' + (th.messages.length ? 'Reply…' : 'Add a comment…') + '"></textarea>' +
@@ -6998,6 +7050,7 @@ class MarkdownEditorWidget extends Widget {
                 case 'comment-delete':
                     if (this.armedDeleteId === id) { this.deleteThread(id); } else { this.armDelete(id, act); }
                     break;
+                case 'comment-make-task': this.makeTaskFromComment(id); break;
                 case 'comment-request-change': this.requestChangeFromComment(id, act); break;
                 case 'hunk-accept':
                     if (suggested) { this.decideSuggestion(proposalId, id, 'accepted'); }

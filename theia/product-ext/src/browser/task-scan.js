@@ -184,6 +184,57 @@ function tasks(files, me, options = {}) {
     };
 }
 
+
+/* The heading a task written from a thread goes under. One place, so a document
+ * does not grow three of them under three spellings. */
+const TASKS_HEADING = '## Tasks';
+
+/**
+ * Write a task line into a document.
+ *
+ * Under an existing `## Tasks` section when there is one, at the END of it —
+ * so the order is the order they were asked for — and in a new section at the
+ * foot of the document when there is not.
+ *
+ * WHY A SECTION AND NOT THE CURSOR. A task made from a comment has no cursor:
+ * the person is in the thread, not in the text. Dropping the line beside the
+ * quoted sentence would edit the paragraph somebody is discussing, which is the
+ * one place in the document it must not land.
+ *
+ * Returns the whole document. The caller writes it through the editor's own
+ * save path, so the change is one edit somebody can undo.
+ */
+function appendTask(markdown, body, assignee) {
+    const text = String(body == null ? '' : body).replace(/\s+/g, ' ').trim();
+    if (!text) { return String(markdown == null ? '' : markdown); }
+    const mention = String(assignee || '').trim();
+    const line = '- [ ] ' + text + (mention ? ' ' + (mention.startsWith('@') ? mention : '@' + mention) : '');
+
+    const lines = String(markdown == null ? '' : markdown).split('\n');
+    const heading = lines.findIndex(one => one.trim().toLowerCase() === TASKS_HEADING.toLowerCase());
+    if (heading < 0) {
+        const out = lines.slice();
+        // One blank line before the new section, and never two: a document that
+        // grows a gap every time somebody makes a task looks edited by a machine.
+        while (out.length && out[out.length - 1].trim() === '') { out.pop(); }
+        out.push('', TASKS_HEADING, '', line, '');
+        return out.join('\n');
+    }
+
+    /* The end of that section: the line before the next heading of the same or
+     * a higher level, or the end of the document. A task appended after a
+     * SUBsection would leave the section it belongs to and read as part of
+     * whatever came next. */
+    let end = lines.length;
+    for (let i = heading + 1; i < lines.length; i++) {
+        if (/^#{1,2}\s/.test(lines[i])) { end = i; break; }
+    }
+    let at = end;
+    while (at > heading + 1 && lines[at - 1].trim() === '') { at--; }
+    const out = lines.slice(0, at).concat([line], lines.slice(at));
+    return out.join('\n');
+}
+
 /** The count line above the list, in the surface's own terms. */
 function countText(result) {
     if (result.total === 0) { return 'No tasks'; }
@@ -212,6 +263,7 @@ function honestyLine(result) {
 }
 
 module.exports = {
-    parseTasks, assigneesOf, assignedTo, band, tasks, countText, honestyLine, clip,
+    parseTasks, assigneesOf, assignedTo, band, tasks, appendTask, countText, honestyLine, clip,
+    TASKS_HEADING,
     TASK_MAX
 };

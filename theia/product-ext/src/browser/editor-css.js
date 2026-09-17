@@ -825,6 +825,15 @@ const WIDGET_CSS = `
 .studio-thread-quote { flex: 1; min-width: 0; }
 .studio-thread-tools { display: flex; gap: 1px; flex: none; }
 .studio-thread-note { font-size: 11.5px; color: var(--studio-accent); margin: 0 0 8px 31px; }
+/* What came of this comment. Indented to the thread's own text column, and in
+   the muted ink rather than the accent: the note above is a question waiting
+   for an answer, while this is a fact that is already settled. */
+.studio-thread-task {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 11.5px; color: var(--studio-muted); margin: 0 0 6px 31px;
+}
+.studio-thread-task svg { width: 12px; height: 12px; flex: none; opacity: 0.8; }
+.studio-thread-task span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .studio-orphan { color: var(--studio-danger); font-weight: 600; }
 /* Borderless until focused: an empty reply box does not need to announce
    itself, it needs to announce itself once someone is typing in it. */
