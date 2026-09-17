@@ -55,14 +55,27 @@ npm run watch:browser
 The session container bakes the bundle into the image, so a change reaches a
 containerised session only on the next image build.
 
-## Where this package comes from
+## This is where the package lives
 
-`product-ext` is **vendored**. Upstream is `studio-desktop`'s `app/product-ext`,
-which is itself vendored from `studio-internal` (see `SOURCE.json` there). Both
-of those still spell the directory `lib/`.
+**The source is here.** `theia/product-ext` is not a copy of anything, and a
+change made here is not waiting to be overwritten.
 
-So a change made only here is lost on the next sync. Land it upstream, or land
-it here and port it deliberately — and when syncing, translate the path:
-`app/product-ext/lib/…` upstream is `theia/product-ext/src/…` here. The only
-code that cared about the spelling is `src/node/flow-backend.js`, which now
-probes both.
+It did not start that way. The package arrived as a vendored copy of
+`studio-desktop`'s `app/product-ext` (#167), and this file used to say that a
+change made only here was lost on the next sync — which meant every improvement
+to the editor carried a deadline nobody was tracking, and most of the
+collaboration work landed in 2026-09 sat under it.
+
+That was settled rather than managed: the editor's source lives in this
+repository, where it is built, tested and shipped from. Anybody wanting these
+files elsewhere copies them *out* of here.
+
+### One thing that did not change, and is easy to get wrong
+
+`src/node/flow-backend.js` still probes for the MCP server under both `src/` and
+`lib/`, and that is **not** vendoring left over. `lib/` is the layout of a
+PACKAGED application, where the server is copied next to the two modules it
+loads because nothing can spawn a script out of an asar archive — see
+`src/flow-mcp/REGISTER.md`. Deleting that probe as part of "we do not vendor any
+more" would break the desktop build and nothing in this repository's tests would
+notice.

@@ -56,7 +56,7 @@ next `git diff`. There is no silent write.
 | | |
 | --- | --- |
 | server, in this checkout | `theia/product-ext/src/flow-mcp/server.mjs` |
-| server, in a studio-desktop checkout | `app/product-ext/lib/flow-mcp/server.mjs` |
+| server, in a packaged desktop build | `app/product-ext/lib/flow-mcp/server.mjs` |
 | server, in an installed application | `Constructor Studio.app/Contents/Resources/app/flow-mcp/server.mjs` |
 | project root (holds `.studio/`) | the green-field project you are working in |
 

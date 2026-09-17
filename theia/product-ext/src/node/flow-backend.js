@@ -45,10 +45,16 @@ function candidates() {
     list.push(path.resolve(__dirname, '..', 'flow-mcp', SERVER_FILE));
     const cwd = process.cwd();
     /*
-     * Both spellings of the package's source directory. This repository calls
-     * it `src/` because the files are hand-written; the studio-desktop checkout
-     * this package is vendored from still calls it `lib/`. The same file has to
-     * resolve in either, so it tries both rather than encoding one of them.
+     * Both spellings of the package's directory, and both are live.
+     *
+     * `src/` is this repository, where the files are hand-written and where the
+     * package's source now lives. `lib/` is a PACKAGED application, where the
+     * server is copied beside the two modules it loads because nothing can
+     * spawn a script out of an asar archive (see `src/flow-mcp/REGISTER.md`).
+     *
+     * Worth stating because the `lib/` spelling used to be explained by this
+     * package being vendored from a desktop checkout, and it no longer is —
+     * anybody tidying that up would find this probe and be wrong to remove it.
      */
     for (const dir of ['src', 'lib']) {
         list.push(path.resolve(cwd, 'product-ext', dir, 'flow-mcp', SERVER_FILE));
