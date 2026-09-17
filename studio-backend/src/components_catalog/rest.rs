@@ -369,6 +369,7 @@ async fn sync(
                 // queue behind each other instead.
                 partition_key: Some("catalog"),
                 idempotency_key: None,
+                notify_workspace_id: None,
             },
         )
         .await

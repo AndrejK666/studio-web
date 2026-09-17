@@ -470,6 +470,12 @@ async fn sync(
                 payload,
                 partition_key: Some(&partition_key),
                 idempotency_key: None,
+                // A sync is the long job someone waits for, and the project it
+                // was asked for is the session they are waiting in. A
+                // workspace-scoped sync addresses nobody: a workspace tenant is
+                // not a session, and guessing one would notify a window that
+                // has nothing to do with this.
+                notify_workspace_id: project_id.as_deref().and_then(|p| Uuid::parse_str(p).ok()),
             },
         )
         .await

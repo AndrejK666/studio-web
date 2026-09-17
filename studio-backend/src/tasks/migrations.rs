@@ -16,7 +16,7 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration)]
+        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
     }
 }
 
@@ -103,6 +103,62 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_studio_tasks_runs_idempotency
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_tasks_runs;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Who to tell when a run ends.
+///
+/// A second migration rather than an edit to the first: m0001 has shipped, and
+/// a changed `up` is a schema history that disagrees with the database it
+/// already created.
+mod m0002 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const ONLY_POSTGRES: &str =
+        "studio-tasks migrations: only PostgreSQL is supported (see the module docs)";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0002_studio_tasks_notify_workspace"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "
+-- Nullable, and no index: it is read once, by primary key, when the run that
+-- carries it ends. Every run that predates this column simply tells nobody.
+ALTER TABLE studio_tasks_runs
+    ADD COLUMN IF NOT EXISTS notify_workspace_id UUID;
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_tasks_runs DROP COLUMN IF EXISTS notify_workspace_id;",
+                )
                 .await?;
             Ok(())
         }

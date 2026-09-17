@@ -76,6 +76,28 @@ fn announce(hub: &ClientHub, tenant: Uuid, run_id: Uuid, kind: &str, payload: Va
     );
 }
 
+/// How a finished run reads in the IDE.
+///
+/// A function because it is the only part of the notice with a decision in it,
+/// and the only part worth pinning: which level an outcome deserves, and what
+/// is said when the handler had nothing to add.
+fn completion_notice(task_type: &str, state: RunState, detail: &str) -> (&'static str, String) {
+    let (level, verb) = match state {
+        RunState::Succeeded => ("info", "finished"),
+        RunState::Failed => ("error", "failed"),
+        // Cancelled is the only other terminal state, and it is neither good
+        // news nor a fault: somebody asked.
+        _ => ("warn", "was cancelled"),
+    };
+    let detail = detail.trim();
+    let text = if detail.is_empty() {
+        format!("{task_type} {verb}")
+    } else {
+        format!("{task_type} {verb} — {detail}")
+    };
+    (level, text)
+}
+
 /// The identity the worker acts as. Fixed, because it appears in audit trails
 /// and in every scoped read the handlers make.
 pub const SERVICE_SUBJECT_ID: Uuid = Uuid::from_u128(0x2c81_5ea7_39d4_4b1f_9a06_7d3e_51c8_2fb0);
@@ -294,6 +316,64 @@ impl TaskDispatcher {
             warn!(run_id = %id, "studio-tasks: could not record the run outcome: {e:#}");
         }
         announce(&self.hub, tenant, id, &kind, payload);
+        if patch.state.is_terminal() {
+            self.tell_the_editor(tenant, id, task_type, &patch).await;
+        }
+    }
+
+    /// Say in the IDE that this run ended, when the run was addressed to one.
+    ///
+    /// Best-effort, exactly like the event above: a notice that cannot be
+    /// queued must not fail a run that has already happened and already been
+    /// recorded.
+    ///
+    /// Note what this does NOT do — read the payload. The workspace was handed
+    /// to the enqueuing gear by its caller and carried here as an address, so
+    /// this gear still does not know what any of its work means.
+    ///
+    /// Nor can it loop. A delivery is a run too, and telling someone their
+    /// import finished queues one — but a delivery carries no address of its
+    /// own, so it ends here rather than announcing itself for ever. That is
+    /// structural, not a name this function has to remember to exclude.
+    async fn tell_the_editor(&self, tenant: Uuid, id: Uuid, task_type: &str, patch: &Patch<'_>) {
+        let Ok(Some(row)) = self.run_row(tenant, id).await else {
+            return;
+        };
+        let Some(workspace_id) = row.notify_workspace_id else {
+            return;
+        };
+        let (level, text) = completion_notice(
+            task_type,
+            patch.state,
+            patch.summary.or(patch.error).unwrap_or_default(),
+        );
+        // The run that ended is what is being announced, so a retried record —
+        // or a second dispatcher seeing the same terminal transition — says it
+        // once.
+        let key = format!("task-ended:{id}");
+        let ctx = match Self::worker_context(tenant) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                warn!(run_id = %id, "studio-tasks: no context to send the completion notice: {e:#}");
+                return;
+            }
+        };
+        let notify = crate::notify::service::NotifyService::new(Arc::clone(&self.hub));
+        let delivery = crate::notify::service::NewDelivery {
+            tenant,
+            to: crate::notify::service::Destination::Editor {
+                workspace_id,
+                level,
+            },
+            title: None,
+            text: &text,
+            link: None,
+            topic: Some("background-work"),
+            idempotency_key: Some(&key),
+        };
+        if let Err(e) = notify.accept(&ctx, delivery).await {
+            warn!(run_id = %id, "studio-tasks: could not queue the completion notice: {e:#}");
+        }
     }
 }
 
@@ -619,6 +699,35 @@ impl LeasedMessageHandler for TaskDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_finished_run_reads_as_what_it_did() {
+        let (level, text) = completion_notice("artifact.ingest", RunState::Succeeded, "42 files");
+        assert_eq!(level, "info");
+        assert_eq!(text, "artifact.ingest finished — 42 files");
+    }
+
+    #[test]
+    fn a_failure_is_an_error_and_carries_its_reason() {
+        let (level, text) = completion_notice("artifact.ingest", RunState::Failed, "token expired");
+        assert_eq!(level, "error");
+        assert_eq!(text, "artifact.ingest failed — token expired");
+    }
+
+    #[test]
+    fn being_cancelled_is_neither_good_news_nor_a_fault() {
+        let (level, text) = completion_notice("artifact.ingest", RunState::Cancelled, "");
+        assert_eq!(level, "warn");
+        assert_eq!(text, "artifact.ingest was cancelled");
+    }
+
+    #[test]
+    fn a_handler_with_nothing_to_add_leaves_no_dangling_dash() {
+        // The em dash introduces a detail. With none, it would trail off the
+        // end of the sentence and read like a truncation.
+        let (_, text) = completion_notice("connector.graph_sync", RunState::Succeeded, "   ");
+        assert_eq!(text, "connector.graph_sync finished");
+    }
 
     #[test]
     fn a_long_message_is_cut_to_a_sentence_without_splitting_a_character() {
