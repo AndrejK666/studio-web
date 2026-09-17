@@ -71,6 +71,7 @@ const { QUALITY_CSS } = require('./quality-view');
 const { MEASURES_CSS } = require('./quality-measures');
 const { QUALITY_MARKS_CSS } = require('./quality-marks');
 const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
+const { CollaborationWidget, COLLAB_CSS, COLLAB_WIDGET_ID } = require('./collab-view');
 const { QualityStore } = require('./quality-store');
 /*
  * The green-field flow. Four modules and a hard rule: with no
@@ -151,6 +152,27 @@ const QUALITY_PROJECT_COMMAND = {
 };
 
 const QUALITY_RAIL_ITEM_ID = 'studio-quality-rail';
+
+/*
+ * Collaboration at project scope: who is here, what is being discussed, what is
+ * waiting for a decision.
+ *
+ * NO KEYBINDING, for Quality's reason — this is a surface you go to when you
+ * want it, not several times an hour, and a chord spent on that is a chord
+ * spent badly. The palette and the rail are the routes.
+ *
+ * NOT GATED ON A SETTING, unlike Quality. Comments and proposals are not an
+ * optional feature of this product; a project with neither shows a page that
+ * says so in three empty states, which is a useful answer rather than a blank.
+ */
+const COLLAB_COMMAND = {
+    id: 'studio.collaboration',
+    label: 'Collaboration — who is here and what is open…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-organization'
+};
+
+const COLLAB_RAIL_ITEM_ID = 'studio-collab-rail';
 
 /*
  * The green-field flow's three commands.
@@ -1528,7 +1550,7 @@ class ProductChromeContribution {
              * the rail's own CSS must land after EDITOR_CSS's .studio-rail-*
              * geometry it builds on.
              */
-            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS +
+            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS +
             /* The flow's one surface: the rail's column. */
             FLOW_RAIL_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
@@ -1695,7 +1717,7 @@ class ProductChromeContribution {
         // The shell is not attached yet under onDidInitializeLayout, and mounting
         // reaches into its DOM, so it waits for the current tick to finish. Same
         // reason the rail-foot cluster this replaces did.
-        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); }, 0);
+        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); this.mountCollabRail(); }, 0);
 
         this.watchFeatureSettings(app.shell);
     }
@@ -1890,6 +1912,50 @@ class ProductChromeContribution {
             await shell.addWidget(widget, { area: 'main' });
         }
         shell.activateWidget(widget.id);
+    }
+
+    /*
+     * Open (or re-reveal) the Collaboration tab. openSearch's shape, including
+     * the staleness guard, and for the same reason (constraint 27).
+     */
+    async openCollaboration(shell) {
+        let widget = shell.widgets.find(w => w.id === COLLAB_WIDGET_ID);
+        if (widget && (widget.isDisposed || !widget.parent)) {
+            try { widget.dispose(); } catch (e) { /* already going */ }
+            widget = undefined;
+        }
+        if (!widget) {
+            widget = new CollaborationWidget({
+                workspaceService: this.container.get(WorkspaceService),
+                fileService: this.container.get(FileService),
+                openerService: this.container.get(OpenerService),
+                messageService: this.container.get(MessageService),
+                commandRegistry: this.container.get(CommandRegistry)
+            });
+            await shell.addWidget(widget, { area: 'main' });
+        }
+        shell.activateWidget(widget.id);
+    }
+
+    /*
+     * The rail's Collaboration button, in the ACTIONS group beside Search and
+     * Quality. Unconditional, unlike Quality's — see COLLAB_COMMAND for why
+     * this one is not behind a setting, and rail-nav.js for why `actions` is
+     * the append-friendly group.
+     */
+    mountCollabRail() {
+        if (this.collabRailNode) { return; }
+        const button = document.createElement('button');
+        button.id = COLLAB_RAIL_ITEM_ID;
+        button.className = 'studio-rail-btn';
+        button.title = 'Collaboration across this project';
+        button.setAttribute('aria-label', 'Collaboration across this project');
+        button.innerHTML = ICONS.comment;
+        button.addEventListener('click', () => {
+            this.container.get(CommandRegistry).executeCommand(COLLAB_COMMAND.id);
+        });
+        this.collabRailNode = button;
+        railNav.claim('actions', group => group.appendChild(button));
     }
 
     /*
@@ -2481,6 +2547,21 @@ function qualityProjectHandler(container) {
     };
 }
 
+function collaborationHandler(container) {
+    return {
+        execute: () => {
+            const shell = container.get(ApplicationShell);
+            const chrome = container.getAll(FrontendApplicationContribution)
+                .find(contribution => typeof contribution.openCollaboration === 'function');
+            if (!chrome) {
+                console.warn('[studio] the product chrome contribution is not available to open Collaboration');
+                return;
+            }
+            return chrome.openCollaboration(shell);
+        }
+    };
+}
+
 const mod = new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toDynamicValue(ctx => new ProductChromeContribution(ctx.container)).inSingletonScope();
     /*
@@ -2512,6 +2593,7 @@ const mod = new ContainerModule(bind => {
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
+            commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
             /* Unconditional: the portal's handshake can arrive before anything
              * else this frontend does, and a command that is not there yet is
              * a sign-in silently dropped. */
