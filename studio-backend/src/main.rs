@@ -26,6 +26,7 @@ mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm 
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
+mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod registered_gears;
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot

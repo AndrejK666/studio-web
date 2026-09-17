@@ -71,6 +71,7 @@ import {
 } from "./view-mode";
 import { olderThanWindow, repoActivity, type RepoActivity } from "./source-activity";
 import { ActivityView } from "./activity-view";
+import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 
@@ -1226,6 +1227,16 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const userName =
     claimStr("name") ?? claimStr("preferred_username") ?? `${me.subject_id.slice(0, 8)}…`;
   const userEmail = claimStr("email");
+  // Say we are here, and pick up anything left for us. `view` is the label
+  // other people see in the admin list, and the crumb's project name is the
+  // detail — "specs" alone answers less than "specs · Studioweb".
+  const presence = usePresence(
+    token,
+    userName,
+    view,
+    workspaces.find((w) => w.id === crumb.projectId)?.name,
+  );
+
   const userInitials = userName
     .split(/\s+/)
     .map((w) => w[0])
@@ -1449,6 +1460,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   return (
     <StudioBridgeProvider value={studioBridge}>
     <div className="shell">
+      <PresenceNotes messages={presence.messages} onDismiss={presence.dismiss} />
       {/* The only chrome in the flow: one 56px row carrying the control that
           opens the navigation drawer, the product, the context the session is
           in, and the session's own affordances. Everything below it belongs to
@@ -2193,7 +2205,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && (
-          <SystemView token={token} filters={filters} tenant={orgAsSpace} />
+          <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
         )}
         {view === "profile" && <ProfileView me={me} home={home} token={token} />}
           </>
@@ -4513,9 +4525,12 @@ function SystemView({
   token,
   filters,
   tenant,
+  meId,
 }: {
   token: string;
   filters: Filters;
+  /** The caller, so the list can mark them and not offer to message them. */
+  meId?: string;
   /** The shared-catalogue tenant a notification is sent from and to. Absent
    *  until one exists, and the panels then say so rather than rendering a form
    *  with nowhere to post. */
@@ -4687,6 +4702,11 @@ function SystemView({
     <>
       <h1>System</h1>
       <p className="subtitle">Live observability over the platform gears of this assembly.</p>
+
+      {/* People before processes. Everything else on this page is about what
+          the assembly is doing; this is about who is doing it, which is the
+          question somebody opens an admin screen with. */}
+      <WhoIsOnline token={token} meId={meId} />
 
       {/* Poking the assembly and watching what comes out belongs with watching
           it: a notification is the one gear behaviour you can trigger by hand

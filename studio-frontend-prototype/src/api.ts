@@ -740,6 +740,28 @@ export interface ProjectRepository {
   git_mode?: string | null;
 }
 
+/* ── studio-presence: who is in Studio now ── */
+
+/** One person, as the presence gear reports them. */
+export interface PresenceEntry {
+  user_id: string;
+  display_name?: string | null;
+  tenant_id: string;
+  place: string;
+  detail?: string | null;
+  since_ms: number;
+  last_seen_ms: number;
+}
+
+/** A note somebody left for the caller. Handed over once and not stored. */
+export interface PresenceMessage {
+  id: string;
+  from_user_id: string;
+  from_display_name?: string | null;
+  text: string;
+  sent_ms: number;
+}
+
 // simple-user-settings gear stores exactly these two per-user fields.
 export interface UserPrefs {
   theme?: string;
@@ -1982,6 +2004,44 @@ export const api = {
     request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${ACCESS_TYPE}`, token, {
       method: "PUT",
       body: JSON.stringify(value),
+    }),
+
+  /* ── Presence (studio-presence gear) ──
+   *
+   * The heartbeat both reports and collects: one request, because a client
+   * that has to be here anyway to say it is here should not need a second one
+   * to find out it was written to. */
+
+  presenceHeartbeat: (
+    token: string,
+    where: { display_name?: string; place?: string; detail?: string },
+  ) =>
+    request<{ me: PresenceEntry; messages: PresenceMessage[]; online: number }>(
+      "/studio-presence/v1/me",
+      token,
+      { method: "POST", body: JSON.stringify(where) },
+    ),
+
+  /** A deliberate exit, so the list does not hold somebody for the whole
+   *  timeout after they closed the tab. */
+  presenceLeave: (token: string) =>
+    request<unknown>("/studio-presence/v1/me", token, { method: "DELETE" }),
+
+  presenceOnline: (token: string) =>
+    request<{ items: PresenceEntry[]; total: number; online_ttl_ms: number; heartbeat_ms: number }>(
+      "/studio-presence/v1/online",
+      token,
+    ),
+
+  /** `delivered: false` means the recipient is not in Studio — nothing was
+   *  queued, and the caller has to say so. */
+  presenceSend: (
+    token: string,
+    message: { to_user_id: string; text: string; from_display_name?: string },
+  ) =>
+    request<{ delivered: boolean; waiting: number }>("/studio-presence/v1/messages", token, {
+      method: "POST",
+      body: JSON.stringify(message),
     }),
 
   /* ── Per-user UI choices (studio-user gear) ──
