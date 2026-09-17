@@ -500,13 +500,14 @@ impl IngestService {
         // is built. `None` when there was no checkout — a repository listed
         // through a connector's tree API has no sidecars to read, and claiming
         // it has no threads would be a different statement from not knowing.
-        let mut document_threads = std::collections::BTreeMap::new();
+        let mut threads = comment_threads::RepositoryThreads::default();
         if let Some((_, list, _)) = on_disk.as_ref() {
-            document_threads = comment_threads::fold_repository(
+            threads = comment_threads::fold_repository(
                 list.iter()
                     .filter_map(|wf| wf.text.as_deref().map(|text| (wf.path.as_str(), text))),
             );
-            open_document_threads = Some(document_threads.values().map(|counts| counts.open).sum());
+            open_document_threads =
+                Some(threads.documents.values().map(|counts| counts.open).sum());
         }
 
         match on_disk {
@@ -545,7 +546,7 @@ impl IngestService {
                         wf.size,
                         text,
                         commit.as_deref(),
-                        document_threads.get(&wf.path).copied(),
+                        threads.documents.get(&wf.path).copied(),
                     ));
                 }
             }
@@ -839,6 +840,7 @@ impl IngestService {
                 open_review_threads,
                 open_document_threads,
             },
+            &threads.waiting,
         ));
         self.flush_and_report(
             ctx,

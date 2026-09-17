@@ -67,6 +67,12 @@ use serde_json::Value;
 
 /// Where the IDE keeps them. A path outside this prefix is not a comment log.
 const SIDECAR_DIR: &str = ".studio/comments/";
+
+/// How many people the repository node names. A node is read to answer "does
+/// this project want something from me", and past a few dozen the answer is
+/// "yes, from everybody" — which the open-thread count already says, more
+/// cheaply than a list nobody scrolls.
+const MAX_WAITING: usize = 50;
 const LOG_SUFFIX: &str = ".jsonl";
 const LEGACY_SUFFIX: &str = ".json";
 
@@ -101,9 +107,40 @@ struct Entry<'a> {
 #[derive(Default)]
 struct Thread {
     resolved: bool,
-    /// Message ids in the order they were added, so a retraction can remove
-    /// exactly one and a thread emptied by retractions stops being a thread.
-    messages: Vec<String>,
+    /// Message id and author, in the order they were added. The id is what a
+    /// retraction names; the author is what makes "who is this waiting on"
+    /// answerable without reading a word of what anybody wrote.
+    messages: Vec<Message>,
+}
+
+struct Message {
+    id: String,
+    /// The author record's `id`, as the op carried it. Absent for a message
+    /// written before identity existed — those fold to no one in particular,
+    /// and a thread of them waits on nobody.
+    author: Option<String>,
+    /// The display name, kept only so a person can be named once counted.
+    name: Option<String>,
+}
+
+/// One person, and what this repository is waiting on them for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    /// The author record's id — `oidc:<subject>` for a signed-in person, which
+    /// is what lets a portal match a row to whoever is looking at it.
+    pub id: String,
+    pub name: String,
+    /// Open threads this person is in where the last word is somebody else's.
+    pub threads: usize,
+}
+
+/// Everything one repository's sidecars amount to.
+#[derive(Debug, Default)]
+pub struct RepositoryThreads {
+    /// Per document, keyed by the document's repo-relative path.
+    pub documents: BTreeMap<String, ThreadCounts>,
+    /// Per person, most waited-on first. Only people the logs actually name.
+    pub waiting: Vec<Waiting>,
 }
 
 /// Which document a sidecar path belongs to, and what kind of file it is.
@@ -150,7 +187,14 @@ struct Sidecars<'a> {
 /// not a sidecar is ignored, so the caller hands over the whole walk rather
 /// than pre-filtering it. A document whose threads have all been deleted
 /// produces no entry, which is the same as never having been commented on.
-pub fn fold_repository<'a, I>(files: I) -> BTreeMap<String, ThreadCounts>
+/// Fold every comment sidecar among a repository's files into per-document
+/// counts and per-person waiting.
+///
+/// Takes `(path, text)` for the files the sync already read; anything that is
+/// not a sidecar is ignored, so the caller hands over the whole walk rather
+/// than pre-filtering it. A document whose threads have all been deleted
+/// produces no entry, which is the same as never having been commented on.
+pub fn fold_repository<'a, I>(files: I) -> RepositoryThreads
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
@@ -166,17 +210,33 @@ where
         }
     }
 
-    let mut counts = BTreeMap::new();
+    let mut out = RepositoryThreads::default();
+    let mut waiting: HashMap<String, (String, usize)> = HashMap::new();
     for (document, sidecars) in by_document {
-        let folded = fold_document(&sidecars);
+        let folded = fold_document(&sidecars, &mut waiting);
         if folded.total() > 0 {
-            counts.insert(document, folded);
+            out.documents.insert(document, folded);
         }
     }
-    counts
+
+    out.waiting = waiting
+        .into_iter()
+        .map(|(id, (name, threads))| Waiting { id, name, threads })
+        .collect();
+    /* Most waited-on first, and by id after that so a re-sync of an unchanged
+     * repository writes an unchanged node: a HashMap's order is not one, and a
+     * node whose bytes move for nothing invites every reader downstream to
+     * treat it as news. */
+    out.waiting
+        .sort_by(|a, b| b.threads.cmp(&a.threads).then_with(|| a.id.cmp(&b.id)));
+    out.waiting.truncate(MAX_WAITING);
+    out
 }
 
-fn fold_document(sidecars: &Sidecars<'_>) -> ThreadCounts {
+fn fold_document(
+    sidecars: &Sidecars<'_>,
+    waiting: &mut HashMap<String, (String, usize)>,
+) -> ThreadCounts {
     let mut threads: HashMap<String, Thread> = HashMap::new();
 
     // The base layer: threads already committed in the legacy sidecar. Read as
@@ -196,12 +256,7 @@ fn fold_document(sidecars: &Sidecars<'_>) -> ThreadCounts {
                 .map(|m| {
                     m.iter()
                         .enumerate()
-                        .map(|(index, message)| {
-                            message
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .map_or_else(|| derived_message_id(id, index), str::to_string)
-                        })
+                        .map(|(index, message)| message_of(message, id, index))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -287,7 +342,7 @@ fn fold_document(sidecars: &Sidecars<'_>) -> ThreadCounts {
             .and_then(Value::as_str)
             .is_some_and(|b| !b.is_empty())
         {
-            let message = message_id(entry.op, id, thread.messages.len());
+            let message = message_of(entry.op, id, thread.messages.len());
             thread.messages.push(message);
         }
     }
@@ -320,7 +375,7 @@ fn fold_document(sidecars: &Sidecars<'_>) -> ThreadCounts {
         };
         match op {
             "reply" => {
-                let message = message_id(entry.op, id, thread.messages.len());
+                let message = message_of(entry.op, id, thread.messages.len());
                 thread.messages.push(message);
             }
             // Not final, unlike a delete: the last one in the total order wins,
@@ -341,36 +396,96 @@ fn fold_document(sidecars: &Sidecars<'_>) -> ThreadCounts {
         }
     }
 
-    // Phase 3 — tombstones, and then the count.
+    // Phase 3 — tombstones, and then the counting.
     let mut counts = ThreadCounts::default();
     for (id, thread) in &threads {
         if deleted.contains(id.as_str()) {
             continue;
         }
-        let left = thread
+        let left: Vec<&Message> = thread
             .messages
             .iter()
-            .filter(|message| !retracted.contains(message.as_str()))
-            .count();
+            .filter(|message| !retracted.contains(message.id.as_str()))
+            .collect();
         // A thread whose every message was retracted shows nothing in the IDE,
         // so counting it here would report a conversation nobody can find.
-        if left == 0 {
+        if left.is_empty() {
             continue;
         }
         if thread.resolved {
             counts.resolved += 1;
-        } else {
-            counts.open += 1;
+            continue;
         }
+        counts.open += 1;
+        credit_waiting(&left, waiting);
     }
     counts
 }
 
-/// The id a message is known by, explicit when the op carries one.
-fn message_id(op: &Value, thread: &str, index: usize) -> String {
-    op.get("message")
-        .and_then(Value::as_str)
-        .map_or_else(|| derived_message_id(thread, index), str::to_string)
+/*
+ * Who an open thread is waiting on: everybody in it except whoever spoke last.
+ *
+ * The same rule `collab-scan.js` applies in the IDE, and stated in identifiers
+ * rather than in words on purpose — no message body is read here, so nothing
+ * about this has to agree with the IDE on what a mention looks like or how a
+ * name is spelled. A person is in a thread because an op carried their author
+ * record, and the last word is somebody else's or it is not.
+ *
+ * NOT an unread count. Nothing anywhere records what anybody has read, and a
+ * read model kept in one browser's storage would disagree with itself across
+ * two tabs of the same person. "The last word is not yours" is a fact about the
+ * thread, which is why it is the one this can state.
+ *
+ * A message written before identity existed carries no author id and so folds
+ * to nobody: a thread of only those waits on no one, which is the honest answer
+ * rather than a name invented from a display string.
+ */
+fn credit_waiting(messages: &[&Message], waiting: &mut HashMap<String, (String, usize)>) {
+    let Some(last) = messages
+        .last()
+        .and_then(|message| message.author.as_deref())
+    else {
+        return;
+    };
+    let mut credited: HashSet<&str> = HashSet::new();
+    for message in messages {
+        let Some(author) = message.author.as_deref() else {
+            continue;
+        };
+        if author == last || !credited.insert(author) {
+            continue;
+        }
+        let entry = waiting
+            .entry(author.to_string())
+            .or_insert_with(|| (String::new(), 0));
+        entry.1 += 1;
+        // The newest name this person wrote under wins: a rename should show
+        // the name they have now, and the fold walks messages in order.
+        if let Some(name) = message.name.as_deref() {
+            entry.0 = name.to_string();
+        }
+    }
+}
+
+/// One message, as the fold needs it: an id to retract by and an author to
+/// count by.
+fn message_of(op: &Value, thread: &str, index: usize) -> Message {
+    let by = op.get("by");
+    Message {
+        id: op
+            .get("message")
+            .and_then(Value::as_str)
+            .map_or_else(|| derived_message_id(thread, index), str::to_string),
+        author: by
+            .and_then(|by| by.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        name: by
+            .and_then(|by| by.get("name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string),
+    }
 }
 
 /// Positional and stable, so two clients that never met agree on which message
@@ -391,8 +506,19 @@ mod tests {
         )
     }
 
-    fn counts(files: &[(&str, &str)]) -> BTreeMap<String, ThreadCounts> {
+    fn fold(files: &[(&str, &str)]) -> RepositoryThreads {
         fold_repository(files.iter().map(|(p, t)| (*p, *t)))
+    }
+
+    fn counts(files: &[(&str, &str)]) -> BTreeMap<String, ThreadCounts> {
+        fold(files).documents
+    }
+
+    /// An op with an author, for the cases about WHO rather than how many.
+    fn by(who: &str, kind: &str, at: &str, body: &str) -> String {
+        format!(
+            r#"{{"op":"{kind}","thread":"t1","at":"{at}","by":{{"id":"oidc:{who}","key":"oidc-{who}","name":"{who}"}},"body":"{body}"}}"#
+        )
     }
 
     #[test]
@@ -545,5 +671,111 @@ mod tests {
             (".studio/comments/data.json/oidc-a.jsonl", one.as_str()),
         ]);
         assert_eq!(found.get("data.json").map(|c| c.open), Some(1));
+    }
+
+    // -- who it waits on -----------------------------------------------------
+
+    #[test]
+    fn an_open_thread_waits_on_everyone_but_whoever_spoke_last() {
+        let log = format!(
+            "{}\n{}",
+            by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?"),
+            by("roma", "reply", "2026-09-17T10:05:00.000Z", "The audit.")
+        );
+        let waiting = fold(&[(".studio/comments/docs/prd.md/oidc-ana.jsonl", &log)]).waiting;
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].id, "oidc:ana");
+        assert_eq!(waiting[0].threads, 1);
+    }
+
+    #[test]
+    fn the_last_speaker_is_not_waiting_on_themselves() {
+        let one = by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?");
+        let waiting = fold(&[(".studio/comments/docs/prd.md/oidc-ana.jsonl", &one)]).waiting;
+        assert!(waiting.is_empty(), "{waiting:?}");
+    }
+
+    #[test]
+    fn a_resolved_thread_waits_on_nobody() {
+        // Settled is settled: it is the one state where nothing is owed.
+        let log = format!(
+            "{}\n{}\n{}",
+            by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?"),
+            by("roma", "reply", "2026-09-17T10:05:00.000Z", "The audit."),
+            r#"{"op":"resolve","thread":"t1","at":"2026-09-17T11:00:00.000Z","by":{"id":"oidc:roma","key":"oidc-roma","name":"roma"}}"#
+        );
+        let folded = fold(&[(".studio/comments/docs/prd.md/oidc-ana.jsonl", &log)]);
+        assert_eq!(
+            folded.documents.get("docs/prd.md").map(|c| c.resolved),
+            Some(1)
+        );
+        assert!(folded.waiting.is_empty(), "{:?}", folded.waiting);
+    }
+
+    #[test]
+    fn a_thread_written_before_identity_existed_waits_on_nobody() {
+        // Those messages carry no author id, and inventing one from a display
+        // string would put a name on somebody who may not be here at all.
+        let log = format!(
+            "{}\n{}",
+            r#"{"op":"open","thread":"t1","at":"2026-09-17T10:00:00.000Z","body":"Why Q3?"}"#,
+            r#"{"op":"reply","thread":"t1","at":"2026-09-17T10:05:00.000Z","body":"The audit."}"#
+        );
+        let folded = fold(&[(".studio/comments/docs/prd.md/legacy.jsonl", &log)]);
+        assert_eq!(folded.documents.get("docs/prd.md").map(|c| c.open), Some(1));
+        assert!(folded.waiting.is_empty(), "{:?}", folded.waiting);
+    }
+
+    #[test]
+    fn one_person_waited_on_across_two_documents_is_one_row() {
+        let log = format!(
+            "{}\n{}",
+            by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?"),
+            by("roma", "reply", "2026-09-17T10:05:00.000Z", "The audit.")
+        );
+        let waiting = fold(&[
+            (".studio/comments/docs/prd.md/oidc-ana.jsonl", log.as_str()),
+            (".studio/comments/README.md/oidc-ana.jsonl", log.as_str()),
+        ])
+        .waiting;
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].threads, 2);
+    }
+
+    #[test]
+    fn the_most_waited_on_person_is_first() {
+        let busy = format!(
+            "{}\n{}",
+            by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?"),
+            by("roma", "reply", "2026-09-17T10:05:00.000Z", "The audit.")
+        );
+        let quiet = format!(
+            "{}\n{}",
+            r#"{"op":"open","thread":"t2","at":"2026-09-17T10:00:00.000Z","by":{"id":"oidc:vlad","key":"oidc-vlad","name":"vlad"},"body":"And this?"}"#,
+            r#"{"op":"reply","thread":"t2","at":"2026-09-17T10:05:00.000Z","by":{"id":"oidc:roma","key":"oidc-roma","name":"roma"},"body":"Yes."}"#
+        );
+        let waiting = fold(&[
+            (".studio/comments/a.md/x.jsonl", busy.as_str()),
+            (".studio/comments/b.md/x.jsonl", busy.as_str()),
+            (".studio/comments/c.md/y.jsonl", quiet.as_str()),
+        ])
+        .waiting;
+        assert_eq!(waiting[0].id, "oidc:ana");
+        assert_eq!(waiting[0].threads, 2);
+        assert_eq!(waiting[1].id, "oidc:vlad");
+        assert_eq!(waiting[1].threads, 1);
+    }
+
+    #[test]
+    fn a_person_is_credited_once_per_thread_however_often_they_wrote() {
+        let log = format!(
+            "{}\n{}\n{}",
+            by("ana", "open", "2026-09-17T10:00:00.000Z", "Why Q3?"),
+            by("ana", "reply", "2026-09-17T10:01:00.000Z", "Or Q4?"),
+            by("roma", "reply", "2026-09-17T10:05:00.000Z", "The audit.")
+        );
+        let waiting = fold(&[(".studio/comments/a.md/x.jsonl", &log)]).waiting;
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].threads, 1);
     }
 }

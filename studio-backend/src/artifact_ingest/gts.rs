@@ -8,7 +8,7 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::comment_threads::ThreadCounts;
+use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::driver::{
     RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
@@ -401,6 +401,7 @@ pub fn repo_synced_node(
     repo_full_path: &str,
     synced_at: &str,
     stats: RepoSyncStats,
+    waiting: &[Waiting],
 ) -> GtsNode {
     let mut node = repo_node(scope_key, connector_id, provider, repo_full_path);
     if let Some(obj) = node.value.as_object_mut() {
@@ -415,6 +416,32 @@ pub fn repo_synced_node(
         }
         if let Some(open) = stats.open_document_threads {
             obj.insert("open_document_threads".to_string(), json!(open));
+        }
+        /*
+         * Who those threads are waiting on, so a portal can answer "does this
+         * project want something from me" without a checkout of its own. The
+         * id is the author record's — `oidc:<subject>` for a signed-in person,
+         * which is what a portal can match against whoever is looking.
+         *
+         * Written only when the sync had sidecars to read, and then even when
+         * the list is empty: on a repository with a conversation, "nobody is
+         * waiting" is an answer, while on one that was never read it is a
+         * guess.
+         */
+        if stats.open_document_threads.is_some() {
+            obj.insert(
+                "waiting_on".to_string(),
+                json!(
+                    waiting
+                        .iter()
+                        .map(|person| json!({
+                            "id": person.id,
+                            "name": person.name,
+                            "threads": person.threads,
+                        }))
+                        .collect::<Vec<_>>()
+                ),
+            );
         }
     }
     node
