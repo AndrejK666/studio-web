@@ -147,6 +147,90 @@ test('a snippet is one line, trimmed, and bounded', () => {
     assert.strictEqual(snippet.length, 90);
 });
 
+
+// -- an area inside an element (requirement 23) ------------------------------
+
+const box = (left, top, width, height) => ({ left, top, width, height });
+
+test('an area is stored as fractions, not pixels', () => {
+    // The whole requirement: "stored relative to its page, slide, image or
+    // canvas". Pixels would put a rectangle over the middle of a diagram the
+    // first time somebody read it in a narrower window.
+    const area = anchor.areaIn(box(150, 100, 100, 50), box(100, 100, 400, 200));
+    assert.deepStrictEqual(area, { x: 0.125, y: 0, w: 0.25, h: 0.25 });
+});
+
+test('the same fractions land on the same part after a resize', () => {
+    const drawn = anchor.areaIn(box(200, 100, 100, 50), box(100, 100, 400, 200));
+    const stored = { type: 'area', path: [0], area: drawn, aspect: 2 };
+    // Half the width, half the height: the same quarter of the picture.
+    const placed = anchor.placeArea(stored, box(0, 0, 200, 100));
+    assert.deepStrictEqual(placed, { left: 50, top: 0, width: 50, height: 25 });
+});
+
+test('a drag that leaves the element is clamped to it', () => {
+    const area = anchor.areaIn(box(-50, -50, 1000, 1000), box(0, 0, 100, 100));
+    assert.deepStrictEqual(area, { x: 0, y: 0, w: 1, h: 1 });
+});
+
+test('a drag that is really a click is not an area', () => {
+    assert.strictEqual(anchor.areaIn(box(10, 10, 0, 0), box(0, 0, 100, 100)), undefined);
+    assert.strictEqual(anchor.areaIn(box(10, 10, 0.5, 40), box(0, 0, 100, 100)), undefined);
+});
+
+test('an element with no box cannot hold an area', () => {
+    // A collapsed or hidden container divides by zero, and a fraction of
+    // nothing is not an anchor.
+    assert.strictEqual(anchor.areaIn(box(0, 0, 10, 10), box(0, 0, 0, 0)), undefined);
+});
+
+test('an area anchor carries where, how big, and what shape it was', () => {
+    const el = node('img', { id: 'diagram' });
+    const root = node('body', { children: [el] });
+    const stored = anchor.areaAnchorFor(el, root, box(10, 0, 40, 25), box(0, 0, 200, 100));
+    assert.strictEqual(stored.type, 'area');
+    assert.deepStrictEqual(stored.path, [0]);
+    assert.strictEqual(stored.aspect, 2);
+    assert.strictEqual(stored.describe, 'img#diagram');
+    assert.deepStrictEqual(stored.area, { x: 0.05, y: 0, w: 0.2, h: 0.25 });
+});
+
+test('an area is never stored without a path in it', () => {
+    const root = node('body');
+    assert.strictEqual(anchor.areaAnchorFor(node('img'), root, box(0, 0, 10, 10), box(0, 0, 100, 100)), undefined);
+});
+
+// -- when placement stops being trustworthy ----------------------------------
+
+test('a resize is not a reshape, so the area is still placed', () => {
+    const stored = { type: 'area', area: { x: 0, y: 0, w: 1, h: 1 }, aspect: 2 };
+    assert.strictEqual(anchor.aspectDrifted(stored, box(0, 0, 400, 200)), false);
+    assert.strictEqual(anchor.aspectDrifted(stored, box(0, 0, 200, 100)), false);
+    assert.strictEqual(anchor.aspectDrifted(stored, box(0, 0, 40, 20)), false);
+});
+
+test('a reshape asks for reattachment instead of moving the area', () => {
+    // A diagram that was wide and is now tall has rearranged its own contents,
+    // so the same fractions now cover something else. Requirement 23: "asks for
+    // reattachment rather than silently moving it".
+    const stored = { type: 'area', area: { x: 0, y: 0, w: 1, h: 1 }, aspect: 2 };
+    assert.strictEqual(anchor.aspectDrifted(stored, box(0, 0, 100, 200)), true);
+    assert.strictEqual(anchor.aspectDrifted(stored, box(0, 0, 400, 100)), true);
+});
+
+test('drift is symmetric: half as wide is as suspicious as twice as wide', () => {
+    const wide = { type: 'area', aspect: 2 };
+    const tall = { type: 'area', aspect: 0.5 };
+    assert.strictEqual(anchor.aspectDrifted(wide, box(0, 0, 100, 100)),
+        anchor.aspectDrifted(tall, box(0, 0, 100, 100)));
+});
+
+test('an anchor written before the ratio existed is still placeable', () => {
+    // An old comment is not evidence of a reshape, and refusing to place it
+    // would lose every area anchor written before this field.
+    assert.strictEqual(anchor.aspectDrifted({ type: 'area', area: {} }, box(0, 0, 10, 100)), false);
+});
+
 if (failures) {
     console.error(failures + ' failing');
     process.exit(1);

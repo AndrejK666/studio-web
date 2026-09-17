@@ -138,6 +138,106 @@ function anchorFor(el, root) {
     };
 }
 
+
+/*
+ * An area inside an element (requirement 23).
+ *
+ * "Draw a rectangular area over rendered content and attach a comment without
+ * creating a screenshot. The area is stored relative to its page, slide, image
+ * or canvas."
+ *
+ * RELATIVE IS THE WHOLE REQUIREMENT, and it means fractions rather than pixels.
+ * A rectangle over the left third of a diagram has to stay over the left third
+ * when the window is narrower, the font is larger, or the same document is read
+ * on somebody else's screen. Pixels would put it over the middle, silently, and
+ * a comment pointing at the wrong part of a picture is worse than one that
+ * admits it is lost.
+ *
+ * WHAT IS STORED BESIDE IT is the container's aspect ratio at the moment of
+ * drawing. Fractions survive a resize; they do not survive a RESHAPE — a
+ * diagram that was wide and is now tall has rearranged its own contents, and
+ * the same fractions now cover something else entirely. That is the case
+ * requirement 23 asks to be caught: "asks for reattachment rather than silently
+ * moving it when layout changes prevent reliable placement". The ratio is how
+ * this tells the two apart.
+ */
+
+/** How far the shape may drift before the placement stops being trustworthy. */
+const ASPECT_TOLERANCE = 0.25;
+
+/** Clamp to the unit square: a drag can leave the element it started in. */
+function unit(value) {
+    return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * A rectangle in client coordinates, as fractions of the element's own box.
+ *
+ * `undefined` when the element has no box to be relative to — a collapsed or
+ * hidden container gives a division by zero, and a fraction of nothing is not
+ * an anchor.
+ */
+function areaIn(rect, box) {
+    if (!rect || !box || !box.width || !box.height) { return undefined; }
+    const x = unit((rect.left - box.left) / box.width);
+    const y = unit((rect.top - box.top) / box.height);
+    const right = unit((rect.left + rect.width - box.left) / box.width);
+    const bottom = unit((rect.top + rect.height - box.top) / box.height);
+    const w = right - x;
+    const h = bottom - y;
+    /* A drag that ends where it started is a click, not an area. Below a
+     * percent of the container in either direction there is nothing a reader
+     * could see highlighted anyway. */
+    if (w < 0.01 || h < 0.01) { return undefined; }
+    return { x, y, w, h };
+}
+
+/**
+ * The whole anchor for an area: which element, where inside it, and what shape
+ * that element was.
+ */
+function areaAnchorFor(el, root, rect, box) {
+    const path = pathOf(el, root);
+    if (!path) { return undefined; }
+    const area = areaIn(rect, box);
+    if (!area) { return undefined; }
+    return {
+        type: 'area',
+        path,
+        area,
+        aspect: box.width / box.height,
+        tag: el.tagName.toLowerCase(),
+        describe: describe(el),
+        snippet: snippetOf(el)
+    };
+}
+
+/** Where the area sits now, in pixels inside the element's current box. */
+function placeArea(anchor, box) {
+    if (!anchor || anchor.type !== 'area' || !anchor.area || !box) { return undefined; }
+    return {
+        left: anchor.area.x * box.width,
+        top: anchor.area.y * box.height,
+        width: anchor.area.w * box.width,
+        height: anchor.area.h * box.height
+    };
+}
+
+/**
+ * Has the container reshaped enough that the placement cannot be trusted?
+ *
+ * Compared as a ratio of ratios, so it does not care about size — only about
+ * shape. An anchor written before this field existed has no ratio to compare
+ * and is treated as placeable: an old comment is not evidence of a reshape.
+ */
+function aspectDrifted(anchor, box, tolerance = ASPECT_TOLERANCE) {
+    if (!anchor || !anchor.aspect || !box || !box.width || !box.height) { return false; }
+    const now = box.width / box.height;
+    if (!Number.isFinite(now) || now <= 0) { return false; }
+    const drift = Math.abs(Math.log(now / anchor.aspect));
+    return drift > Math.log(1 + tolerance);
+}
+
 /** What a surface shows for an anchor whose element it can no longer find. */
 function lostText(anchor) {
     if (!anchor) { return ''; }
@@ -146,5 +246,6 @@ function lostText(anchor) {
 }
 
 module.exports = {
-    INJECTED, realChildren, pathOf, resolvePath, snippetOf, describe, anchorFor, lostText
+    INJECTED, realChildren, pathOf, resolvePath, snippetOf, describe, anchorFor, lostText,
+    areaIn, areaAnchorFor, placeArea, aspectDrifted, ASPECT_TOLERANCE
 };

@@ -780,6 +780,19 @@ const EXTERNAL_POLL_MS = 2000;
 // to the save state. Long enough to be read after glancing away, short enough
 // that it is never the answer to "is my work saved".
 const REMOTE_NOTICE_MS = 5000;
+/* Below this a drag is a click. A hand that moves three pixels on the way down
+ * means "this block", not "this eight-pixel corner of it". */
+const AREA_MIN_DRAG = 8;
+
+/** The rectangle between where a drag started and where the pointer is now. */
+function dragRect(start, event) {
+    return {
+        left: Math.min(start.x, event.clientX),
+        top: Math.min(start.y, event.clientY),
+        width: Math.abs(event.clientX - start.x),
+        height: Math.abs(event.clientY - start.y)
+    };
+}
 
 /*
  * How long after a keystroke a suggestion is written.
@@ -1912,6 +1925,14 @@ class MarkdownEditorWidget extends Widget {
         this.gutterEl = document.createElement('div');
         this.gutterEl.className = 'studio-doc-gutter';
         this.pageEl.appendChild(this.gutterEl);
+        /* Areas are drawn in an overlay beside the gutter rather than inside
+         * the editable DOM: ProseMirror owns that subtree, and a box injected
+         * into it would be wiped on the next render and counted by every
+         * anchor path in the document. Same origin as the gutter, so positions
+         * are plain offsets. */
+        this.areasEl = document.createElement('div');
+        this.areasEl.className = 'studio-doc-areas';
+        this.pageEl.appendChild(this.areasEl);
 
         /*
          * Re-place the marks whenever the page's box changes.
@@ -1924,7 +1945,7 @@ class MarkdownEditorWidget extends Widget {
          * place. The observer fires as the box actually changes.
          */
         if (typeof ResizeObserver === 'function') {
-            this.pageObserver = new ResizeObserver(() => this.renderGutter());
+            this.pageObserver = new ResizeObserver(() => { this.renderGutter(); this.renderAreas(); });
             this.pageObserver.observe(this.pageEl);
             this.disposables.push({ dispose: () => this.pageObserver.disconnect() });
         }
@@ -3900,6 +3921,10 @@ class MarkdownEditorWidget extends Widget {
                 '" style="top:' + top + 'px" title="' +
                 'Open comment" aria-label="Open comment"></button>';
         }).join('') + this.qualityGutterHtml(root, lastTop);
+        // Areas share the gutter's origin and its triggers: anything that moves
+        // a mark moves a box, so drawing them apart would be two answers to one
+        // question about where the document currently is.
+        this.renderAreas();
     }
 
     /*
@@ -4150,6 +4175,12 @@ class MarkdownEditorWidget extends Widget {
                 const el = elementAnchor.resolvePath(th.anchor && th.anchor.path, root);
                 th.el = el;
                 th.orphaned = !el;
+                /* An area whose block has reshaped is found but not placeable:
+                 * the fractions would still produce a rectangle, over the wrong
+                 * part of a diagram that has rearranged itself. Requirement 23
+                 * asks for reattachment rather than a silent move. */
+                th.needsReattach = !!el && elementAnchor.aspectDrifted(th.anchor,
+                    { width: el.offsetWidth, height: el.offsetHeight });
                 continue;
             }
             if (!th.quote) { th.orphaned = true; continue; }
@@ -4206,8 +4237,17 @@ class MarkdownEditorWidget extends Widget {
         if (!this.pageEl) { return; }
         const onMove = event => {
             if (!this.componentCommentMode) { return; }
+            if (this.dragFrom) { this.drawBand(dragRect(this.dragFrom, event)); return; }
             this.highlightComponent(this.componentAt(event.target));
         };
+        /*
+         * ONE MODE, TWO GESTURES. A click picks the whole component
+         * (requirement 22); a drag picks an area inside it (requirement 23).
+         * The alternative was a second toggle, which would have made a person
+         * decide what kind of comment they were making before they had looked
+         * at the thing — and the two are the same act with a different amount
+         * of precision.
+         */
         const onDown = event => {
             if (!this.componentCommentMode) { return; }
             const el = this.componentAt(event.target);
@@ -4216,7 +4256,23 @@ class MarkdownEditorWidget extends Widget {
             // and the document is not focused out from under the rail.
             event.preventDefault();
             event.stopPropagation();
-            this.createElementThread(el);
+            this.dragFrom = { el, x: event.clientX, y: event.clientY };
+        };
+        const onUp = event => {
+            const start = this.dragFrom;
+            this.dragFrom = undefined;
+            this.clearBand();
+            if (!this.componentCommentMode || !start) { return; }
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = dragRect(start, event);
+            // Below the threshold it was a click, whatever the pointer did on
+            // the way: a hand that moves three pixels means the whole block.
+            if (rect.width < AREA_MIN_DRAG || rect.height < AREA_MIN_DRAG) {
+                this.createElementThread(start.el);
+                return;
+            }
+            this.createAreaThread(start.el, rect);
         };
         const onKey = event => {
             // Escape leaves the mode, the way it leaves every other transient
@@ -4228,11 +4284,15 @@ class MarkdownEditorWidget extends Widget {
         };
         this.pageEl.addEventListener('mousemove', onMove, true);
         this.pageEl.addEventListener('mousedown', onDown, true);
+        // On the document, not the page: a drag that ends outside the editor
+        // must still finish, or the mode is stuck with a band on screen.
+        document.addEventListener('mouseup', onUp, true);
         document.addEventListener('keydown', onKey, true);
         this.disposables.push({
             dispose: () => {
                 this.pageEl.removeEventListener('mousemove', onMove, true);
                 this.pageEl.removeEventListener('mousedown', onDown, true);
+                document.removeEventListener('mouseup', onUp, true);
                 document.removeEventListener('keydown', onKey, true);
             }
         });
@@ -4281,6 +4341,96 @@ class MarkdownEditorWidget extends Widget {
         }
         this.highlightedComponent = el;
         if (el) { el.classList.add('studio-component-target'); }
+    }
+
+    /** The band the pointer is describing, in client coordinates. */
+    drawBand(rect) {
+        if (!this.areasEl) { return; }
+        const origin = this.pageEl.getBoundingClientRect();
+        let band = this.areasEl.querySelector('.studio-area-band');
+        if (!band) {
+            band = document.createElement('div');
+            band.className = 'studio-area-band';
+            this.areasEl.appendChild(band);
+        }
+        band.style.left = (rect.left - origin.left) + 'px';
+        band.style.top = (rect.top - origin.top) + 'px';
+        band.style.width = rect.width + 'px';
+        band.style.height = rect.height + 'px';
+    }
+
+    clearBand() {
+        const band = this.areasEl && this.areasEl.querySelector('.studio-area-band');
+        if (band) { band.remove(); }
+    }
+
+    /**
+     * Anchor a thread to a rectangle inside a rendered block (requirement 23).
+     *
+     * Stored as fractions of that block, never pixels — see element-anchor.js.
+     * The scope stays `element`: what changes is the anchor's TYPE, so every
+     * other path in this file that asks "is this anchored to a block" keeps one
+     * answer instead of two.
+     */
+    createAreaThread(el, rect) {
+        const root = this.editor && this.editor.view.dom;
+        const anchor = elementAnchor.areaAnchorFor(el, root, rect, el.getBoundingClientRect());
+        if (!anchor) { return; }
+        const thread = { id: newId(), scope: 'element', anchor, resolved: false, messages: [] };
+        this.threads.push(thread);
+        this.setComponentCommentMode(false);
+        this.reanchorThreads();
+        this.focusThread(thread.id);
+    }
+
+    /**
+     * Draw every stored area over the block it belongs to.
+     *
+     * Positions come from `offsetTop`/`offsetLeft` against the page, which is
+     * the overlay's own origin — the same trick the gutter uses, and the reason
+     * reflow is followed without any bookkeeping.
+     *
+     * An area whose block has RESHAPED is not drawn. The fractions would still
+     * produce a rectangle, and it would sit over the wrong part of a diagram
+     * that has rearranged itself; requirement 23 asks for reattachment rather
+     * than a silent move, and the rail is where that is said.
+     */
+    renderAreas() {
+        if (!this.areasEl) { return; }
+        if (this.mode === 'raw' || !this.editor || this.trackedActive()) {
+            this.clearBand();
+            this.areasEl.querySelectorAll('.studio-area').forEach(node => node.remove());
+            return;
+        }
+        const boxes = [];
+        for (const th of this.threads) {
+            if (th.scope !== 'element' || th.orphaned || th.resolved) { continue; }
+            if (!th.anchor || th.anchor.type !== 'area' || !th.el) { continue; }
+            if (th.needsReattach) { continue; }
+            const el = th.el;
+            const placed = elementAnchor.placeArea(th.anchor,
+                { width: el.offsetWidth, height: el.offsetHeight });
+            if (!placed) { continue; }
+            boxes.push({
+                id: th.id,
+                left: el.offsetLeft + placed.left,
+                top: el.offsetTop + placed.top,
+                width: placed.width,
+                height: placed.height
+            });
+        }
+        this.areasEl.querySelectorAll('.studio-area').forEach(node => node.remove());
+        for (const box of boxes) {
+            const node = document.createElement('button');
+            node.className = 'studio-area' + (box.id === this.activeThreadId ? ' active' : '');
+            node.setAttribute('data-gutter-thread', box.id);
+            node.setAttribute('title', 'Open comment');
+            node.style.left = box.left + 'px';
+            node.style.top = box.top + 'px';
+            node.style.width = box.width + 'px';
+            node.style.height = box.height + 'px';
+            this.areasEl.appendChild(node);
+        }
     }
 
     /**
@@ -4880,7 +5030,11 @@ class MarkdownEditorWidget extends Widget {
         const quote = quoteLineHtml({
             text: th.scope === 'element' ? elementAnchor.lostText(th.anchor) : th.quote,
             scope: th.scope,
-            orphaned: th.orphaned
+            /* Two different losses, said the same way on purpose: the thread is
+             * intact and its placement is not, and in both cases what a reader
+             * has to do is put it back. `needsReattach` is the softer of the
+             * two — the block is still there, it has just changed shape. */
+            orphaned: th.orphaned || th.needsReattach
         });
 
         return '<div class="studio-thread' + (th.resolved ? ' resolved' : '') +
