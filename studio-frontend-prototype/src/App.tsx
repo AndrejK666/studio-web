@@ -3844,25 +3844,25 @@ function ProjectScreen({
   // (which take a Workspace) operate on it unchanged.
   const proj = { ...tenant, orgId: workspace.orgId, orgName: workspace.orgName } as Workspace;
 
+  /* No header row. Everything that was in it was already on the screen:
+   *
+   *   - the NAME is the bar's PathBar project segment, one row above, and that
+   *     one is a picker — it says where you are and moves you, where an <h1>
+   *     only says it. This is the same argument that removed the breadcrumb
+   *     trail and the "← <workspace>" link before it.
+   *   - "project · d5e76267…" said the type, which is obvious from having
+   *     opened a project, and eight characters of an id, which cannot be
+   *     pasted into anything. The full id has never been here; if it is ever
+   *     wanted it belongs somewhere it can be copied whole.
+   *   - "Open in IDE" was the THIRD on this screen. Overview's Studio card
+   *     carries it with the session's state and what it will mount, and
+   *     Sources carries it next to the repositories it would check out. Both
+   *     say something this one could not.
+   *
+   * What is left starts at the section band, which is the first thing on the
+   * page that is about this project rather than about where it sits. */
   return (
     <>
-      <div className="topbar">
-        <div>
-          <h1>{tenant.name}</h1>
-          <p className="subtitle" style={{ margin: 0 }}>
-            project · <code>{tenant.id.slice(0, 8)}…</code>
-          </p>
-        </div>
-        {/* No "← <workspace>" here. It went to exactly where the bar's PathBar
-            workspace segment goes, which made this header the third thing on
-            one screen offering the same move. What is left is the one action
-            that belongs to a project and to nothing above it. */}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="primary" onClick={() => onOpenStudio(proj)}>
-            Open in IDE
-          </button>
-        </div>
-      </div>
       <div className="proj-content">
         {tab === "overview" && (
           <ProjectOverview
