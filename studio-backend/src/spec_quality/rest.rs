@@ -61,6 +61,31 @@ pub struct SpecQualityStatusDto {
     pub key_set: bool,
 }
 
+/// What the upstream service can actually do, read from the service rather
+/// than restated here.
+///
+/// The portal used to carry its own copy of the document-type list, as a
+/// constant in the Spec Quality screen. It had drifted: the workspace offers
+/// seven built-in types and the service accepts five, so `app_spec` and
+/// `upstream_reqs` reached the upstream only to come back as
+/// `422 Unprocessable Entity` — *"Input should be 'prd', 'design', 'adr',
+/// 'feature' or 'decomposition'"*. A list that has to be kept equal to
+/// somebody else's list by hand is a list that will disagree with it.
+///
+/// So it is asked for. The service is FastAPI and publishes `/openapi.json`;
+/// both facts below are read out of that document, which is the same source
+/// the 422 comes from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecQualityCapabilitiesDto {
+    /// Detector names the service exposes, from its `/v1/analyze/{name}` paths.
+    pub detectors: Vec<String>,
+    /// What `doc_type` accepts. Empty when the schema no longer declares it —
+    /// an empty list means "unknown", and a caller should offer no constraint
+    /// rather than invent one.
+    pub doc_types: Vec<String>,
+}
+
 /// What a submit answers with now: the run that is watching the analysis.
 ///
 /// `task_id` is the upstream service's own id, kept because it is what appears
@@ -464,6 +489,149 @@ async fn status(
     }))
 }
 
+/// GET /spec-quality/v1/capabilities — what the upstream declares about itself.
+///
+/// Deliberately not cached. The document is ~11 KB, it is fetched when a screen
+/// opens, and a cache would have to answer "for how long is a stale vocabulary
+/// better than a request?" — the answer being "never", since serving a doc type
+/// the service has dropped produces a 422 the user cannot act on.
+async fn capabilities(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(state): Extension<Arc<ProxyState>>,
+) -> ApiResult<JsonBody<SpecQualityCapabilitiesDto>> {
+    let schema = state
+        .upstream_json(reqwest::Method::GET, "/openapi.json", None)
+        .await
+        .map_err(|e| {
+            CanonicalError::internal(format!("spec-quality capabilities unavailable: {e}")).create()
+        })?;
+
+    Ok(Json(read_capabilities(&schema)))
+}
+
+/// Pull the two vocabularies out of an OpenAPI document.
+///
+/// Separate from the handler so it can be tested against the real schema
+/// rather than against a live service: what breaks here is a shape change
+/// upstream, and a shape change is exactly what a fixture catches and a
+/// smoke test does not.
+fn read_capabilities(schema: &serde_json::Value) -> SpecQualityCapabilitiesDto {
+    // Detectors are the `/v1/analyze/<name>` paths. Read from the paths rather
+    // than from a list of our own, for the same reason as the types below.
+    let mut detectors: Vec<String> = schema
+        .get("paths")
+        .and_then(|p| p.as_object())
+        .map(|paths| {
+            paths
+                .keys()
+                .filter_map(|p| p.strip_prefix("/v1/analyze/"))
+                .filter(|name| !name.is_empty() && !name.contains('/'))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    detectors.sort();
+
+    // `doc_type` is declared on the request schemas as an `anyOf` of a string
+    // enum and null — it is optional. Walk every schema and take the first
+    // enum found: the service declares the same set on each request type that
+    // has one, and copies that disagreed would be its bug to fix rather than
+    // ours to reconcile.
+    let doc_types = schema
+        .get("components")
+        .and_then(|c| c.get("schemas"))
+        .and_then(|s| s.as_object())
+        .and_then(|schemas| {
+            schemas.values().find_map(|s| {
+                let any_of = s
+                    .get("properties")?
+                    .get("doc_type")?
+                    .get("anyOf")?
+                    .as_array()?;
+                any_of.iter().find_map(|variant| {
+                    let values = variant.get("enum")?.as_array()?;
+                    let list: Vec<String> = values
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect();
+                    (!list.is_empty()).then_some(list)
+                })
+            })
+        })
+        .unwrap_or_default();
+
+    SpecQualityCapabilitiesDto {
+        detectors,
+        doc_types,
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::read_capabilities;
+
+    /// The real document, fetched from the running service on 2026-09-17.
+    /// Trimmed to the parts this reads, and kept verbatim otherwise — a
+    /// hand-written approximation would pass while the real shape drifted.
+    const SCHEMA: &str = r#"{
+      "paths": {
+        "/healthz": {"get": {}},
+        "/v1/analyze/bloat": {"post": {}},
+        "/v1/analyze/leak": {"post": {}},
+        "/v1/analyze/purpose": {"post": {}},
+        "/v1/analyze/traceability": {"post": {}},
+        "/v1/tasks": {"get": {}},
+        "/v1/tasks/{task_id}": {"get": {}}
+      },
+      "components": {"schemas": {
+        "BloatRequest": {"properties": {"docs": {"type": "array"}}},
+        "PurposeRequest": {"properties": {"doc_type": {"anyOf": [
+          {"type": "string", "enum": ["prd","design","adr","feature","decomposition"]},
+          {"type": "null"}
+        ], "title": "Doc Type"}}}
+      }}
+    }"#;
+
+    #[test]
+    fn detectors_come_from_the_analyze_paths_and_nothing_else() {
+        let caps = read_capabilities(&serde_json::from_str(SCHEMA).unwrap());
+        // /healthz and /v1/tasks are paths too, and are not detectors.
+        assert_eq!(
+            caps.detectors,
+            vec!["bloat", "leak", "purpose", "traceability"]
+        );
+    }
+
+    #[test]
+    fn doc_types_come_from_the_enum_beside_the_null_variant() {
+        let caps = read_capabilities(&serde_json::from_str(SCHEMA).unwrap());
+        assert_eq!(
+            caps.doc_types,
+            vec!["prd", "design", "adr", "feature", "decomposition"]
+        );
+    }
+
+    #[test]
+    fn a_schema_without_the_vocabulary_reports_nothing_rather_than_guessing() {
+        // Upstream drops or renames `doc_type`: the portal must offer no
+        // constraint, not a stale list it invented. Empty means "unknown".
+        let caps = read_capabilities(&serde_json::json!({"paths": {}, "components": {}}));
+        assert!(caps.doc_types.is_empty());
+        assert!(caps.detectors.is_empty());
+    }
+
+    #[test]
+    fn a_doc_type_that_is_a_bare_enum_is_still_read() {
+        // The optionality is the service's choice, not ours to depend on.
+        let caps = read_capabilities(&serde_json::json!({
+            "components": {"schemas": {"R": {"properties": {"doc_type": {
+                "anyOf": [{"enum": ["prd"]}]
+            }}}}}
+        }));
+        assert_eq!(caps.doc_types, vec!["prd"]);
+    }
+}
+
 /* ── Routes ── */
 
 /// Body-size ceiling for the submit endpoints. A bloat/traceability call ships
@@ -619,6 +787,28 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(status)
         .json_response_with_schema::<SpecQualityStatusDto>(openapi, StatusCode::OK, "Wiring status")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/spec-quality/v1/capabilities")
+        .operation_id("spec_quality.capabilities")
+        .summary("Detectors and document types the upstream service declares")
+        .description(
+            "Read from the service's own OpenAPI document, so the portal does \
+             not keep a second copy of a vocabulary it does not own. The copy \
+             it used to keep had drifted: two of the workspace's built-in \
+             document types were rejected by the upstream with a 422.",
+        )
+        .tag("SpecQuality")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(capabilities)
+        .json_response_with_schema::<SpecQualityCapabilitiesDto>(
+            openapi,
+            StatusCode::OK,
+            "What the upstream declares",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

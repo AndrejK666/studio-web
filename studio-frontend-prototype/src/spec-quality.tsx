@@ -84,7 +84,52 @@ const DETECTORS: { id: Detector; label: string; blurb: string; setwise: boolean 
   },
 ];
 
-const DOC_TYPES: DocType[] = ["", "prd", "design", "adr", "feature", "decomposition"];
+/** What the analyser declares it can do, asked for rather than restated.
+ *
+ *  This used to be a constant here — `["", "prd", "design", "adr", "feature",
+ *  "decomposition"]` — and the trouble with a constant is that it is a copy of
+ *  somebody else's list with no way of noticing when the two stop agreeing.
+ *  They had: a workspace offers seven built-in document types and the service
+ *  accepts five, so a document bound to `app_spec` or `upstream_reqs` reached
+ *  the upstream and came back
+ *  `422 Input should be 'prd', 'design', 'adr', 'feature' or 'decomposition'`.
+ *
+ *  The division of ownership this restores is the one that was always intended:
+ *  the SERVICE owns which document types it can analyse; the WORKSPACE owns the
+ *  template, the required sections and the conformance rules for each. A type
+ *  the service has never heard of is still a perfectly good template — it just
+ *  cannot be handed to purpose or leak, and now the screen can say so instead
+ *  of finding out by failing.
+ *
+ *  `null` while loading and on failure. A failure means "we do not know what
+ *  it accepts", which is not the same as "it accepts nothing", so the caller
+ *  offers no constraint rather than a stale guess. */
+export interface SpecQualityCapabilities {
+  detectors: string[];
+  docTypes: string[];
+}
+
+export function useSpecQualityCapabilities(token: string): SpecQualityCapabilities | null {
+  const [caps, setCaps] = useState<SpecQualityCapabilities | null>(null);
+  useEffect(() => {
+    let alive = true;
+    sqFetch<{ detectors?: string[]; doc_types?: string[] }>("/v1/capabilities", token)
+      .then((r) => {
+        if (!alive) return;
+        setCaps({ detectors: r.detectors ?? [], docTypes: r.doc_types ?? [] });
+      })
+      .catch(() => {
+        // The wrapper answers 500 when the upstream is unreachable or
+        // unconfigured. The status chip beside this already reports that; a
+        // second red thing for the same cause is noise.
+        if (alive) setCaps(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+  return caps;
+}
 
 /* ── Small fetch layer (Studio token → gateway → wrapper gear) ── */
 
@@ -484,6 +529,74 @@ export interface BloatVerdicts {
   taskId: string;
 }
 
+/** Ask the `traceability` detector how the documents reference each other.
+ *
+ *  Set-wise, like bloat. `extract` mode by default: it builds the reference
+ *  graph from the ids already in the text and costs no model call, where
+ *  `classify` asks an LLM to judge drift. A button that quietly spends tokens
+ *  is a button people stop pressing.
+ *
+ *  **The response shape is not in the service's OpenAPI.** That document
+ *  declares the four request bodies and nothing else; a result comes back
+ *  inside the generic `TaskView`, so the keys below are read defensively and
+ *  `recognised` says whether any of them were there. That flag is the point:
+ *  without it an unfamiliar shape and a genuinely unreferenced doc-set both
+ *  render as "no references", and the first is a bug in this reader while the
+ *  second is a fact about the documents.
+ */
+export async function detectTraceability(
+  token: string,
+  docs: Record<string, string>,
+  opts?: { mode?: "extract" | "classify"; signal?: AbortSignal },
+): Promise<TraceVerdicts> {
+  const view = await runDetector(
+    "traceability",
+    { docs, mode: opts?.mode ?? "extract", verify: false },
+    token,
+    { signal: opts?.signal },
+  );
+  const r = (view.result ?? {}) as Record<string, unknown>;
+  const rawEdges = r.edges ?? r.links ?? r.references ?? r.pairs;
+  const recognised = Array.isArray(rawEdges);
+
+  const byPath: Record<string, string[]> = {};
+  for (const path of Object.keys(docs)) byPath[path] = [];
+  const pairs: [string, string][] = [];
+
+  if (Array.isArray(rawEdges)) {
+    for (const raw of rawEdges) {
+      // Tuples and objects both appear in the wild; take whichever this is.
+      let from: unknown;
+      let to: unknown;
+      if (Array.isArray(raw)) {
+        [from, to] = raw;
+      } else if (raw && typeof raw === "object") {
+        const e = raw as Record<string, unknown>;
+        from = e.from ?? e.source ?? e.src;
+        to = e.to ?? e.target ?? e.dst;
+      }
+      if (typeof from !== "string" || typeof to !== "string" || from === to) continue;
+      pairs.push([from, to]);
+      if (byPath[from] && !byPath[from].includes(to)) byPath[from].push(to);
+    }
+  }
+  for (const list of Object.values(byPath)) list.sort();
+
+  return { byPath, pairs, recognised, taskId: view.task_id };
+}
+
+/** How a set of documents references itself. */
+export interface TraceVerdicts {
+  /** Every document in the set, mapped to the documents it references. */
+  byPath: Record<string, string[]>;
+  /** The same edges, directed, for the graph. */
+  pairs: [string, string][];
+  /** False when the service's result carried none of the edge keys this knows.
+   *  Empty results then mean "unreadable", not "nothing found". */
+  recognised: boolean;
+  taskId: string;
+}
+
 /** True when an error came from the user pressing Stop, not from a failure. */
 export const isDetectorCancel = isCancel;
 
@@ -589,6 +702,9 @@ export function SpecQuality({
   const [batches, setBatches] = useState<Partial<Record<Detector, BatchRow[]>>>({});
   const result = results[detector] ?? null;
   const batch = batches[detector] ?? [];
+
+  /** What the analyser says it accepts. Asked once per token; see the hook. */
+  const caps = useSpecQualityCapabilities(token);
 
   // Per-detector options.
   const [purposeFile, setPurposeFile] = useState<string>("");
@@ -1228,13 +1344,23 @@ export function SpecQuality({
                 {!classifyDocType && (
                   <label className="sq-opt">
                     doc-type
+                    {/* "" is ours, not the service's: it is how this form says
+                        "send no doc_type at all", which the schema allows by
+                        declaring the field nullable. Everything after it comes
+                        from the service. */}
                     <select value={docType} onChange={(e) => setDocType(e.target.value as DocType)}>
-                      {DOC_TYPES.map((t) => (
+                      {["", ...(caps?.docTypes ?? [])].map((t) => (
                         <option key={t} value={t}>
                           {t || "(none)"}
                         </option>
                       ))}
                     </select>
+                    {caps === null && (
+                      <span className="sq-hint" title="The wrapper could not read the service's schema">
+                        {" "}
+                        · types unknown
+                      </span>
+                    )}
                   </label>
                 )}
                 <label className="sq-opt">

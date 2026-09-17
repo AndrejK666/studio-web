@@ -38,8 +38,10 @@ import {
   detectBloat,
   detectDocTypes,
   detectLeak,
+  detectTraceability,
   isDetectorCancel,
   MIN_SPEC_SHARE,
+  useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { relTime } from "./format";
@@ -1243,6 +1245,106 @@ function IngestedDocumentsView({
     }
   };
 
+  /** Trace how the bound documents reference each other — the fourth detector.
+   *
+   *  The page ran three of the service's four. Traceability was reachable only
+   *  from the Analysis console, which meant the one question it answers —
+   *  "which of these documents is connected to the rest, and which is an
+   *  island" — was not askable from the list where the documents are.
+   *
+   *  `extract` mode: it builds the graph from the ids already written in the
+   *  text and spends no model call. `classify` asks an LLM to judge drift, and
+   *  a button on a list page should not quietly cost tokens.
+   *
+   *  Set-wise, like bloat, and for the same reason: "what does this reference"
+   *  has no answer from one document. */
+  const runTraceCheck = async () => {
+    const targets = bindings.filter((b) => b.type_key && contentByNode[b.node_id]);
+    if (targets.length < 2) {
+      setNote(
+        targets.length === 1
+          ? "Tracing is a question about two documents; this project has one."
+          : "No bound documents with text to trace. Run Scan first.",
+      );
+      return;
+    }
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    setProgress(`Tracing references across ${targets.length} documents…`);
+    try {
+      const docs: Record<string, string> = {};
+      for (const b of targets) docs[b.path] = contentByNode[b.node_id];
+      const { byPath, recognised, taskId } = await detectTraceability(token, docs, {
+        signal: ctrl.signal,
+      });
+
+      // The service does not document this response, so an unreadable shape
+      // must not be reported as "nothing references anything" — that reads as
+      // a fact about the documents when it is a fact about this reader.
+      if (!recognised) {
+        setNote(
+          "The traceability run finished, but its result carried no edge list this build " +
+            "recognises — so nothing was recorded. The raw result is on the Analysis view.",
+        );
+        return;
+      }
+
+      let connected = 0;
+      for (const b of targets) {
+        const refs = byPath[b.path] ?? [];
+        if (refs.length > 0) connected += 1;
+        const summary =
+          refs.length === 0
+            ? "traceability: references no other document in this set"
+            : `traceability: references ${refs.map(basename).join(", ")}`;
+
+        void api
+          .saveQualityFindings(token, {
+            findings: [
+              {
+                detector: "traceability",
+                subject: b.node_id,
+                path: b.path,
+                // An unreferenced document is worth noticing, not failing:
+                // a glossary that cites nothing is doing its job.
+                severity: refs.length === 0 ? "some" : "clean",
+                summary,
+                score: refs.length,
+              },
+            ],
+            workspace_id: workspaceId,
+            project_id: projectTenantId,
+          })
+          .catch(() => {});
+
+        void api
+          .recordBindingAnalysis(token, workspaceId, b.id, "traceability", {
+            state: "passed",
+            task_id: taskId,
+            summary,
+          })
+          .catch(() => {});
+      }
+
+      await reload();
+      setNote(
+        `Traced ${targets.length} documents: ${connected} reference at least one other, ` +
+          `${targets.length - connected} reference none.`,
+      );
+    } catch (e) {
+      if (isDetectorCancel(e)) setNote("Stopped.");
+      else setErr(errText(e));
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+
   /** Find the documents that repeat each other.
    *
    *  One run over the whole set, because that is the only way the question
@@ -1442,6 +1544,13 @@ function IngestedDocumentsView({
           title="Find the documents that repeat each other"
         >
           Compare bound documents for duplication
+        </button>
+        <button
+          onClick={runTraceCheck}
+          disabled={busy || counts.bound < 2}
+          title="Build the reference graph between bound documents and find the ones nothing connects to"
+        >
+          Trace references between bound documents
         </button>
         {busy && abortRef.current && (
           <button onClick={() => abortRef.current?.abort()}>Stop</button>
@@ -3152,6 +3261,11 @@ function TypesView({
   types: DocType[];
   onSaved: () => Promise<void> | void;
 }) {
+  /** The type keys the analyser accepts, asked of the service rather than
+   *  restated here. null = the wrapper could not read its schema, which is
+   *  "unknown" and not "none". */
+  const caps = useSpecQualityCapabilities(token);
+  const analysable = useMemo(() => (caps ? new Set(caps.docTypes) : null), [caps]);
   const [key, setKey] = useState("");
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -3258,6 +3372,7 @@ function TypesView({
           <span>Owner</span>
           <span>Sections</span>
           <span>Front-matter</span>
+          <span>Analyser</span>
         </div>
         {types.map((t) => (
           <button
@@ -3276,6 +3391,28 @@ function TypesView({
                 reads as data the reader has to discount. */}
             <span className="dt-type-num">
               {t.rules.front_matter.length || <span className="dt-dash">—</span>}
+            </span>
+            {/* Whether the spec-quality service can analyse a document of this
+                type. The workspace owns the template and the rules; the SERVICE
+                owns which type keys its purpose and leak detectors accept, and
+                the two lists are not the same. A type it does not know is a
+                perfectly good template — it just cannot be analysed, and
+                saying so here beats finding out from a 422 later. */}
+            <span className="dt-type-analyser">
+              {analysable === null ? (
+                <span className="dt-dash" title="Could not read the analyser's vocabulary">
+                  ?
+                </span>
+              ) : analysable.has(t.key) ? (
+                <span className="badge ok">analysable</span>
+              ) : (
+                <span
+                  className="badge"
+                  title={`The analyser accepts ${[...analysable].join(", ")} — documents of this type can still be templated and validated, but purpose and leak will refuse them`}
+                >
+                  template only
+                </span>
+              )}
             </span>
           </button>
         ))}
@@ -3503,7 +3640,7 @@ const DOCTYPES_CSS = `
 /* Only Name flexes. Key was minmax(140px,0.5fr) and took 339px at 1600 to
    print "adr" — a slug has a known, short length, so the slack belongs to the
    one column that can actually use it. */
-.doctypes .dt-row { display: grid; grid-template-columns: minmax(200px,1fr) 180px 110px 90px 120px; gap: 12px; align-items: center; padding: 10px 14px; }
+.doctypes .dt-row { display: grid; grid-template-columns: minmax(200px,1fr) 180px 110px 90px 120px 130px; gap: 12px; align-items: center; padding: 10px 14px; }
 .doctypes .dt-row-head { font-family: var(--font-mono); font-size: 10px; line-height: 16px; text-transform: uppercase; color: var(--dtmu); border-bottom: 1px solid var(--dtb); }
 .doctypes .dt-type-key { font-size: 11px; color: var(--dtmu); overflow: hidden; text-overflow: ellipsis; }
 .doctypes .dt-type-num { font-variant-numeric: tabular-nums; color: var(--dttx); }
