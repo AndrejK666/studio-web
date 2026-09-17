@@ -45,6 +45,24 @@ const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
 const ROOT_URL_ENV: &str = "STUDIO_ROOT_URL";
 const SOURCES_ENV: &str = "STUDIO_SOURCES";
 
+/// Whether a Pod phase means the session is still here — on its way up, or up.
+///
+/// `Pending` counts, and that is the whole point of this function. A Pod is
+/// `Pending` while it is being scheduled, while its image is pulled and while
+/// the kubelet mounts the workspace volume: seconds on a warm node, longer on a
+/// cold one. Reading that as "gone" makes `SessionService::refresh` record the
+/// session as `Stopped`, and `session.await_ready` treats `Stopped` as terminal
+/// — so a launch fails with "stopped before it became ready" while the Pod is
+/// quietly still starting, and the user's retry then collides with the delete
+/// of the Pod the previous attempt gave up on (`AlreadyExists: object is being
+/// deleted`).
+///
+/// Both callers go through here because they used to disagree: the single-Pod
+/// check accepted `Pending`, the listing that feeds the session cache did not.
+fn pod_phase_is_live(phase: Option<&str>) -> bool {
+    matches!(phase, Some("Running" | "Pending"))
+}
+
 pub struct KubernetesDriver {
     client: Client,
     namespace: String,
@@ -356,11 +374,7 @@ impl SessionDriver for KubernetesDriver {
 
     async fn is_running(&self, handle: &str) -> bool {
         match self.pods().get_opt(handle).await {
-            Ok(Some(pod)) => pod
-                .status
-                .and_then(|s| s.phase)
-                .map(|p| p == "Running" || p == "Pending")
-                .unwrap_or(false),
+            Ok(Some(pod)) => pod_phase_is_live(pod.status.and_then(|s| s.phase).as_deref()),
             _ => false,
         }
     }
@@ -416,12 +430,7 @@ impl SessionDriver for KubernetesDriver {
                 continue;
             };
             let name = pod.metadata.name.clone().unwrap_or_default();
-            let running = pod
-                .status
-                .as_ref()
-                .and_then(|s| s.phase.as_deref())
-                .map(|p| p == "Running")
-                .unwrap_or(false);
+            let running = pod_phase_is_live(pod.status.as_ref().and_then(|s| s.phase.as_deref()));
             // Recover what the Pod was started with — visible to anyone who can
             // read Pods in this namespace, so it hands out nothing new.
             let env = pod
@@ -508,8 +517,26 @@ fn workspace_claim(
 
 #[cfg(test)]
 mod tests {
-    use super::{StudioSessionConfig, workspace_claim, workspace_claim_name};
+    use super::{StudioSessionConfig, pod_phase_is_live, workspace_claim, workspace_claim_name};
     use std::collections::BTreeMap;
+
+    /// A Pod that is being scheduled, pulled or mounted is a session starting,
+    /// not a session that stopped — `await_ready` gives up permanently on the
+    /// second reading, and the whole launch fails while the IDE is still on its
+    /// way up.
+    #[test]
+    fn a_pod_on_its_way_up_is_not_a_stopped_session() {
+        assert!(pod_phase_is_live(Some("Running")));
+        assert!(pod_phase_is_live(Some("Pending")));
+    }
+
+    #[test]
+    fn a_finished_or_missing_pod_is_not_live() {
+        assert!(!pod_phase_is_live(Some("Succeeded")));
+        assert!(!pod_phase_is_live(Some("Failed")));
+        assert!(!pod_phase_is_live(Some("Unknown")));
+        assert!(!pod_phase_is_live(None));
+    }
 
     fn labels() -> BTreeMap<String, String> {
         BTreeMap::from([("cf.studio.session".to_string(), "1".to_string())])
