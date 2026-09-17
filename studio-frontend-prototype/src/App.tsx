@@ -3649,14 +3649,18 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "overview", icon: "home", label: "Overview" },
   { id: "components", icon: "package", label: "Components" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
-  // Sources sits beside Artifacts because it is where they come from: a sync
-  // run here is what puts anything in that list at all. It was a card near the
+  // Specs, then Sources — the product's own order and the product's own word.
+  // It called this section Documents here and the shipped project-sidebar calls
+  // it Specs (`/v1/projects/<id>/specs`), and a prototype that renames the
+  // product's sections is a prototype of a different product. The screen is
+  // unchanged: the same three views of the same documents.
+  { id: "specs", icon: "scan", label: "Specs" },
+  // Sources sits beside them because it is where they come from: a sync run
+  // here is what puts anything in Artifacts at all. It was a card near the
   // bottom of Overview, which buried the project's only long-running action
-  // under six panels people read and then leave.
+  // under six panels people read and then leave. The shipped sidebar has since
+  // grown the same section, in the same place.
   { id: "sources", icon: "plug", label: "Sources" },
-  // Documents stands where the product puts Findings — see ProjTab. A finding
-  // is about a document and does not survive being separated from one.
-  { id: "documents", icon: "scan", label: "Documents" },
   { id: "activity", icon: "activity", label: "Activity" },
   { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
@@ -3760,7 +3764,7 @@ function ProjectScreen({
             />
           </>
         )}
-        {tab === "documents" && (
+        {tab === "specs" && (
           <DocumentsTab
             token={token}
             workspaceId={workspace.id}
