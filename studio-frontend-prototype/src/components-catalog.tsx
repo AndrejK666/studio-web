@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { CatalogNode, Connection, DocType, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { ViewToggle, useViewMode } from "./view-mode";
 import {
   ACTIVITY_CSS,
   ACTIVITY_WINDOWS,
@@ -788,6 +789,10 @@ export function ComponentsCatalog({
   );
 
   const [viewMode, setViewMode] = useState<"list" | "graph">("list");
+  /* Cards or a table, inside "List". Defaulted to tiles because cards are what
+   * this page has always been, and remembered with everything else — somebody
+   * who reads lists as tables reads this one as a table too. */
+  const [listView, setListView] = useViewMode("components.view", "tiles");
   const graph = useMemo(() => buildComponentGraph(visible, profiles), [visible, profiles]);
 
   // Delivery activity from Insight, for the whole catalogue at once: one request
@@ -836,6 +841,7 @@ export function ComponentsCatalog({
                   </button>
                 ))}
               </div>
+              {viewMode === "list" && <ViewToggle mode={listView} onChange={setListView} />}
               <div className="seg" role="tablist" aria-label="Activity window">
                 {ACTIVITY_WINDOWS.map((w) => (
                   <button
@@ -904,6 +910,38 @@ export function ComponentsCatalog({
             </p>
           ) : viewMode === "graph" ? (
             <ComponentGraph graph={graph} nodes={visible} />
+          ) : listView === "table" ? (
+            <div className="gcat-table-wrap">
+              <table className="gcat-table">
+                <thead>
+                  <tr>
+                    <th>Component and purpose</th>
+                    <th>Type</th>
+                    <th>Release</th>
+                    <th className="gcat-num">Downloads</th>
+                    <th>Activity · {activityDays} days</th>
+                    <th>Profile</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((g) => (
+                    <GearListRow
+                      key={g.instance_id}
+                      gear={g}
+                      profile={profiles[nameOf(g)]}
+                      schema={schemaFor(schemas, g.type_id)}
+                      activity={activity.byGear.get(nameOf(g))}
+                      activityDays={activityDays}
+                      onOpen={() => setSelected(nameOf(g))}
+                    />
+                  ))}
+                </tbody>
+              </table>
+              <div className="gcat-foot">
+                {visible.length} of {gears?.length ?? 0} components
+              </div>
+            </div>
           ) : (
             <div className="gcat-cards">
               {visible.map((g) => (
@@ -1162,6 +1200,137 @@ function ActivityStatus({ activity }: { activity: ActivityIndex }) {
       Activity {activity.from} → {activity.to}, from Constructor Insight: commits, files and lines
       per gear directory{activity.truncated ? " (Insight capped the page — some gears are missing)" : ""}.
     </p>
+  );
+}
+
+/** One component as a table row.
+ *
+ *  The product's own components table is the shape this follows — a first
+ *  column that is the component AND what it is for, then one column per
+ *  question somebody scans down. What it deliberately does NOT follow is its
+ *  CONTENT: that table has Readiness, Delivery and Review columns fed by a
+ *  roadmap, an SBOM and a review pipeline, and we hold none of those. Drawing
+ *  empty SPEC/SDK/IMPL bars here would be an invented finding, which is worse
+ *  than a column that is not there.
+ *
+ *  So every column below is something the catalogue actually holds, and where
+ *  a value is missing the cell says which KIND of missing it is. "Not
+ *  published" is a fact about the component; "Not measured" is a fact about
+ *  our window; a dash is neither and would collapse them.
+ */
+function GearListRow({
+  gear,
+  profile,
+  schema,
+  activity,
+  activityDays,
+  onOpen,
+}: {
+  gear: CatalogNode;
+  profile: Record<string, unknown> | undefined;
+  schema: Schema;
+  activity: GearActivity | undefined;
+  activityDays: number;
+  onOpen: () => void;
+}) {
+  const name = String(gear.value.name ?? gear.instance_id);
+  const values = useMemo(() => buildValues(gear.value, profile), [gear.value, profile]);
+  const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
+  const filled = fields.filter((f) => values[f.key]).length;
+  const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
+  const category = values.category?.b ?? "gear";
+  const version = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
+  const lamps = fields.map((f) => lampOf(f, values)).filter((l): l is Lamp => !!l);
+  const bad = lamps.filter((l) => l === "bad").length;
+  const watch = lamps.filter((l) => l === "watch").length;
+  const repository = typeof gear.value.repository === "string" ? gear.value.repository : null;
+  const moved = activity && (activity.commits > 0 || activity.linesAdded + activity.linesRemoved > 0);
+
+  return (
+    <tr className="gcat-row" onClick={onOpen} title={`Open ${name}`}>
+      <td className="gcat-lead">
+        <div className="gcat-name">{name}</div>
+        {gear.value.description && (
+          <div className="gcat-purpose">{String(gear.value.description)}</div>
+        )}
+      </td>
+      <td>
+        <span className="pill">{category}</span>
+      </td>
+      <td>
+        {/* No version at all is not "0" and not a blank: crates.io has no
+            record of this component, which is a thing to go and look at. */}
+        {version ? (
+          <>
+            <code className="gcat-version">{String(version)}</code>
+            <div className="gcat-sub">{numText(gear.value.num_versions)} versions</div>
+          </>
+        ) : (
+          <span className="gcat-absent">Not published</span>
+        )}
+      </td>
+      <td className="gcat-num">{numText(gear.value.downloads)}</td>
+      <td>
+        {moved ? (
+          <div className="act-card">
+            <MiniChurn points={activity!.points} />
+            <span>
+              <b>{compact(activity!.commits)}</b> commits ·{" "}
+              <b className="ink-added">+{compact(activity!.linesAdded)}</b>{" "}
+              <b className="ink-removed">−{compact(activity!.linesRemoved)}</b> ·{" "}
+              <b>{compact(activity!.authors)}</b> authors
+            </span>
+          </div>
+        ) : (
+          /* Nothing moved in the window, or Insight has no directory for this
+             component — two different facts, and the one we can tell apart is
+             whether we measured at all. */
+          <span className="gcat-absent">
+            {activity ? `No commits in ${activityDays} days` : "Not measured"}
+          </span>
+        )}
+      </td>
+      <td>
+        {fields.length === 0 ? (
+          <span className="gcat-absent">No schema</span>
+        ) : (
+          <div className="gcat-profile">
+            <span className="gcat-bar">
+              <span className="gcat-bar-fill" style={{ width: `${pct}%` }} />
+            </span>
+            <span className="gcat-pct">{pct}%</span>
+            {bad > 0 && (
+              <span className="lchip">
+                <span className="tl bad" />
+                {bad}
+              </span>
+            )}
+            {watch > 0 && (
+              <span className="lchip">
+                <span className="tl watch" />
+                {watch}
+              </span>
+            )}
+          </div>
+        )}
+      </td>
+      <td>
+        {repository ? (
+          <a
+            className="gcat-link"
+            href={repository}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={repository}
+          >
+            {repository.replace(/^https?:\/\/(www\.)?/, "")}
+          </a>
+        ) : (
+          <span className="gcat-absent">Not recorded</span>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -2475,6 +2644,35 @@ const GCAT_CSS = `
 
 /* list cards */
 .gcat .gcat-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+
+/* The table beside the cards. Same rows, same click target, laid out for
+   scanning one question down a column instead of one component at a time.
+   The first column is the component AND its purpose, as the product's own
+   table has it: a name with no purpose beside it sends you into the page to
+   find out what it was. */
+.gcat .gcat-table-wrap { border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--card); overflow-x:auto; }
+.gcat .gcat-table { width:100%; border-collapse:collapse; font-size:13px; }
+.gcat .gcat-table th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted-foreground); font-weight:500; padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; }
+.gcat .gcat-table td { padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:top; }
+.gcat .gcat-table tr:last-child td { border-bottom:none; }
+.gcat .gcat-row { cursor:pointer; }
+.gcat .gcat-row:hover td { background:var(--accent); }
+.gcat .gcat-lead { min-width:260px; max-width:420px; }
+.gcat .gcat-name { font-weight:600; color:var(--foreground); }
+.gcat .gcat-purpose { margin-top:2px; font-size:12px; color:var(--muted-foreground); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.gcat .gcat-version { font-family:var(--font-mono); font-size:12px; }
+.gcat .gcat-sub { font-size:11px; color:var(--muted-foreground); margin-top:2px; }
+.gcat .gcat-num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* A missing value says WHICH missing it is, so it reads as a finding rather
+   than as a gap in the rendering. Muted and italic: present, not shouting. */
+.gcat .gcat-absent { color:var(--muted-foreground); font-style:italic; font-size:12px; white-space:nowrap; }
+.gcat .gcat-profile { display:flex; align-items:center; gap:8px; }
+.gcat .gcat-bar { width:64px; height:6px; border-radius:999px; background:var(--border); overflow:hidden; flex:none; }
+.gcat .gcat-bar-fill { display:block; height:100%; background:var(--primary); }
+.gcat .gcat-pct { font-size:12px; font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
+.gcat .gcat-link { color:var(--primary); text-decoration:none; font-size:12px; white-space:nowrap; }
+.gcat .gcat-link:hover { text-decoration:underline; }
+.gcat .gcat-foot { padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-top:1px solid var(--border); }
 .gcat .gcard {
   text-align:left; font:inherit; color:inherit; cursor:pointer;
   background:var(--studio-surface); border:1px solid var(--studio-line);
