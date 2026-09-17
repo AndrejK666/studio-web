@@ -29,6 +29,7 @@ import type {
   DocType,
   DocValidation,
   KitInstallation,
+  Me,
   ProjectConfig,
   RepoEntry,
   StudioSession,
@@ -193,6 +194,15 @@ export function ProjectOverview({
   const [findingTotal, setFindingTotal] = useState(0);
   const [kits, setKits] = useState<KitInstallation[]>([]);
   const [team, setTeam] = useState<User[]>([]);
+  /* Who is reading this screen, for the one fact on it that is about them.
+   *
+   * Asked for here rather than handed down: the subject lives three components
+   * above, and threading it through two of them that have no use for it is a
+   * worse change than one more request on a screen that already makes a dozen.
+   * It is the CANONICAL person id (`GET /me`), not the token subject — the two
+   * are different UUIDs for the same human, and the IDE signs its comments with
+   * this one. */
+  const [meSubject, setMeSubject] = useState<string | null>(null);
   const [sessions, setSessions] = useState<StudioSession[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,6 +232,7 @@ export function ProjectOverview({
         kitPage,
         users,
         sessionPage,
+        who,
       ] =
         await Promise.all([
           optional("workspace settings", api.workspaceSettings(token, project.id), null, misses),
@@ -267,6 +278,15 @@ export function ProjectOverview({
           optional("kit registry", api.kitInstallations(token, project.id), { items: [] as KitInstallation[] }, misses),
           optional("team", api.tenantUsers(token, project.id), { items: [] as User[] }, misses),
           optional("IDE sessions", api.studioSessions(token), { items: [] as StudioSession[] }, misses),
+          // The fallback is a whole Me, not a partial: `optional` types its
+          // answer from it, and a screen that cannot ask who you are simply
+          // has nobody to address rather than a different shape to handle.
+          optional(
+            "who you are",
+            api.me(token),
+            { subject_id: "", subject_tenant_id: "" } as Me,
+            misses,
+          ),
         ]);
 
       setSettings(s);
@@ -284,6 +304,7 @@ export function ProjectOverview({
       // A session is keyed by the tenant it was launched for, so the project's
       // own sessions are the ones carrying its id.
       setSessions((sessionPage.items ?? []).filter((x) => x.workspace_id === project.id));
+      setMeSubject(who.subject_id || null);
       // De-duplicated so one unreachable gear is named once.
       setMissing([...new Set(misses)]);
       setLoading(false);
@@ -363,6 +384,33 @@ export function ProjectOverview({
   const installedKits = kits.filter((k) => k.status === "installed").length;
 
   /* ── Actions ── */
+
+  /*
+   * Open comment threads across this project that are waiting on the person
+   * reading the screen.
+   *
+   * The sync writes this onto each repository node (`waiting_on`), crediting
+   * everybody in an open thread except whoever spoke last. The id it writes is
+   * the author record's — `oidc:<subject>` — and the subject is the canonical
+   * person id, which is why the match is an identity rather than a name: two
+   * people can share a display name, and one person can change theirs.
+   *
+   * Summed across repositories, because a project can have several and the
+   * question is about the project. Undefined rather than zero when no
+   * repository carries the key at all: a sync that never read a checkout has
+   * no answer, and "nothing is waiting on you" is a different thing to say.
+   */
+  const waitingOnMe = useMemo(() => {
+    if (!meSubject) return undefined;
+    const mine = `oidc:${meSubject}`;
+    let total: number | undefined;
+    for (const node of repoNodes) {
+      const rows = node.value.waiting_on as { id?: string; threads?: number }[] | undefined;
+      if (!rows) continue;
+      total = (total ?? 0) + (rows.find((row) => row.id === mine)?.threads ?? 0);
+    }
+    return total;
+  }, [repoNodes, meSubject]);
 
   /* Running a sync moved to the Sources section along with the card that
      offered it. This screen still READS the repositories — the Repositories
@@ -648,6 +696,22 @@ export function ProjectOverview({
               <h2>Studio</h2>
               {liveSession && <span className={`badge ${liveSession.state === "running" ? "ok" : "info"}`}>{liveSession.state}</span>}
             </div>
+            {/* The one line on this screen that is about the reader. Above the
+                session state on purpose: it is the reason to open the IDE, and
+                a reason belongs before the door. Silent at zero — a dashboard
+                that reports nothing owed on every project teaches people to
+                stop reading it — and silent when the sync never read a
+                checkout, which is not the same as nothing owed. */}
+            {waitingOnMe ? (
+              <p className="hint waiting">
+                <b>
+                  {waitingOnMe} comment {waitingOnMe === 1 ? "thread is" : "threads are"} waiting on
+                  you
+                </b>{" "}
+                in this project. They are answered in the IDE, where the thread sits on the text it
+                is about.
+              </p>
+            ) : null}
             {liveSession ? (
               <>
                 <p className="hint">
