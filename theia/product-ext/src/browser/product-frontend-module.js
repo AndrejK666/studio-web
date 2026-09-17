@@ -198,6 +198,24 @@ const FLOW_PROVISION_COMMAND = {
     category: 'Studio'
 };
 
+/*
+ * The portal hands over the person it has signed in (identity.js, portalProvider).
+ *
+ * A COMMAND rather than a shared module, because the two sides are different
+ * Theia extensions: the bridge that receives the portal's message is TypeScript
+ * in `studio/`, this is hand-written JavaScript in `product-ext/`, and neither
+ * package depends on the other. The command registry is the seam they already
+ * share, and it keeps the direction right — the bridge knows a command id, not
+ * this module's internals.
+ *
+ * NO LABEL, deliberately. The command palette lists what has one, and this is
+ * not something a person invokes: it takes an argument only the portal holds,
+ * and invoking it with nothing is a no-op by design (identity.adopt).
+ */
+const IDENTITY_VIEWER_COMMAND = {
+    id: 'studio.identity.viewer'
+};
+
 // The DOM id of the rendered toolbar item is the ITEM's id, so it stays free of
 // dots — a selector-friendly hook for the regression suites.
 const CONNECT_PROJECT_ITEM_ID = 'studio-connect-project';
@@ -2485,6 +2503,12 @@ const mod = new ContainerModule(bind => {
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
+            /* Unconditional: the portal's handshake can arrive before anything
+             * else this frontend does, and a command that is not there yet is
+             * a sign-in silently dropped. */
+            commands.registerCommand(IDENTITY_VIEWER_COMMAND, {
+                execute: viewer => identity.adopt(viewer)
+            });
             /*
              * The optional features' commands are registered whatever the
              * setting says and made INVISIBLE when it is off, rather than
