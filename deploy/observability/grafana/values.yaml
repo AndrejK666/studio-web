@@ -14,12 +14,36 @@
 persistence:
   enabled: false
 
-# No ingress. Grafana has no SSO in front of it here, and the cluster's one
-# public entry point serves the product. Reach it with:
-#   kubectl -n studio-monitoring port-forward svc/grafana 3000:80
 service:
   type: ClusterIP
   port: 80
+
+# Public access — OFF, and it needs two things this repository cannot provide.
+#
+#   1. A DNS record. studio-dev.cfabric.org resolves to Cloudflare (172.67.x.x)
+#      and TLS terminates there: the cluster has no cert-manager Issuer and the
+#      product's own Ingress carries no `tls` block. So a new host is a
+#      Cloudflare record someone in infra adds, not a certificate we request.
+#      That is also why there are no cert-manager annotations and no `tls` here.
+#   2. The `grafana` client in the DEPLOYED realm. The public Keycloak image
+#      ships no realm — it comes from the `studio-web-keycloak-realm` Secret,
+#      so adding the client to `keycloak/realm-studio.json` in this repository
+#      does not by itself change the running IdP. That Secret has to be
+#      regenerated from the updated file.
+#
+# Until both exist, `kubectl -n studio-monitoring port-forward svc/grafana
+# 3000:80` is the way in, and the realm client already carries the matching
+# localhost redirect URIs so SSO can be exercised over that port-forward.
+ingress:
+  enabled: false
+  ingressClassName: traefik
+  # e.g. ["monitoring.cfabric.org"]. Set `grafana.ini.server.domain` to the
+  # same value: the OAuth redirect is built from root_url, and a mismatch
+  # sends the browser back to the wrong host after a successful login.
+  hosts: []
+  path: /
+  pathType: Prefix
+  tls: []
 
 # The chart generates an admin password into the `grafana` Secret on first
 # install and keeps it across upgrades:
@@ -95,5 +119,49 @@ grafana.ini:
   news:
     news_feed_enabled: false
   users:
-    # No self-service signup on an unauthenticated-ingress-free instance.
+    # No self-service signup: accounts come from Keycloak or from nowhere.
     allow_sign_up: false
+  server:
+    # Must match the address the browser actually uses. `localhost` is correct
+    # for the port-forward; set it to the ingress host when that exists, or the
+    # OAuth round trip returns to a URL nobody is listening on.
+    domain: localhost
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+  auth:
+    # The local admin login stays available as a break-glass path — SSO that
+    # cannot be bypassed is also SSO that locks you out when the IdP is the
+    # thing that broke, which is exactly when the dashboards matter.
+    disable_login_form: false
+
+  # Keycloak SSO against the studio realm. OFF until the `grafana` client
+  # exists in the deployed realm (see the ingress note above) — enabling it
+  # first turns the login button into a dead end.
+  #
+  # A PUBLIC client with PKCE, the same shape studio-portal uses: Grafana holds
+  # no client secret, so there is none to seal, rotate, or leak. Verified
+  # against this image: `client_secret` is empty in its defaults.ini and
+  # `use_pkce` is a supported key for this provider.
+  #
+  # `client_secret` is absent rather than set to "": the chart refuses to render
+  # when that key appears in values at all (`assertNoLeakedSecrets`), which for
+  # a public client is the outcome we wanted anyway.
+  auth.generic_oauth:
+    enabled: false
+    name: Keycloak
+    icon: signin
+    client_id: grafana
+    use_pkce: true
+    scopes: "openid profile email"
+    auth_url: "https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/auth"
+    token_url: "https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/token"
+    api_url: "https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/userinfo"
+    signout_redirect_url: "https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/logout"
+    email_attribute_path: email
+    login_attribute_path: preferred_username
+    name_attribute_path: name
+    # Everyone who authenticates gets read-only. Dashboards are provisioned with
+    # allowUiUpdates=false, so Editor would grant the right to change nothing
+    # that survives a restart; Admin stays the local account. Map realm roles
+    # here when there is a reason to.
+    role_attribute_path: "'Viewer'"
+    allow_sign_up: true

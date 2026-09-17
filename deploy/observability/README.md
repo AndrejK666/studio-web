@@ -74,6 +74,49 @@ Two things this arrangement buys, both learned the hard way elsewhere:
   Grafana wants it instead of being helm-escaped. (Insight, which embeds
   dashboards inline in a values file, has to escape every one of them.)
 
+## Public access and SSO (prepared, off)
+
+Grafana is `ClusterIP` only. The way in is
+
+```bash
+kubectl -n studio-monitoring port-forward svc/grafana 3000:80
+# admin; password:
+kubectl -n studio-monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+An Ingress and Keycloak SSO are wired in `grafana/values.yaml` and default to
+off, because turning them on needs two things this repository cannot do on its
+own:
+
+1. **A DNS record.** `studio-dev.cfabric.org` resolves to Cloudflare and TLS
+   terminates there — the cluster has no cert-manager `Issuer`, no
+   `Certificate`, and the product's own Ingress carries no `tls` block. A host
+   for Grafana is therefore a Cloudflare record someone in infra adds, not a
+   certificate we request. Set `ingress.hosts` and
+   `grafana.ini.server.domain` to that name (both, or the OAuth redirect
+   returns to a host nobody is listening on).
+2. **The `grafana` client in the deployed realm.** The public Keycloak image
+   ships no realm; it arrives as the `studio-web-keycloak-realm` Secret. The
+   client is added to `keycloak/realm-studio.json` here, so that Secret has to
+   be regenerated from the updated file before
+   `grafana.ini.auth.generic_oauth.enabled` is flipped.
+
+The client is **public, with PKCE** — the same shape `studio-portal` uses. There
+is no client secret anywhere: none to seal, rotate, or leak. Its redirect URIs
+already include `http://localhost:3000/login/generic_oauth`, so once the realm
+Secret carries the client, SSO can be exercised over the port-forward before any
+DNS exists.
+
+Everyone who authenticates gets **Viewer**. Dashboards are provisioned with
+`allowUiUpdates: false`, so Editor would grant the right to change nothing that
+survives a restart; Admin stays the local account, which also keeps a way in for
+the case where the IdP is the thing that broke.
+
+> The `grafana/grafana` chart is flagged `deprecated: true` upstream, yet 10.5.15
+> is its newest release and carries the current Grafana (12.3.1). The successor
+> is `grafana-operator`, a CRD-based rewrite — not worth it for one instance.
+> Noted here so the flag is a known fact rather than a surprise at upgrade time.
+
 ## Reaching the application namespaces
 
 `studio-dev` and `studio-test` carry a hand-applied `default-deny-ingress`.
