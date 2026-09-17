@@ -261,6 +261,46 @@ class FileTypeSettings {
         return !!(raw && raw.qualitySignals);
     }
 
+    /*
+     * Which recognised links get a card (requirement 21).
+     *
+     * `false` or absent is off — a build that grew this key must not start
+     * redrawing links in projects already in flight. `true` is every kind;
+     * a list is those kinds, which is what "administrators can configure
+     * plugins" amounts to with the pieces that exist.
+     *
+     * A PROJECT setting and not a per-machine one, like its neighbours above:
+     * it decides how this project's documents read, and two people reading the
+     * same PRD should be looking at the same thing. It travels with the branch.
+     */
+    linkCardsFor(rootUri) {
+        const raw = rootUri && this.rawByRoot.get(rootUri.toString());
+        const value = raw && raw.linkCards;
+        if (Array.isArray(value)) { return value.filter(kind => typeof kind === 'string'); }
+        return value === true;
+    }
+
+    /** The same answer for the project that owns `uri`. */
+    linkCardsForFile(uri) {
+        const key = this.rootOf(uri);
+        if (!key) { return false; }
+        const raw = this.rawByRoot.get(key);
+        const value = raw && raw.linkCards;
+        if (Array.isArray(value)) { return value.filter(kind => typeof kind === 'string'); }
+        return value === true;
+    }
+
+    linkCardsActive() {
+        const key = this.activeRootKey();
+        const raw = key && this.rawByRoot.get(key);
+        const value = raw && raw.linkCards;
+        return Array.isArray(value) ? value.length > 0 : value === true;
+    }
+
+    async setLinkCards(rootUri, value) {
+        await this.writeRoot(rootUri, { linkCards: Array.isArray(value) ? value : !!value });
+    }
+
     gearFlowActive() {
         const key = this.activeRootKey();
         const raw = key && this.rawByRoot.get(key);

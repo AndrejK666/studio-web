@@ -70,6 +70,7 @@ const { SearchWidget, SEARCH_CSS, SEARCH_WIDGET_ID } = require('./search-view');
 const { QUALITY_CSS } = require('./quality-view');
 const { MEASURES_CSS } = require('./quality-measures');
 const { QUALITY_MARKS_CSS } = require('./quality-marks');
+const { LINK_CARD_CSS } = require('./link-card-marks');
 const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
 const { CollaborationWidget, COLLAB_CSS, COLLAB_WIDGET_ID } = require('./collab-view');
 const { CollaborationStrip, COLLAB_STRIP_CSS, COLLAB_STRIP_ID } = require('./collab-strip');
@@ -1552,6 +1553,7 @@ class ProductChromeContribution {
              * geometry it builds on.
              */
             QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS + COLLAB_STRIP_CSS +
+            LINK_CARD_CSS +
             /* The flow's one surface: the rail's column. */
             FLOW_RAIL_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
