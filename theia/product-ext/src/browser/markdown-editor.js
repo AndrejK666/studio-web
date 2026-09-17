@@ -66,7 +66,7 @@ const { SessionLock } = require('./session-lock');
 /* The other half of SessionLock's problem. That one sees this person's second
  * tab; this one sees the colleague in the next browser, because the workspace's
  * Theia backend is one process they both connect to. */
-const { presence } = require('./presence-client');
+const { collab } = require('./collab-client');
 const { fileTypeSettings } = require('./file-type-settings');
 const { ICONS } = require('./icons');
 const { messageHtml, quoteLineHtml } = require('./comment-ui');
@@ -1591,8 +1591,8 @@ class MarkdownEditorWidget extends Widget {
         this.disposables = [];
         // The drain above told the backend we left; this drops the roster the
         // status line was still holding for a document that is now closed.
-        this.presenceSession = undefined;
-        statusLine.setDocumentPresence(this.uri, []);
+        this.collabSession = undefined;
+        statusLine.setCoEditors(this.uri, []);
         clearInterval(this.pollTimer);
         clearTimeout(this.externalTimer);
         clearTimeout(this.remoteNoticeTimer);
@@ -2302,7 +2302,7 @@ class MarkdownEditorWidget extends Widget {
         /* The same signal the lock uses, read for the other audience: unsaved
          * work is what "is editing" means to the colleague looking at the
          * roster. Reported on the next heartbeat, not now — see setTyping. */
-        if (this.presenceSession) { this.presenceSession.setTyping(state === 'dirty'); }
+        if (this.collabSession) { this.collabSession.setTyping(state === 'dirty'); }
     }
 
     /**
@@ -2434,7 +2434,7 @@ class MarkdownEditorWidget extends Widget {
          * ever be early, and an early claim for a write that then fails expires
          * on its own without having been redeemed.
          */
-        await presence.claimWrite(this.uri, full);
+        await collab.claimWrite(this.uri, full);
         const written = await this.fileService.write(this.uri, full);
         this.knownMtime = written.mtime;
         return written;
@@ -2542,9 +2542,9 @@ class MarkdownEditorWidget extends Widget {
          * outlived its editor would report somebody as present in a file they
          * closed, which is worse than no roster.
          */
-        this.presenceSession = presence.join(this.uri,
-            others => statusLine.setDocumentPresence(this.uri, others));
-        this.disposables.push(this.presenceSession);
+        this.collabSession = collab.join(this.uri,
+            others => statusLine.setCoEditors(this.uri, others));
+        this.disposables.push(this.collabSession);
     }
 
     async pollExternalChange() {
@@ -2597,7 +2597,7 @@ class MarkdownEditorWidget extends Widget {
         /*
          * A colleague's ordinary save is not a suggestion (requirement 14, in
          * as many words: "remote human edits are not AI suggestions and require
-         * no accept/reject control"). Until presence existed there was no way
+         * no accept/reject control"). Until co-editing existed there was no way
          * to tell one from an agent's write, so every external change became a
          * proposal — which put two people editing the same document into a
          * review queue against each other and made the second person's work
@@ -2610,7 +2610,7 @@ class MarkdownEditorWidget extends Widget {
          * applied, and `isSelf` keeps my own second tab from being treated as
          * somebody else.
          */
-        const writer = await presence.lastWriter(this.uri, content.value);
+        const writer = await collab.lastWriter(this.uri, content.value);
         if (writer && writer.author && !isSelf(writer.author)) {
             await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value, writer.author);
             return;

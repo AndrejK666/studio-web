@@ -25,7 +25,7 @@
  * to a person's ordinary save is requirement 14's explicit "remote human edits
  * are not AI suggestions".
  *
- * LIFETIME. Entries expire (PRESENCE_TTL_MS) rather than being deleted on
+ * LIFETIME. Entries expire (PARTY_TTL_MS) rather than being deleted on
  * disconnect. A closed tab gets no chance to say goodbye, and a container whose
  * users have all gone home should not be holding a timer to notice — so the
  * sweep runs inside the calls, and a registry nobody is calling costs nothing.
@@ -34,8 +34,8 @@
 const crypto = require('crypto');
 const { ContainerModule } = require('inversify');
 const { ConnectionContainerModule } = require('@theia/core/lib/node/messaging/connection-container-module');
-const { PRESENCE_PATH } = require('../common/presence-protocol');
-const { PresenceRegistry } = require('./presence-registry');
+const { COLLAB_PATH } = require('../common/collab-protocol');
+const { CollabRegistry } = require('./collab-registry');
 
 /**
  * The per-connection face of the registry.
@@ -43,7 +43,7 @@ const { PresenceRegistry } = require('./presence-registry');
  * One of these per browser, so the connection id never has to be sent over the
  * wire and one browser cannot announce itself as another.
  */
-class PresenceService {
+class CollabService {
 
     constructor(registry) {
         this.registry = registry;
@@ -86,18 +86,18 @@ const connectionModule = ConnectionContainerModule.create(({ bind, bindBackendSe
     // inversify is given a factory rather than asked to construct the class.
     // `ctx.container` is the connection's child container, so the registry
     // resolves up to the one bound process-wide below.
-    bind(PresenceService).toDynamicValue(ctx =>
-        new PresenceService(ctx.container.get(PresenceRegistry))).inSingletonScope();
-    bindBackendService(PRESENCE_PATH, PresenceService);
+    bind(CollabService).toDynamicValue(ctx =>
+        new CollabService(ctx.container.get(CollabRegistry))).inSingletonScope();
+    bindBackendService(COLLAB_PATH, CollabService);
 });
 
 const mod = new ContainerModule(bind => {
-    bind(PresenceRegistry).toDynamicValue(() => new PresenceRegistry()).inSingletonScope();
+    bind(CollabRegistry).toDynamicValue(() => new CollabRegistry()).inSingletonScope();
     bind(ConnectionContainerModule).toConstantValue(connectionModule);
 });
 
 module.exports = mod;
 module.exports.default = mod;
-module.exports.PresenceRegistry = PresenceRegistry;
-module.exports.PresenceService = PresenceService;
-module.exports.PRESENCE_PATH = PRESENCE_PATH;
+module.exports.CollabRegistry = CollabRegistry;
+module.exports.CollabService = CollabService;
+module.exports.COLLAB_PATH = COLLAB_PATH;

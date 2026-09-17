@@ -150,10 +150,10 @@ const STATUS_LINE_CSS = `
  * Names while there are few enough to read — which is the whole point, since
  * "someone else is editing this" is an alarm and "Ana is editing this" is
  * information — and a count past that, because three names in an 11px field is
- * a smear rather than a fact. Typing outranks presence: a colleague who is
+ * a smear rather than a fact. Typing outranks mere presence: a colleague who is
  * writing right now is the thing worth interrupting for.
  */
-function presenceText(others) {
+function coEditorsText(others) {
     const typing = others.filter(other => other.typing);
     const shown = typing.length ? typing : others;
     const names = shown
@@ -179,7 +179,7 @@ class StatusLine {
         this.changesStore = new ChangesStore(fileService, workspaceService);
         this.pending = 0;
         this.documentStates = new Map();
-        this.documentPresence = new Map();
+        this.coEditors = new Map();
     }
 
     start() {
@@ -227,19 +227,19 @@ class StatusLine {
     }
 
     /**
-     * Who else has this document open (`presence-client.js`).
+     * Who else has this document open (`collab-client.js`).
      *
      * An empty roster CLEARS the entry rather than storing one, so a document
      * nobody else is in leaves nothing behind for a later render to find.
      */
-    setDocumentPresence(uri, others) {
+    setCoEditors(uri, others) {
         if (!uri) { return; }
         const key = uri.toString();
         if (!others || others.length === 0) {
-            if (!this.documentPresence.has(key)) { return; }
-            this.documentPresence.delete(key);
+            if (!this.coEditors.has(key)) { return; }
+            this.coEditors.delete(key);
         } else {
-            this.documentPresence.set(key, others);
+            this.coEditors.set(key, others);
         }
         this.render();
     }
@@ -427,22 +427,22 @@ class StatusLine {
          * the same reason: it is absent unless it has something to say, so the
          * line's usual width does not change and nobody is trained to ignore a
          * field that always reads "nobody". When it does appear it states the
-         * one thing the product could not say at all until presence existed —
+         * one thing the product could not say at all until co-editing existed —
          * that the file in front of you is not only yours.
          */
-        const here = root ? this.documentPresence.get((this.activeDocumentUri() || {}).toString?.()) : undefined;
+        const here = root ? this.coEditors.get((this.activeDocumentUri() || {}).toString?.()) : undefined;
         if (here && here.length) {
-            this.statusBar.setElement('studio.presence', {
-                text: presenceText(here),
+            this.statusBar.setElement('studio.co-editing', {
+                text: coEditorsText(here),
                 alignment: StatusBarAlignment.RIGHT,
                 priority: 250,
                 tooltip: here
                     .map(other => (other.author && other.author.name) || 'Somebody')
                     .join(', ') + ' also have this document open.',
-                className: 'studio-status-presence'
+                className: 'studio-status-co-editing'
             });
         } else {
-            this.statusBar.removeElement('studio.presence');
+            this.statusBar.removeElement('studio.co-editing');
         }
 
         /*

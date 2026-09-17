@@ -13,7 +13,7 @@
  * exists:
  *
  *   - HERE NOW. Who else is in this project and what they have open. This is
- *     the one fact the product could not state at all before presence existed:
+ *     the one fact the product could not state at all before co-editing existed:
  *     one session container serves everybody who opened the workspace, so the
  *     colleague editing the next file was invisible.
  *   - OPEN THREADS, ranked. A comment thread lives in the document it is
@@ -29,7 +29,7 @@
  * WHAT IT DOES NOT SHOW, said in the UI as well as here:
  *
  *   - OTHER PEOPLE'S UNSAVED WORK. A draft that has not been written is not on
- *     disk and cannot be read. The roster reports "editing" from presence, so a
+ *     disk and cannot be read. The roster reports "editing" from the co-editing roster, so a
  *     person shows as busy without their words being claimed to be known.
  *   - COMMENTS MADE IN CONNECTED TOOLS. Figma, pull requests and chat are not
  *     in the repository. `honestyLine` says so on every render, because a quiet
@@ -49,7 +49,7 @@ const { activeProject } = require('./active-project');
 const { ICONS } = require('./icons');
 const { esc, avatarHtml } = require('./comment-ui');
 const { identity } = require('./identity');
-const { presence } = require('./presence-client');
+const { collab } = require('./collab-client');
 const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
 const sidecarScan = require('./sidecar-scan');
@@ -203,7 +203,7 @@ class CollaborationWidget extends Widget {
         const root = await this.activeRoot();
         if (!root) { return; }
         this.rootString = root.toString();
-        const parties = await presence.everyone(root);
+        const parties = await collab.everyone(root);
         this.roster = scan.roster(parties);
         this.render();
     }
@@ -235,7 +235,7 @@ class CollaborationWidget extends Widget {
 
         const rootString = root.toString();
         this.rootString = rootString;
-        const parties = await presence.everyone(root);
+        const parties = await collab.everyone(root);
         if (token.cancelled) { return; }
         this.roster = scan.roster(parties);
 
@@ -313,7 +313,7 @@ class CollaborationWidget extends Widget {
         const people = this.roster.people;
         if (people.length === 0) {
             return this.sectionHtml('Here now', '', this.emptyHtml(
-                presence.available()
+                collab.available()
                     ? 'Just you in this project right now.'
                     : 'This session cannot see other people — it is running without the collaboration service.'));
         }

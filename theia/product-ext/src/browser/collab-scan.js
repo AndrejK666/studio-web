@@ -194,7 +194,7 @@ function inbox(files, me, options = {}) {
 }
 
 /**
- * The roster, folded from per-document presence into per-person.
+ * The roster, folded from per-document parties into per-person.
  *
  * One row per person with the documents they have open, because the question
  * this answers is "who is in the project" and a person with three tabs is one

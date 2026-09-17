@@ -52,7 +52,7 @@ const { fileTypeSettings, patchNavigatorFilter } = require('./file-type-settings
 const { TABLE_EXTENSIONS } = require('./table-data');
 const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
-const { presence } = require('./presence-client');
+const { collab } = require('./collab-client');
 const { QualityRunnerClient } = require('./quality-runner-client');
 const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
@@ -1572,10 +1572,10 @@ class ProductChromeContribution {
          * And right after it, for the same reason in the other direction: both
          * answer "who is at this keyboard" to a container that is shared by
          * everybody who opened this workspace. Credentials keep the answer
-         * private; presence is what makes it visible to the other people in the
+         * private; the co-editing roster is what makes it visible to the others in the
          * document.
          */
-        presence.init(this.container);
+        collab.init(this.container);
         patchNavigatorFilter(this.container);
         document.head.appendChild(style);
         themeService = this.container.get(ThemeService);
