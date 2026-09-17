@@ -52,6 +52,7 @@ const { fileTypeSettings, patchNavigatorFilter } = require('./file-type-settings
 const { TABLE_EXTENSIONS } = require('./table-data');
 const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
+const { presence } = require('./presence-client');
 const { QualityRunnerClient } = require('./quality-runner-client');
 const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
@@ -1545,6 +1546,14 @@ class ProductChromeContribution {
          * src/node/viewer-credentials.js for what happens when it has not.
          */
         viewerCredentials.init(this.container, identity).start();
+        /*
+         * And right after it, for the same reason in the other direction: both
+         * answer "who is at this keyboard" to a container that is shared by
+         * everybody who opened this workspace. Credentials keep the answer
+         * private; presence is what makes it visible to the other people in the
+         * document.
+         */
+        presence.init(this.container);
         patchNavigatorFilter(this.container);
         document.head.appendChild(style);
         themeService = this.container.get(ThemeService);

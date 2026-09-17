@@ -1,8 +1,8 @@
 # studio-product-ext
 
 The product surface over Theia: the Markdown editor, quality rail, flow rail and
-log, figure and table editors, search, repositories and project views, comments
-and tracked changes.
+log, figure and table editors, search, repositories and project views, comments,
+tracked changes, and who else is in the document.
 
 ## These files are source
 
