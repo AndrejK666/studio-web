@@ -60,6 +60,14 @@ test('age is coarse, because that is how it is read', () => {
     assert.strictEqual(scan.ageText('not a date', clock), '');
 });
 
+test('a phrase reads as a phrase, and “just now” takes no preposition', () => {
+    // Measured in the running IDE: the task section said "read just now ago".
+    assert.strictEqual(scan.agoText(ago(0), clock), 'just now');
+    assert.strictEqual(scan.agoText(ago(20), clock), '20m ago');
+    assert.strictEqual(scan.agoText(ago(60 * 24 * 4), clock), '4d ago');
+    assert.strictEqual(scan.agoText(undefined, clock), '');
+});
+
 // -- mentions ----------------------------------------------------------------
 
 test('a mention is recognised however it was typed', () => {

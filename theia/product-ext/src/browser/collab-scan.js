@@ -77,6 +77,20 @@ function ageText(at, now = Date.now()) {
 }
 
 /**
+ * How long ago, as a phrase rather than a measurement.
+ *
+ * `ageText` answers "20m", which reads correctly after a number and wrongly
+ * after a word: "read 20m" is not English. This adds the preposition — and
+ * knows not to, for the one value that is already a phrase. Measured in the
+ * running IDE, where the section read "read just now ago".
+ */
+function agoText(at, now = Date.now()) {
+    const age = ageText(at, now);
+    if (!age) { return ''; }
+    return age === 'just now' ? 'just now' : age + ' ago';
+}
+
+/**
  * Does this text address me by name?
  *
  * Matches the `@name` form the editor inserts (markdown-editor.js's mention
@@ -90,7 +104,12 @@ function mentions(text, me) {
     const target = slug(me.name);
     if (!target) { return false; }
     const body = String(text == null ? '' : text);
-    const tokens = body.match(/@[A-Za-z0-9._-]+/g) || [];
+    /* The lookbehind keeps `roma@example.com` from reading as a mention of
+     * `example.com`. It matched nobody here in practice, because the slug had
+     * to equal a real display name — but the same expression in
+     * `task-scan.js` shows the token to a person as an assignee, and one
+     * spelling of "a mention starts a word" is better than two. */
+    const tokens = body.match(/(?<![A-Za-z0-9._-])@[A-Za-z0-9._-]+/g) || [];
     return tokens.some(token => {
         const candidate = slug(token.slice(1));
         // Prefix, not equality: "@Roma" is how somebody writes to Roma Ivanov,
@@ -250,6 +269,7 @@ function countText(result) {
 }
 
 module.exports = {
-    ageText, mentions, isMine, threadItem, band, inbox, roster, honestyLine, countText, clip, plural,
+    ageText, agoText, mentions, isMine, threadItem, band, inbox, roster, honestyLine, countText,
+    clip, plural,
     PREVIEW_MAX, INBOX_MAX
 };
