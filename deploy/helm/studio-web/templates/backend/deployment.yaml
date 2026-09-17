@@ -123,6 +123,16 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: embed_api_key, optional: true } }
             - name: STUDIO_ENVIRONMENT
               value: {{ .Values.global.environmentName | quote }}
+            # OpenTelemetry switches. The backend config expands these textually
+            # into its `opentelemetry` block before parsing the YAML, so "true"
+            # here becomes a real boolean there — which is why they are plain
+            # values and not a templated config fragment.
+            - name: STUDIO_OTEL_METRICS
+              value: {{ .Values.backend.telemetry.metrics | quote }}
+            - name: STUDIO_OTEL_TRACING
+              value: {{ .Values.backend.telemetry.tracing | quote }}
+            - name: STUDIO_OTLP_ENDPOINT
+              value: {{ .Values.backend.telemetry.endpoint | quote }}
             - name: STUDIO_SESSION_ENABLED
               value: {{ .Values.backend.sessions.enabled | quote }}
             - name: STUDIO_SESSION_IMAGE

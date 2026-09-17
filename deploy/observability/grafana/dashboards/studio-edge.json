@@ -1,0 +1,214 @@
+{
+  "uid": "studio-edge",
+  "title": "Studio — Edge (Traefik)",
+  "description": "What the ingress sees. This is edge-observed truth: requests the backend rejected, never answered, or never received still appear here. Until the backend exports its own RED metrics, this is the only request-level view there is.",
+  "tags": ["studio", "traefik", "red"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests/s",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(rate(traefik_entrypoint_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "5xx ratio",
+      "description": "Server-side failures as a share of all answered requests, across every entrypoint.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.02 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(rate(traefik_service_requests_total{code=~\"5..\"}[5m])) / clamp_min(sum(rate(traefik_service_requests_total[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "Over a 15-minute window, not 5: this stand is idle for long stretches, and a percentile over an empty window is not a zero — it is nothing at all, which reads as a broken panel. Traefik's default buckets are 0.1/0.3/1.2/5 s, so this number is interpolated inside a very wide first bucket; the accurate latency view arrives with the backend's own histogram (14 buckets, 5 ms to 10 s).",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket[15m])))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Open connections",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(traefik_open_connections)"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by status class",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 25, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (code) (rate(traefik_service_requests_total[5m]))",
+          "legendFormat": "{{code}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by service",
+      "description": "Traefik's own notion of a service — the Kubernetes Service an Ingress route resolved to.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (service) (rate(traefik_service_requests_total[5m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency percentiles by service",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "histogram_quantile(0.50, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket[15m])))",
+          "legendFormat": "p50 {{service}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket[15m])))",
+          "legendFormat": "p99 {{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors by service",
+      "description": "4xx and 5xx separated: one is usually a client or a bad route, the other is ours.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 15, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"4..\"}[5m]))",
+          "legendFormat": "4xx {{service}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"5..\"}[5m]))",
+          "legendFormat": "5xx {{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Traefik exporter up",
+      "description": "An instant view per pod: a replaced replica drops off the graph instead of showing as falsely up.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "max": 1.2, "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "up{job=\"traefik\"}",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    }
+  ]
+}

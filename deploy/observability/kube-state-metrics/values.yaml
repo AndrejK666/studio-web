@@ -1,0 +1,46 @@
+# kube-state-metrics — Kubernetes object state as metrics.
+#
+# This is where readiness, restarts, OOMKills, replica counts and pod phase
+# come from. cAdvisor knows what a container consumes; only KSM knows what
+# Kubernetes thinks it should be doing.
+#
+# chart: prometheus-community/kube-state-metrics 8.4.1
+
+# Trimmed collector set: everything the dashboards actually query, nothing
+# else. Certificates, leases and endpointslices are pure series with no
+# consumer here — adding a collector later is a values edit.
+collectors:
+  - deployments
+  - statefulsets
+  - daemonsets
+  - replicasets
+  - pods
+  - nodes
+  - namespaces
+  - persistentvolumeclaims
+  - persistentvolumes
+  - jobs
+  - cronjobs
+  - horizontalpodautoscalers
+  - resourcequotas
+
+# Promote the session labels into `kube_pod_labels`, so a query can tell a
+# per-user Theia pod from a platform pod and group by workspace. These are
+# one series per pod (no per-metric multiplication), and they are the only
+# handle we have: cAdvisor series carry pod/container names, never pod labels.
+metricLabelsAllowlist:
+  - pods=[cf.studio.session,cf.studio.workspace_id,app.kubernetes.io/component,app.kubernetes.io/name]
+  - deployments=[app.kubernetes.io/component,app.kubernetes.io/name]
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Alloy scrapes this by its Service name; no ServiceMonitor (no operator here).
+prometheus:
+  monitor:
+    enabled: false

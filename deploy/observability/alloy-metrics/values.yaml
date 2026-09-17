@@ -1,0 +1,333 @@
+# Grafana Alloy — the collector.
+#
+# One Deployment plays both roles the stack needs:
+#   * scraper  — pull-scrapes kubelet/cAdvisor, kube-state-metrics, Traefik and
+#                the CloudNativePG instances, then remote-writes to VictoriaMetrics.
+#   * receiver — accepts OTLP push on :4317/:4318 from studio-backend and turns
+#                it into the same remote_write stream.
+#
+# The OTLP receiver is already listening: nothing pushes to it until
+# `opentelemetry.metrics.enabled` is turned on in the backend config, and an
+# idle receiver costs nothing. That makes enabling application RED metrics a
+# backend-config change alone, with no second round-trip through this chart.
+#
+# NB (load-bearing): the chart runs `tpl` over `alloy.configMap.content`, so a
+# literal Helm delimiter in the config below would be rendered by Helm and break
+# the boot. Keep Helm's `{{` out of this file.
+#
+# chart: grafana/alloy 1.12.1
+
+controller:
+  # Deployment, not the chart's default DaemonSet: these are cluster-wide pull
+  # targets, so scraping them once is correct. Log tailing (the DaemonSet role)
+  # is a separate release when Loki lands.
+  type: deployment
+  replicas: 1
+
+rbac:
+  # Cluster-scoped: node and pod discovery, plus the kubelet metrics endpoints.
+  create: true
+
+alloy:
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  configMap:
+    create: true
+    content: |-
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // Discovery
+      // ─────────────────────────────────────────────────────────────
+
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // kubelet — cAdvisor (what containers actually consume) and the
+      // resource endpoint (kubelet's own accounting). Scraped on :10250
+      // directly rather than through the apiserver proxy, so a busy
+      // control plane never sits between us and the numbers.
+      // ─────────────────────────────────────────────────────────────
+
+      discovery.relabel "kubelet_cadvisor" {
+        targets = discovery.kubernetes.nodes.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          target_label = "__metrics_path__"
+          replacement  = "/metrics/cadvisor"
+        }
+      }
+
+      prometheus.scrape "kubelet_cadvisor" {
+        targets           = discovery.relabel.kubelet_cadvisor.output
+        forward_to        = [prometheus.relabel.drop_noise.receiver]
+        job_name          = "kubelet-cadvisor"
+        scheme            = "https"
+        scrape_interval   = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+        tls_config {
+          // The kubelet serving certificate is signed for the node's own
+          // identity, not for the address we dial it on.
+          insecure_skip_verify = true
+        }
+      }
+
+      discovery.relabel "kubelet_resource" {
+        targets = discovery.kubernetes.nodes.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          target_label = "__metrics_path__"
+          replacement  = "/metrics/resource"
+        }
+      }
+
+      prometheus.scrape "kubelet_resource" {
+        targets           = discovery.relabel.kubelet_resource.output
+        forward_to        = [prometheus.relabel.drop_noise.receiver]
+        job_name          = "kubelet-resource"
+        scheme            = "https"
+        scrape_interval   = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+        tls_config {
+          insecure_skip_verify = true
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // kube-state-metrics — a static in-cluster target (same namespace).
+      // ─────────────────────────────────────────────────────────────
+
+      prometheus.scrape "kube_state_metrics" {
+        targets = [
+          {
+            __address__ = "kube-state-metrics.studio-monitoring.svc.cluster.local:8080",
+          },
+        ]
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+        job_name        = "kube-state-metrics"
+        scrape_interval = "30s"
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // Traefik — the ingress already exports Prometheus metrics on the
+      // `metrics` entrypoint (:9100); this is edge-observed RED, the truth
+      // a service's own instrumentation cannot see (rejected connections,
+      // TLS failures, requests that never reach a pod). Discovered per pod
+      // so a replaced replica drops off instead of showing as falsely up.
+      // ─────────────────────────────────────────────────────────────
+
+      discovery.relabel "traefik" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          separator     = ";"
+          regex         = "traefik;traefik"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_port_name"]
+          regex         = "metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+      }
+
+      prometheus.scrape "traefik" {
+        targets         = discovery.relabel.traefik.output
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+        job_name        = "traefik"
+        scrape_interval = "30s"
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // CloudNativePG — every Postgres instance exports on :9187 out of the
+      // box. Keyed on the operator's own pod-role label, so new clusters
+      // (and failovers) are picked up without a config change.
+      // ─────────────────────────────────────────────────────────────
+
+      discovery.relabel "cnpg" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_cnpg_io_podRole"]
+          regex         = "instance"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_port_name"]
+          regex         = "metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_cnpg_io_cluster"]
+          target_label  = "cnpg_cluster"
+        }
+      }
+
+      prometheus.scrape "cnpg" {
+        targets         = discovery.relabel.cnpg.output
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+        job_name        = "cnpg"
+        scrape_interval = "30s"
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // OTLP receiver — studio-backend pushes metrics (and, when enabled,
+      // traces) here. Metrics are converted to the Prometheus model and
+      // join the same remote_write stream as the scrapes.
+      // ─────────────────────────────────────────────────────────────
+
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+
+        output {
+          metrics = [otelcol.processor.batch.default.input]
+        }
+      }
+
+      otelcol.processor.batch "default" {
+        output {
+          metrics = [otelcol.exporter.prometheus.default.input]
+        }
+      }
+
+      otelcol.exporter.prometheus "default" {
+        forward_to = [prometheus.relabel.drop_noise.receiver]
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // One relabel pass for everything, then remote_write.
+      //
+      // Two jobs: keep cardinality honest, and stamp `env` so one store can
+      // hold both application namespaces without ambiguity.
+      // ─────────────────────────────────────────────────────────────
+
+      prometheus.relabel "drop_noise" {
+        forward_to = [prometheus.remote_write.vm.receiver]
+
+        // cAdvisor emits a pod-level roll-up with an empty `container` label
+        // that duplicates the sum over the pod's containers.
+        //
+        // The families are named rather than matched as `container_.*`:
+        // network counters exist ONLY at the pod level (a pod shares one
+        // network namespace), so a blanket drop on an empty `container` label
+        // deletes pod network I/O entirely — silently, since nothing errors
+        // and the metric simply never appears.
+        rule {
+          source_labels = ["__name__", "container"]
+          separator     = ";"
+          regex         = "container_(cpu|memory|fs|blkio|processes|sockets|threads|ulimits|start_time|last_seen|oom).*;"
+          action        = "drop"
+        }
+
+        // The systemd slice tree: one series per cgroup on every node, none
+        // of it about our workloads.
+        rule {
+          source_labels = ["__name__", "id"]
+          separator     = ";"
+          regex         = "container_.*;/(system|user)\\.slice.*"
+          action        = "drop"
+        }
+
+        // Families nothing queries. Per-device and per-interface series are
+        // the expensive ones, and they multiply by every per-user Theia pod
+        // the session gear starts (`cf-studio-session-<workspace>`) — the one
+        // workload here with unbounded pod churn.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "container_(fs_(reads|writes|io_current|io_time|io_time_weighted|sector)_.*|blkio_device_usage_total|tasks_state|memory_failures_total|network_(tcp|udp|advance_tcp)_usage_total|memory_mapped_file|spec_.*|file_descriptors|threads_max|ulimits_soft)"
+          action        = "drop"
+        }
+
+        // Postgres' whole settings table, one series per GUC per instance.
+        // A static config dump that nothing queries and that was the single
+        // largest family in the store on day one (900 of 11.5k series).
+        // `SHOW ALL` answers the same question when it is actually asked.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "cnpg_pg_settings_setting"
+          action        = "drop"
+        }
+
+        // Pod tolerations as metrics: scheduling trivia, not runtime signal.
+        rule {
+          source_labels = ["__name__"]
+          regex         = "kube_pod_tolerations"
+          action        = "drop"
+        }
+
+        // `env` from the application namespace, so dev and test series are
+        // separable by label rather than by reading pod names.
+        rule {
+          source_labels = ["namespace"]
+          regex         = "studio-(dev|test)"
+          target_label  = "env"
+          replacement   = "$1"
+        }
+      }
+
+      prometheus.remote_write "vm" {
+        external_labels = {
+          cluster = "webstudio",
+        }
+
+        endpoint {
+          url = "http://vm-victoria-metrics-single-server.studio-monitoring.svc.cluster.local:8428/api/v1/write"
+        }
+      }

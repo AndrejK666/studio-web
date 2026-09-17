@@ -1,0 +1,291 @@
+{
+  "uid": "studio-resources",
+  "title": "Studio — Resources",
+  "description": "Live cluster health per pod: what the workloads consume, what Kubernetes thinks they should be doing, and where the two disagree.",
+  "tags": ["studio", "resources"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "vm" },
+        "query": "label_values(kube_pod_status_phase, namespace)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "studio-dev", "value": "studio-dev" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Pods not Running",
+      "description": "Anything Pending, Failed or Unknown. Zero is the only good number here.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(kube_pod_status_phase{namespace=~\"$namespace\", phase!~\"Running|Succeeded\"} > 0) or vector(0)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Restarts (1h)",
+      "description": "Container restarts across the namespace in the last hour. A non-zero value is worth a `kubectl describe` for the last-terminated reason — OOMKilled and Error are very different problems.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[1h])) or vector(0)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "OOMKilled containers",
+      "description": "Containers whose last termination was the kernel reclaiming memory. Distinct from a crash: the process did nothing wrong, the limit did.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum(kube_pod_container_status_last_terminated_reason{namespace=~\"$namespace\", reason=\"OOMKilled\"}) or vector(0)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Live Theia sessions",
+      "description": "Per-workspace session pods the studio-session gear currently has running. Empty until someone opens an IDE — the label comes from kube-state-metrics' allowlist, and a pod that does not exist has no series.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "count(kube_pod_labels{namespace=~\"$namespace\", label_cf_studio_session=\"1\"}) or vector(0)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU by pod",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\", container!=\"\"}[5m]))",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory working set by pod",
+      "description": "Working set, not RSS: this is the number the kubelet compares against the limit when it decides to OOMKill.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"$namespace\", container!=\"\"})",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory as a share of limit",
+      "description": "Per container. Above ~90% sustained, the next allocation spike is an OOMKill rather than a slowdown.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1.2,
+          "custom": { "lineWidth": 1, "fillOpacity": 5, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod, container) (container_memory_working_set_bytes{namespace=~\"$namespace\", container!=\"\"}) / sum by (pod, container) (kube_pod_container_resource_limits{namespace=~\"$namespace\", resource=\"memory\"})",
+          "legendFormat": "{{pod}}/{{container}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Ready vs desired replicas",
+      "description": "A gap that does not close is a deployment that thinks it succeeded while the traffic disagrees.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "kube_deployment_status_replicas_ready{namespace=~\"$namespace\"}",
+          "legendFormat": "{{deployment}} ready"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "kube_deployment_spec_replicas{namespace=~\"$namespace\"}",
+          "legendFormat": "{{deployment}} desired"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network I/O by pod",
+      "description": "Pod-level by nature: a pod shares one network namespace, so cAdvisor has no per-container view to give.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod) (rate(container_network_receive_bytes_total{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{pod}} rx"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "- sum by (pod) (rate(container_network_transmit_bytes_total{namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "{{pod}} tx"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU throttling",
+      "description": "Share of scheduler periods in which the container hit its CPU limit. Sustained throttling looks like latency, not like a CPU graph at 100%.",
+      "datasource": { "type": "prometheus", "uid": "vm" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "custom": { "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "vm" },
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"$namespace\", container!=\"\"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=~\"$namespace\", container!=\"\"}[5m]))",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    }
+  ]
+}
