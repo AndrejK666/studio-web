@@ -1877,3 +1877,15 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .work-inbox-when { color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
+/* ── Presence notes ──────────────────────────────────────────────────────────
+   Stacked in the corner, above everything, and never auto-hiding: the note is
+   not stored anywhere, so a toast that faded while somebody was in another
+   window would be the only copy of it disappearing. */
+.notes { position: fixed; right: 18px; bottom: 18px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
+.note { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); padding: 10px 12px; }
+.note-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+.note-from { font-weight: 600; color: var(--foreground); }
+.note-when { margin-left: auto; }
+.note-x { border: none; background: transparent; color: var(--muted-foreground); cursor: pointer; padding: 0 2px; font-size: 12px; }
+.note-x:hover { color: var(--foreground); }
+.note-text { margin-top: 6px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
