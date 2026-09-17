@@ -1,15 +1,15 @@
 /*
  * The registry itself: plain data structures, no Theia and no inversify.
  *
- * Split out of `presence.js` for `viewer-credentials-env.js`'s reason — the
+ * Split out of `collab.js` for `viewer-credentials-env.js`'s reason — the
  * part with the rules in it is the part worth testing, and a test that has to
  * boot a dependency-injection container to reach a Map is a test nobody runs.
- * `presence.js` keeps the wiring and nothing else.
+ * `collab.js` keeps the wiring and nothing else.
  *
- * See `../common/presence-protocol.js` for why a write claim carries a digest.
+ * See `../common/collab-protocol.js` for why a write claim carries a digest.
  */
 
-const { PRESENCE_TTL_MS, WRITE_CLAIM_TTL_MS } = require('../common/presence-protocol');
+const { PARTY_TTL_MS, WRITE_CLAIM_TTL_MS } = require('../common/collab-protocol');
 
 /** Shape an author record into what a roster may carry. Input from a frontend:
  *  nothing is trusted past its type, and nothing but these four fields is kept
@@ -37,7 +37,7 @@ function documentKey(value) {
  * exactly that reason — a per-connection singleton would give each browser a
  * registry of one, which is the state the product was already in.
  */
-class PresenceRegistry {
+class CollabRegistry {
 
     constructor(now = () => Date.now()) {
         this.now = now;
@@ -160,7 +160,7 @@ class PresenceRegistry {
         const now = this.now();
         for (const [key, inDoc] of this.parties) {
             for (const [id, entry] of inDoc) {
-                if (now - entry.at > PRESENCE_TTL_MS) { inDoc.delete(id); }
+                if (now - entry.at > PARTY_TTL_MS) { inDoc.delete(id); }
             }
             if (inDoc.size === 0) { this.parties.delete(key); }
         }
@@ -170,4 +170,4 @@ class PresenceRegistry {
     }
 }
 
-module.exports = { PresenceRegistry, authorOf, documentKey };
+module.exports = { CollabRegistry, authorOf, documentKey };

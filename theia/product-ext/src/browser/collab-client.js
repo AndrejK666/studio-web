@@ -1,5 +1,5 @@
 /*
- * The browser half of presence: announce this document while it is open, and
+ * The browser half of co-editing: announce this document while it is open, and
  * ask who wrote a change that arrived from outside.
  *
  * DEGRADES TO SILENCE, NEVER TO A GUESS. Every call is wrapped, and a failure
@@ -11,24 +11,24 @@
  * person who did not make it, and there is no path here that can produce one:
  * an answer only ever comes from a claim the writer made themselves.
  *
- * See `../common/presence-protocol.js` for why a claim carries a digest, and
- * `../node/presence.js` for why the node backend can answer this at all.
+ * See `../common/collab-protocol.js` for why a claim carries a digest, and
+ * `../node/collab.js` for why the node backend can answer this at all.
  */
 
 const { RemoteConnectionProvider } =
     require('@theia/core/lib/browser/messaging/service-connection-provider');
-const { PRESENCE_PATH, HEARTBEAT_MS, bodyDigest } = require('../common/presence-protocol');
+const { COLLAB_PATH, HEARTBEAT_MS, bodyDigest } = require('../common/collab-protocol');
 const { identity } = require('./identity');
 
-class PresenceClient {
+class CollabClient {
 
     /** @param container the frontend inversify container */
     init(container) {
         try {
             const provider = container.get(RemoteConnectionProvider);
-            this.service = provider.createProxy(PRESENCE_PATH);
+            this.service = provider.createProxy(COLLAB_PATH);
         } catch (error) {
-            console.warn('[studio] presence unavailable; this session will not see colleagues', error);
+            console.warn('[studio] co-editing unavailable; this session will not see colleagues', error);
             this.service = undefined;
         }
         return this;
@@ -133,6 +133,6 @@ class PresenceClient {
     }
 }
 
-const presence = new PresenceClient();
+const collab = new CollabClient();
 
-module.exports = { presence, PresenceClient };
+module.exports = { collab, CollabClient };

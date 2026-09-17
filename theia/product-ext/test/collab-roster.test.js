@@ -1,5 +1,5 @@
 /*
- * Presence and write attribution.
+ * The co-editing roster and write attribution.
  *
  * The roster half is decoration and its failures are cosmetic. The attribution
  * half is not: its answer decides whether a change that arrived from outside is
@@ -8,14 +8,14 @@
  * anyone having read it. So most of what is below is about the ways a claim
  * must fail to match.
  *
- * Run: `node test/presence.test.js` (or `npm run test:presence`).
+ * Run: `node test/collab-roster.test.js` (or `npm run test:collab-roster`).
  */
 
 const assert = require('node:assert');
-const { PresenceRegistry } = require('../src/node/presence-registry');
+const { CollabRegistry } = require('../src/node/collab-registry');
 const {
-    bodyDigest, PRESENCE_TTL_MS, WRITE_CLAIM_TTL_MS
-} = require('../src/common/presence-protocol');
+    bodyDigest, PARTY_TTL_MS, WRITE_CLAIM_TTL_MS
+} = require('../src/common/collab-protocol');
 
 const DOC = 'file:///workspace/docs/prd.md';
 const ROMA = { id: 'oidc:sub-1', name: 'Roma', kind: 'person', key: 'oidc-sub-1' };
@@ -24,7 +24,7 @@ const ANA = { id: 'oidc:sub-2', name: 'Ana', kind: 'person', key: 'oidc-sub-2' }
 /* A clock the test moves, so nothing here waits on a real one. */
 function clocked(start = 1_000_000) {
     const state = { now: start };
-    const registry = new PresenceRegistry(() => state.now);
+    const registry = new CollabRegistry(() => state.now);
     return { registry, tick: ms => { state.now += ms; } };
 }
 
@@ -40,7 +40,7 @@ function test(name, fn) {
     }
 }
 
-console.log('presence');
+console.log('collab-roster');
 
 // -- the roster --------------------------------------------------------------
 
@@ -61,7 +61,7 @@ test('two people in one document see each other', () => {
 });
 
 test('my own second tab is me, not a colleague', () => {
-    // The whole reason presence is keyed by author and not by connection: a
+    // The whole reason the roster is keyed by author and not by connection: a
     // roster that listed my other tab would put the duplicate-session warning
     // back, this time as somebody who does not exist.
     const { registry } = clocked();
@@ -80,7 +80,7 @@ test('a closed tab expires instead of lingering', () => {
     // fall out on its own.
     const { registry, tick } = clocked();
     registry.announce('conn-a', DOC, ROMA, false);
-    tick(PRESENCE_TTL_MS + 1);
+    tick(PARTY_TTL_MS + 1);
     assert.deepStrictEqual(registry.announce('conn-b', DOC, ANA, false), []);
 });
 
@@ -113,7 +113,7 @@ test('a project roster spans its documents and stops at its edge', () => {
 test('a project roster forgets a party that stopped beating', () => {
     const { registry, tick } = clocked();
     registry.announce('conn-a', 'file:///workspace/alpha/a.md', ROMA, false);
-    tick(PRESENCE_TTL_MS + 1);
+    tick(PARTY_TTL_MS + 1);
     assert.deepStrictEqual(registry.everyone('file:///workspace/alpha'), []);
 });
 
