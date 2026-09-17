@@ -52,6 +52,7 @@ const { fileTypeSettings, patchNavigatorFilter } = require('./file-type-settings
 const { TABLE_EXTENSIONS } = require('./table-data');
 const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
+const { presence } = require('./presence-client');
 const { QualityRunnerClient } = require('./quality-runner-client');
 const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
 const { CommentLog } = require('./comment-log');
@@ -70,6 +71,7 @@ const { QUALITY_CSS } = require('./quality-view');
 const { MEASURES_CSS } = require('./quality-measures');
 const { QUALITY_MARKS_CSS } = require('./quality-marks');
 const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
+const { CollaborationWidget, COLLAB_CSS, COLLAB_WIDGET_ID } = require('./collab-view');
 const { QualityStore } = require('./quality-store');
 /*
  * The green-field flow. Four modules and a hard rule: with no
@@ -152,6 +154,27 @@ const QUALITY_PROJECT_COMMAND = {
 const QUALITY_RAIL_ITEM_ID = 'studio-quality-rail';
 
 /*
+ * Collaboration at project scope: who is here, what is being discussed, what is
+ * waiting for a decision.
+ *
+ * NO KEYBINDING, for Quality's reason — this is a surface you go to when you
+ * want it, not several times an hour, and a chord spent on that is a chord
+ * spent badly. The palette and the rail are the routes.
+ *
+ * NOT GATED ON A SETTING, unlike Quality. Comments and proposals are not an
+ * optional feature of this product; a project with neither shows a page that
+ * says so in three empty states, which is a useful answer rather than a blank.
+ */
+const COLLAB_COMMAND = {
+    id: 'studio.collaboration',
+    label: 'Collaboration — who is here and what is open…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-organization'
+};
+
+const COLLAB_RAIL_ITEM_ID = 'studio-collab-rail';
+
+/*
  * The green-field flow's three commands.
  *
  * `studio.flow.new` is the one that did not exist in any form: the scenario's
@@ -196,6 +219,24 @@ const FLOW_PROVISION_COMMAND = {
     id: 'studio.flow.provision',
     label: 'Set this project up for agents',
     category: 'Studio'
+};
+
+/*
+ * The portal hands over the person it has signed in (identity.js, portalProvider).
+ *
+ * A COMMAND rather than a shared module, because the two sides are different
+ * Theia extensions: the bridge that receives the portal's message is TypeScript
+ * in `studio/`, this is hand-written JavaScript in `product-ext/`, and neither
+ * package depends on the other. The command registry is the seam they already
+ * share, and it keeps the direction right — the bridge knows a command id, not
+ * this module's internals.
+ *
+ * NO LABEL, deliberately. The command palette lists what has one, and this is
+ * not something a person invokes: it takes an argument only the portal holds,
+ * and invoking it with nothing is a no-op by design (identity.adopt).
+ */
+const IDENTITY_VIEWER_COMMAND = {
+    id: 'studio.identity.viewer'
 };
 
 // The DOM id of the rendered toolbar item is the ITEM's id, so it stays free of
@@ -1509,7 +1550,7 @@ class ProductChromeContribution {
              * the rail's own CSS must land after EDITOR_CSS's .studio-rail-*
              * geometry it builds on.
              */
-            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS +
+            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS +
             /* The flow's one surface: the rail's column. */
             FLOW_RAIL_CSS;
         fileTypeSettings.init(this.container.get(FileService), this.container.get(WorkspaceService));
@@ -1527,6 +1568,14 @@ class ProductChromeContribution {
          * src/node/viewer-credentials.js for what happens when it has not.
          */
         viewerCredentials.init(this.container, identity).start();
+        /*
+         * And right after it, for the same reason in the other direction: both
+         * answer "who is at this keyboard" to a container that is shared by
+         * everybody who opened this workspace. Credentials keep the answer
+         * private; presence is what makes it visible to the other people in the
+         * document.
+         */
+        presence.init(this.container);
         patchNavigatorFilter(this.container);
         document.head.appendChild(style);
         themeService = this.container.get(ThemeService);
@@ -1668,7 +1717,7 @@ class ProductChromeContribution {
         // The shell is not attached yet under onDidInitializeLayout, and mounting
         // reaches into its DOM, so it waits for the current tick to finish. Same
         // reason the rail-foot cluster this replaces did.
-        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); }, 0);
+        setTimeout(() => { slotStrip.mount(); welcomeView.mount(); this.mountSearchRail(); this.mountQualityRail(); this.mountCollabRail(); }, 0);
 
         this.watchFeatureSettings(app.shell);
     }
@@ -1863,6 +1912,50 @@ class ProductChromeContribution {
             await shell.addWidget(widget, { area: 'main' });
         }
         shell.activateWidget(widget.id);
+    }
+
+    /*
+     * Open (or re-reveal) the Collaboration tab. openSearch's shape, including
+     * the staleness guard, and for the same reason (constraint 27).
+     */
+    async openCollaboration(shell) {
+        let widget = shell.widgets.find(w => w.id === COLLAB_WIDGET_ID);
+        if (widget && (widget.isDisposed || !widget.parent)) {
+            try { widget.dispose(); } catch (e) { /* already going */ }
+            widget = undefined;
+        }
+        if (!widget) {
+            widget = new CollaborationWidget({
+                workspaceService: this.container.get(WorkspaceService),
+                fileService: this.container.get(FileService),
+                openerService: this.container.get(OpenerService),
+                messageService: this.container.get(MessageService),
+                commandRegistry: this.container.get(CommandRegistry)
+            });
+            await shell.addWidget(widget, { area: 'main' });
+        }
+        shell.activateWidget(widget.id);
+    }
+
+    /*
+     * The rail's Collaboration button, in the ACTIONS group beside Search and
+     * Quality. Unconditional, unlike Quality's — see COLLAB_COMMAND for why
+     * this one is not behind a setting, and rail-nav.js for why `actions` is
+     * the append-friendly group.
+     */
+    mountCollabRail() {
+        if (this.collabRailNode) { return; }
+        const button = document.createElement('button');
+        button.id = COLLAB_RAIL_ITEM_ID;
+        button.className = 'studio-rail-btn';
+        button.title = 'Collaboration across this project';
+        button.setAttribute('aria-label', 'Collaboration across this project');
+        button.innerHTML = ICONS.comment;
+        button.addEventListener('click', () => {
+            this.container.get(CommandRegistry).executeCommand(COLLAB_COMMAND.id);
+        });
+        this.collabRailNode = button;
+        railNav.claim('actions', group => group.appendChild(button));
     }
 
     /*
@@ -2454,6 +2547,21 @@ function qualityProjectHandler(container) {
     };
 }
 
+function collaborationHandler(container) {
+    return {
+        execute: () => {
+            const shell = container.get(ApplicationShell);
+            const chrome = container.getAll(FrontendApplicationContribution)
+                .find(contribution => typeof contribution.openCollaboration === 'function');
+            if (!chrome) {
+                console.warn('[studio] the product chrome contribution is not available to open Collaboration');
+                return;
+            }
+            return chrome.openCollaboration(shell);
+        }
+    };
+}
+
 const mod = new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toDynamicValue(ctx => new ProductChromeContribution(ctx.container)).inSingletonScope();
     /*
@@ -2485,6 +2593,13 @@ const mod = new ContainerModule(bind => {
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
+            commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
+            /* Unconditional: the portal's handshake can arrive before anything
+             * else this frontend does, and a command that is not there yet is
+             * a sign-in silently dropped. */
+            commands.registerCommand(IDENTITY_VIEWER_COMMAND, {
+                execute: viewer => identity.adopt(viewer)
+            });
             /*
              * The optional features' commands are registered whatever the
              * setting says and made INVISIBLE when it is off, rather than

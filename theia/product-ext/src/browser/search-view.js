@@ -146,6 +146,8 @@ function markedText(text, offsets) {
 }
 
 /* Root-relative path of a file URI under a root URI. */
+const sidecarScan = require('./sidecar-scan');
+
 function relativeTo(rootString, uriString) {
     return uriString.startsWith(rootString) ? uriString.slice(rootString.length).replace(/^\//, '') : uriString;
 }
@@ -650,62 +652,12 @@ class SearchWidget extends Widget {
      * Which documents have comment logs, proposals, or history — one shallow
      * walk of `.studio/` per root instead of three existence probes per file.
      *
-     * On a project with 1,200 documents and comments on nine of them, the probe
-     * version costs 3,600 filesystem calls to discover nine. This costs three
-     * directory walks.
+     * The walk itself moved to `sidecar-scan.js` when the collaboration tab
+     * needed the same answer; the arithmetic that justifies it is in that
+     * file's header. This stays as the call site's own name for it.
      */
     async collectSidecars(rootUri, token) {
-        const found = { comments: new Set(), changes: new Set(), history: new Set() };
-        const { URI } = require('@theia/core/lib/common/uri');
-        const base = rootUri.toString() + '/.studio';
-
-        /* comments/<rel>/  is a DIRECTORY of per-author .jsonl logs;
-         * comments/<rel>.json is the legacy sidecar. Both name one document. */
-        await this.walkSidecar(new URI(base + '/comments'), base + '/comments', token, (rel, isDirectory, hasLogs) => {
-            if (isDirectory && hasLogs) { found.comments.add(rel); }
-            if (!isDirectory && rel.endsWith('.json')) { found.comments.add(rel.slice(0, -'.json'.length)); }
-        });
-        await this.walkSidecar(new URI(base + '/changes'), base + '/changes', token, (rel, isDirectory) => {
-            // index.json at the top is the workspace-wide pending index, not a
-            // document's proposals.
-            if (!isDirectory && rel.endsWith('.json') && rel !== 'index.json') { found.changes.add(rel.slice(0, -'.json'.length)); }
-        });
-        await this.walkSidecar(new URI(base + '/history'), base + '/history', token, (rel, isDirectory) => {
-            if (!isDirectory && rel.endsWith('.json')) { found.history.add(rel.slice(0, -'.json'.length)); }
-        });
-        return found;
-    }
-
-    async walkSidecar(dirUri, prefix, token, visit) {
-        if (token.cancelled) { return; }
-        let stat;
-        try {
-            // A project with no comments has no .studio/comments, and that is
-            // the common case rather than an error.
-            if (!(await this.fileService.exists(dirUri))) { return; }
-            stat = await this.fileService.resolve(dirUri);
-        } catch (e) {
-            return;
-        }
-        for (const child of (stat && stat.children) || []) {
-            if (token.cancelled) { return; }
-            const rel = relativeTo(prefix, child.resource.toString());
-            if (child.isDirectory) {
-                /* A log directory is one whose own children are .jsonl files.
-                 * Anything else is an intermediate folder mirroring the
-                 * document tree, so the walk continues through it. */
-                let logs = false;
-                try {
-                    const inner = await this.fileService.resolve(child.resource);
-                    logs = ((inner && inner.children) || []).some(entry =>
-                        !entry.isDirectory && entry.resource.path.base.endsWith('.jsonl'));
-                } catch (e) { /* treated as not a log directory */ }
-                visit(rel, true, logs);
-                if (!logs) { await this.walkSidecar(child.resource, prefix, token, visit); }
-                continue;
-            }
-            visit(rel, false, false);
-        }
+        return sidecarScan.collectSidecars(this.fileService, rootUri, token);
     }
 
     /** Every hit one document can produce, pushed onto this.hits. */

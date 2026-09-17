@@ -1168,13 +1168,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     return () => mo.disconnect();
   }, []);
 
-  useEffect(() => {
-    // Silent renew: hand the fresh token to every mounted space.
-    document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame").forEach((f) => {
-      const origin = f.dataset.origin;
-      if (origin) f.contentWindow?.postMessage({ type: "studio.token", apiToken: token }, origin);
-    });
-  }, [token]);
   /* ── What finished ──
      One source, two destinations. The channel says a background run ended; the
      bell in the bar is where a person notices it, and any session they have
@@ -1239,6 +1232,38 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  /* Who the IDE should attribute this person's writing to.
+   *
+   * The session container is shared by everyone who opens the same workspace,
+   * and the IDE has no login of its own, so the portal is the only side that
+   * knows who is at the keyboard. Without this the IDE falls back to a name
+   * typed into a text field and kept in that browser's storage.
+   *
+   * `sub` is the subject id, not the display name: it survives a rename, and
+   * it is what the comment and change logs are partitioned by on disk. */
+  const viewer = useMemo(
+    () => ({ sub: me.subject_id, name: userName, kind: "person" }),
+    [me.subject_id, userName],
+  );
+  /* Read by the studio.init retry, for tokenRef's reason: that timer keeps
+     firing the closure it was created with for up to five minutes, and the
+     display name can resolve inside that window. */
+  const viewerRef = useRef(viewer);
+  viewerRef.current = viewer;
+
+  useEffect(() => {
+    // Silent renew: hand the fresh token — and the person it belongs to — to
+    // every mounted space. The viewer rides along rather than going out on a
+    // message of its own because the two answer the same question for the
+    // IDE (who is calling), and a renew is exactly when the answer can change.
+    document.querySelectorAll<HTMLIFrameElement>("iframe.space-frame").forEach((f) => {
+      const origin = f.dataset.origin;
+      if (origin) {
+        f.contentWindow?.postMessage({ type: "studio.token", apiToken: token, viewer }, origin);
+      }
+    });
+  }, [token, viewer]);
 
   // Resolved AFTER home/orgs state exists (declaration order matters).
   const adminOrg =
@@ -1961,6 +1986,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                       type: "studio.init",
                       theme,
                       apiToken: tokenRef.current,
+                      // Who is at the keyboard. The IDE attributes comments,
+                      // suggestions and history to this, and one container is
+                      // shared by everyone who opens this workspace — so
+                      // without it the session cannot tell them apart.
+                      viewer: viewerRef.current,
                       workspaceId: s.wsId,
                       // The IDE opens `/workspace`, so without the name every
                       // surface in it calls the project after the container's

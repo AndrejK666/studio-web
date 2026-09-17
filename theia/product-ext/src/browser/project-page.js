@@ -464,6 +464,20 @@ class ProjectPageWidget extends Widget {
         this.identityAvatarEl.innerHTML = avatarHtml(me);
 
         /*
+         * Signed in through the portal: the name belongs to the identity
+         * provider, so the field reports it instead of offering to change it —
+         * anything typed here would be overwritten by the next silent renew.
+         * Disabled rather than hidden, because checking which account a session
+         * is writing under is exactly what brings a person to this section.
+         */
+        const verified = !identity.provider().canSetName;
+        this.identityEl.disabled = verified;
+        if (verified) {
+            this.identityNoteEl.textContent = 'From your organisation’s sign-in, and verified. Comments, suggestions and history are attributed to this account in every session and on any machine, not just this one.';
+            return;
+        }
+
+        /*
          * Two things this note has to be honest about, because both are
          * surprising: the name is per machine while everything else on the page
          * is per project, and it is not verified. OIDC is what will make it

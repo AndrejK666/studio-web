@@ -63,10 +63,14 @@ const { DocumentCodeBlock, starterButtonsHtml } = require('./figure-view');
 const { codeHighlightPlugin } = require('./code-highlight');
 const { FIGURE_LANGUAGE, figureRequestPrompt, starterFigure } = require('./figure-spec');
 const { SessionLock } = require('./session-lock');
+/* The other half of SessionLock's problem. That one sees this person's second
+ * tab; this one sees the colleague in the next browser, because the workspace's
+ * Theia backend is one process they both connect to. */
+const { presence } = require('./presence-client');
 const { fileTypeSettings } = require('./file-type-settings');
 const { ICONS } = require('./icons');
 const { messageHtml, quoteLineHtml } = require('./comment-ui');
-const { identity, authorRecord } = require('./identity');
+const { identity, authorRecord, isSelf } = require('./identity');
 const { signature, mergeFolded } = require('./comment-log');
 const { loaderMarkup, loadingMarkup, showLoading } = require('./loader');
 const {
@@ -770,6 +774,10 @@ const SPLIT_SYNC_MS = 320;
 // enough to be invisible, frequent enough that an assistant's edit surfaces
 // while the user is still thinking about the request that caused it.
 const EXTERNAL_POLL_MS = 2000;
+// How long the status line says who just edited the document before going back
+// to the save state. Long enough to be read after glancing away, short enough
+// that it is never the answer to "is my work saved".
+const REMOTE_NOTICE_MS = 5000;
 
 /*
  * How long after a keystroke a suggestion is written.
@@ -1581,8 +1589,13 @@ class MarkdownEditorWidget extends Widget {
         if (this.linkOutsideHandler) { document.removeEventListener('pointerdown', this.linkOutsideHandler, true); }
         for (const d of this.disposables) { try { d.dispose(); } catch (e) { /* already gone */ } }
         this.disposables = [];
+        // The drain above told the backend we left; this drops the roster the
+        // status line was still holding for a document that is now closed.
+        this.presenceSession = undefined;
+        statusLine.setDocumentPresence(this.uri, []);
         clearInterval(this.pollTimer);
         clearTimeout(this.externalTimer);
+        clearTimeout(this.remoteNoticeTimer);
         if (this.lock) { this.lock.release(); this.lock = undefined; }
         if (this.editor) { this.editor.destroy(); this.editor = undefined; }
         super.onCloseRequest(msg);
@@ -2286,6 +2299,10 @@ class MarkdownEditorWidget extends Widget {
         }
         this.updateTopbarVisibility();
         if (this.lock) { this.lock.setDirty(state === 'dirty' || state === 'conflict'); }
+        /* The same signal the lock uses, read for the other audience: unsaved
+         * work is what "is editing" means to the colleague looking at the
+         * roster. Reported on the next heartbeat, not now — see setTyping. */
+        if (this.presenceSession) { this.presenceSession.setTyping(state === 'dirty'); }
     }
 
     /**
@@ -2406,6 +2423,18 @@ class MarkdownEditorWidget extends Widget {
     async writeBody(body) {
         const full = joinFrontmatter(this.frontmatter, body);
         this.lastWrittenFull = full;
+        /*
+         * Claim the bytes BEFORE writing them.
+         *
+         * A colleague's editor learns about this write from the filesystem, and
+         * that can arrive within milliseconds. A claim made after the write
+         * would sometimes lose that race, and losing it means my ordinary save
+         * is presented to them as an unattributed change to review — the
+         * failure this whole path exists to remove. Claiming first can only
+         * ever be early, and an early claim for a write that then fails expires
+         * on its own without having been redeemed.
+         */
+        await presence.claimWrite(this.uri, full);
         const written = await this.fileService.write(this.uri, full);
         this.knownMtime = written.mtime;
         return written;
@@ -2504,6 +2533,18 @@ class MarkdownEditorWidget extends Widget {
          * this.
          */
         this.pollTimer = setInterval(() => this.pollExternalChange(), EXTERNAL_POLL_MS);
+
+        /*
+         * Announce this document while it is open, and show who else is in it.
+         *
+         * Pushed onto `disposables`, which onCloseRequest drains — the same
+         * thing that releases the filesystem watch above. A roster entry that
+         * outlived its editor would report somebody as present in a file they
+         * closed, which is worse than no roster.
+         */
+        this.presenceSession = presence.join(this.uri,
+            others => statusLine.setDocumentPresence(this.uri, others));
+        this.disposables.push(this.presenceSession);
     }
 
     async pollExternalChange() {
@@ -2552,7 +2593,90 @@ class MarkdownEditorWidget extends Widget {
             this.enterConflict(diskBody, this.currentBody(), content.value);
             return;
         }
+
+        /*
+         * A colleague's ordinary save is not a suggestion (requirement 14, in
+         * as many words: "remote human edits are not AI suggestions and require
+         * no accept/reject control"). Until presence existed there was no way
+         * to tell one from an agent's write, so every external change became a
+         * proposal — which put two people editing the same document into a
+         * review queue against each other and made the second person's work
+         * look like something the first had to approve.
+         *
+         * The claim is what settles it, and it settles it in the safe
+         * direction: a write nobody claimed — an agent's, a `git checkout`, a
+         * hand edit in a terminal — still becomes a proposal, exactly as
+         * before. Only a person who said "these bytes are mine" gets their save
+         * applied, and `isSelf` keeps my own second tab from being treated as
+         * somebody else.
+         */
+        const writer = await presence.lastWriter(this.uri, content.value);
+        if (writer && writer.author && !isSelf(writer.author)) {
+            await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value, writer.author);
+            return;
+        }
+
         await this.captureProposal(diskBody, frontmatterChanged ? { frontmatterChanged: true } : undefined);
+    }
+
+    /**
+     * Take a colleague's save into the open document.
+     *
+     * The state it moves is exactly what `resolveConflict('theirs')` moves,
+     * because it is the same decision — adopt what is on disk — arrived at
+     * without a question to ask. Anything less leaves the editor believing
+     * something about the file that is no longer true, and the next save then
+     * reports a conflict against a version that was never in dispute.
+     *
+     * THE CARET. `setRichContent` replaces the whole document, which puts the
+     * selection back at the start; with autosave on the other side that would
+     * happen every second or so and make the file unusable to read, never mind
+     * to edit. So the offset is captured and restored, clamped to the new
+     * length. It is an offset, not an anchor: a remote edit ABOVE the caret
+     * still shifts it, which is the honest limit of reseeding a document rather
+     * than patching it, and is not noticeable at the size these edits arrive in.
+     */
+    async applyRemoteEdit(diskBody, frontmatter, stat, diskFull, author) {
+        const caret = this.editor && this.editor.state
+            ? this.editor.state.selection.from
+            : undefined;
+        const focused = !!(this.editor && this.editor.isFocused);
+
+        this.knownMtime = stat.mtime;
+        this.frontmatter = frontmatter;
+        this.lastWrittenFull = diskFull;
+        this.setBody(diskBody);
+        this.lastSavedBody = diskBody;
+        this.setSaveState('clean');
+
+        if (focused && caret !== undefined && this.editor) {
+            try {
+                const end = this.editor.state.doc.content.size;
+                this.editor.commands.setTextSelection(Math.min(caret, end));
+            } catch (e) { /* a caret is a courtesy, never a reason to fail */ }
+        }
+
+        const name = (author && author.name) || 'A collaborator';
+        this.historyEntries = await this.historyStore.record(this.uri, {
+            kind: 'remote-edit',
+            author: name,
+            title: name + ' edited this document',
+            body: diskBody
+        });
+
+        /*
+         * Said in the status line rather than in a toast. With autosave on the
+         * other side these arrive every second or so, and a notification per
+         * save would bury everything else the product has to say. The line
+         * states it while it is news and then goes back to the save state; the
+         * history entry above is what keeps it afterwards.
+         */
+        statusLine.setDocumentState(this.uri, 'clean', name + ' edited this');
+        clearTimeout(this.remoteNoticeTimer);
+        this.remoteNoticeTimer = setTimeout(() => this.setSaveState(this.saveState), REMOTE_NOTICE_MS);
+
+        this.renderBanners();
+        this.renderRail();
     }
 
     /**

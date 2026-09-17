@@ -39,11 +39,45 @@ import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 
+/**
+ * The person the portal has signed in, as `studio.init` and `studio.token`
+ * carry them.
+ *
+ * The IDE has no login of its own — it is served through the session gate, and
+ * one session container is shared by everybody who opens that workspace — so
+ * the portal is the only side that knows who is at the keyboard. Until this
+ * arrived, the product's identity was a display name typed into a text field
+ * and kept in the browser's own storage, which made every author in a document
+ * indistinguishable from every other.
+ */
+export interface PortalViewer {
+    /** The identity provider's subject. Stable across a rename, which is why
+     *  it and not the name is what an authored comment is keyed by. */
+    sub?: string;
+    /** Display only. */
+    name?: string;
+    /** `person` unless the portal is driving the IDE as something else. */
+    kind?: string;
+}
+
+/**
+ * Hands `PortalViewer` to the product extension's identity module.
+ *
+ * A command id rather than an import: `product-ext` is a separate Theia
+ * extension that this package does not depend on (and which is plain
+ * JavaScript). Declared here as a literal because a shared constant would need
+ * exactly the dependency the command exists to avoid — the two spellings are
+ * pinned together by `portal-bridge-contribution.test.ts`.
+ */
+export const IDENTITY_VIEWER_COMMAND_ID = 'studio.identity.viewer';
+
 interface PortalMessage {
     type?: string;
     theme?: string;
     apiToken?: string;
     path?: string;
+    /** Who the portal has signed in; see {@link PortalViewer}. */
+    viewer?: PortalViewer;
     /** Tenant that opened this session — a workspace tenant (shows every
      *  project under it) or a project tenant (shows just that project). Scopes
      *  the Artifact Graph's reads so it never bleeds other projects' nodes.
@@ -157,6 +191,12 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             if ((msg.type === 'studio.init' || msg.type === 'studio.token') && typeof msg.workspaceId === 'string') {
                 StudioApi.scope = msg.workspaceId;
             }
+            if (msg.type === 'studio.init' || msg.type === 'studio.token') {
+                // Restated on every silent renew, not only at the handshake: a
+                // hosted session outlives a token, and the person can change
+                // under a live page when the portal posts a different one.
+                this.adoptPortalViewer(msg.viewer);
+            }
             if (typeof msg.workspaceName === 'string') {
                 this.workspaceName.setName(msg.workspaceName);
             }
@@ -219,6 +259,27 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         // leak on close. Only changes are posted.
         const statusTimer = setInterval(() => this.postStatus(), 2000);
         this.toDispose.push(Disposable.create(() => clearInterval(statusTimer)));
+    }
+
+    /**
+     * Hand the signed-in person to the product extension's identity module.
+     *
+     * A viewer without a `sub` is dropped rather than forwarded: the portal
+     * posts `studio.token` on every silent renew whether or not it has anybody
+     * signed in, and adopting a subject-less viewer would replace a verified
+     * identity with an anonymous one halfway through a session.
+     *
+     * The rejection is caught rather than `void`-ed. This command belongs to a
+     * different extension, and a build composed without `product-ext` answers
+     * an unknown id by throwing — which would turn every token renew into an
+     * unhandled rejection in the console.
+     */
+    protected adoptPortalViewer(viewer: PortalViewer | undefined): void {
+        if (!viewer?.sub) {
+            return;
+        }
+        this.commands.executeCommand(IDENTITY_VIEWER_COMMAND_ID, viewer)
+            .catch(e => console.warn('[studio] portal viewer not adopted', e));
     }
 
     /**
