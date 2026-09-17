@@ -1842,3 +1842,38 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 /* The subject is the one column worth a colour: it is what the row is about,
    and it is where the eye lands after the event name. */
 .act-table .act-subject { color: var(--primary); }
+
+/* ── What finished ────────────────────────────────────────────────────────
+   The bell lives with the bar's other pills and keeps their shape; the panel
+   hangs off it like the account menu does, rather than becoming a third kind
+   of overlay. */
+.work-inbox { position: relative; display: inline-flex; }
+.work-inbox-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  width: min(380px, calc(100vw - 32px));
+  background: var(--card); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.75rem; display: grid; gap: 0.5rem;
+  animation: rightbar-in 0.18s ease;
+}
+.work-inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.work-inbox-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.work-inbox-item {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px; align-items: baseline;
+  padding: 6px 4px; border-radius: var(--radius-md);
+}
+.work-inbox-item + .work-inbox-item { border-top: 1px solid var(--border); }
+/* The outcome is the first thing read, so it carries the colour — the row
+   itself stays neutral rather than becoming a bar of green and red. */
+.work-inbox-state { font-size: 12px; }
+.work-inbox-item.succeeded .work-inbox-state { color: var(--success); }
+.work-inbox-item.failed .work-inbox-state { color: var(--destructive); }
+.work-inbox-item.cancelled .work-inbox-state { color: var(--muted-foreground); }
+.work-inbox-body { display: grid; gap: 1px; min-width: 0; }
+.work-inbox-title { font-weight: 500; }
+.work-inbox-line {
+  color: var(--muted-foreground); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.work-inbox-when { color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }

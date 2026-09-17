@@ -13,6 +13,7 @@ jest.mock('./artifact-graph-contribution', () => ({
     ArtifactGraphCommand: { id: 'studio.artifactGraph' }
 }));
 
+import type { NotifyEditorFrontendController } from './notify-editor-controller';
 import { PortalBridgeContribution } from './portal-bridge-contribution';
 
 /**
@@ -27,6 +28,10 @@ import { PortalBridgeContribution } from './portal-bridge-contribution';
 class TestBridge extends PortalBridgeContribution {
     requestOpen(open: () => void): void {
         this.openWhenLayoutReady(open);
+    }
+
+    notify(request: Parameters<NotifyEditorFrontendController['onNotifyEditor']>[0]): void {
+        void this.notifier.onNotifyEditor(request);
     }
 }
 
@@ -72,5 +77,25 @@ describe('PortalBridgeContribution layout gating', () => {
         bridge.onDidInitializeLayout();
 
         expect(opened).toEqual(['file']);
+    });
+});
+
+describe('PortalBridgeContribution notifications', () => {
+    it('shows a portal notification without waiting for the layout', () => {
+        // The opens are held until the shell has restored, because the restore
+        // would bury them. A notification moves nothing and steals no focus,
+        // and holding it back would only make it arrive after the thing it is
+        // about has gone stale.
+        const bridge = new TestBridge();
+        const shown: unknown[] = [];
+        Object.defineProperty(bridge, 'notifier', {
+            value: { onNotifyEditor: (request: unknown) => void shown.push(request) },
+        });
+
+        bridge.notify({ level: 'info', message: 'finished', source: 'Artifact ingest' });
+
+        expect(shown).toEqual([
+            expect.objectContaining({ message: 'finished', source: 'Artifact ingest' }),
+        ]);
     });
 });
