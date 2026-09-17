@@ -74,7 +74,7 @@ Two things this arrangement buys, both learned the hard way elsewhere:
   Grafana wants it instead of being helm-escaped. (Insight, which embeds
   dashboards inline in a values file, has to escape every one of them.)
 
-## Public access and SSO (prepared, off)
+## Access: SSO over a port-forward
 
 Grafana is `ClusterIP` only. The way in is
 
@@ -84,28 +84,46 @@ kubectl -n studio-monitoring port-forward svc/grafana 3000:80
 kubectl -n studio-monitoring get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
 ```
 
-An Ingress and Keycloak SSO are wired in `grafana/values.yaml` and default to
-off, because turning them on needs two things this repository cannot do on its
-own:
+**SSO is live.** That login page offers a Keycloak button next to the local
+admin form: the `grafana` client exists in the studio realm, and the redirect
+URIs cover the port-forward, so the whole flow works today without any public
+hostname. The client is **public, with PKCE** — the same shape `studio-portal`
+uses — so there is no client secret anywhere to seal, rotate, or leak.
 
-1. **A DNS record.** `studio-dev.cfabric.org` resolves to Cloudflare and TLS
-   terminates there — the cluster has no cert-manager `Issuer`, no
-   `Certificate`, and the product's own Ingress carries no `tls` block. A host
-   for Grafana is therefore a Cloudflare record someone in infra adds, not a
-   certificate we request. Set `ingress.hosts` and
-   `grafana.ini.server.domain` to that name (both, or the OAuth redirect
-   returns to a host nobody is listening on).
-2. **The `grafana` client in the deployed realm.** The public Keycloak image
-   ships no realm; it arrives as the `studio-web-keycloak-realm` Secret. The
-   client is added to `keycloak/realm-studio.json` here, so that Secret has to
-   be regenerated from the updated file before
-   `grafana.ini.auth.generic_oauth.enabled` is flipped.
+**The Ingress is not**, and cannot be from this repository. Both routes out are
+blocked by things the cluster owns:
 
-The client is **public, with PKCE** — the same shape `studio-portal` uses. There
-is no client secret anywhere: none to seal, rotate, or leak. Its redirect URIs
-already include `http://localhost:3000/login/generic_oauth`, so once the realm
-Secret carries the client, SSO can be exercised over the port-forward before any
-DNS exists.
+- *A subdomain* needs a Cloudflare record. There is no wildcard DNS — of
+  `grafana.studio-dev.cfabric.org`, `grafana-dev.cfabric.org` and
+  `monitoring.cfabric.org`, none resolve; only `studio-dev.cfabric.org` does,
+  through Cloudflare, where TLS also terminates. The cluster has no cert-manager
+  `Issuer` and the product's own Ingress carries no `tls` block, which is why
+  the ingress values here have neither.
+- *A path on the existing host* looked free, since Keycloak already answers at
+  `/auth` on that very hostname. It is not: Traefik runs with
+  `--providers.kubernetesingress.namespaces=studio-dev,studio-test`. An Ingress
+  in `studio-monitoring` is simply invisible to it, an Ingress cannot point at a
+  Service in another namespace, and `allowExternalNameServices` is off. The
+  symptom is worth remembering — the frontend SPA answers `200` on every path,
+  so `/grafana/api/health` returned HTML and looked like a working route.
+
+When one of them is unblocked, set `ingress.hosts` **and**
+`grafana.ini.server.domain` to the host, and add the matching redirect URI to
+the `grafana` client. Setting only one of the two sends the OAuth round trip to
+a URL nobody serves.
+
+### Keeping the realm and this repository in step
+
+The deployed realm comes from the `studio-web-keycloak-realm` Secret, not from
+the image and not from this file — `studio-delivery.yml` only checks that the
+Secret exists. The client was therefore created twice: through the Admin API, so
+the running Keycloak has it now, and in the Secret, so a Keycloak that starts
+against an empty database imports it too. `keycloak/realm-studio.json` is the
+source both were built from.
+
+One constraint the file cannot show: Keycloak stores `client.description` in a
+`varchar(255)`. A longer one fails with a Postgres error rather than a
+validation message, and it fails the realm import the same way.
 
 Everyone who authenticates gets **Viewer**. Dashboards are provisioned with
 `allowUiUpdates: false`, so Editor would grant the right to change nothing that

@@ -18,28 +18,34 @@ service:
   type: ClusterIP
   port: 80
 
-# Public access — OFF, and it needs two things this repository cannot provide.
+# Public access — OFF. Both routes to it are blocked outside this repository,
+# and the blockers are worth writing down because neither is obvious from here.
 #
-#   1. A DNS record. studio-dev.cfabric.org resolves to Cloudflare (172.67.x.x)
-#      and TLS terminates there: the cluster has no cert-manager Issuer and the
-#      product's own Ingress carries no `tls` block. So a new host is a
-#      Cloudflare record someone in infra adds, not a certificate we request.
-#      That is also why there are no cert-manager annotations and no `tls` here.
-#   2. The `grafana` client in the DEPLOYED realm. The public Keycloak image
-#      ships no realm — it comes from the `studio-web-keycloak-realm` Secret,
-#      so adding the client to `keycloak/realm-studio.json` in this repository
-#      does not by itself change the running IdP. That Secret has to be
-#      regenerated from the updated file.
+# A SUBDOMAIN needs a Cloudflare record. There is no wildcard DNS: of
+# grafana.studio-dev.cfabric.org, grafana-dev.cfabric.org and
+# monitoring.cfabric.org, none resolve — only studio-dev.cfabric.org does,
+# through Cloudflare, where TLS also terminates. That is why this block carries
+# no cert-manager annotations and no `tls` section: the certificate was never
+# ours to request.
 #
-# Until both exist, `kubectl -n studio-monitoring port-forward svc/grafana
-# 3000:80` is the way in, and the realm client already carries the matching
-# localhost redirect URIs so SSO can be exercised over that port-forward.
+# A PATH on the existing host looked free — Keycloak already answers at /auth on
+# exactly this hostname — but Traefik is scoped:
+#
+#     --providers.kubernetesingress.namespaces=studio-dev,studio-test
+#
+# An Ingress in studio-monitoring is invisible to it, and an Ingress cannot
+# point at a Service in another namespace. `allowExternalNameServices` is not
+# enabled either, so there is no way around it from here. Adding this namespace
+# to that list is a one-line change to the cluster-wide Traefik release, which
+# this repository does not own.
+#
+# NB when it is unblocked: a subdomain serves Grafana at the root, so leave
+# `serve_from_sub_path` alone; only a path-based host needs it.
 ingress:
   enabled: false
   ingressClassName: traefik
-  # e.g. ["monitoring.cfabric.org"]. Set `grafana.ini.server.domain` to the
-  # same value: the OAuth redirect is built from root_url, and a mismatch
-  # sends the browser back to the wrong host after a successful login.
+  # Set this AND `grafana.ini.server.domain` to the same name — setting only
+  # one sends the OAuth redirect to a host nobody is listening on.
   hosts: []
   path: /
   pathType: Prefix
@@ -122,9 +128,9 @@ grafana.ini:
     # No self-service signup: accounts come from Keycloak or from nowhere.
     allow_sign_up: false
   server:
-    # Must match the address the browser actually uses. `localhost` is correct
-    # for the port-forward; set it to the ingress host when that exists, or the
-    # OAuth round trip returns to a URL nobody is listening on.
+    # Must match the address the browser actually uses, or the OAuth round trip
+    # returns to a URL nobody is listening on. `localhost` is correct while the
+    # way in is the port-forward; change it together with `ingress.hosts`.
     domain: localhost
     root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
   auth:
@@ -133,9 +139,10 @@ grafana.ini:
     # thing that broke, which is exactly when the dashboards matter.
     disable_login_form: false
 
-  # Keycloak SSO against the studio realm. OFF until the `grafana` client
-  # exists in the deployed realm (see the ingress note above) — enabling it
-  # first turns the login button into a dead end.
+  # Keycloak SSO against the studio realm. The `grafana` client exists in the
+  # deployed realm and in the `studio-web-keycloak-realm` Secret, so this is on:
+  # over the port-forward, http://localhost:3000 offers a Keycloak button and
+  # the local admin form side by side.
   #
   # A PUBLIC client with PKCE, the same shape studio-portal uses: Grafana holds
   # no client secret, so there is none to seal, rotate, or leak. Verified
@@ -146,7 +153,7 @@ grafana.ini:
   # when that key appears in values at all (`assertNoLeakedSecrets`), which for
   # a public client is the outcome we wanted anyway.
   auth.generic_oauth:
-    enabled: false
+    enabled: true
     name: Keycloak
     icon: signin
     client_id: grafana
