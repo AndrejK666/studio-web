@@ -127,7 +127,7 @@ function derivedMessageId(threadId, index) {
  * and its card then has nothing to attach to. Carried through wherever a
  * thread is built, never invented. */
 function blankThread(id) {
-    return { id, scope: 'inline', quote: '', occurrence: 0, resolved: false, messages: [] };
+    return { id, scope: 'inline', quote: '', occurrence: 0, resolved: false, messages: [], tasks: [] };
 }
 
 function normaliseMessage(m, threadId, index) {
@@ -154,6 +154,10 @@ function legacyThread(t) {
     thread.resolved = !!t.resolved;
     thread.messages = (Array.isArray(t.messages) ? t.messages : [])
         .map((m, i) => normaliseMessage(m, t.id, i));
+    /* Tasks made from a thread never existed in the legacy sidecar — they are
+     * an op — but a thread read from one has to have the field, or every
+     * reader has to remember it might be missing. */
+    thread.tasks = Array.isArray(t.tasks) ? t.tasks.slice() : [];
     return thread;
 }
 
@@ -270,6 +274,24 @@ function foldOps(baseThreads, ops) {
                 break;
             case 'reopen':
                 thread.resolved = false;
+                break;
+            case 'task':
+                /*
+                 * A task written into the document from this thread. The op is
+                 * the LINK, and it points one way on purpose: the document gets
+                 * an ordinary Markdown task item with nothing hidden in it, so
+                 * the line stays a line somebody can edit, move or delete. A
+                 * back-reference would have to live in that text, and there is
+                 * nowhere in it that survives the editor's round trip — see the
+                 * note in markdown-editor.js.
+                 */
+                if (op.text) {
+                    thread.tasks.push({
+                        text: String(op.text),
+                        at: op.at,
+                        by: authorRecord(op.by)
+                    });
+                }
                 break;
             case 'retract':
                 if (op.message) { retractedMessages.add(op.message); }
@@ -485,6 +507,17 @@ class CommentLog {
         await this.append(docUri, { op: resolved ? 'resolve' : 'reopen', thread: threadId });
     }
 
+    /**
+     * Record that a task was written into a document from this thread.
+     *
+     * The task itself is a line in the Markdown; this is the thread's memory of
+     * having asked for it, which is what makes "what came of my comment" a
+     * question the thread can answer.
+     */
+    async noteTask(docUri, threadId, text) {
+        await this.append(docUri, { op: 'task', thread: threadId, text });
+    }
+
     async deleteThread(docUri, threadId) {
         await this.append(docUri, { op: 'delete', thread: threadId });
     }
@@ -580,7 +613,11 @@ function signature(threads) {
     return JSON.stringify((threads || []).map(t => [
         t.id, t.resolved ? 1 : 0, t.quote, t.occurrence,
         t.anchor ? JSON.stringify(t.anchor) : 0,
-        (t.messages || []).map(m => [m.id, m.author, m.at, m.body])
+        (t.messages || []).map(m => [m.id, m.author, m.at, m.body]),
+        // Tasks belong in the signature for the reason everything else here
+        // does: the rail repaints when this string changes, and a thread that
+        // just spawned a task has something new to show.
+        (t.tasks || []).map(x => [x.at, x.text])
     ]));
 }
 
