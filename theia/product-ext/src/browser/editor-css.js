@@ -839,6 +839,28 @@ const WIDGET_CSS = `
   outline-offset: 3px;
   border-radius: 3px;
 }
+/* --- an area over rendered content (requirement 23) ----------------------- *
+ *
+ * The overlay sits above the page and lets the pointer through, because the
+ * document under it must stay readable and selectable: an area is a label on
+ * the picture, not a lid over it. The boxes themselves take the pointer, since
+ * clicking one opens its thread.
+ *
+ * Outlined, not filled, for the reason the component highlight is — an area is
+ * drawn over the exact part somebody needs to look at while reading the
+ * comment about it. The faint wash is there only so a box over a blank region
+ * of a diagram is still findable. */
+.studio-doc-areas { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.studio-area, .studio-area-band {
+  position: absolute; box-sizing: border-box;
+  border: 2px solid var(--studio-accent); border-radius: 3px;
+  background: var(--studio-selection-bg);
+}
+.studio-area { pointer-events: auto; padding: 0; cursor: pointer; }
+.studio-area:hover, .studio-area.active { box-shadow: 0 0 0 2px var(--studio-selection-bg); }
+/* The band is being drawn right now, so it is dashed: a shape that is not yet
+   a decision should not look like one that is. */
+.studio-area-band { border-style: dashed; pointer-events: none; }
 .studio-thread-note { font-size: 11.5px; color: var(--studio-accent); margin: 0 0 8px 31px; }
 /* What came of this comment. Indented to the thread's own text column, and in
    the muted ink rather than the accent: the note above is a question waiting
