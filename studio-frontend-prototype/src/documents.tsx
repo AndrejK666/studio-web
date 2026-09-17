@@ -799,6 +799,14 @@ function IngestedDocumentsView({
    *  metadata only — it never asks for the text — so it costs a page walk, not
    *  a clone. */
   const [repoByNode, setRepoByNode] = useState<Record<string, string>>({});
+  /** What each repository is called, keyed by its node id.
+   *
+   *  A file node carries only the repo's instance id — a v5 UUID over
+   *  (scope, connector, path) — which identifies the repository perfectly and
+   *  tells a reader nothing. The repo node itself holds `full_path`, so one
+   *  extra listing turns the column from an id into "owner/name". A repository
+   *  missing from the map keeps its id: unnamed provenance still beats none. */
+  const [repoNames, setRepoNames] = useState<Record<string, string>>({});
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -855,6 +863,23 @@ function IngestedDocumentsView({
       setRepoByNode(byNode);
     } catch {
       // The column falls back to "—"; it is provenance, not identity.
+    }
+    // The names behind those ids. Read separately and allowed to fail
+    // separately: losing the names must leave the ids, not blank the column.
+    try {
+      const names: Record<string, string> = {};
+      let cursor: string | undefined;
+      do {
+        const page = await api.listArtifactNodes(token, "repo", projectTenantId, cursor, 200);
+        for (const n of page.nodes) {
+          const label = n.value.full_path ?? n.value.name;
+          if (typeof label === "string" && label) names[n.instance_id] = label;
+        }
+        cursor = page.next_cursor;
+      } while (cursor);
+      setRepoNames(names);
+    } catch {
+      // Ids stay on screen.
     }
   }, [token, workspaceId, projectTenantId]);
 
@@ -1659,8 +1684,14 @@ function IngestedDocumentsView({
                     ))}
                   </select>
                 </span>
+                {/* The name, with the id kept on the title: the name is what
+                    a reader recognises, the id is what an API call wants. */}
                 <span className="ing-repo" title={repoByNode[b.node_id] ?? ""}>
-                  {repoByNode[b.node_id] ?? <span className="ing-dash">—</span>}
+                  {repoByNode[b.node_id] ? (
+                    repoNames[repoByNode[b.node_id]] ?? repoByNode[b.node_id]
+                  ) : (
+                    <span className="ing-dash">—</span>
+                  )}
                 </span>
                 <span className="ing-path" title={b.path}>
                   {b.path}
