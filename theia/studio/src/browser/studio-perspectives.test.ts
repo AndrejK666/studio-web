@@ -59,10 +59,11 @@ describe('Studio workbench modes', () => {
             ['studio:audit', 'bottom'],
         ]);
         expect(workbench.primaryViews).toEqual({ right: 'studio.orca' });
-        // The desktop collapses its side panels on start and this workbench had
-        // no equivalent — #167 recorded the result as a strip of unclaimed
-        // right panel beside the editor.
-        expect(workbench.chromeOptions).toEqual({ collapseAreas: ['right', 'bottom'] });
+        // Nothing is collapsed: the bottom is where Git Operations, Analyze and
+        // Audit live, so collapsing it would put the commit surface out of
+        // reach — which is what it did.
+        expect(workbench.chromeOptions).toBeUndefined();
+        expect(workbench.viewPlacements.get('studio:audit')).toBe('bottom');
     });
 
     it('clears the flanks for writing, and keeps findings one click away', () => {
