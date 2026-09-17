@@ -64,6 +64,10 @@ impl Sessions {
                     // retried: the session id is the natural key.
                     partition_key: Some(&session_id.to_string()),
                     idempotency_key: Some(&session_id.to_string()),
+                    // The session is the thing being launched; telling its own
+                    // IDE that it is ready would be addressed to a window that
+                    // is only there because it already is.
+                    notify_workspace_id: None,
                 },
             )
             .await

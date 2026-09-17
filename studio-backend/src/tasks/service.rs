@@ -40,6 +40,17 @@ pub struct NewRun<'a> {
     pub partition_key: Option<&'a str>,
     /// Makes a repeated enqueue one run. The scheduler always sets it.
     pub idempotency_key: Option<&'a str>,
+    /// Where to say so when this run ends, if anywhere: the workspace whose IDE
+    /// session should be told.
+    ///
+    /// Carried, not derived. This gear does not read payloads — it runs work,
+    /// it does not understand it — and a workspace is not something it could
+    /// work out anyway: a run has a tenant, and a tenant is not a session. The
+    /// caller knows which workspace its work was for, so the caller says.
+    ///
+    /// `None` means nobody is told, which is every run with no one waiting in
+    /// an editor.
+    pub notify_workspace_id: Option<Uuid>,
 }
 
 /// Filter for the run listing.
@@ -118,6 +129,7 @@ impl TaskService {
             last_error: None,
             cancel_requested: false,
             idempotency_key: key,
+            notify_workspace_id: req.notify_workspace_id,
             requested_by: ctx.subject_id(),
             created_at: now,
             updated_at: now,
@@ -341,6 +353,7 @@ fn active(row: entity::Model) -> entity::ActiveModel {
         last_error: ActiveValue::Set(row.last_error),
         cancel_requested: ActiveValue::Set(row.cancel_requested),
         idempotency_key: ActiveValue::Set(row.idempotency_key),
+        notify_workspace_id: ActiveValue::Set(row.notify_workspace_id),
         requested_by: ActiveValue::Set(row.requested_by),
         created_at: ActiveValue::Set(row.created_at),
         updated_at: ActiveValue::Set(row.updated_at),

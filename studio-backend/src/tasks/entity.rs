@@ -56,6 +56,9 @@ pub struct Model {
     /// `<schedule_id>:<scheduled_for>`, which is what turns an at-least-once
     /// firing into an exactly-once run.
     pub idempotency_key: Option<String>,
+    /// Set by the enqueuing gear when a person is waiting for this run in an
+    /// IDE session. See `NewRun::notify_workspace_id`.
+    pub notify_workspace_id: Option<Uuid>,
     pub requested_by: Uuid,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
