@@ -13,7 +13,7 @@ import { SpecQuality } from "./spec-quality";
 import { ComponentsCatalog } from "./components-catalog";
 import { ObjectTypes } from "./object-types";
 import { ProjectKits } from "./kits";
-import { DocumentsTab, DocumentTypesTab, WorkspaceDocumentsTab } from "./documents";
+import { DocumentsTab, DocumentTypesTab } from "./documents";
 import { ProcessCatalogTab } from "./process-catalog";
 import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
@@ -2869,7 +2869,6 @@ function ProjectsView({
           <WorkspaceCatalogue
             token={token}
             workspaceId={root.id}
-            studioTarget={root}
             tab={workspaceTab}
           />
         </>
@@ -2891,7 +2890,13 @@ function ProjectsView({
  *  workspace one thing was pinned above a different kind of switch — and it
  *  pushed the type editor, which is the tallest screen in the product, below a
  *  projects table it has nothing to do with. */
-type WorkspaceTab = "projects" | "types" | "process" | "documents";
+/* No "documents" here. A workspace owns the document TYPES; a project owns the
+   documents written from them. The workspace had a Documents section that
+   offered "New document" and then listed nothing — on the development stand it
+   had produced zero rows against one project-level document, which is what a
+   section with no reader looks like. Authoring moved to the project's Documents
+   section, where the writing actually happens. */
+type WorkspaceTab = "projects" | "types" | "process";
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above
@@ -2922,24 +2927,17 @@ const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: str
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
   { id: "process", icon: "activity", label: "Process", hint: "The journey's stages and the capability vocabulary" },
-  {
-    id: "documents",
-    icon: "scan",
-    label: "Documents",
-    hint: "Written from a type here, then published into a repository",
-  },
 ];
 
 function WorkspaceCatalogue({
   token,
   workspaceId,
-  studioTarget,
   tab,
 }: {
   token: string;
   workspaceId: string;
-  /** The workspace an "Edit in Studio" hand-off launches the IDE against. */
-  studioTarget?: StudioTarget;
+  /* No studioTarget: the only screen here that handed off to the IDE was the
+     Documents one, and documents are authored in a project now. */
   /** Which catalogue the band selected. "projects" never reaches here — the
    *  screen above renders that one itself, because it owns the navigation into
    *  a project. */
@@ -2949,13 +2947,6 @@ function WorkspaceCatalogue({
     <div>
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
       {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
-      {tab === "documents" && (
-        <WorkspaceDocumentsTab
-          token={token}
-          workspaceId={workspaceId}
-          studioTarget={studioTarget}
-        />
-      )}
     </div>
   );
 }
@@ -3782,6 +3773,9 @@ function ProjectScreen({
             analysis={
               <SpecQuality token={token} workspaceId={proj.id} parentWorkspaceId={workspace.id} />
             }
+            /* The Authored view can hand a document to the IDE, and the IDE it
+               means is this project's. */
+            studioTarget={proj}
           />
         )}
         {/* Two sections the product has and this prototype does not. They say

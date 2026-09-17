@@ -58,16 +58,25 @@ const slug = (s: string) =>
 
 /** Project-level: what the project's repository actually contains.
  *
- *  Authoring lives at the workspace, next to the types — see
- *  [`WorkspaceDocumentsTab`]. A document reaches a project by being written
- *  into its repository, and reaches this view by being ingested and identified.
- *  That is the whole of it: this tab reports, it does not author. */
+ *  Authoring lives HERE, not at the workspace. It used to sit beside the type
+ *  catalogue, on the reasoning that a type is workspace property and so is a
+ *  document written from one before a project claims it. In practice nobody
+ *  wrote one: a document is something a project needs, and a workspace-level
+ *  draft belonging to no project is a state with no reader. The types stay
+ *  workspace property; the writing moved to where the writing happens.
+ *
+ *  So this tab has three views of one subject. A document can reach a project
+ *  two ways — written from a type here, or found in the repository by a scan —
+ *  and the third view is the detector run that judges either. */
+type DocView = "repository" | "authored" | "analysis";
+
 export function DocumentsTab({
   token,
   workspaceId,
   projectTenantId,
   onOpenFile,
   analysis,
+  studioTarget,
 }: {
   token: string;
   /** The parent workspace tenant — the storage scope for documents and types. */
@@ -78,14 +87,16 @@ export function DocumentsTab({
    *  file. The path is repo-relative, which is what the IDE's opener wants. */
   onOpenFile: (path: string) => void;
   /** The detector console, which used to be a section of its own called
-   *  Findings. It is a second VIEW here rather than a second section: a
-   *  detector run is something you do to the documents in this list, and its
-   *  output is the Status column beside them. */
+   *  Findings. It is a VIEW here rather than a second section: a detector run
+   *  is something you do to the documents in this list, and its output is the
+   *  Status column beside them. */
   analysis?: ReactNode;
+  /** The project an "Edit in Studio" hand-off launches the IDE against. */
+  studioTarget?: StudioTarget;
 }) {
   const [types, setTypes] = useState<DocType[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [view, setView] = useState<"documents" | "analysis">("documents");
+  const [view, setView] = useState<DocView>("repository");
 
   useEffect(() => {
     let alive = true;
@@ -105,20 +116,28 @@ export function DocumentsTab({
   return (
     <div className="documents">
       {err && <div className="error">{err}</div>}
-      {/* The product puts a list/tree switch in this corner; ours switches
-          between the documents and the analysis that produced their findings.
-          Rendered only when there is an analysis view to switch to, so the
-          workspace-level callers that pass none are unchanged. */}
-      {analysis && (
-        <div className="doc-views" role="tablist" aria-label="Documents view">
-          <button
-            role="tab"
-            aria-selected={view === "documents"}
-            className={view === "documents" ? "doc-view on" : "doc-view"}
-            onClick={() => setView("documents")}
-          >
-            Documents
-          </button>
+      {/* Named for where a document CAME FROM, not "Documents" and "the other
+          one": the two lists hold different things and the old label claimed
+          the whole subject for the first of them. "In the repository" keeps
+          the landing view it had. */}
+      <div className="doc-views" role="tablist" aria-label="Documents view">
+        <button
+          role="tab"
+          aria-selected={view === "repository"}
+          className={view === "repository" ? "doc-view on" : "doc-view"}
+          onClick={() => setView("repository")}
+        >
+          In the repository
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "authored"}
+          className={view === "authored" ? "doc-view on" : "doc-view"}
+          onClick={() => setView("authored")}
+        >
+          Authored
+        </button>
+        {analysis && (
           <button
             role="tab"
             aria-selected={view === "analysis"}
@@ -127,12 +146,12 @@ export function DocumentsTab({
           >
             Analysis
           </button>
-        </div>
-      )}
-      {/* Both stay mounted. The console holds a detector run in progress and
-          the results of the last one, and unmounting it to glance at the list
-          would throw away a run somebody is waiting on. */}
-      <div hidden={view !== "documents"}>
+        )}
+      </div>
+      {/* All of them stay mounted. The console holds a detector run in progress
+          and the results of the last one, and the editor holds an unsaved
+          draft — unmounting either to glance at a list would throw that away. */}
+      <div hidden={view !== "repository"}>
         <IngestedDocumentsView
           token={token}
           workspaceId={workspaceId}
@@ -141,56 +160,16 @@ export function DocumentsTab({
           onOpenFile={onOpenFile}
         />
       </div>
+      <div hidden={view !== "authored"}>
+        <DocumentsView
+          token={token}
+          workspaceId={workspaceId}
+          projectTenantId={projectTenantId}
+          types={types}
+          studioTarget={studioTarget}
+        />
+      </div>
       {analysis && <div hidden={view !== "analysis"}>{analysis}</div>}
-    </div>
-  );
-}
-
-/** Workspace-level: the documents the workspace itself keeps, written from its
- *  own types and published into a repository from here.
- *
- *  It sits beside the type catalogue on purpose. A type, its template and its
- *  questionnaire are workspace property, and so is a document written from one
- *  before any project has claimed it. */
-export function WorkspaceDocumentsTab({
-  token,
-  workspaceId,
-  studioTarget,
-}: {
-  token: string;
-  workspaceId: string;
-  /** The workspace an "Edit in Studio" hand-off launches the IDE against.
-   *  Absent where no target is known — the hand-off is then simply not
-   *  offered, and the in-portal editor below is the only editor. */
-  studioTarget?: StudioTarget;
-}) {
-  const [types, setTypes] = useState<DocType[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .docTypes(token, workspaceId)
-      .then((r) => {
-        if (alive) setTypes(r.items);
-      })
-      .catch((e) => {
-        if (alive) setErr(errText(e));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [token, workspaceId]);
-
-  return (
-    <div className="documents">
-      {err && <div className="error">{err}</div>}
-      <DocumentsView
-        token={token}
-        workspaceId={workspaceId}
-        types={types}
-        studioTarget={studioTarget}
-      />
     </div>
   );
 }
@@ -270,11 +249,20 @@ function DocTypesFlow() {
 function DocumentsView({
   token,
   workspaceId,
+  projectTenantId,
   types,
   studioTarget,
 }: {
   token: string;
   workspaceId: string;
+  /** The project these documents belong to. Documents are authored INSIDE a
+   *  project — the workspace owns the types, the project owns the writing —
+   *  so this is where both the listing and the creation are scoped.
+   *
+   *  The project listing is the effective one: a project's own documents plus
+   *  the ones inherited from its workspace. Nothing that was written at the
+   *  workspace level becomes unreachable by scoping here. */
+  projectTenantId: string;
   types: DocType[];
   studioTarget?: StudioTarget;
 }) {
@@ -325,11 +313,11 @@ function DocumentsView({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      setDocs((await api.workspaceDocuments(token, workspaceId)).items);
+      setDocs((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
     } catch (e) {
       setErr(errText(e));
     }
-  }, [token, workspaceId]);
+  }, [token, workspaceId, projectTenantId]);
 
   useEffect(() => {
     void reload();
@@ -388,7 +376,7 @@ function DocumentsView({
         title: title.trim(),
       };
       if (answers) body.answers = answers;
-      const doc = await api.createWorkspaceDocument(token, workspaceId, body);
+      const doc = await api.createProjectDocument(token, workspaceId, projectTenantId, body);
       setNewTitle("");
       setShowQ(false);
       await reload();
