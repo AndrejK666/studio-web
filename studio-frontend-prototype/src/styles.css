@@ -1894,3 +1894,10 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
    not: twenty grey dots down a list of twenty people say nothing and cost a
    column's worth of attention. */
 .online-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-left: 7px; vertical-align: middle; flex: none; }
+
+/* The one line on the project overview that is addressed at the reader. It
+   borrows the hint's size and spacing and differs only in ink, because the
+   thing that makes it worth noticing is that it is about you — not that it is
+   louder than its neighbours. */
+.hint.waiting { color: var(--foreground); }
+.hint.waiting b { color: var(--primary); }
