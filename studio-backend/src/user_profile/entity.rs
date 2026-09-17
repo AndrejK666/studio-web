@@ -42,6 +42,13 @@ pub mod user {
         pub email: Option<String>,
         pub avatar_url: Option<String>,
         pub locale: Option<String>,
+        /// The UI's own remembered choices, as a JSON object of short strings.
+        ///
+        /// TEXT rather than JSONB because this Model derives `Eq`, which
+        /// `serde_json::Value` does not implement. Nothing here queries into
+        /// the document — it is read whole and written whole — so the column
+        /// type buys nothing that would pay for dropping the derive.
+        pub ui_preferences: Option<String>,
         pub merged_into: Option<Uuid>,
         pub created_at: OffsetDateTime,
         pub updated_at: OffsetDateTime,

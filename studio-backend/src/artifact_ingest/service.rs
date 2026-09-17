@@ -1147,6 +1147,12 @@ impl IngestService {
         let mut nodes: Vec<GtsNode> = Vec::new();
         let mut edges: Vec<GtsEdge> = Vec::new();
 
+        // One instant for the whole batch: four detectors reporting on the
+        // same document in one run did so together, and stamping each as it is
+        // built would scatter them across a few milliseconds for no reason.
+        let recorded_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
         for f in findings {
             if f.detector.trim().is_empty() || f.subject.trim().is_empty() {
                 continue;
@@ -1159,6 +1165,7 @@ impl IngestService {
                 f.summary.as_deref(),
                 f.score,
                 f.details.clone(),
+                &recorded_at,
             );
             // Scope the finding to the same tenants as the document it is about,
             // so it survives the graph's `scope` filter instead of vanishing.

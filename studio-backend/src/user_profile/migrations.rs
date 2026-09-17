@@ -23,6 +23,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0001::Migration),
             Box::new(m0002::Migration),
             Box::new(m0003::Migration),
+            Box::new(m0004::Migration),
         ]
     }
 }
@@ -211,6 +212,53 @@ ALTER TABLE identity_membership
             manager
                 .get_connection()
                 .execute_unprepared("ALTER TABLE identity_membership DROP COLUMN IF EXISTS status;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0004 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0004_user_ui_preferences"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    // Nullable, with no default: every existing user has made
+                    // no UI choices, and NULL says that. An empty object would
+                    // claim they had chosen the defaults on purpose, which
+                    // matters the day a default changes.
+                    r"
+ALTER TABLE identity_user
+    ADD COLUMN IF NOT EXISTS ui_preferences TEXT;
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE identity_user DROP COLUMN IF EXISTS ui_preferences;",
+                )
                 .await?;
             Ok(())
         }

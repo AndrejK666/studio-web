@@ -701,6 +701,15 @@ pub fn spec_finding_instance_id(detector: &str, subject_id: &str) -> String {
 
 /// A spec-quality finding node about `subject_id` (a document node instance id).
 /// `title` mirrors the summary so the graph node name reads as the verdict.
+/// One detector's verdict on one document.
+///
+/// `recorded_at` is when this run produced it, not when the document changed.
+/// The instance id is keyed on (detector, subject), so a re-run UPSERTS —
+/// there is one finding per detector per document, and the timestamp is the
+/// only thing that says how old the answer is. Without it a reader cannot
+/// order two findings, tell a check from this morning from one from March, or
+/// build a feed out of them at all.
+#[allow(clippy::too_many_arguments)]
 pub fn spec_finding_node(
     detector: &str,
     subject_id: &str,
@@ -709,6 +718,7 @@ pub fn spec_finding_node(
     summary: Option<&str>,
     score: Option<f64>,
     details: Value,
+    recorded_at: &str,
 ) -> GtsNode {
     GtsNode {
         type_id: SPEC_FINDING_TYPE,
@@ -722,6 +732,7 @@ pub fn spec_finding_node(
             "summary": summary,
             "score": score,
             "details": details,
+            "recorded_at": recorded_at,
         }),
     }
 }

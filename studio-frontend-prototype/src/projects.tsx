@@ -16,6 +16,7 @@ import type { CSSProperties, FormEvent } from "react";
 import { api, TENANT_TYPES, type User } from "./api";
 import { errText, matches } from "./format";
 import { rollupText, workspaceRollup, type WorkspaceRollup } from "./rollups";
+import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
 function initials(name: string): string {
@@ -232,6 +233,8 @@ export function ProjectsPortfolio({
     }
   }
 
+  const [view, setView] = useViewMode("workspaces.view");
+
   const visible = roots
     .filter((r) => matches(query, r.name))
     .filter((r) => !selfManagedOnly || r.self_managed)
@@ -250,9 +253,12 @@ export function ProjectsPortfolio({
             connectors, artifacts and people, and its own IDE sessions.
           </p>
         </div>
-        <button className="primary" disabled={!homeOrgId} onClick={() => setCreating((v) => !v)}>
-          New workspace
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <ViewToggle mode={view} onChange={setView} />
+          <button className="primary" disabled={!homeOrgId} onClick={() => setCreating((v) => !v)}>
+            New workspace
+          </button>
+        </div>
       </div>
 
       {creating && (
@@ -286,6 +292,44 @@ export function ProjectsPortfolio({
           <p className="empty">No workspaces yet — “New workspace” starts the first one.</p>
         ) : visible.length === 0 ? (
           <p className="empty">No workspaces match the current filters.</p>
+        ) : view === "tiles" ? (
+          /* The tree does not come with: a card that can unfold into other
+             cards is a table with extra steps. Tiles answer "which workspace",
+             and opening one is how you see its projects. */
+          <TileGrid>
+            {visible.map((root) => (
+              <Tile
+                key={root.id}
+                icon={<FolderIcon />}
+                title={root.name}
+                subtitle={root.self_managed ? "self-managed" : "workspace"}
+                onClick={() => onOpen(root)}
+                /* The same two facts the table columns carry. People come
+                   from the avatar list rather than the rollup, which does not
+                   have them — and `?? null` keeps "not read yet" showing as a
+                   dash instead of as nobody. */
+                stats={[
+                  { label: "projects", value: rollupText(rollups[root.id]?.projects ?? null) },
+                  { label: "people", value: rollupText(people[root.id]?.length ?? null) },
+                ]}
+                footer={
+                  <>
+                    <Avatars users={people[root.id]} />
+                    <button
+                      className="ghost"
+                      style={{ marginLeft: "auto" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenStudio(root);
+                      }}
+                    >
+                      Open in IDE
+                    </button>
+                  </>
+                }
+              />
+            ))}
+          </TileGrid>
         ) : (
           <table className="ptable">
             <thead>
