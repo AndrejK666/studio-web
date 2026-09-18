@@ -103,8 +103,11 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
     });
 
     // `kind` tells the portal which working tree is the project itself: the
-    // synthetic `/workspace` host in a managed workspace, the single checkout in
-    // a classic one. It is the default target for project-level operations --
+    // repository at the configured repository root -- the single checkout in a
+    // classic workspace, an adopted root repository where there is one. A
+    // managed workspace whose root is a plain directory has no such repository,
+    // and then every entry is a `source`: the portal must be able to offer a
+    // choice without one. It is the default target for project-level operations --
     // `.cf-studio-kit.toml` lives there -- so a caller that offers a choice needs
     // to be able to preselect it, and one that offers none needs to know what the
     // node will pick. Derived here from the registry rather than read off the

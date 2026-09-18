@@ -67,16 +67,32 @@ function stageRuntimePlugins(sourceDirectory, targetDirectory, disabledPlugins =
     }
 }
 
+/*
+ * The repository that contains the workspace, or `undefined` when there is
+ * none — an ordinary answer, not a failure.
+ *
+ * A managed Studio workspace is a CONTAINER for source checkouts, not a
+ * repository: /workspace holds .cf-workspace.toml and one directory per
+ * source, each its own clone. This launcher used to demand a repository here,
+ * a leftover from the single-checkout POC where one repository WAS the
+ * workspace, and the session entrypoint satisfied the demand by git-initialising
+ * /workspace — README, first commit and all. That synthetic repository then sat
+ * in Source Control beside the real ones, which is the opposite of what a person
+ * wants there: the repositories worth seeing are the project's.
+ *
+ * Only the git write modes genuinely need a repository, and they say so
+ * themselves in applyDefaultEnv.
+ */
 function resolveRepositoryRoot(workspaceDirectory) {
-    const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
         cwd: workspaceDirectory,
         encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'inherit']
-    }).trim();
-    if (!repositoryRoot) {
-        throw new Error('Unable to resolve repository root.');
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    if (result.error || result.status !== 0) {
+        return undefined;
     }
-    return repositoryRoot;
+    return result.stdout.trim() || undefined;
 }
 
 function createCheckoutKey(repositoryRoot, workspaceRoot = repositoryRoot) {
@@ -175,7 +191,12 @@ function applyDefaultEnv(
         env.STUDIO_WORKSPACE_ID = `theia-poc-${checkoutKey}`;
     }
     if (env.STUDIO_REPOSITORY_ROOT === undefined) {
-        env.STUDIO_REPOSITORY_ROOT = repositoryRoot;
+        // Without a repository the workspace root is its own boundary. Keeping
+        // the two equal matters downstream: RepositoryDiscoveryService only adds
+        // the configured root as a scan candidate when it DIFFERS from the
+        // workspace root, so a container root contributes nothing of its own and
+        // the registry lists exactly the project's checkouts.
+        env.STUDIO_REPOSITORY_ROOT = repositoryRoot ?? workspaceRoot;
     }
     if (env.STUDIO_WORKSPACE_ROOT === undefined) {
         env.STUDIO_WORKSPACE_ROOT = workspaceRoot;
@@ -187,6 +208,13 @@ function applyDefaultEnv(
         env.STUDIO_GIT_MODE = 'push';
     }
     if (env.STUDIO_GIT_MODE === 'commit' || env.STUDIO_GIT_MODE === 'push') {
+        if (repositoryRoot === undefined) {
+            throw new Error(
+                'STUDIO_GIT_MODE=' + env.STUDIO_GIT_MODE + ' reads the branch, remote and identity from a git '
+                + 'repository, but ' + workspaceRoot + ' is not inside one. A managed workspace keeps its sources '
+                + 'in subdirectories and wants STUDIO_GIT_MODE=disabled.'
+            );
+        }
         const gitDefaults = gitDefaultsFactory();
         if (env.STUDIO_GIT_BRANCH === undefined) {
             env.STUDIO_GIT_BRANCH = gitDefaults.branch;
@@ -221,7 +249,10 @@ function main(argv = process.argv.slice(2)) {
     const browserAppDir = path.resolve(__dirname, '..');
     const workspaceDirectory = resolveWorkspaceDirectory(launchArgv, browserAppDir);
     const repositoryRoot = resolveRepositoryRoot(workspaceDirectory);
-    const checkoutKey = createCheckoutKey(repositoryRoot, workspaceDirectory);
+    // The key identifies the checkout on disk; a container root identifies
+    // itself. For a workspace that used to carry a synthetic root repository
+    // the two were already the same path, so no data directory moves.
+    const checkoutKey = createCheckoutKey(repositoryRoot ?? workspaceDirectory, workspaceDirectory);
     const env = applyDefaultEnv({ ...process.env }, repositoryRoot, workspaceDirectory, checkoutKey);
     const theiaCli = require.resolve('@theia/cli/bin/theia.js');
     const runtimePluginsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'theia-studio-plugins-'));

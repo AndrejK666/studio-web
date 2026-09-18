@@ -210,9 +210,38 @@ export class RepositoryDiscoveryService implements Disposable {
         }, RESCAN_DEBOUNCE_MS);
     }
 
+    /*
+     * A configured root that is not a repository registers nothing — it does
+     * not fail the contribution.
+     *
+     * A managed workspace is a container: its root holds the manifest and one
+     * directory per source, each its own clone, and is not a repository itself.
+     * It used to be one only because the session entrypoint git-initialised it
+     * to satisfy the launcher, and the price was a phantom entry in Source
+     * Control beside the project's real repositories. With that gone, `git
+     * rev-parse` at the root legitimately exits 128, and a throw here took the
+     * whole Studio backend contribution down with it — the IDE came up, the
+     * Studio half did not.
+     *
+     * Canonical mode never reaches this path (the manifest is authoritative),
+     * so the workspaces this protects are the legacy and single-folder ones:
+     * whatever repositories the workspace does contain are still found by the
+     * nested rescan that follows.
+     */
     protected async initializeConfiguredRepository(config: StudioRuntimeConfig): Promise<void> {
-        const registration = await this.discoverConfiguredRepository(config);
-        await this.registry.replace([registration]);
+        try {
+            const registration = await this.discoverConfiguredRepository(config);
+            await this.registry.replace([registration]);
+        } catch (error) {
+            if (!(error instanceof GitCommandError)) {
+                throw error;
+            }
+            this.logger.warn(
+                `Workspace root ${config.repositoryRoot} is not a Git repository; `
+                + `continuing with no project repository: ${error.message}`
+            );
+            await this.registry.replace([]);
+        }
     }
 
     protected async discoverConfiguredRepository(config: StudioRuntimeConfig): Promise<RepositoryRegistration> {

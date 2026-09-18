@@ -115,33 +115,30 @@ export class KitInstallerImpl {
 /*
  * The project repository is the default kit target. `.cf-studio-kit.toml` is a
  * project-level manifest and lives at the configured repository root -- the
- * synthetic `/workspace` host in a managed workspace, the single checkout in a
- * classic one. Source clones below it receive a kit only when the caller names
- * one explicitly.
+ * single checkout in a classic workspace, an adopted root repository where
+ * there is one. Source clones below it receive a kit only when the caller
+ * names one explicitly.
  *
- * Resolved through `configuredRepository`, never positionally: the registry is
+ * Resolved through `projectRepository`, never positionally: the registry is
  * ordered deepest-first (compareRepositoriesForDepth), so `repositories[0]` is
  * the deepest source clone and a positional default would silently install the
- * kit into the wrong tree.
+ * kit into the wrong tree. That getter also owns the single-repository
+ * fallback, so the control API's `kind: 'project'` and this default are the
+ * same answer rather than two that can disagree.
  *
- * The fallback covers a registry that has not registered the configured root at
- * all -- a startup race, or a host `.git` that discovery could not read. With a
- * single repository there is no ambiguity to resolve; with several there is no
- * safe guess, and the caller has to name one.
+ * Undefined is the honest answer for a workspace with several repositories and
+ * no root repository to call the project: there is no safe guess, and the
+ * caller has to name one.
  */
 function requireDefaultRepository(repositories: RepositoryRegistry) {
-    const configured = repositories.configuredRepository;
-    if (configured) {
-        return configured;
+    const project = repositories.projectRepository;
+    if (project) {
+        return project;
     }
-    const available = repositories.repositories;
-    if (available.length !== 1) {
-        throw new Error(
-            'repositoryId is required: the project repository is not registered '
-            + 'and the workspace contains several repositories'
-        );
-    }
-    return available[0];
+    throw new Error(
+        'repositoryId is required: the project repository is not registered '
+        + 'and the workspace contains several repositories'
+    );
 }
 
 /*

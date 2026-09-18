@@ -172,7 +172,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             getSession: () => this.getSession(),
             getRepositories: () => this.getRepositories(),
             projectRepositoryId: () =>
-                this.repositoryRegistry.configuredRepository?.descriptor.repositoryId,
+                this.repositoryRegistry.projectRepository?.descriptor.repositoryId,
             enqueueOperation: request => this.enqueueOperation(request),
             getOperationDeltas: request => this.getOperationDeltas(request),
             retryOperation: request => this.retryOperation(request),
@@ -553,11 +553,13 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
         try {
             hostRepository = await this.repositoryDiscovery.discoverConfiguredRepositoryRegistration();
         } catch (error) {
-            // Managed Kubernetes workspaces keep the canonical manifest in a
-            // synthetic /workspace repository and clone real sources below
-            // it. The synthetic repository is optional for SCM operations;
-            // a startup race or an absent host .git must not discard valid,
-            // configured source checkouts from RepositoryRegistry.
+            // A managed workspace keeps the canonical manifest at /workspace
+            // and clones real sources below it. That root is a plain directory
+            // — the entrypoint no longer git-inits it, so Source Control shows
+            // the project's repositories and nothing else — and even where one
+            // still exists it is optional for SCM operations. Neither its
+            // absence nor a startup race may discard valid, configured source
+            // checkouts from RepositoryRegistry.
             if (sourceRepositories.length === 0) {
                 throw error;
             }

@@ -60,6 +60,28 @@ describe('repository registry', () => {
         expect(registry.configuredRepository).toBeUndefined();
     });
 
+    it('calls the only checkout the project when the workspace root is a plain directory', async () => {
+        // A managed workspace is a container: /workspace holds the manifest and
+        // one repository per source, and is not a repository itself. With a
+        // single source there is nothing to disambiguate, so project-level
+        // operations still have a target and the portal still has something to
+        // preselect.
+        await registry.replace([{ repositoryRoot: nestedRepository }]);
+
+        expect(registry.projectRepository?.canonicalRoot).toBe(await fs.realpath(nestedRepository));
+    });
+
+    it('refuses to guess the project repository among several sources', async () => {
+        const secondSource = path.join(workspaceRoot, 'sources', 'second');
+        await fs.mkdir(secondSource, { recursive: true });
+        await registry.replace([
+            { repositoryRoot: nestedRepository },
+            { repositoryRoot: secondSource }
+        ]);
+
+        expect(registry.projectRepository).toBeUndefined();
+    });
+
     it('selects the workspace-root repository for files outside nested repositories', async () => {
         const rootFile = path.join(workspaceRoot, 'README.md');
         await fs.writeFile(rootFile, '# Root');
