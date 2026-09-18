@@ -1,0 +1,31 @@
+{{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
+{{- /*
+  The one volume the backend and the IDE Pods share. Each workspace occupies a
+  subPath named after its id, so ingest reads the same checkout the IDE writes.
+
+  Not deleted with the release (helm.sh/resource-policy: keep): it holds real
+  work — clones, agent worktrees, whatever was not committed — and a chart
+  uninstall is not a decision to throw that away. Reclaim it deliberately.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "studio-web.fullname" . }}-workspaces
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    # ReadWriteOnce is per NODE, not per Pod: several Pods on the same node may
+    # mount it, which is exactly what makes this work here — and exactly why the
+    # session driver pins them to the backend's node. ReadWriteMany would lift
+    # that, if the cluster ever has a class that offers it.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.sessions.sharedWorkspaces.size | quote }}
+  {{- with .Values.backend.sessions.sharedWorkspaces.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

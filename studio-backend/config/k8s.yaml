@@ -701,6 +701,18 @@ gears:
       k8s_workspace_volume_size: "${STUDIO_WORKSPACE_VOLUME_SIZE:-10Gi}"
       # Leave empty for the cluster default StorageClass.
       k8s_workspace_storage_class: "${STUDIO_WORKSPACE_STORAGE_CLASS:-}"
+      # One checkout for the IDE and for the analyses: a claim the BACKEND
+      # mounts too, with each workspace in a subPath of its own id — the layout
+      # artifact-ingest resolves under STUDIO_WORKSPACES_ROOT. Set, it wins over
+      # the per-workspace claim above, which the backend could never mount
+      # (created per launch, and this Pod's volumes are fixed at start).
+      #
+      # Comes with the node pin below, because a ReadWriteOnce volume attaches
+      # to one node. Empty = off, and each side keeps its own copy.
+      k8s_workspace_shared_claim: "${STUDIO_WORKSPACE_SHARED_CLAIM:-}"
+      # This Pod's node (chart: fieldRef spec.nodeName). Required with the
+      # shared claim; ignored without it.
+      k8s_node_name: "${STUDIO_NODE_NAME:-}"
       # Namespace is auto-detected from the mounted ServiceAccount token;
       # k8s_namespace / k8s_image_pull_secret override only if ever needed.
       git_mode: "disabled"

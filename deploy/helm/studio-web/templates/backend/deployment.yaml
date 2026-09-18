@@ -112,6 +112,12 @@ spec:
             - name: artifact-clones
               mountPath: {{ .Values.backend.artifactClone.mountPath }}
             {{- end }}
+            {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
+            # The same volume the session Pods mount. Not `readOnly`: the
+            # importer writes its clone here for the IDE to open.
+            - name: workspaces
+              mountPath: {{ .Values.backend.sessions.sharedWorkspaces.mountPath }}
+            {{- end }}
           ports: [{ name: http, containerPort: {{ .Values.backend.port }} }]
           env:
             # Knowledge-graph embeddings: one provider per deployment
@@ -133,6 +139,22 @@ spec:
             # the connector's tree API — metadata with no file content.
             - name: STUDIO_ARTIFACT_WORKDIR
               value: {{ .Values.backend.artifactClone.mountPath | quote }}
+            {{- end }}
+            {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
+            # Where ingest looks FIRST: the checkout the IDE shares. It reads
+            # `{root}/{workspace_id}/{repo_dir}`, which is this mount plus the
+            # subPath each session Pod gets.
+            - name: STUDIO_WORKSPACES_ROOT
+              value: {{ .Values.backend.sessions.sharedWorkspaces.mountPath | quote }}
+            # Handed to the session driver so it mounts the same claim.
+            - name: STUDIO_WORKSPACE_SHARED_CLAIM
+              value: {{ include "studio-web.fullname" . }}-workspaces
+            # The node this Pod landed on. The driver pins sessions here,
+            # because a ReadWriteOnce volume attaches to one node and this Pod
+            # is already holding it — without this the driver refuses to launch
+            # rather than leave a session Pending on a multi-attach error.
+            - name: STUDIO_NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             {{- end }}
             # OpenTelemetry switches. The backend config expands these textually
             # into its `opentelemetry` block before parsing the YAML, so "true"
@@ -284,4 +306,9 @@ spec:
         - name: artifact-clones
           emptyDir:
             sizeLimit: {{ .Values.backend.artifactClone.sizeLimit }}
+        {{- end }}
+        {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: {{ include "studio-web.fullname" . }}-workspaces
         {{- end }}
