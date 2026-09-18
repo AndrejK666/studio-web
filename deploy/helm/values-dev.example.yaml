@@ -76,3 +76,9 @@ keycloak:
 ingress:
   enabled: true
   className: traefik
+
+# Studio owns this namespace, so it may govern it. The numbers and the
+# arithmetic behind them are in the chart's own values.yaml; this only turns
+# them on. Four concurrent IDE sessions plus one on its way out.
+capacity:
+  enabled: true
