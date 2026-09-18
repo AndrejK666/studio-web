@@ -94,12 +94,23 @@ impl TaskHandler for IngestTask {
             .resolve_token(&ctx.security, &payload.secret_ref)
             .await
         {
-            Ok(token) => token,
+            Ok(Some(token)) => token,
+            // Nothing stored under that reference. A public repository does not
+            // need one, so the run proceeds unauthenticated rather than
+            // dead-lettering; a private one will fail at the provider, which
+            // says more about what is wrong than we can from here.
+            Ok(None) => {
+                tracing::warn!(
+                    secret_ref = %payload.secret_ref,
+                    repo = %payload.repo_full_path,
+                    "studio-artifact-ingest: no readable token — syncing without credentials"
+                );
+                String::new()
+            }
             Err(e) => {
                 let error = format!("{e:#}");
-                // A reference that is malformed, or one this identity cannot
-                // read, will not become readable on the fourth attempt. A
-                // credstore that is down will.
+                // A malformed reference will not become well-formed on the
+                // fourth attempt. A credstore that is down will come back.
                 if permanent_token_error(&error) {
                     return TaskOutcome::Failed(error);
                 }
@@ -172,8 +183,12 @@ impl TaskHandler for IngestTask {
 
 /// Whether a `resolve_token` failure is about the reference rather than about
 /// credstore being reachable.
+///
+/// An absent secret is no longer in here: it does not fail the run at all, it
+/// runs it unauthenticated. What remains is a reference that cannot be parsed,
+/// which no number of attempts will fix.
 fn permanent_token_error(error: &str) -> bool {
-    error.contains("bad secret reference") || error.contains("is not readable")
+    error.contains("bad secret reference")
 }
 
 #[cfg(test)]
@@ -226,11 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_secret_is_permanent_but_a_credstore_outage_is_not() {
+    fn a_malformed_reference_is_permanent_but_a_credstore_outage_is_not() {
         assert!(permanent_token_error("bad secret reference: empty"));
-        assert!(permanent_token_error(
-            "the token for 'x' is not readable (wrong scope or removed)"
-        ));
         assert!(!permanent_token_error("credstore: connection refused"));
     }
 }

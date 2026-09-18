@@ -213,21 +213,35 @@ impl IngestService {
     /// Resolve the connector token from credstore. Needs the request's security
     /// context, so it is done up front (in the handler) before a sync is spawned
     /// into the background.
+    ///
+    /// `Ok(None)` means the reference resolved to nothing this identity can
+    /// read — removed, never stored, or out of scope. That is NOT an error
+    /// here: a public repository syncs and clones perfectly well without
+    /// credentials, and refusing the whole sync over a missing token turns a
+    /// working public repo into a 500. The session gear made the same choice
+    /// years-of-code earlier, logging `cloning without credentials` and
+    /// carrying on; a private repository still fails, but with the provider's
+    /// own 404/401 instead of ours.
+    ///
+    /// `Err` is reserved for the two cases a caller must treat differently: a
+    /// malformed reference (a bug, permanent) and credstore itself being
+    /// unreachable (transient, worth retrying).
     pub async fn resolve_token(
         &self,
         ctx: &SecurityContext,
         secret_ref: &str,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Option<String>> {
         let key = SecretRef::new(secret_ref).map_err(|e| anyhow!("bad secret reference: {e}"))?;
-        let secret = self
+        let Some(secret) = self
             .credstore
             .get(ctx, &key)
             .await
             .map_err(|e| anyhow!("credstore: {e}"))?
-            .ok_or_else(|| {
-                anyhow!("the token for '{secret_ref}' is not readable (wrong scope or removed)")
-            })?;
+        else {
+            return Ok(None);
+        };
         String::from_utf8(secret.value.as_bytes().to_vec())
+            .map(Some)
             .map_err(|_| anyhow!("stored token is not valid UTF-8"))
     }
 
