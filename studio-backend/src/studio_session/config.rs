@@ -43,6 +43,32 @@ pub struct StudioSessionConfig {
     /// a workspace.
     #[serde(default)]
     pub k8s_workspace_storage_class: Option<String>,
+    /// A claim the BACKEND also mounts, shared by every workspace through a
+    /// `subPath` of the workspace id. Set, it wins over the per-workspace claim
+    /// above.
+    ///
+    /// This is what makes one checkout serve both sides: the IDE clones into
+    /// `/workspace`, and artifact-ingest reads the same tree at
+    /// `{workspaces_root}/{workspace_id}/{repo_dir}` — the layout that gear
+    /// already looks for. Per-workspace claims cannot do that, because they are
+    /// created per launch and a long-running backend Pod cannot mount a volume
+    /// that did not exist when it started.
+    ///
+    /// The cost is [`Self::k8s_node_name`]: a `ReadWriteOnce` volume attaches to
+    /// one node, so every session has to run on the backend's node. With an
+    /// ReadWriteMany class that constraint disappears and this claim is all
+    /// that is needed.
+    #[serde(default)]
+    pub k8s_workspace_shared_claim: Option<String>,
+    /// The node the backend itself runs on (`spec.nodeName`, injected by the
+    /// chart). Sessions are pinned here while [`Self::k8s_workspace_shared_claim`]
+    /// is in use, because that is where its volume can be attached.
+    ///
+    /// Unset with a shared claim configured, the launch refuses rather than
+    /// scheduling a Pod that would sit `Pending` on a multi-attach error — a
+    /// clear error beats a session that never starts.
+    #[serde(default)]
+    pub k8s_node_name: Option<String>,
     /// Docker image for a Theia session. Default: the legacy CI-published one;
     /// Kubernetes deployments inject this repository's matching immutable image.
     /// when absent; a locally-built `cf-studio-theia:latest` also works.
@@ -156,6 +182,8 @@ impl Default for StudioSessionConfig {
             k8s_workspace_persistent: false,
             k8s_workspace_volume_size: default_workspace_volume_size(),
             k8s_workspace_storage_class: None,
+            k8s_workspace_shared_claim: None,
+            k8s_node_name: None,
             image: default_image(),
             always_pull: default_always_pull(),
             registry_user_env: default_registry_user_env(),

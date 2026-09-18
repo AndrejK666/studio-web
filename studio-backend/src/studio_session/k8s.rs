@@ -115,6 +115,17 @@ impl KubernetesDriver {
         })
     }
 
+    /// The node this backend runs on, when the chart told us
+    /// (`spec.nodeName` → `STUDIO_NODE_NAME`). Blank counts as absent: an
+    /// unset env var renders as an empty string, not as a missing key.
+    fn node_name(&self) -> Option<&str> {
+        self.cfg
+            .k8s_node_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
     fn pods(&self) -> Api<Pod> {
         Api::namespaced(self.client.clone(), &self.namespace)
     }
@@ -223,30 +234,94 @@ impl SessionDriver for KubernetesDriver {
         // it first (the service only launches when no LIVE session exists).
         let _ = self.destroy(&name).await;
 
-        // `/workspace`: ephemeral by default, or the workspace's own claim.
-        // The claim is named after the Pod, which is itself per-workspace, so
-        // the same workspace comes back to the same volume — clones, agent
-        // worktrees and uncommitted work included. It deliberately outlives
-        // the session; `destroy` does not touch it.
-        let workspace_volume = if self.cfg.k8s_workspace_persistent {
+        // `/workspace`: a shared claim, the workspace's own claim, or ephemeral.
+        //
+        // The shared claim is the only one of the three the backend can read
+        // too — it mounts the same volume, and each workspace lives in a
+        // `subPath` named after itself, which is exactly the layout
+        // artifact-ingest looks for (`{root}/{workspace_id}/{repo_dir}`). One
+        // clone then serves both the IDE and the analyses, instead of each side
+        // fetching its own copy of the same repository.
+        //
+        // The per-workspace claim below cannot serve that purpose: it is created
+        // during a launch, and a long-running backend Pod cannot mount a volume
+        // that did not exist when it started.
+        let shared_claim = self
+            .cfg
+            .k8s_workspace_shared_claim
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let (workspace_volume, workspace_sub_path) = if let Some(claim) = shared_claim {
+            // A ReadWriteOnce volume is attached to one node, so the session has
+            // to run where the backend already holds it. Refuse rather than
+            // schedule a Pod that would sit `Pending` on a multi-attach error:
+            // the operator gets a sentence, not a stuck session.
+            if self.node_name().is_none() {
+                return Err(anyhow!(
+                    "studio-session: k8s_workspace_shared_claim is set but the backend's node is \
+                     unknown (k8s_node_name / STUDIO_NODE_NAME) — a session sharing that volume \
+                     must be scheduled on the same node"
+                ));
+            }
+            // The subPath is the workspace id and nothing else: it is the
+            // directory name artifact-ingest resolves, so a different scheme
+            // here would leave the backend reading an empty path with no error
+            // anywhere.
+            let Some(workspace_id) = labels.get(WS_LABEL).cloned() else {
+                return Err(anyhow!(
+                    "studio-session: a session sharing the workspaces claim needs its \
+                     {WS_LABEL} label to name the subPath"
+                ));
+            };
+            self.await_pod_gone(&name).await;
+            (
+                Volume {
+                    name: "workspace".to_string(),
+                    persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                        claim_name: claim.to_string(),
+                        read_only: None,
+                    }),
+                    ..Default::default()
+                },
+                Some(workspace_id),
+            )
+        } else if self.cfg.k8s_workspace_persistent {
             let claim_name = workspace_claim_name(&name);
             self.ensure_workspace_claim(&claim_name, &labels).await?;
             self.await_pod_gone(&name).await;
-            Volume {
-                name: "workspace".to_string(),
-                persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
-                    claim_name,
-                    read_only: None,
-                }),
-                ..Default::default()
-            }
+            (
+                Volume {
+                    name: "workspace".to_string(),
+                    persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
+                        claim_name,
+                        read_only: None,
+                    }),
+                    ..Default::default()
+                },
+                None,
+            )
         } else {
-            Volume {
-                name: "workspace".to_string(),
-                empty_dir: Some(EmptyDirVolumeSource::default()),
-                ..Default::default()
-            }
+            (
+                Volume {
+                    name: "workspace".to_string(),
+                    empty_dir: Some(EmptyDirVolumeSource::default()),
+                    ..Default::default()
+                },
+                None,
+            )
         };
+
+        // `kubernetes.io/hostname` carries the node name, so this is the node
+        // the backend itself is on. Absent unless a shared claim is in use —
+        // an ephemeral or per-workspace volume follows the Pod wherever the
+        // scheduler puts it, and constraining that would only cost capacity.
+        let node_selector = workspace_sub_path.as_ref().and_then(|_| {
+            self.node_name().map(|node| {
+                BTreeMap::from([("kubernetes.io/hostname".to_string(), node.to_string())])
+            })
+        });
 
         let image_pull_secrets = self
             .cfg
@@ -280,12 +355,26 @@ impl SessionDriver for KubernetesDriver {
                 automount_service_account_token: Some(false),
                 security_context: Some(PodSecurityContext {
                     run_as_non_root: Some(true),
+                    // A claim-backed volume arrives owned by root, and this
+                    // container is uid 1000 — without fsGroup the IDE cannot
+                    // write its own workspace. `OnRootMismatch` keeps the
+                    // recursive chown to first use instead of every start,
+                    // which matters once a workspace holds a real checkout.
+                    // The backend runs as 1000 too, so the shared tree stays
+                    // writable from both sides.
+                    fs_group: Some(1000),
+                    fs_group_change_policy: Some("OnRootMismatch".to_string()),
                     seccomp_profile: Some(SeccompProfile {
                         type_: "RuntimeDefault".to_string(),
                         ..Default::default()
                     }),
                     ..Default::default()
                 }),
+                // Pinned to the backend's node while a shared ReadWriteOnce
+                // claim is in play: that volume can only be attached to one
+                // node, and the backend is already holding it. This is the
+                // constraint an ReadWriteMany class would remove.
+                node_selector: node_selector.clone(),
                 image_pull_secrets,
                 containers: vec![Container {
                     name: "theia".to_string(),
@@ -299,6 +388,9 @@ impl SessionDriver for KubernetesDriver {
                     volume_mounts: Some(vec![VolumeMount {
                         name: "workspace".to_string(),
                         mount_path: "/workspace".to_string(),
+                        // Only set for the shared claim: each workspace gets its
+                        // own directory inside one volume.
+                        sub_path: workspace_sub_path.clone(),
                         ..Default::default()
                     }]),
                     resources: Some(ResourceRequirements {

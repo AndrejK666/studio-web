@@ -194,6 +194,33 @@ backend:
   # one-line change here.
   sessions:
     enabled: false
+    # One checkout, read by the IDE and by the analyses.
+    #
+    # A claim the backend mounts and every session Pod mounts too, each
+    # workspace in a `subPath` of its own id — which is the layout
+    # artifact-ingest already resolves (`{root}/{workspace_id}/{repo_dir}`).
+    # Without it the two sides never see the same files: the IDE's clone lives
+    # in its Pod's own volume, ingest falls back to the connector's tree API,
+    # and document text exists nowhere in the cluster.
+    #
+    # It also makes a workspace outlive its session, which is what the
+    # per-workspace claim (`k8s_workspace_persistent`) was for. That knob is
+    # superseded while this is on: the shared claim wins, and a claim the
+    # backend cannot mount would defeat the point.
+    #
+    # THE COST, and it is not small: this cluster has no ReadWriteMany class
+    # (Cinder block only, every PV ReadWriteOnce), and an RWO volume attaches
+    # to ONE node. So every session Pod is pinned to the backend's node — the
+    # driver refuses to launch rather than leave a Pod Pending on a
+    # multi-attach error. All IDEs therefore land on one node, and losing that
+    # node loses the backend and every session together. With an RWX class the
+    # pinning disappears and nothing else about this changes.
+    sharedWorkspaces:
+      enabled: false
+      size: 20Gi
+      # Empty leaves it to the cluster default.
+      storageClass: ""
+      mountPath: /var/lib/studio/workspaces
     rbac:
       # Set false when application deploys run under a restricted ServiceAccount.
       # A cluster administrator must bootstrap the Role/RoleBinding once; see
