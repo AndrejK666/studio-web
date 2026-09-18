@@ -355,6 +355,7 @@ function DocumentsView({
   useEffect(() => {
     void reload();
   }, [reload]);
+
   useEffect(() => {
     if (types.length > 0 && !newType) setNewType(types[0].key);
   }, [types, newType]);
@@ -717,8 +718,19 @@ function DocumentsView({
  *  body would blow the gateway's request-size limit. */
 const CLASSIFY_BATCH = 25;
 
-/** Page size when walking the artifact graph's file nodes. */
+/** Page size when walking the artifact graph's file nodes. The server clamps
+ *  this to 200, so it is the fewest round trips the walk can take. */
 const NODE_PAGE = 200;
+
+/** How many rows are put in the DOM at once.
+ *
+ *  A synced repository is thousands of files and every row is a dozen elements,
+ *  so rendering the whole list costs tens of thousands of nodes for a screen
+ *  that shows twenty. The rows all exist in memory — the counts on the chips
+ *  are over the full list and stay exact — this only bounds what is mounted,
+ *  and the footer says what is being held back rather than letting the list
+ *  end silently on a lie. */
+const RENDER_PAGE = 200;
 
 /** Whether an ingested node is a file this tab should list.
  *
@@ -906,16 +918,6 @@ function IngestedDocumentsView({
     } catch (e) {
       setErr(errText(e));
     }
-    // Everything the sync has already ingested, whether or not anything has
-    // classified it. This is what the list shows before a scan has ever run:
-    // the alternative is an empty screen for a project that demonstrably has
-    // documents in it, which reads as "there is nothing here".
-    try {
-      setCandidates(await readCandidates());
-    } catch {
-      // Candidates are a head start, not the record. The bindings above are
-      // the queue that matters, and losing the preview must not cost them.
-    }
     try {
       setAuthored((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
     } catch {
@@ -983,6 +985,34 @@ function IngestedDocumentsView({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /** The candidate walk, kept off `reload`.
+   *
+   *  It pages the whole file listing — 200 nodes per request is the server's
+   *  cap, so a repository of six thousand files is thirty round trips — and
+   *  `reload` runs after every decision, every detector pass and every commit.
+   *  Paying that walk each time would make one dropdown change cost thirty
+   *  requests about files that did not move.
+   *
+   *  The file SET only changes when a sync runs, which is another tab; within
+   *  this one a file leaves the list by gaining a binding, and `specRows` drops
+   *  it from what is already in memory. So: once per project.
+   */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const found = await readCandidates();
+        if (alive) setCandidates(found);
+      } catch {
+        // A head start, not the record. The bindings are the queue that
+        // matters, and losing the preview must not cost them.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [readCandidates]);
 
   useEffect(
     () => () => {
@@ -1616,6 +1646,13 @@ function IngestedDocumentsView({
     // forced a recompute.
   }, [rows, filter, typeFilter, originFilter]);
 
+  /** How much of `shown` is mounted. Reset whenever the view changes: a filter
+   *  is a new question, and answering it from row 400 of the previous one
+   *  would be a strange place to start reading. */
+  const [rendered, setRendered] = useState(RENDER_PAGE);
+  useEffect(() => setRendered(RENDER_PAGE), [filter, typeFilter, originFilter, view]);
+  const visible = useMemo(() => shown.slice(0, rendered), [shown, rendered]);
+
   /** The row the side panel is about — always a repository one. An authored
    *  document opens in the editor instead, where it can be changed; a panel
    *  that only says what its type expects would be a worse answer than the
@@ -1760,7 +1797,7 @@ function IngestedDocumentsView({
                and the side panel are for, and tiles answer "what have we
                got". */
             <TileGrid>
-              {shown.map((row) => {
+              {visible.map((row) => {
                 const open = row.nodeId ? (findings[row.nodeId] ?? []).length : 0;
                 const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
                 return (
@@ -1820,7 +1857,7 @@ function IngestedDocumentsView({
               <span>Updated</span>
               <span />
             </div>
-            {shown.map((row) => {
+            {visible.map((row) => {
               const b = row.binding;
               const open = row.nodeId ? findings[row.nodeId] : undefined;
               const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
@@ -1966,6 +2003,20 @@ function IngestedDocumentsView({
               );
             })}
           </div>
+          )}
+
+          {visible.length < shown.length && (
+            /* Says what is held back rather than letting the list stop without
+               explanation — a table that ends at row 200 of 5785 with no note
+               reads as "that is all there is". */
+            <div className="ing-more">
+              <button onClick={() => setRendered((n) => n + RENDER_PAGE)} disabled={busy}>
+                Show {Math.min(RENDER_PAGE, shown.length - visible.length)} more
+              </button>
+              <span className="ing-dash">
+                {visible.length} of {shown.length}
+              </span>
+            </div>
           )}
 
           <div className="ing-side">
@@ -2555,6 +2606,14 @@ const INGESTED_CSS = `
 .ing-ok { color: var(--success); }
 .ing-bad { color: var(--warning); }
 .ing-dash { opacity: 0.4; }
+.ing-more {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 2px 2px;
+  font-size: 12px;
+}
 /* Authored, said in the Origin column where every other row names a
    repository. A chip rather than plain text: it is a different KIND of answer
    from the ones around it, not another repository with an odd name. */
