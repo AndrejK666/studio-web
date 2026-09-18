@@ -424,13 +424,30 @@ async fn sync(
             .with_constraint("repo_full_path must not be empty")
             .create());
     }
-    // Resolved here and thrown away: the run resolves its own token per
-    // attempt (a queue row is no place for one), but a `secret_ref` this caller
-    // cannot read should be a 500 on this request rather than a run that
-    // dead-letters where nobody is looking.
-    svc.resolve_token(&ctx, &secret_ref)
+    // Resolved here and thrown away: the run resolves its own token per attempt
+    // (a queue row is no place for one). What this call is for is the errors —
+    // a malformed reference, or a credstore that cannot answer — which belong
+    // on this request rather than in a run that dead-letters where nobody is
+    // looking.
+    //
+    // A reference that resolves to nothing is deliberately NOT one of them. A
+    // public repository syncs and clones without credentials, and answering 500
+    // because a token is missing refuses work that would have succeeded — it is
+    // how this environment ended up with a Specs tab that could not scan a
+    // public repo. The run logs that it is unauthenticated; a private
+    // repository still fails, at the provider, with the provider's reason.
+    if svc
+        .resolve_token(&ctx, &secret_ref)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .is_none()
+    {
+        tracing::warn!(
+            secret_ref = %secret_ref,
+            repo = %repo_full_path,
+            "studio-artifact-ingest: no readable token — the sync will run without credentials"
+        );
+    }
 
     let trimmed = |v: Option<&str>| {
         v.map(str::trim)
