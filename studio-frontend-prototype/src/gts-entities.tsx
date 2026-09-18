@@ -1,6 +1,7 @@
 // A scannable table of the registered GTS entities (types-registry/v1/entities)
 // instead of a raw JSON dump: categorised by gts_id, searchable, filterable.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { Modal } from "./modal";
 
 interface Segment { vendor?: string; package?: string; namespace?: string; type_name?: string; ver_major?: number }
 interface Entity {
@@ -52,13 +53,7 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
   const [cat, setCat] = useState<Category | null>(null);
   const [sel, setSel] = useState<Entity | null>(null);
 
-  useEffect(() => {
-    if (!sel) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSel(null); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sel]);
-
+  
   const rows = useMemo(() => {
     const d = data as { entities?: Entity[]; error?: string } | undefined;
     const list = d?.entities ?? [];
@@ -139,8 +134,12 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
       </div>
 
       {sel && (
-        <div className="gte-modal" onClick={() => setSel(null)}>
-          <div className="gte-dialog" onClick={(e) => e.stopPropagation()}>
+        <Modal
+          label={sel.gts_id}
+          onClose={() => setSel(null)}
+          backdropClassName="gte-modal"
+          cardClassName="gte-dialog"
+        >
             <button className="gte-close" aria-label="Close" onClick={() => setSel(null)}>×</button>
             <span className="gte-badge" style={{ borderColor: CAT_COLOR[categoryOf(sel.gts_id)], color: CAT_COLOR[categoryOf(sel.gts_id)] }}>
               <span className="gte-dot" style={{ background: CAT_COLOR[categoryOf(sel.gts_id)] }} />
@@ -153,8 +152,7 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
             )}
             <h4>{sel.is_schema ? "Schema" : "Content"}</h4>
             <pre className="gte-json">{JSON.stringify(sel.content ?? {}, null, 2)}</pre>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

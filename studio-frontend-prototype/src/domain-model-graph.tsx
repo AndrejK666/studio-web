@@ -385,7 +385,25 @@ export function DomainModelGraph({ token }: { token: string }) {
       {buckets.length > 0 && (
         <div className="dmg-legend">
           {buckets.map(({ b, n }) => (
-            <div key={b} className={"dmg-lrow" + (F.off.has(b) ? " off" : "")} onClick={() => toggleBucket(b)}>
+            /* A toggle, and now one the keyboard can reach and a screen
+               reader can read: `aria-pressed` carries the on/off that the
+               `off` class only showed. It stays a div rather than becoming a
+               button because `.dmg-lrow` lays out three spans and a button
+               would bring its own box to fight with. */
+            <div
+              key={b}
+              role="button"
+              tabIndex={0}
+              aria-pressed={!F.off.has(b)}
+              className={"dmg-lrow" + (F.off.has(b) ? " off" : "")}
+              onClick={() => toggleBucket(b)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleBucket(b);
+                }
+              }}
+            >
               <span className="dmg-dot" style={{ background: colorOf(b) }} /><span>{b}</span><span className="dmg-n">{n}</span>
             </div>
           ))}
