@@ -12,34 +12,62 @@ backend for so the copy is not needed.
 
 ---
 
-## 1. The root cause: the contract carries no vocabularies
+## 1. The root cause: our own gears skipped a pattern the platform uses
 
-`studio-backend` declares **no enums**. Every closed set of values — binding
-states, document statuses, connector categories, run states — reaches the
-frontend as `"type": "string"` with the values written in prose:
+Some of `studio-backend`'s DTOs flatten a closed set of values into a
+`"type": "string"` field and write the values in prose:
 
 ```json
 "DocumentBindingDto.state": {
   "type": "string",
   "description": "\"detected\" | \"confirmed\" | \"manual\" | \"unknown\" | \"not_a_document\"."
 }
-"DocumentDto.status":  { "type": "string", "description": "\"draft\", \"review\" or \"approved\"." }
-"ProviderDto.category": { "type": "string", "description": "`source_code` … | `ai` … | `notification` …" }
+"ProviderDto.category": { "type": "string", "description": "`source_code` \u2026 | `ai` \u2026 | `notification` \u2026" }
 ```
 
-Measured, not assumed: walking `components.schemas` in the live
-`/cf/openapi.json` finds **zero** `enum` declarations.
+> **Correction to the first draft of this document.** It said the backend
+> declared *no* enums at all. That was wrong, and the mistake is worth recording
+> because it is easy to repeat: the check walked `properties[].enum` only, and
+> every enum here is a **named schema** reached by `$ref`, so none were counted.
+> There were 31 \u2014 twelve of them in gear DTOs (`TenantStatusDto`,
+> `SharingModeDto`, `ConversionStatusDto`, \u2026).
 
-Three consequences, and the third is the one that costs:
+So this is not a gap in the platform. It is an inconsistency in our own gears:
+the pattern was there to copy and `studio-documents` had not. That makes the fix
+cheaper than the draft suggested \u2014 nothing to ask anyone for, only something to
+match.
 
-1. No client can be generated for these. The union types in `api.ts` are
-   hand-transcribed from the description string.
+While a field is still a bare string there are three consequences, and the
+third is the one that costs:
+
+1. No client can be generated for it. The union types in `api.ts` are
+   hand-transcribed from the description.
 2. Nothing fails when the backend adds a value. The old client keeps compiling.
-3. A `Record<Vocabulary, …>` lookup then returns `undefined`, and what happens
+3. A `Record<Vocabulary, \u2026>` lookup then returns `undefined`, and what happens
    next depends on whether whoever wrote it added `??`.
 
-**Ask for:** `enum` on these fields in the OpenAPI. It costs the backend an
-attribute and turns every table below from a copy into a generated type.
+**Done for `studio-documents`:** `BindingState`, `DetectionSource` and
+`DocStatus` now reach the contract as enums. The Rust enums had existed all
+along in `model.rs`, deriving `Serialize` with the same spelling the DTOs were
+building by hand \u2014 they only lacked `ToSchema`, so the DTO flattened them on
+the way out and the contract lost what the code already knew.
+
+**Still flattened**, each with an enum already sitting in the code:
+
+| DTO field | the enum it should carry |
+|---|---|
+| `ProviderDto.category` | `connectors::driver::ConnectorCategory` |
+| `RunDto.state` (studio-tasks) | `tasks::RunState` |
+| document owner and question-kind fields | `Owner`, `QuestionKind` |
+
+These are a bigger change than the three above, not a one-line swap: the value
+arrives from the layer below as a `String` \u2014 a database column, a plugin
+record \u2014 so the boundary has to parse it and decide what an unparseable value
+means.
+
+**Do, rather than ask for:** derive `ToSchema` on the enum the code already has
+and stop flattening it in the DTO. That turns the tables below from copies into
+generated types.
 
 ---
 
@@ -65,8 +93,8 @@ the prototype lists six. `repo` and `spec_finding` are deliberately absent
 person adding a node type has no way to tell a deliberate omission from a
 forgotten one.
 
-**Ask for:** enums (§1). Until then, a comment on each table naming the Rust
-constant it mirrors, so a reader can diff them.
+**Do:** finish §1. Until a field carries its enum, put a comment on each table
+naming the Rust constant it mirrors, so a reader can diff them.
 
 ---
 
@@ -168,9 +196,10 @@ document.
 
 In the order that buys the most:
 
-1. **`enum` on the vocabulary fields** (§1). Turns §2 from eight hand-copies
-   into generated types, and makes a backend change a compile error rather than
-   a blank cell.
+1. **Finish §1.** Three fields carry their enum now; `ProviderDto.category` and
+   `RunDto.state` are the two that matter next, and both have an enum waiting in
+   the code. Each one turns a hand-copy in §2 into a generated type, and a
+   backend change into a compile error rather than a blank cell.
 2. **`category` used rather than re-derived** (§3). One join replaces one
    array that nobody will remember to edit.
 3. **A fallback on every vocabulary lookup.** Cheap, and it converts the whole
