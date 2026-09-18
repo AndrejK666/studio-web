@@ -1,49 +1,51 @@
-import { inject, injectable } from '@theia/core/shared/inversify';
-import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import type { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import type { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
-import type { OpenViewArguments } from '@theia/core/lib/browser';
-import { Command } from '@theia/core';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
-import { StudioWidget } from './studio-widget';
 import { GitOperationsWidget } from './git-operations-widget';
-import { ObjectDetailsWidget } from './object-details-widget';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditWidget } from './audit-widget';
 import { OrcaWidget } from './orca-widget';
-
-export const StudioCommand: Command = { id: 'studio:command' };
 
 /** Where the Studio views go in the normal workbench.
  *
  *  Exported because it is now two things at once: what a fresh session lays
  *  out, and the "Workbench" perspective's placement map. Writing it twice is
- *  how the two would drift apart. */
+ *  how the two would drift apart.
+ *
+ *  What is deliberately NOT here is as much of the design as what is:
+ *
+ *  - The Workspace Graph. It used to be the main area's occupant and the widget
+ *    activated last, so every session opened on a picture of itself — in front
+ *    of the file the person came for. It is a view you ask for, and it is one
+ *    command away.
+ *  - Object Details, which reads the graph's selection and can say nothing
+ *    without it. Kept out of a fresh session it stops being an empty panel in
+ *    the right flank; `WorkspaceGraphContribution.openView` attaches it the
+ *    moment the graph opens, which is the only moment it has anything to show.
+ *  - The sample widget the Theia extension generator left behind. It shipped in
+ *    the left flank of every session, opened by default, offering a button that
+ *    congratulated the reader on its own creation. */
 export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' | 'right' | 'bottom' }> = [
-    { id: StudioWidget.ID, area: 'left' },
-    // The Workspace Graph is NOT here any more. It used to be the main area's
-    // occupant and the widget activated last, so every session opened on a
-    // picture of itself — in front of the file the person came for. It is a
-    // view you ask for, and it is one command away.
-    { id: ObjectDetailsWidget.ID, area: 'right' },
     { id: OrcaWidget.ID, area: 'right' },
     { id: GitOperationsWidget.ID, area: 'bottom' },
     { id: AnalyzeWidget.ID, area: 'bottom' },
     { id: AuditWidget.ID, area: 'bottom' }
 ] as const;
 
+/**
+ * Composes the layout a fresh session opens on.
+ *
+ * Not a view contribution any more: it used to be the sample widget's, and the
+ * layout rode along on it. With the sample gone the layout is the whole job, so
+ * the class says so rather than carrying a toggle command for a view that no
+ * longer exists.
+ */
 @injectable()
-export class StudioContribution extends AbstractViewContribution<StudioWidget> implements FrontendApplicationContribution {
+export class StudioContribution implements FrontendApplicationContribution {
     constructor(
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager
-    ) {
-        super({
-            widgetId: StudioWidget.ID,
-            widgetName: StudioWidget.LABEL,
-            defaultWidgetOptions: { area: 'left' },
-            toggleCommandId: StudioCommand.id
-        });
-    }
+    ) {}
 
     async initializeLayout(app: FrontendApplication): Promise<void> {
         for (const placement of DEFAULT_LAYOUT) {
@@ -58,8 +60,5 @@ export class StudioContribution extends AbstractViewContribution<StudioWidget> i
         // the Agents panel came out invisible on a fresh session. Activating it
         // is what expands the right panel.
         await app.shell.activateWidget(OrcaWidget.ID);
-    }
-    override async openView(args: Partial<OpenViewArguments> = {}): Promise<StudioWidget> {
-        return super.openView({ activate: false, reveal: true, ...args });
     }
 }

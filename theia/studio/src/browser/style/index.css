@@ -8,14 +8,6 @@
     --studio-text: var(--theia-ui-font-color1);
 }
 
-#widget-container h2 {
-    color: var(--studio-text);
-    font-size: 12px;
-    font-weight: 400;
-    padding: 10px;
-    text-transform: uppercase;
-}
-
 .studio-git-operations,
 .studio-workspace-graph,
 .studio-object-details,

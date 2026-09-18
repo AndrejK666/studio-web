@@ -41,9 +41,6 @@ jest.mock('@theia/core/lib/browser/shell/shell-layout-restorer', () => ({
     ShellLayoutRestorer: Symbol('ShellLayoutRestorer'),
     ApplicationShellLayoutMigrationError: { is: () => false }
 }));
-jest.mock('./studio-widget', () => ({
-    StudioWidget: { ID: 'studio:widget', LABEL: 'Studio Widget' }
-}));
 jest.mock('./workspace-graph-widget', () => ({
     WorkspaceGraphWidget: { ID: 'studio:workspace-graph', LABEL: 'Workspace Graph' }
 }));
@@ -71,8 +68,7 @@ import { CommonMenus } from '@theia/core/lib/browser/common-menus';
 import { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
 import type { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { AuditCommand, AuditContribution } from './audit-contribution';
-import { StudioContribution, StudioCommand } from './studio-contribution';
-import { StudioWidget } from './studio-widget';
+import { StudioContribution } from './studio-contribution';
 import { WorkspaceGraphWidget } from './workspace-graph-widget';
 import { ObjectDetailsWidget } from './object-details-widget';
 import { GitOperationsWidget } from './git-operations-widget';
@@ -83,7 +79,6 @@ import { OrcaWidget } from './orca-widget';
 describe('StudioContribution', () => {
     it('initializes the default layout only through initializeLayout', async () => {
         const widgets = new Map([
-            [StudioWidget.ID, { id: StudioWidget.ID, isAttached: false }],
             [WorkspaceGraphWidget.ID, { id: WorkspaceGraphWidget.ID, isAttached: false }],
             [ObjectDetailsWidget.ID, { id: ObjectDetailsWidget.ID, isAttached: false }],
             [GitOperationsWidget.ID, { id: GitOperationsWidget.ID, isAttached: false }],
@@ -104,10 +99,16 @@ describe('StudioContribution', () => {
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(6);
+        expect(shell.addWidget).toHaveBeenCalledTimes(4);
         expect(shell.addWidget).toHaveBeenCalledWith(
             expect.objectContaining({ id: OrcaWidget.ID }),
             { area: 'right' }
+        );
+        // Object Details reads the graph's selection and can say nothing
+        // without it. It arrives with the graph, not with the session.
+        expect(shell.addWidget).not.toHaveBeenCalledWith(
+            expect.objectContaining({ id: ObjectDetailsWidget.ID }),
+            expect.anything()
         );
         // The Agents panel is revealed by activating it — adding a widget to a
         // side area only puts it in that area's tab bar.
@@ -155,21 +156,21 @@ describe('StudioContribution', () => {
 
         await application.runInitializeLayout();
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(6);
+        expect(shell.addWidget).toHaveBeenCalledTimes(4);
         expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
         expect(shell.activateWidget).not.toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
     });
 
-    it('registers exactly one Studio toggle command and one View menu entry', () => {
-        const commands = createRecordingCommandRegistry();
-        const menus = new RecordingMenuRegistry();
+    it('contributes no view of its own', () => {
+        // It used to be the sample widget's view contribution, with the layout
+        // riding along on it. The sample is gone; a toggle command for a view
+        // that no longer exists would be a menu entry that opens nothing.
         const contribution = new StudioContribution({ getOrCreateWidget: jest.fn() } as never);
 
-        contribution.registerCommands(commands as never);
-        contribution.registerMenus(menus as never);
-
-        expect(commands.getCommand(StudioCommand.id)).toMatchObject({ id: StudioCommand.id });
-        expect(menus.actionsFor(CommonMenus.VIEW_VIEWS, StudioCommand.id)).toHaveLength(1);
+        expect((contribution as unknown as { registerCommands?: unknown }).registerCommands)
+            .toBeUndefined();
+        expect((contribution as unknown as { registerMenus?: unknown }).registerMenus)
+            .toBeUndefined();
     });
 
     it('registers exactly one Audit toggle command and one View menu entry', () => {
