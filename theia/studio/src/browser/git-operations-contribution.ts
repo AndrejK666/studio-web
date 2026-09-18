@@ -2,21 +2,18 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { DisposableCollection, Emitter, Event } from '@theia/core/lib/common';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { StatusBar, StatusBarAlignment } from '@theia/core/lib/browser/status-bar/status-bar-types';
-import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { Command, CommandRegistry } from '@theia/core/lib/common/command';
 import { CommandService } from '@theia/core/lib/common/command';
 import { ILogger } from '@theia/core';
 import URI from '@theia/core/lib/common/uri';
 import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import {
-    StudioRuntimeService,
     type StudioOperationSnapshot,
     type StudioRepositoryDescriptor,
     type StudioRuntimeSession,
     type StudioWorkspaceLocation,
     type StudioWorkspaceRequest
 } from '../common/studio-protocol';
-import { GitOperationsWidget } from './git-operations-widget';
 
 export const GitOperationsCommand: Command = { id: 'studio.git-operations:toggle' };
 
@@ -541,34 +538,6 @@ export class GitOperationsFrontendController implements FrontendApplicationContr
             command: GitOperationsCommand.id,
             priority: 100
         });
-    }
-}
-
-@injectable()
-export class GitOperationsContribution extends AbstractViewContribution<GitOperationsWidget> implements FrontendApplicationContribution {
-    constructor(
-        @inject(GitOperationsFrontendController) protected readonly controller: GitOperationsFrontendController,
-        @inject(StudioRuntimeService) runtime: StudioRuntimeService
-    ) {
-        super({
-            widgetId: GitOperationsWidget.ID,
-            widgetName: GitOperationsWidget.LABEL,
-            defaultWidgetOptions: { area: 'bottom' },
-            toggleCommandId: GitOperationsCommand.id
-        });
-        this.controller.bindRuntime(runtime);
-    }
-
-    registerCommands(commands: CommandRegistry): void {
-        super.registerCommands(commands);
-    }
-
-    async onStart(): Promise<void> {
-        await this.controller.onStart();
-    }
-
-    onDidInitializeLayout(): void {
-        this.controller.onDidInitializeLayout();
     }
 }
 

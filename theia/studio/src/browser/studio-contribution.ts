@@ -2,9 +2,8 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import type { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import type { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
-import { GitOperationsWidget } from './git-operations-widget';
+import { OperationsWidget } from './operations-widget';
 import { AnalyzeWidget } from './analyze-widget';
-import { AuditWidget } from './audit-widget';
 import { OrcaWidget } from './orca-widget';
 
 /** Where the Studio views go in the normal workbench.
@@ -28,9 +27,8 @@ import { OrcaWidget } from './orca-widget';
  *    congratulated the reader on its own creation. */
 export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' | 'right' | 'bottom' }> = [
     { id: OrcaWidget.ID, area: 'right' },
-    { id: GitOperationsWidget.ID, area: 'bottom' },
-    { id: AnalyzeWidget.ID, area: 'bottom' },
-    { id: AuditWidget.ID, area: 'bottom' }
+    { id: OperationsWidget.ID, area: 'bottom' },
+    { id: AnalyzeWidget.ID, area: 'bottom' }
 ] as const;
 
 /**

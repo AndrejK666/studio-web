@@ -15,12 +15,13 @@ jest.mock('./audit-controller', () => ({
 import * as React from '@theia/core/shared/react';
 import { Container, ContainerModule } from '@theia/core/shared/inversify';
 import { MessageLoop } from '@theia/core/shared/@lumino/messaging';
-import { AuditWidget } from './audit-widget';
-import { AuditCommand, AuditContribution, AuditFilterCommandPrefix } from './audit-contribution';
+import { OperationsWidget } from './operations-widget';
+import { OperationsCommand, OperationsContribution, OperationsFilterCommandPrefix } from './operations-contribution';
+import { GitOperationsFrontendController } from './git-operations-contribution';
 import { AuditFrontendController } from './audit-controller';
 
-describe('AuditWidget', () => {
-    let widget: AuditWidget;
+describe('OperationsWidget', () => {
+    let widget: OperationsWidget;
     const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
     let previousReactActEnvironment: boolean | undefined;
 
@@ -53,12 +54,23 @@ describe('AuditWidget', () => {
         };
         const module = new ContainerModule(bind => {
             bind(AuditFrontendController).toConstantValue(controller as unknown as AuditFrontendController);
-            bind(AuditWidget).toSelf();
+            /* The panel carries the queue half too. This suite is about the
+             * journal, so the queue is bound empty — it renders "No operations
+             * yet" and stays out of the way. */
+            bind(GitOperationsFrontendController).toConstantValue({
+                onDidChange: () => ({ dispose: () => undefined }),
+                getOperations: () => [],
+                getRepositories: () => [],
+                getSelectedRepository: () => undefined,
+                isConnected: () => true,
+                isScmUnavailable: () => false
+            } as unknown as GitOperationsFrontendController);
+            bind(OperationsWidget).toSelf();
         });
         const container = new Container();
         container.load(module);
         React.act(() => {
-            widget = container.resolve<AuditWidget>(AuditWidget);
+            widget = container.resolve<OperationsWidget>(OperationsWidget);
             MessageLoop.flush();
         });
     });
@@ -99,7 +111,10 @@ describe('AuditWidget', () => {
     });
 
     it('registers stable, labeled Audit commands that remain keyboard-command accessible', async () => {
-        const contribution = new AuditContribution();
+        const contribution = new OperationsContribution(
+            { bindRuntime: jest.fn() } as never,
+            {} as never
+        );
         const openView = jest.spyOn(contribution, 'openView').mockResolvedValue(widget);
         const commands = { registerCommand: jest.fn() };
 
@@ -107,12 +122,12 @@ describe('AuditWidget', () => {
 
         const registered = commands.registerCommand.mock.calls.map(([command]) => command);
         expect(registered).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: `${AuditFilterCommandPrefix}failed`, label: 'Audit: Failed' })
+            expect.objectContaining({ id: `${OperationsFilterCommandPrefix}failed`, label: 'Operations: Failed' })
         ]));
-        expect(AuditCommand).toEqual({ id: 'studio:audit:toggle', label: 'Audit' });
+        expect(OperationsCommand).toEqual({ id: 'studio:operations:toggle', label: 'Operations' });
 
         const [, handler] = commands.registerCommand.mock.calls.find(
-            ([command]) => command.id === `${AuditFilterCommandPrefix}failed`
+            ([command]) => command.id === `${OperationsFilterCommandPrefix}failed`
         ) ?? [];
         await handler.execute();
 

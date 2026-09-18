@@ -47,14 +47,12 @@ jest.mock('./workspace-graph-widget', () => ({
 jest.mock('./object-details-widget', () => ({
     ObjectDetailsWidget: { ID: 'studio:object-details', LABEL: 'Object Details' }
 }));
-jest.mock('./git-operations-widget', () => ({
-    GitOperationsWidget: { ID: 'studio:git-operations', LABEL: 'Git Operations' }
-}));
+
 jest.mock('./analyze-widget', () => ({
     AnalyzeWidget: { ID: 'studio:analyze', LABEL: 'Analyze' }
 }));
-jest.mock('./audit-widget', () => ({
-    AuditWidget: { ID: 'studio:audit', LABEL: 'Audit' },
+jest.mock('./operations-widget', () => ({
+    OperationsWidget: { ID: 'studio:operations', LABEL: 'Operations' },
     AUDIT_FILTERS: []
 }));
 jest.mock('./orca-widget', () => ({
@@ -67,13 +65,12 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { CommonMenus } from '@theia/core/lib/browser/common-menus';
 import { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
 import type { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
-import { AuditCommand, AuditContribution } from './audit-contribution';
+import { OperationsCommand, OperationsContribution } from './operations-contribution';
 import { StudioContribution } from './studio-contribution';
 import { WorkspaceGraphWidget } from './workspace-graph-widget';
 import { ObjectDetailsWidget } from './object-details-widget';
-import { GitOperationsWidget } from './git-operations-widget';
 import { AnalyzeWidget } from './analyze-widget';
-import { AuditWidget } from './audit-widget';
+import { OperationsWidget } from './operations-widget';
 import { OrcaWidget } from './orca-widget';
 
 describe('StudioContribution', () => {
@@ -81,9 +78,8 @@ describe('StudioContribution', () => {
         const widgets = new Map([
             [WorkspaceGraphWidget.ID, { id: WorkspaceGraphWidget.ID, isAttached: false }],
             [ObjectDetailsWidget.ID, { id: ObjectDetailsWidget.ID, isAttached: false }],
-            [GitOperationsWidget.ID, { id: GitOperationsWidget.ID, isAttached: false }],
+            [OperationsWidget.ID, { id: OperationsWidget.ID, isAttached: false }],
             [AnalyzeWidget.ID, { id: AnalyzeWidget.ID, isAttached: false }],
-            [AuditWidget.ID, { id: AuditWidget.ID, isAttached: false }],
             [OrcaWidget.ID, { id: OrcaWidget.ID, isAttached: false }]
         ]);
         const widgetManager = {
@@ -99,7 +95,14 @@ describe('StudioContribution', () => {
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(4);
+        // Three, not four: the Git Operations panel and the Audit panel were
+        // one subject in two tabs — what became of a change — and are one
+        // Operations panel now.
+        expect(shell.addWidget).toHaveBeenCalledTimes(3);
+        expect(shell.addWidget).toHaveBeenCalledWith(
+            expect.objectContaining({ id: OperationsWidget.ID }),
+            { area: 'bottom' }
+        );
         expect(shell.addWidget).toHaveBeenCalledWith(
             expect.objectContaining({ id: OrcaWidget.ID }),
             { area: 'right' }
@@ -156,7 +159,7 @@ describe('StudioContribution', () => {
 
         await application.runInitializeLayout();
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(4);
+        expect(shell.addWidget).toHaveBeenCalledTimes(3);
         expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
         expect(shell.activateWidget).not.toHaveBeenCalledWith(WorkspaceGraphWidget.ID);
     });
@@ -173,16 +176,22 @@ describe('StudioContribution', () => {
             .toBeUndefined();
     });
 
-    it('registers exactly one Audit toggle command and one View menu entry', () => {
+    /* One toggle and one View entry, where there used to be two of each: the
+     * Git Operations panel and the Audit panel registered separately for one
+     * subject. */
+    it('registers exactly one Operations toggle command and one View menu entry', () => {
         const commands = createRecordingCommandRegistry();
         const menus = new RecordingMenuRegistry();
-        const contribution = new AuditContribution();
+        const contribution = new OperationsContribution(
+            { bindRuntime: jest.fn() } as never,
+            {} as never
+        );
 
         contribution.registerCommands(commands as never);
         contribution.registerMenus(menus as never);
 
-        expect(commands.getCommand(AuditCommand.id)).toMatchObject({ id: AuditCommand.id });
-        expect(menus.actionsFor(CommonMenus.VIEW_VIEWS, AuditCommand.id)).toHaveLength(1);
+        expect(commands.getCommand(OperationsCommand.id)).toMatchObject({ id: OperationsCommand.id });
+        expect(menus.actionsFor(CommonMenus.VIEW_VIEWS, OperationsCommand.id)).toHaveLength(1);
     });
 
     it('uses Theia theme variables and focus-visible rules in the stylesheet', () => {
