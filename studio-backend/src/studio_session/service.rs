@@ -1141,7 +1141,16 @@ impl SessionService {
             .list_adoptable()
             .await?
             .into_iter()
-            .filter(|s| s.created_at_epoch_secs < cutoff)
+            // A session whose creation time the runtime did not report reads
+            // as epoch 0 — "created in 1970" — and every cutoff is after that,
+            // so the worst possible reading of "I do not know how old this is"
+            // used to be "destroy it". A Pod that has just been created is
+            // exactly the one most likely to be listed without a timestamp,
+            // and it is the one a person is waiting on.
+            //
+            // The cache already refuses to believe a zero (see `refresh`);
+            // this is the same refusal on the path that acts on it.
+            .filter(|s| s.created_at_epoch_secs != 0 && s.created_at_epoch_secs < cutoff)
             .collect();
 
         let mut outcome = ReapOutcome {
@@ -1413,6 +1422,45 @@ mod tests {
         stopped.running = false;
         let service = service(FakeRuntime::with(vec![stopped]));
         assert_eq!(service.list(TENANT).await[0].state, SessionState::Stopped);
+    }
+
+    /// A session the runtime listed without a creation time is NOT an expired
+    /// session. Epoch 0 is before every cutoff, so the reaper used to read "I
+    /// do not know how old this is" as "it is ancient, destroy it" — and the
+    /// Pod most likely to be listed without a timestamp is the one that was
+    /// just created, which is the one somebody is waiting on.
+    #[tokio::test]
+    async fn a_session_of_unknown_age_is_not_reaped() {
+        let ws = Uuid::from_u128(0xB1);
+        let mut ageless = running_session(ws, 41000);
+        ageless.created_at_epoch_secs = 0;
+        let runtime = FakeRuntime::with(vec![ageless]);
+        let service = service(runtime.clone());
+
+        let outcome = service.reap_expired().await.expect("the pass runs");
+
+        assert_eq!(outcome.expired, 0, "an unknown age is not an expiry");
+        assert_eq!(outcome.stopped, 0);
+        assert!(
+            runtime
+                .is_running("pod-00000000-0000-0000-0000-0000000000b1")
+                .await
+        );
+    }
+
+    /// And the guard does not save a session that really is too old.
+    #[tokio::test]
+    async fn a_session_past_its_maximum_age_is_still_reaped() {
+        let ws = Uuid::from_u128(0xB2);
+        let mut old = running_session(ws, 41000);
+        old.created_at_epoch_secs = 1; // 1970, but stated rather than missing
+        let runtime = FakeRuntime::with(vec![old]);
+        let service = service(runtime.clone());
+
+        let outcome = service.reap_expired().await.expect("the pass runs");
+
+        assert_eq!(outcome.expired, 1);
+        assert_eq!(outcome.stopped, 1);
     }
 
     /// Whether the IDE answers is the one thing the runtime cannot report, so
