@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 
 /** A key the viewer stored for themselves, or nothing. Never logged. */
+const os = require('os');
+
 function readStoredKey(file) {
     try {
         const value = fs.readFileSync(file, 'utf8').trim();
@@ -111,6 +113,57 @@ function gitIdentityConfig(containerConfigPath, person) {
     return lines.join('\n') + '\n';
 }
 
+/*
+ * A git identity in the viewer's home, because that home IS `$HOME` for the
+ * plugin host.
+ *
+ * THE DEFECT THIS FIXES, measured in a running session. The entrypoint writes a
+ * global git identity with `git config --global`, which lands in the container
+ * user's `~/.gitconfig`. This class then repoints `HOME` for the plugin host so
+ * one viewer's assistant credentials cannot be another's — and the plugin host
+ * is where the built-in git extension runs. With `HOME` moved, git looks for a
+ * global config in a directory that has none, and the IDE's own Commit answers
+ * "Make sure you configure your user.name and user.email in git". Reported from
+ * use; confirmed by reading the plugin host's own environ and finding no
+ * `.gitconfig` in any credential home.
+ *
+ * So each home gets one. It `include`s the container's config first, so
+ * whatever the session was launched with still applies, and then states the
+ * person on top — which is the part worth having: before this, every commit
+ * made from the IDE was authored by a shared "Constructor Studio" whoever made
+ * it, in a product whose whole point is telling collaborators apart.
+ *
+ * The address is only written when the identity provider stated one. Git needs
+ * an address to commit at all, and the include supplies the session's default,
+ * so a person with no address on their account commits under their own name and
+ * the session's address rather than not at all.
+ */
+function writeGitConfig(directory, person) {
+    const target = path.join(directory, '.gitconfig');
+    const body = gitIdentityConfig(path.join(os.homedir(), '.gitconfig'), person);
+    try {
+        // Rewritten only when it would change: this runs on every plugin-host
+        // fork, and a file whose mtime moves for nothing invites a watcher
+        // somewhere to act on it.
+        if (fs.readFileSync(target, 'utf8') === body) { return; }
+    } catch (error) {
+        /* absent or unreadable — write it */
+    }
+    try {
+        fs.writeFileSync(target, body, { mode: 0o600 });
+    } catch (error) {
+        // A home that cannot hold a git config still holds credentials, and the
+        // IDE falls back to the message this exists to remove rather than
+        // failing to start.
+        console.warn('[studio] could not write a git identity for this viewer', error);
+    }
+}
+
 module.exports = {
-    assistantEnvironment, gitIdentityConfig, readStoredKey, CREDENTIAL_STORE, HOME_IS_MOVABLE
+    assistantEnvironment,
+    gitIdentityConfig,
+    writeGitConfig,
+    readStoredKey,
+    CREDENTIAL_STORE,
+    HOME_IS_MOVABLE
 };

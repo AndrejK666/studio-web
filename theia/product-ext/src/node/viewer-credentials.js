@@ -38,7 +38,9 @@ const crypto = require('crypto');
 const { ContainerModule } = require('inversify');
 const { ConnectionContainerModule } = require('@theia/core/lib/node/messaging/connection-container-module');
 const { PluginHostEnvironmentVariable } = require('@theia/plugin-ext/lib/common/plugin-protocol');
-const { assistantEnvironment, gitIdentityConfig } = require('./viewer-credentials-env');
+const {
+    assistantEnvironment, gitIdentityConfig, writeGitConfig
+} = require('./viewer-credentials-env');
 const { AssistantAuth } = require('./assistant-auth');
 
 const VIEWER_CREDENTIALS_PATH = '/services/studio-viewer-credentials';
@@ -79,51 +81,6 @@ function ensureDirectory(directory) {
 }
 
 
-/*
- * A git identity in the viewer's home, because that home IS `$HOME` for the
- * plugin host.
- *
- * THE DEFECT THIS FIXES, measured in a running session. The entrypoint writes a
- * global git identity with `git config --global`, which lands in the container
- * user's `~/.gitconfig`. This class then repoints `HOME` for the plugin host so
- * one viewer's assistant credentials cannot be another's — and the plugin host
- * is where the built-in git extension runs. With `HOME` moved, git looks for a
- * global config in a directory that has none, and the IDE's own Commit answers
- * "Make sure you configure your user.name and user.email in git". Reported from
- * use; confirmed by reading the plugin host's own environ and finding no
- * `.gitconfig` in any credential home.
- *
- * So each home gets one. It `include`s the container's config first, so
- * whatever the session was launched with still applies, and then states the
- * person on top — which is the part worth having: before this, every commit
- * made from the IDE was authored by a shared "Constructor Studio" whoever made
- * it, in a product whose whole point is telling collaborators apart.
- *
- * The address is only written when the identity provider stated one. Git needs
- * an address to commit at all, and the include supplies the session's default,
- * so a person with no address on their account commits under their own name and
- * the session's address rather than not at all.
- */
-function writeGitConfig(directory, person) {
-    const target = path.join(directory, '.gitconfig');
-    const body = gitIdentityConfig(path.join(os.homedir(), '.gitconfig'), person);
-    try {
-        // Rewritten only when it would change: this runs on every plugin-host
-        // fork, and a file whose mtime moves for nothing invites a watcher
-        // somewhere to act on it.
-        if (fs.readFileSync(target, 'utf8') === body) { return; }
-    } catch (error) {
-        /* absent or unreadable — write it */
-    }
-    try {
-        fs.writeFileSync(target, body, { mode: 0o600 });
-    } catch (error) {
-        // A home that cannot hold a git config still holds credentials, and the
-        // IDE falls back to the message this exists to remove rather than
-        // failing to start.
-        console.warn('[studio] could not write a git identity for this viewer', error);
-    }
-}
 
 /**
  * Per-connection state: which viewer this browser session belongs to, and the
@@ -203,6 +160,21 @@ class ViewerCredentials {
             // is lost and nothing is shared.
             console.warn('[studio] could not redirect the anonymous credential home', error);
         }
+        /* AFTER the move, and not before it: the anonymous home may carry a
+         * `.gitconfig` written while nobody had announced themselves, and the
+         * move keeps whatever is already there. Writing second makes the
+         * adopted person win, which is the whole point of adopting them.
+         *
+         * This line was missing, and the hole was exactly one adoption wide:
+         * the early return above rewrites the config for a viewer already
+         * known, and `home()` writes it for a home it is asked for — but the
+         * FIRST time a portal identity arrived, its brand-new home got no
+         * config at all. On the dev stand that left
+         * `.studio-credentials/oidc-<sub>-<hash>/` an empty directory, so git
+         * in the plugin host had neither the include nor a `[user]` and
+         * answered "Make sure you configure your user.name and user.email" —
+         * to the one person in the session who HAD said who they were. */
+        writeGitConfig(stable, this.person);
         return stable;
     }
 

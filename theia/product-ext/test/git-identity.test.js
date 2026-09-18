@@ -22,7 +22,7 @@
  */
 
 const assert = require('node:assert');
-const { gitIdentityConfig } = require('../src/node/viewer-credentials-env');
+const { gitIdentityConfig, writeGitConfig } = require('../src/node/viewer-credentials-env');
 
 const CONTAINER = '/home/node/.gitconfig';
 
@@ -88,6 +88,47 @@ test('the file is tab-indented and newline-terminated, as git writes it', () => 
     const config = gitIdentityConfig(CONTAINER, { name: 'Roma' });
     assert.ok(config.endsWith('\n'), JSON.stringify(config));
     assert.ok(/\n\tname = /.test(config), JSON.stringify(config));
+});
+
+// -- the config a home actually receives -------------------------------------
+
+test('a brand-new home comes out with the include AND the person in it', () => {
+    /* Measured on the dev stand, not imagined: `.studio-credentials/oidc-<sub>-<hash>/`
+     * was an EMPTY directory. `setViewer` rewrote the config for a viewer it
+     * already knew, and `home()` wrote it for a home it was asked for, but the
+     * FIRST adoption — the moment a person stops being anonymous — created the
+     * directory and put nothing in it. git in that home then had neither the
+     * include nor a `[user]`, which is the "Make sure you configure your
+     * user.name and user.email" the session answered to the one person who HAD
+     * said who they were. */
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-home-'));
+    try {
+        writeGitConfig(home, { name: 'ANDREI KUCHMA', email: 'andrej.kuchma@constructor.tech' });
+        const config = fs.readFileSync(path.join(home, '.gitconfig'), 'utf8');
+        assert.ok(config.includes('[include]'), config);
+        assert.ok(config.includes('	name = ANDREI KUCHMA'), config);
+        assert.ok(config.includes('	email = andrej.kuchma@constructor.tech'), config);
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test('an anonymous home still gets the include, so a commit is possible at all', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-home-'));
+    try {
+        writeGitConfig(home, undefined);
+        const config = fs.readFileSync(path.join(home, '.gitconfig'), 'utf8');
+        assert.ok(config.includes('[include]'), config);
+        assert.ok(!config.includes('[user]'), config);
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
 });
 
 if (failures) {
