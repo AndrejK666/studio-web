@@ -63,6 +63,30 @@ fn pod_phase_is_live(phase: Option<&str>) -> bool {
     matches!(phase, Some("Running" | "Pending"))
 }
 
+/// The Service that fronts a session Pod — same name (a session is one Pod),
+/// so destroy/adopt can derive one from the other.
+fn service_dns(pod_name: &str, namespace: &str) -> String {
+    format!("{pod_name}.{namespace}.svc.cluster.local")
+}
+
+/// Where this driver publishes a session: its Service, on the one port that
+/// Service declares.
+///
+/// Both the launch and the adoption path go through here. They used to build the
+/// address separately, and the adoption path read the port from the
+/// `cf.studio.port` label — which carries the Docker driver's published host
+/// port, not this one. A session adopted that way was addressed on a port the
+/// Service does not expose, so the reachability probe could never promote it out
+/// of `starting`: the IDE answered on 3003 while the backend dialled 41000. The
+/// launch itself was correct, until the first cache refresh replaced its address
+/// with the adopted one.
+fn session_address(pod_name: &str, namespace: &str) -> SessionAddress {
+    SessionAddress::Service {
+        host: service_dns(pod_name, namespace),
+        port: THEIA_PORT as u16,
+    }
+}
+
 pub struct KubernetesDriver {
     client: Client,
     namespace: String,
@@ -143,12 +167,6 @@ impl KubernetesDriver {
             "studio-session: previous session Pod still terminating — \
              the replacement may wait for its workspace volume"
         );
-    }
-
-    /// The Service that fronts a session Pod — same name (a session is one
-    /// Pod), so destroy/adopt can derive one from the other.
-    fn service_dns(&self, pod_name: &str) -> String {
-        format!("{pod_name}.{}.svc.cluster.local", self.namespace)
     }
 
     /// `[K=V, …]` → Kubernetes env entries (split on the first `=`).
@@ -365,10 +383,7 @@ impl SessionDriver for KubernetesDriver {
 
         Ok(LaunchedSession {
             handle: name.clone(),
-            address: SessionAddress::Service {
-                host: self.service_dns(&name),
-                port: THEIA_PORT as u16,
-            },
+            address: session_address(&name, &self.namespace),
         })
     }
 
@@ -420,7 +435,12 @@ impl SessionDriver for KubernetesDriver {
         let mut out = Vec::new();
         for pod in pods {
             let labels = pod.metadata.labels.clone().unwrap_or_default();
-            let (Some(ws), Some(tenant), Some(port)) = (
+            // The port label is still required — it is part of what this driver
+            // writes, so demanding it keeps adoption to sessions this platform
+            // started — but its VALUE is deliberately unused: it carries the
+            // Docker driver's published host port, while a Pod is reached
+            // through its Service on `THEIA_PORT`.
+            let (Some(ws), Some(tenant), Some(_)) = (
                 labels.get(WS_LABEL).and_then(|v| v.parse::<Uuid>().ok()),
                 labels
                     .get(TENANT_LABEL)
@@ -452,10 +472,7 @@ impl SessionDriver for KubernetesDriver {
                 workspace_id: ws,
                 tenant_id: tenant,
                 handle: name.clone(),
-                address: SessionAddress::Service {
-                    host: self.service_dns(&name),
-                    port,
-                },
+                address: session_address(&name, &self.namespace),
                 running,
                 created_at_epoch_secs: pod
                     .metadata
@@ -517,8 +534,30 @@ fn workspace_claim(
 
 #[cfg(test)]
 mod tests {
-    use super::{StudioSessionConfig, pod_phase_is_live, workspace_claim, workspace_claim_name};
+    use super::{
+        SessionAddress, StudioSessionConfig, THEIA_PORT, pod_phase_is_live, session_address,
+        workspace_claim, workspace_claim_name,
+    };
     use std::collections::BTreeMap;
+
+    /// A session is reached through its Service, which publishes exactly one
+    /// port. The `cf.studio.port` label on the Pod is the Docker driver's
+    /// published host port and has no meaning here — reading it as the Service
+    /// port left the reachability probe dialling a closed port forever, so the
+    /// session never left `starting` and the caller timed out on a healthy IDE.
+    #[test]
+    fn a_session_is_addressed_on_the_port_its_service_publishes() {
+        match session_address("cf-studio-session-abc123", "studio-dev") {
+            SessionAddress::Service { host, port } => {
+                assert_eq!(
+                    host,
+                    "cf-studio-session-abc123.studio-dev.svc.cluster.local"
+                );
+                assert_eq!(port, THEIA_PORT as u16);
+            }
+            other => panic!("a Kubernetes session is reached through its Service, got {other:?}"),
+        }
+    }
 
     /// A Pod that is being scheduled, pulled or mounted is a session starting,
     /// not a session that stopped — `await_ready` gives up permanently on the
