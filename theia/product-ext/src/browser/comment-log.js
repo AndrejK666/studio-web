@@ -536,7 +536,7 @@ class CommentLog {
      * The DIRECTORY is watched, not my file — the interesting writes are by
      * definition somebody else's, into a file that may not exist yet.
      * `onDidFilesChange` only reports resources something has asked to watch
-     * (the same trap documented in repositories-view.js), so the explicit
+     * (the same trap quality-store.js documents), so the explicit
      * `watch(dir)` is what makes the subscription real rather than decorative.
      *
      * SELF-WRITE GUARD: a plain debounce, not bookkeeping of what I just wrote.
@@ -560,8 +560,8 @@ class CommentLog {
          * registered on a path that does not exist is silently inert and never
          * recovers when the path appears — so the FIRST party to comment on a
          * document would never see the second party's reply, which is the one
-         * case that matters. repositories-view.js documents the same trap for the
-         * pending-changes index. Measured by collaboration-regression: the reply
+         * case that matters. quality-store.js documents the same trap for the
+         * report directory. Measured by collaboration-regression: the reply
          * reached disk and never reached the screen.
          *
          * The filter below keeps this precise despite the broader subscription.

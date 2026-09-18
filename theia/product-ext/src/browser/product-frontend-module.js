@@ -38,7 +38,7 @@ const { WorkspaceService } = require('@theia/workspace/lib/browser/workspace-ser
  * deleted, renamed, or on an unmounted volume. Theia's own fallback
  * (UserWorkingDirectoryProvider) is not a safe last resort either: it derives a
  * directory from the current selection first, which in a workspace that has gone
- * missing is just as dead. See dialogStartFolder() in repositories-view.js.
+ * missing is just as dead. See connectDialogStartFolder() below.
  */
 const { EnvVariablesServer } = require('@theia/core/lib/common/env-variables');
 
@@ -54,7 +54,12 @@ const { identity } = require('./identity');
 const { viewerCredentials } = require('./viewer-credentials-client');
 const { collab } = require('./collab-client');
 const { QualityRunnerClient } = require('./quality-runner-client');
-const { RepositoriesWidget, REPOS_CSS } = require('./repositories-view');
+const { CONTROLS_CSS } = require('./controls-css');
+// Theia's own file tree. The product used to ship a second one — the Projects
+// panel — beside it, and two file trees in one rail is one file tree too many.
+// Explorer is the one that drags, renames, reveals and talks to every extension
+// in the window, so the product keeps it and hangs its own two actions on it.
+const { FILE_NAVIGATOR_ID } = require('@theia/navigator/lib/browser/navigator-widget');
 const { CommentLog } = require('./comment-log');
 const { ChangesStore } = require('./changes-store');
 const { ChangeLog } = require('./change-log');
@@ -94,9 +99,6 @@ const { QuickInputService } = require('@theia/core/lib/common/quick-pick-service
 
 const THEME_STORAGE_KEY = 'studio-theme';
 
-// Kept next to the layout setup that looks the widget up by id, so the two
-// cannot drift apart; RepositoriesWidget assigns it in its constructor.
-const REPOSITORIES_WIDGET_ID = 'studio-repositories';
 
 // Kept next to openProjectPage() for the same reason.
 const PROJECT_PAGE_WIDGET_ID = 'studio-project-page';
@@ -244,6 +246,20 @@ const IDENTITY_VIEWER_COMMAND = {
 // The DOM id of the rendered toolbar item is the ITEM's id, so it stays free of
 // dots — a selector-friendly hook for the regression suites.
 const CONNECT_PROJECT_ITEM_ID = 'studio-connect-project';
+
+/*
+ * Which project the project-scoped surfaces are about. See switchProjectHandler
+ * for why this is a quick pick and not the `<select>` the retired Projects panel
+ * used to carry.
+ */
+const SWITCH_PROJECT_COMMAND = {
+    id: 'studio.switch-project',
+    label: 'Switch project…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-repo'
+};
+
+const SWITCH_PROJECT_ITEM_ID = 'studio-switch-project';
 
 // Monaco/VS Code color IDs consumed by anything the product's own CSS
 // variables never reach: Monaco text editors and — the reason this exists —
@@ -545,9 +561,9 @@ const SHELL_CSS = `
  * This first shipped as a bug in the selection toolbar: .studio-bubble sets
  * display:flex, so hideBubble() set the attribute and left the toolbar on
  * screen with its last contents. The fix was scoped to .studio-doc, and the
- * next flex element to use el.hidden -- the projects breadcrumb, in
- * repositories-view.js -- reproduced the same bug immediately. Getting it
- * twice is the evidence that this belongs at the product root, not in one
+ * next flex element to use el.hidden -- the breadcrumb in the product's own
+ * Projects panel, since retired -- reproduced the same bug immediately. Getting
+ * it twice is the evidence that this belongs at the product root, not in one
  * surface's stylesheet.
  *
  * Scoped to our three widget roots rather than written globally, so it can
@@ -559,8 +575,7 @@ const SHELL_CSS = `
  * NOTE: comments in this file live inside a template literal. No backticks.
  */
 .studio-doc [hidden],
-.studio-html [hidden],
-.studio-repos [hidden] { display: none !important; }
+.studio-html [hidden] { display: none !important; }
 
 :root {
   /* Neutral product surfaces; deep blue is the single navigational accent. */
@@ -1275,12 +1290,14 @@ body[data-studio-input="pointer"] [class*="studio-"]:focus-visible { outline: no
 body[data-studio-input="pointer"] .studio-icon-btn:focus-visible,
 body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: none !important; }
 
-/* --- the Projects panel's own title-bar action ----------------------------- *
- * Connecting a project is an "add one of these" action, so it belongs in the
- * panel's title bar rather than in a ⋯ menu beside the project selector (which
- * is gone; see repositories-view.js). Theia renders it through the side panel's
- * TabBarToolbar, so what is styled here is Theia's own action item, brought into
- * the product's icon-button language: muted at rest, full ink on hover. */
+/* --- the file tree's title-bar actions ------------------------------------- *
+ * Connect project is an "add one of these" action and Switch project is a
+ * "which one of these" action, so both belong in the view's title bar rather
+ * than in chrome the product invents. They hang on Theia's Explorer now — the
+ * product's own Projects panel was a second file tree beside it and has been
+ * retired. Theia renders them through the side panel's TabBarToolbar, so what is
+ * styled here is Theia's own action item, brought into the product's icon-button
+ * language: muted at rest, full ink on hover. */
 #theia-left-content-panel .theia-sidepanel-toolbar .item > .action-label { color: var(--studio-muted); }
 #theia-left-content-panel .theia-sidepanel-toolbar .item > .action-label:hover { color: var(--studio-text); background: var(--studio-surface-sunken); }
 
@@ -1325,7 +1342,6 @@ body[data-studio-input="pointer"] .studio-rail-btn:focus-visible { box-shadow: n
   background-color: var(--studio-accent);
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--studio-accent) 45%, transparent));
 }
-#shell-tab-studio-repositories { --studio-rail-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='4'/%3E%3Cpath d='M8 9h8M8 15h5'/%3E%3C/svg%3E"); }
 /* Eliminate the dark native resize strip and make webview scrollbars neutral. */
 .lm-SplitPanel-handle, .lm-DockPanel-handle { background: var(--studio-line) !important; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -1544,7 +1560,7 @@ class ProductChromeContribution {
         const style = document.createElement('style');
         style.id = 'studio-product-chrome';
         style.textContent = SHELL_CSS + LOADER_CSS + COMMENT_UI_CSS + SUGGEST_MODE_CSS + SUGGEST_MARKS_CSS + EDITOR_CSS + HTML_VIEWER_CSS +
-            TABLE_EDITOR_CSS + REPOS_CSS +
+            TABLE_EDITOR_CSS + CONTROLS_CSS +
             AI_MENU_CSS + SLOT_STRIP_CSS + RAIL_NAV_CSS + STATUS_LINE_CSS + PROJECT_PAGE_CSS + WELCOME_CSS + SEARCH_CSS +
             /*
              * The quality extension's four stylesheets, in dependency order:
@@ -1636,25 +1652,23 @@ class ProductChromeContribution {
         if (this.layoutReady) { return; }         // both hooks can fire
         this.layoutReady = true;
         try {
-            const existing = app.shell.widgets.find(w => w.id === REPOSITORIES_WIDGET_ID);
-            const widget = existing || new RepositoriesWidget({
-                workspaceService: this.container.get(WorkspaceService),
-                fileDialogService: this.container.get(FileDialogService),
-                fileService: this.container.get(FileService),
-                openerService: this.container.get(OpenerService),
-                messageService: this.container.get(MessageService),
-                envVariables: this.container.get(EnvVariablesServer)
-                // No openProjectPage callback: the panel no longer has a control
-                // that opens the page. The route is the bottom line's own
-                // settings field, which statusLine.init receives below.
-            });
-            if (!existing) { await app.shell.addWidget(widget, { area: 'left', rank: 20 }); }
-            this.guardLeftRail(app.shell, widget.id);
-            // Projects is this product's home. Claiming it explicitly also
-            // recovers a restored layout that had a now-hidden view active.
-            app.shell.activateWidget(widget.id);
+            // Explorer is the product's home now. It already knows how to be a
+            // file tree — drag and drop, rename, reveal, the context menu, every
+            // extension that contributes to it — which is the whole argument
+            // that retired the panel that used to stand here: the product was
+            // maintaining a second, thinner tree beside a complete one, and a
+            // person had two rail tabs to choose between for the same question.
+            //
+            // What the panel did have and Explorer did not, the product now
+            // hangs on Explorer's own title bar: Connect project, and the
+            // project switcher for a window with more than one root.
+            //
+            // Activating it explicitly also recovers a restored layout whose
+            // active view no longer exists.
+            this.guardLeftRail(app.shell, FILE_NAVIGATOR_ID);
+            app.shell.activateWidget(FILE_NAVIGATOR_ID);
         } catch (e) {
-            console.error('[studio] could not add the Repositories view', e);
+            console.error('[studio] could not claim the Explorer view', e);
         }
         /*
          * The slot's two clusters. The five destinations are split by SCOPE, not
@@ -2045,13 +2059,13 @@ class ProductChromeContribution {
     // here can simply win a one-shot race — instead this reacts every time
     // the left rail's current tab changes and reclaims it for Projects
     // whenever the hidden Claude view is what tried to take it.
-    guardLeftRail(shell, reposId) {
+    guardLeftRail(shell, homeId) {
         const tabBar = shell.leftPanelHandler && shell.leftPanelHandler.tabBar;
         if (!tabBar) { return; }
         tabBar.currentChanged.connect((_sender, args) => {
             const owner = args.currentTitle && args.currentTitle.owner;
-            if (owner && owner.id !== reposId && owner.id.includes('claude-sessions-sidebar')) {
-                shell.activateWidget(reposId);
+            if (owner && owner.id !== homeId && owner.id.includes('claude-sessions-sidebar')) {
+                shell.activateWidget(homeId);
             }
         });
     }
@@ -2471,22 +2485,154 @@ function flowContinueHandler(container) {
     };
 }
 
+/**
+ * The first of `uris` that resolves to a directory, or undefined.
+ *
+ * Pure, and exported, because the bug it exists to prevent is entirely about
+ * what happens when a path is gone — which is a condition a test can state in
+ * one line and a running application can only be coaxed into.
+ */
+async function firstResolvableFolder(uris, resolve) {
+    for (const uri of uris || []) {
+        if (!uri) { continue; }
+        try {
+            const stat = await resolve(uri);
+            if (stat && stat.isDirectory) { return stat; }
+        } catch (e) {
+            // Deleted, renamed, or on a volume that is no longer mounted. Not
+            // worth reporting: the next candidate is the answer, and the last
+            // resort (undefined) is a working dialog at the user's home.
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Where the Connect dialog should open, as a FileStat Theia can resolve.
+ *
+ * THE STARTING FOLDER HAS TO BE ONE THAT STILL EXISTS.
+ *
+ * This used to pass `roots[0]` straight through, and that is how "Connect
+ * project" became a button that does nothing. Theia's ElectronFileDialogService
+ * resolves the folder it is given (`getRootNode` -> `fileService.resolve`),
+ * swallows the failure in a bare `catch {}`, and returns `undefined` — the same
+ * value it returns when the user cancels. So a workspace whose first root has
+ * been deleted, renamed, or left on an unmounted volume produced: no dialog, no
+ * error, no message, and no way to connect a project again without editing the
+ * workspace file by hand. Reproduced exactly: with the root present the native
+ * dialog opens; with it missing the call resolves `undefined` in under a
+ * millisecond.
+ *
+ * Candidates run in order of how useful they are to the person clicking: the
+ * project they have selected, then any root at all, then home.
+ *
+ * Home LAST, and it is what makes this a fix rather than an improvement.
+ * Handing Theia `undefined` looks like it should be enough — its own
+ * `getRootNode` falls back to `UserWorkingDirectoryProvider` — and it is not:
+ * that provider tries the current SELECTION first, which in a workspace whose
+ * folder has gone missing is a path inside the missing folder. Home is the one
+ * directory that cannot have been deleted out from under the person now asking
+ * to connect a project.
+ */
+async function connectDialogStartFolder(container) {
+    const workspaceService = container.get(WorkspaceService);
+    const fileService = container.get(FileService);
+    const envVariables = container.get(EnvVariablesServer);
+    const roots = await workspaceService.roots;
+    const candidates = [];
+    const active = activeProject.get();
+    if (active) { candidates.push(new URI(active)); }
+    for (const root of roots) { candidates.push(root.resource); }
+    if (envVariables && typeof envVariables.getHomeDirUri === 'function') {
+        try { candidates.push(new URI(await envVariables.getHomeDirUri())); }
+        catch (e) { console.warn('[studio] could not read the home directory', e); }
+    }
+    return firstResolvableFolder(candidates, uri => fileService.resolve(uri));
+}
+
+/*
+ * Connect a local project.
+ *
+ * The body used to live on the Projects panel, and the command was a thin
+ * delegate to `widget.connect()`. The panel is gone — Explorer is the product's
+ * file tree — so the action lives here, where it never depended on a widget in
+ * the first place: it opens a dialog, adds a root, and lets everything that
+ * watches the workspace redraw itself.
+ */
 function connectProjectHandler(container) {
     return {
-        execute: () => {
-            const shell = container.get(ApplicationShell);
-            const widget = shell.widgets.find(w => w.id === REPOSITORIES_WIDGET_ID);
-            if (!widget || typeof widget.connect !== 'function') {
-                console.warn('[studio] the Projects panel is not available to connect a project');
-                return;
+        execute: async () => {
+            const fileDialogService = container.get(FileDialogService);
+            const workspaceService = container.get(WorkspaceService);
+            const folder = await fileDialogService.showOpenDialog({
+                title: 'Connect a local project', canSelectFiles: false, canSelectFolders: true,
+                canSelectMany: false, openLabel: 'Connect'
+            }, await connectDialogStartFolder(container));
+            if (!folder) { return; }
+            await workspaceService.addRoot(folder);
+            activeProject.set(folder.toString());
+            await fileTypeSettings.reloadAll();
+            try {
+                container.get(ApplicationShell).activateWidget(FILE_NAVIGATOR_ID);
+            } catch (e) {
+                console.warn('[studio] the project was connected but Explorer would not come forward', e);
             }
-            return widget.connect();
-        },
-        // Enabled whenever the panel is there to do it — the toolbar item's own
-        // isVisible below already restricts WHERE it appears.
-        isEnabled: () => {
-            const shell = container.get(ApplicationShell);
-            return !!shell.widgets.find(w => w.id === REPOSITORIES_WIDGET_ID);
+        }
+    };
+}
+
+/*
+ * Switch which root the project-scoped surfaces are talking about.
+ *
+ * The Projects panel carried a `<select>` for this. Explorer has no such
+ * control and should not grow one — Theia renders per-view actions as command
+ * buttons — so the choice is a quick pick, which is also the first place a
+ * person looks for "switch something" in an editor.
+ *
+ * It is registered unconditionally, so the palette can reach it; the toolbar
+ * item beside it appears only when there is more than one root, because a
+ * picker over one project is a control that answers nothing.
+ */
+/*
+ * How many roots the window has, synchronously.
+ *
+ * `isVisible` is called during a render pass and cannot await, so this reads
+ * `tryGetRoots` — Theia's own synchronous view of the same list — and answers 0
+ * rather than throwing while the workspace is still resolving. A button that
+ * appears one frame late is fine; one that throws inside a toolbar render is
+ * not.
+ */
+function connectedRootCount(container) {
+    try {
+        return container.get(WorkspaceService).tryGetRoots().length;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function switchProjectHandler(container) {
+    return {
+        execute: async () => {
+            const workspaceService = container.get(WorkspaceService);
+            const quickInput = container.get(QuickInputService);
+            const roots = await workspaceService.roots;
+            if (roots.length < 2) { return; }
+            const active = activeProject.resolve(roots);
+            const picks = roots.map(root => ({
+                id: root.resource.toString(),
+                label: root.resource.path.base || root.resource.toString(),
+                description: root.resource.path.toString(),
+                // The current one says so rather than being pre-selected: a
+                // quick pick's highlight is where the keyboard is, not a claim
+                // about state.
+                detail: root === active ? 'Current project' : undefined
+            }));
+            const chosen = await quickInput.showQuickPick(picks, {
+                title: 'Switch project',
+                placeholder: 'Which project the status line, collaboration and flow are about'
+            });
+            if (!chosen) { return; }
+            activeProject.set(chosen.id);
         }
     };
 }
@@ -2624,6 +2770,7 @@ const mod = new ContainerModule(bind => {
     bind(CommandContribution).toDynamicValue(ctx => ({
         registerCommands(commands) {
             commands.registerCommand(CONNECT_PROJECT_COMMAND, connectProjectHandler(ctx.container));
+            commands.registerCommand(SWITCH_PROJECT_COMMAND, switchProjectHandler(ctx.container));
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
             commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
             /* Unconditional: the portal's handshake can arrive before anything
@@ -2679,7 +2826,7 @@ const mod = new ContainerModule(bind => {
             keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f' });
         }
     })).inSingletonScope();
-    bind(TabBarToolbarContribution).toDynamicValue(() => ({
+    bind(TabBarToolbarContribution).toDynamicValue(ctx => ({
         registerToolbarItems(registry) {
             registry.registerItem({
                 id: CONNECT_PROJECT_ITEM_ID,
@@ -2687,11 +2834,24 @@ const mod = new ContainerModule(bind => {
                 tooltip: 'Connect a local project',
                 group: 'navigation',
                 priority: 0,
-                // The side panel's toolbar renders the items of whichever view is
-                // current, so this must say "only on Projects" — otherwise a +
-                // would appear over an assistant panel offering to connect a
-                // project to it.
-                isVisible: widget => !!widget && widget.id === REPOSITORIES_WIDGET_ID
+                // The side panel's toolbar renders the items of whichever view
+                // is current, so this must say "only on the file tree" —
+                // otherwise a + would appear over an assistant panel offering to
+                // connect a project to it.
+                isVisible: widget => !!widget && widget.id === FILE_NAVIGATOR_ID
+            });
+            registry.registerItem({
+                id: SWITCH_PROJECT_ITEM_ID,
+                command: SWITCH_PROJECT_COMMAND.id,
+                tooltip: 'Switch project',
+                group: 'navigation',
+                priority: 1,
+                // One project is not a choice. The command stays in the palette
+                // either way; what is conditional is the button, because a
+                // control that can only re-pick what is already picked reads as
+                // broken rather than as unnecessary.
+                isVisible: widget => !!widget && widget.id === FILE_NAVIGATOR_ID
+                    && connectedRootCount(ctx.container) > 1
             });
         }
     })).inSingletonScope();

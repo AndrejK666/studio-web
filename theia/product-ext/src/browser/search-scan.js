@@ -146,10 +146,12 @@ function plural(count, one, many) {
 }
 
 /*
- * The same extension-to-glyph table the Projects browser draws its file rows
- * with (repositories-view.js's fileIconKind, which is not exported). Copied
- * rather than imported for one reason: that module builds a Lumino widget at
- * require time, and this one must stay loadable in node.
+ * The extension-to-glyph table search rows are drawn with.
+ *
+ * It began as a copy of the one in the product's own Projects browser, which
+ * could not be imported because that module built a Lumino widget at require
+ * time and this one must stay loadable in node. The panel has since been retired
+ * in favour of Theia's Explorer, so this is now the only copy.
  */
 function fileGlyphKind(name) {
     const base = String(name || '').toLowerCase();

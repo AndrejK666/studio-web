@@ -1,5 +1,4 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
-import { StudioWidget } from './studio-widget';
 import { StudioContribution } from './studio-contribution';
 import { ApplicationShell, bindViewContribution, FrontendApplicationContribution, LabelProviderContribution, OpenHandler, SaveableService, WidgetFactory, WebSocketConnectionProvider } from '@theia/core/lib/browser';
 import { TabBarToolbarContribution } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
@@ -164,7 +163,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // bridge stores from the handshake.
     bind(PortalPresenceContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(PortalPresenceContribution);
-    bindViewContribution(bind, StudioContribution);
+    // The layout, not a view: nothing to toggle, so nothing to bind a view
+    // contribution for.
+    bind(StudioContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioContribution);
     bindViewContribution(bind, GitOperationsContribution);
     bind(FrontendApplicationContribution).toService(GitOperationsContribution);
@@ -179,7 +180,6 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         ctx.container.get(WebSocketConnectionProvider).createProxy<OrcaService>(orcaServicePath)
     ).inSingletonScope();
     bindViewContribution(bind, OrcaContribution);
-    bind(StudioWidget).toSelf();
     bind(GitOperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();
     bind(AnalyzeWidget).toSelf();
@@ -187,10 +187,6 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(AuditWidget).toSelf();
     bind(WorkspaceSourcesWidget).toSelf();
     bind(OrcaWidget).toSelf();
-    bind(WidgetFactory).toDynamicValue(ctx => ({
-        id: StudioWidget.ID,
-        createWidget: () => ctx.container.get<StudioWidget>(StudioWidget)
-    })).inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GitOperationsWidget.ID,
         createWidget: () => ctx.container.get<GitOperationsWidget>(GitOperationsWidget)

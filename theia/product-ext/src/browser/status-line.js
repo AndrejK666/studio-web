@@ -363,7 +363,10 @@ class StatusLine {
             priority: 100,
             tooltip: 'Where you are. Click to show the Projects panel.',
             className: 'studio-status-location',
-            onclick: () => { try { this.shell.activateWidget('studio-repositories'); } catch (e) { /* not mounted */ } }
+            // 'files' is Theia's navigator: the product's own Projects panel
+            // was retired in favour of it, so the project name in the status
+            // line now brings the one remaining file tree forward.
+            onclick: () => { try { this.shell.activateWidget('files'); } catch (e) { /* not mounted */ } }
         });
 
         /*

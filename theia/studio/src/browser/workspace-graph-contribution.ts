@@ -1,5 +1,5 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { AbstractViewContribution, FrontendApplicationContribution, type OpenViewArguments } from '@theia/core/lib/browser';
+import { AbstractViewContribution, type OpenViewArguments } from '@theia/core/lib/browser';
 import { Command, CommandRegistry, MenuModelRegistry } from '@theia/core';
 import { CommonMenus } from '@theia/core/lib/browser/common-menus';
 import { WorkspaceGraphWidget } from './workspace-graph-widget';
@@ -11,7 +11,7 @@ export const WorkspaceGraphCommand: Command = { id: 'studio.workspace-graph:togg
 export const ObjectDetailsCommand: Command = { id: 'studio.object-details:toggle' };
 
 @injectable()
-export class WorkspaceGraphContribution extends AbstractViewContribution<WorkspaceGraphWidget> implements FrontendApplicationContribution {
+export class WorkspaceGraphContribution extends AbstractViewContribution<WorkspaceGraphWidget> {
     constructor(
         @inject(WorkspaceGraphFrontendController) controller: WorkspaceGraphFrontendController,
         @inject(WorkspaceGraphService) graphService: WorkspaceGraphService
@@ -25,9 +25,12 @@ export class WorkspaceGraphContribution extends AbstractViewContribution<Workspa
         controller.bindGraphService(graphService);
     }
 
-    async onStart(): Promise<void> {
-        await this.openView({ activate: false, reveal: true });
-    }
+    // No `onStart`. There was one, and it called `openView` — which overrides
+    // `activate` to true — so every session that ever registered this class as
+    // a FrontendApplicationContribution opened on the graph instead of on the
+    // file the person came for. It was never registered as one, so the code was
+    // dead and read as a promise the product does not make. The graph is a view
+    // you ask for; the command and the View menu are how you ask.
 
     registerCommands(commands: CommandRegistry): void {
         super.registerCommands(commands);

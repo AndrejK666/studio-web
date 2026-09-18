@@ -5,7 +5,6 @@ import 'reflect-metadata';
 // the ARRANGEMENT, so the placed views stand in for themselves.
 jest.mock('./studio-contribution', () => ({
     DEFAULT_LAYOUT: [
-        { id: 'studio:widget', area: 'left' },
         { id: 'studio.orca', area: 'right' },
         { id: 'studio:audit', area: 'bottom' }
     ]
@@ -54,7 +53,6 @@ describe('Studio workbench modes', () => {
         // the mode restores drift apart.
         const workbench = register().get(WORKBENCH_PERSPECTIVE_ID);
         expect([...workbench.viewPlacements.entries()]).toEqual([
-            ['studio:widget', 'left'],
             ['studio.orca', 'right'],
             ['studio:audit', 'bottom'],
         ]);
