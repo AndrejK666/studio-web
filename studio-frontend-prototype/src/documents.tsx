@@ -757,6 +757,21 @@ const STATE_TONE: Record<DocBindingState, { bg: string; fg: string }> = {
   not_a_document: { bg: "var(--muted)", fg: "var(--muted-foreground)" },
 };
 
+/** The tone for a state, including one this build has never heard of.
+ *
+ *  `DocBindingState` is transcribed by hand from a sentence in the backend's
+ *  OpenAPI description — the field is typed `string` there, with the five
+ *  values written in prose — so a sixth state compiles fine here and arrives
+ *  at runtime. Read straight, `STATE_TONE[state].bg` then throws and takes the
+ *  panel with it. Neutral is the right answer to a state we cannot interpret,
+ *  and it is what `findingTone` next door already does. */
+export const stateTone = (state: string) =>
+  STATE_TONE[state as DocBindingState] ?? { bg: "var(--muted)", fg: "var(--muted-foreground)" };
+
+/** Its label, likewise. An unrecognised state shows its own wire value rather
+ *  than nothing: a reader can then say what the screen could not. */
+export const stateLabel = (state: string) => STATE_LABEL[state as DocBindingState] ?? state;
+
 const SOURCE_LABEL: Record<string, string> = {
   front_matter: "declared in the file",
   heuristic: "matched the template",
@@ -1892,7 +1907,7 @@ function IngestedDocumentsView({
                   className="ing-status"
                   title={[
                     b
-                      ? `${STATE_LABEL[b.state]}${
+                      ? `${stateLabel(b.state)}${
                           b.confidence != null && b.state === "detected"
                             ? ` · ${Math.round(b.confidence * 100)}%`
                             : ""
@@ -1990,11 +2005,11 @@ function IngestedDocumentsView({
                     <span
                       className="ing-state"
                       style={{
-                        background: STATE_TONE[selected.state].bg,
-                        color: STATE_TONE[selected.state].fg,
+                        background: stateTone(selected.state).bg,
+                        color: stateTone(selected.state).fg,
                       }}
                     >
-                      {STATE_LABEL[selected.state]}
+                      {stateLabel(selected.state)}
                     </span>
                     {selected.confidence != null && selected.state === "detected" && (
                       <span className="ing-conf">{Math.round(selected.confidence * 100)}%</span>
