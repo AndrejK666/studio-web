@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { env as runtimeEnv } from "./env";
+import { env as runtimeEnv, idpConsoleUrl } from "./env";
 import { errText, matches, relTime } from "./format";
 import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
@@ -1237,6 +1237,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     workspaces.find((w) => w.id === crumb.projectId)?.name,
   );
 
+  /** Where this deployment's identity provider keeps its console, or nothing
+   *  when it has not said. */
+  const idpConsole = useMemo(() => idpConsoleUrl(), []);
+
   const userInitials = userName
     .split(/\s+/)
     .map((w) => w[0])
@@ -1756,15 +1760,21 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                       ))}
                     </div>
                   )}
-                  <div className="nav-section">
-                    <div className="nav-section-title admin-title">IdP</div>
-                    <button
-                      title="Keycloak administration console"
-                      onClick={() => window.open("https://localhost:8443/admin/", "_blank", "noopener")}
-                    >
-                      <span className="ico">🛡</span> IdP console ↗
-                    </button>
-                  </div>
+                  {/* Only when the deployment says where its identity
+                      provider is. The URL used to be a literal localhost, so
+                      on anything but a developer's own machine this opened
+                      the reader's own port 8443. */}
+                  {idpConsole && (
+                    <div className="nav-section">
+                      <div className="nav-section-title admin-title">IdP</div>
+                      <button
+                        title="Keycloak administration console"
+                        onClick={() => window.open(idpConsole, "_blank", "noopener")}
+                      >
+                        <span className="ico">🛡</span> IdP console ↗
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
