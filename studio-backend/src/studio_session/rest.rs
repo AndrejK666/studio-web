@@ -10,6 +10,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::driver::NoCapacity;
 use super::service::{RepoKind, RepoSpec, Session, SessionService};
 
 /// Errors attributable to an IDE session as a resource.
@@ -286,7 +287,20 @@ async fn create_session(
     let (session, existed) = svc
         .create(&ctx, req.workspace_id, req.root_path, root_repo, repos)
         .await
-        .map_err(|e| CanonicalError::internal(format!("session launch failed: {e:#}")).create())?;
+        .map_err(|e| match e.downcast_ref::<NoCapacity>() {
+            // A full namespace is not an internal error: nothing is broken,
+            // the caller did nothing wrong, and it clears when a session ends
+            // or an operator raises the quota. 503 says exactly that, and the
+            // detail names the quota so the person reading it knows what to
+            // raise instead of opening the backend's logs to find out.
+            Some(no_room) => CanonicalError::service_unavailable()
+                .with_detail(format!(
+                    "no capacity for an IDE session right now: {}.                      Close a running session, or raise the namespace quota.",
+                    no_room.detail
+                ))
+                .create(),
+            None => CanonicalError::internal(format!("session launch failed: {e:#}")).create(),
+        })?;
     let status = if existed {
         StatusCode::OK
     } else {

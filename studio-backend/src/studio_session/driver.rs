@@ -17,6 +17,34 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use uuid::Uuid;
 
+/// The runtime refused the session because there is no room for it.
+///
+/// Distinct from every other launch failure on purpose. A namespace that has
+/// reached its CPU or memory quota is not a bug in Studio, is not the caller's
+/// mistake, and IS worth retrying later — so it must not reach the browser as
+/// "an internal error occurred", which is what every launch failure used to
+/// look like. On a stand where the quota fits two sessions, that message was
+/// the only thing a person saw when the second one would not start.
+///
+/// Carried through `anyhow` rather than the trait's error type: every driver
+/// can hit it, it has no data beyond an explanation, and threading a typed
+/// error through `SessionDriver` would change every implementation to describe
+/// one leaf case. The REST layer recovers it with `downcast_ref`.
+#[derive(Debug)]
+pub struct NoCapacity {
+    /// What the runtime said, verbatim — the quota it names is the thing an
+    /// operator has to raise, so it is not worth paraphrasing.
+    pub detail: String,
+}
+
+impl std::fmt::Display for NoCapacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no capacity for a session: {}", self.detail)
+    }
+}
+
+impl std::error::Error for NoCapacity {}
+
 /// Where a launched session listens, as the driver exposes it.
 #[derive(Debug, Clone)]
 pub enum SessionAddress {
