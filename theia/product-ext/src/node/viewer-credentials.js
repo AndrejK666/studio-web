@@ -39,7 +39,7 @@ const { ContainerModule } = require('inversify');
 const { ConnectionContainerModule } = require('@theia/core/lib/node/messaging/connection-container-module');
 const { PluginHostEnvironmentVariable } = require('@theia/plugin-ext/lib/common/plugin-protocol');
 const {
-    assistantEnvironment, gitIdentityConfig, writeGitConfig
+    assistantEnvironment, gitIdentityConfig, writeGitConfig, redirectHome
 } = require('./viewer-credentials-env');
 const { AssistantAuth } = require('./assistant-auth');
 
@@ -137,29 +137,7 @@ class ViewerCredentials {
         const stable = ensureDirectory(path.join(credentialsRoot(), directoryNameFor(key)));
         this.viewerKey = key;
 
-        try {
-            const existing = fs.lstatSync(anonymous, { throwIfNoEntry: false });
-            if (existing && existing.isDirectory()) {
-                // Anything the plugin host wrote before identity arrived
-                // belongs to this viewer: it was written by them.
-                for (const entry of fs.readdirSync(anonymous)) {
-                    const from = path.join(anonymous, entry);
-                    const to = path.join(stable, entry);
-                    if (!fs.existsSync(to)) {
-                        fs.renameSync(from, to);
-                    }
-                }
-                fs.rmSync(anonymous, { recursive: true, force: true });
-            }
-            if (!fs.existsSync(anonymous)) {
-                fs.symlinkSync(stable, anonymous, 'dir');
-            }
-        } catch (error) {
-            // A failed redirect leaves the anonymous home in place and working.
-            // The viewer signs in to the assistant again next session; nothing
-            // is lost and nothing is shared.
-            console.warn('[studio] could not redirect the anonymous credential home', error);
-        }
+        redirectHome(anonymous, stable);
         /* AFTER the move, and not before it: the anonymous home may carry a
          * `.gitconfig` written while nobody had announced themselves, and the
          * move keeps whatever is already there. Writing second makes the

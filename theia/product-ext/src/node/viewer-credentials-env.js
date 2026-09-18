@@ -159,10 +159,66 @@ function writeGitConfig(directory, person) {
     }
 }
 
+/*
+ * Point this connection's anonymous home at the home its viewer actually owns.
+ *
+ * The plugin host is forked with `HOME=<anonymous>` before anybody has said who
+ * they are — `PluginHostEnvironmentVariable.process` is synchronous, so the
+ * fork cannot wait for identity. The running process keeps the path it was
+ * given, so the path is redirected underneath it instead.
+ *
+ * THREE cases, and the third is the one that was missing. Measured in a running
+ * session, whose credential root read:
+ *
+ *     local-anon-90e726d0-…/
+ *     oidc-46ac15da-…/                      (empty)
+ *     session-cd95393e-… -> local-anon-90e726d0-…
+ *
+ * That is ONE connection adopting twice: the IDE's own local identity first,
+ * then the portal's when it arrived. The first adoption moved the anonymous
+ * directory and left a symlink, correctly. The second created the new home and
+ * did nothing else — `lstat().isDirectory()` is false for a symlink, so the
+ * move was skipped, and `existsSync` FOLLOWS a symlink, so it reported the path
+ * as taken and no new link was made. The plugin host therefore kept resolving
+ * to the identity the person had already stopped being.
+ *
+ * Failure is not fatal in any case: the anonymous home stays in place and
+ * works, the viewer signs in to their assistant again next session, and
+ * nothing is shared with anybody.
+ */
+function redirectHome(anonymous, stable) {
+    try {
+        const existing = fs.lstatSync(anonymous, { throwIfNoEntry: false });
+        if (existing && existing.isSymbolicLink()) {
+            // Already redirected, possibly somewhere else. Repointing is the
+            // whole of "the person changed under a live page".
+            if (fs.readlinkSync(anonymous) === stable) { return; }
+            fs.unlinkSync(anonymous);
+        } else if (existing && existing.isDirectory()) {
+            // Anything the plugin host wrote before identity arrived belongs
+            // to this viewer: it was written by them.
+            for (const entry of fs.readdirSync(anonymous)) {
+                const from = path.join(anonymous, entry);
+                const to = path.join(stable, entry);
+                if (!fs.existsSync(to)) {
+                    fs.renameSync(from, to);
+                }
+            }
+            fs.rmSync(anonymous, { recursive: true, force: true });
+        }
+        if (!fs.lstatSync(anonymous, { throwIfNoEntry: false })) {
+            fs.symlinkSync(stable, anonymous, 'dir');
+        }
+    } catch (error) {
+        console.warn('[studio] could not redirect the anonymous credential home', error);
+    }
+}
+
 module.exports = {
     assistantEnvironment,
     gitIdentityConfig,
     writeGitConfig,
+    redirectHome,
     readStoredKey,
     CREDENTIAL_STORE,
     HOME_IS_MOVABLE
