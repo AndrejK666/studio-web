@@ -285,6 +285,66 @@ frontendPrototype:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 250m, memory: 256Mi }
 
+# How much of the namespace this deployment may use.
+#
+# The numbers below are not a guess at "enough": they are derived, and the
+# arithmetic is worth keeping because the next person will want to change them.
+#
+# MEASURED ON THE CLUSTER (webstudio, 2026-09-18):
+#   3 worker nodes x 8 CPU / ~15.5Gi  = 24 CPU, ~46Gi allocatable
+#   actually REQUESTED across all of it: ~4 CPU (16%), ~7Gi (16%)
+#   already-declared LIMITS: 98% and 121% of two of those nodes
+#
+# So the hardware is nearly idle and limits are already oversubscribed, which
+# is normal — the scheduler reserves REQUESTS and limits are burst ceilings.
+# Sessions were failing on the declared ceiling, not on the machines.
+#
+# PLATFORM BASELINE in studio-dev, counted as limits.cpu:
+#   postgres 1 + backend 1.5 + frontend .25 + prototype .25 + keycloak 1 = 4
+#   plus 0.5 for the database bootstrap hook while it runs
+#
+# ONE IDE SESSION: requests 250m/512Mi, limits 2 CPU/2Gi (studio-session sets
+# these; they are configurable there).
+#
+# limits.cpu    = 4.5 + (4 sessions + 1 terminating) x 2 = 14.5  -> 16
+# limits.memory = 5Gi + 0.5 + 5 x 2Gi                  = 15.5Gi -> 24Gi
+# requests.cpu  = 1.15 + 5 x 250m                      = 2.4    -> 6
+# requests.mem  = 2Gi  + 5 x 512Mi                     = 4.5Gi  -> 8Gi
+#
+# The requests are what has to fit the hardware, and they do with room to
+# spare: this namespace's 6 CPU plus studio-test's 8 is 14 of 24.
+capacity:
+  enabled: true
+  # Four people in four workspaces at once, plus one session on its way out.
+  # Raise `limits` by 2 CPU / 2Gi for each further concurrent session.
+  limits:
+    cpu: 16
+    memory: 24Gi
+  requests:
+    cpu: 6
+    memory: 8Gi
+    storage: 100Gi
+  counts:
+    pods: 50
+    # One per session, plus the platform's own eight.
+    services: 20
+    persistentVolumeClaims: 10
+    configMaps: 100
+    secrets: 100
+  # What a container that declares nothing is charged. The cluster's own
+  # default was 4 CPU / 8Gi — a quarter of the quota above, for saying nothing.
+  containerDefaults:
+    limits:
+      cpu: 1
+      memory: 2Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    # Unchanged from the cluster's: a container that needs more may still ask.
+    max:
+      cpu: 4
+      memory: 8Gi
+
 ingress:
   enabled: true
   className: "nginx"

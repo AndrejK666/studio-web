@@ -1,0 +1,84 @@
+{{/*
+  How much of the namespace this deployment is allowed to use, and what a
+  container that forgets to say gets.
+
+  These existed before, applied by hand: the live ResourceQuota carried
+  `kubectl.kubernetes.io/last-applied-configuration` and no labels, so nothing
+  in git described the ceiling that stopped sessions launching. They are here so
+  the number is reviewed like any other, and so re-applying the chart does not
+  quietly undo somebody's fix.
+
+  SIZED FROM SESSIONS, because they are the only part that scales with people:
+  one IDE Pod per workspace, and a Pod that is still TERMINATING keeps counting.
+  So the arithmetic is
+
+      platform baseline + (concurrent sessions + 1) x session limits
+
+  and the `+ 1` is the session on its way out while the next one starts. Without
+  it, closing an IDE and reopening it immediately is refused — which is exactly
+  how this was found.
+
+  Set `capacity.enabled: false` where the namespace is governed elsewhere: a
+  quota applied twice by two owners is worse than one applied by neither.
+*/}}
+{{- if .Values.capacity.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .Release.Namespace }}
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- /* Limits are ceilings, not reservations; the cluster oversubscribes
+           them deliberately (measured: 98% and 121% of two nodes) and schedules
+           on REQUESTS. So this number buys concurrency, not hardware. */}}
+    limits.cpu: {{ .Values.capacity.limits.cpu | quote }}
+    limits.memory: {{ .Values.capacity.limits.memory | quote }}
+    {{- /* Requests are what the scheduler actually reserves, so these must fit
+           the nodes alongside every other namespace. */}}
+    requests.cpu: {{ .Values.capacity.requests.cpu | quote }}
+    requests.memory: {{ .Values.capacity.requests.memory | quote }}
+    requests.storage: {{ .Values.capacity.requests.storage | quote }}
+    pods: {{ .Values.capacity.counts.pods | quote }}
+    services: {{ .Values.capacity.counts.services | quote }}
+    persistentvolumeclaims: {{ .Values.capacity.counts.persistentVolumeClaims | quote }}
+    configmaps: {{ .Values.capacity.counts.configMaps | quote }}
+    secrets: {{ .Values.capacity.counts.secrets | quote }}
+    {{- /* Deliberately zero, and not an oversight to be relaxed when something
+           is hard to reach: a session is reached through the backend's
+           authenticated proxy and is never exposed directly. Theia has no login
+           of its own, so a LoadBalancer or NodePort in front of one is a free
+           IDE for whoever finds the port. */}}
+    services.loadbalancers: "0"
+    services.nodeports: "0"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ .Release.Namespace }}
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      {{- /* WHAT A CONTAINER GETS FOR SAYING NOTHING, and the reason this is
+             not left at the cluster's own default.
+
+             That default was `cpu: 4, memory: 8Gi`. A container that declares
+             no limits is then charged four CPUs against the quota above —
+             a quarter of it, for a process that may be idle. It is a real
+             trap rather than a theoretical one: the database bootstrap hook
+             carries explicit resources in this chart for exactly this reason,
+             with a comment saying so.
+
+             Low enough that forgetting is cheap, and `max` still allows a
+             workload that genuinely needs more to ASK for it. */}}
+      default:
+        cpu: {{ .Values.capacity.containerDefaults.limits.cpu | quote }}
+        memory: {{ .Values.capacity.containerDefaults.limits.memory | quote }}
+      defaultRequest:
+        cpu: {{ .Values.capacity.containerDefaults.requests.cpu | quote }}
+        memory: {{ .Values.capacity.containerDefaults.requests.memory | quote }}
+      max:
+        cpu: {{ .Values.capacity.containerDefaults.max.cpu | quote }}
+        memory: {{ .Values.capacity.containerDefaults.max.memory | quote }}
+{{- end }}
