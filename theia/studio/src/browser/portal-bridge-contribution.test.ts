@@ -44,6 +44,10 @@ class TestBridge extends PortalBridgeContribution {
     useCommands(commands: CommandService): void {
         (this as unknown as { commands: CommandService }).commands = commands;
     }
+
+    openFile(relativePath: string): Promise<void> {
+        return this.openFileInMode(relativePath);
+    }
 }
 
 describe('PortalBridgeContribution layout gating', () => {
@@ -181,5 +185,74 @@ describe('PortalBridgeContribution viewer hand-off', () => {
         );
         expect(registrar).toContain(`id: '${IDENTITY_VIEWER_COMMAND_ID}'`);
         expect(registrar).toContain('identity.adopt(viewer)');
+    });
+});
+
+describe('PortalBridgeContribution file hand-off', () => {
+
+    function bridgeWith(active: string) {
+        const bridge = new TestBridge();
+        const switchPerspective = jest.fn(async () => undefined);
+        const onOpenInEditor = jest.fn(async () => undefined);
+        Object.assign(bridge, {
+            perspectives: { getActivePerspectiveId: () => active, switchPerspective },
+            opener: { onOpenInEditor }
+        });
+        return { bridge, switchPerspective, onOpenInEditor };
+    }
+
+    /*
+     * Two editors claim a `.md` file and the ACTIVE PERSPECTIVE decides between
+     * them — the studio editor at 600 in the workbench and 400 in documents,
+     * the product's rich surface at 500. So the same document arrived in a
+     * different editor depending on a mode the person never chose, and from
+     * the portal they had no way to choose it. Asking to edit a document is
+     * the request for the documents mode; `studio.openDocument` has always
+     * read it that way, and this is the same sentence for a file on disk.
+     */
+    it('a markdown hand-off asks for the documents mode first', async () => {
+        const { bridge, switchPerspective, onOpenInEditor } = bridgeWith('workbench');
+
+        await bridge.openFile('docs/prd.md');
+
+        expect(switchPerspective).toHaveBeenCalledWith('studio.documents');
+        expect(onOpenInEditor).toHaveBeenCalledWith({ relativePath: 'docs/prd.md' });
+    });
+
+    it('leaves source code where it is', async () => {
+        // Switching perspective for a `.rs` file would rearrange the workbench
+        // under somebody who came to read code — and nothing arbitrates on
+        // perspective for it anyway.
+        const { bridge, switchPerspective, onOpenInEditor } = bridgeWith('workbench');
+
+        await bridge.openFile('src/main.rs');
+
+        expect(switchPerspective).not.toHaveBeenCalled();
+        expect(onOpenInEditor).toHaveBeenCalledWith({ relativePath: 'src/main.rs' });
+    });
+
+    it('does not switch a mode that is already the right one', async () => {
+        const { bridge, switchPerspective } = bridgeWith('studio.documents');
+
+        await bridge.openFile('docs/prd.md');
+
+        expect(switchPerspective).not.toHaveBeenCalled();
+    });
+
+    it('still opens the file when the perspective refuses to switch', async () => {
+        // A mode that will not change is not a reason to withhold the document.
+        const { bridge, onOpenInEditor } = bridgeWith('workbench');
+        Object.assign(bridge, {
+            perspectives: {
+                getActivePerspectiveId: () => 'workbench',
+                switchPerspective: jest.fn(async () => { throw new Error('no'); })
+            }
+        });
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        await bridge.openFile('docs/prd.md');
+
+        expect(onOpenInEditor).toHaveBeenCalled();
+        warn.mockRestore();
     });
 });

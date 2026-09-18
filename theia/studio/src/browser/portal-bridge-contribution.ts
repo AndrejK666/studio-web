@@ -113,6 +113,12 @@ interface PortalMessage {
  * portal renews it silently and re-posts `studio.token`; gears calls go
  * same-origin through the session gate at `/studio-api/<gear path>`.
  */
+/** The two spellings the document surfaces arbitrate over. */
+function isMarkdownPath(relativePath: string): boolean {
+    const path = relativePath.toLowerCase();
+    return path.endsWith('.md') || path.endsWith('.markdown');
+}
+
 @injectable()
 export class PortalBridgeContribution implements FrontendApplicationContribution {
 
@@ -220,7 +226,7 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // repository file in its editor (ADR-0010 openInEditor). Resolved
                 // against the first workspace root by the controller.
                 const relativePath = msg.path;
-                this.openWhenLayoutReady(() => void this.opener.onOpenInEditor({ relativePath }));
+                this.openWhenLayoutReady(() => void this.openFileInMode(relativePath));
             }
             if (msg.type === 'studio.notify' && msg.message) {
                 // Background work finished, and the person may be looking at
@@ -310,6 +316,42 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     }
 
     /** Put the workbench in the documents mode, then open the document. */
+    /**
+     * A file the portal asked for, in the mode that asking implies.
+     *
+     * Only for Markdown, and that restraint is the point. Two editors claim a
+     * `.md` file and the active perspective decides between them: the studio
+     * editor at 600 in the workbench and 400 in documents, the product's rich
+     * surface — the one with diagrams, comments and suggestions — at 500. So
+     * the same file opens in a different editor depending on a mode the person
+     * never chose, and from the portal they had no way to choose it.
+     *
+     * Asking to edit a document from the portal IS the request for the
+     * documents mode, exactly as `studio.openDocument` already treats it. This
+     * is the same sentence applied to a file in a checkout rather than a row in
+     * the documents gear.
+     *
+     * Everything else opens where it is: switching perspective for a `.rs`
+     * file would rearrange the workbench under somebody who came to read code,
+     * and nothing arbitrates on perspective for those anyway — Monaco wins
+     * because Monaco is what wins for them.
+     */
+    protected async openFileInMode(relativePath: string): Promise<void> {
+        if (isMarkdownPath(relativePath)) {
+            try {
+                if (this.perspectives && this.perspectives.getActivePerspectiveId() !== DOCUMENTS_PERSPECTIVE_ID) {
+                    await this.perspectives.switchPerspective(DOCUMENTS_PERSPECTIVE_ID);
+                }
+            } catch (e) {
+                // A perspective that will not switch is not a reason to refuse
+                // the open: the person still gets the file, in whichever editor
+                // the current mode prefers.
+                console.warn('[studio] could not switch to the documents perspective', e);
+            }
+        }
+        await this.opener.onOpenInEditor({ relativePath });
+    }
+
     protected async openDocumentInMode(
         ref: { workspaceId: string; documentId: string },
         title: string | undefined,
