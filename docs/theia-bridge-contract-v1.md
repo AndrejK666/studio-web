@@ -68,12 +68,17 @@ Included (exact signatures from `studio-protocol.ts`):
 | `getWorkspaceSnapshot(WorkspaceSnapshotRequest)` → `WorkspaceSnapshotResponse` | `getWorkspaceSnapshot` | read workspace sources / sync / migration state (read-only) |
 
 `kind` is `"project"` for the repository whose root is the configured
-repository root -- the synthetic `/workspace` host in a managed workspace, the
-single checkout in a classic one -- and `"source"` for a checkout mounted below
+repository root -- the single checkout in a classic workspace, an adopted root
+repository where there is one -- and `"source"` for a checkout mounted below
 it. It is not a field of `StudioRepositoryDescriptor`: only `RepositoryRegistry`
 knows the configured root, and the descriptor is built in places that do not, so
 the node derives `kind` in the control-API projection. Consumers that predate the
 field see nothing; the Rust DTO defaults it to `"source"`.
+
+A managed workspace is a container: its root is a plain directory holding one
+repository per source, so no entry is `"project"` and a caller that needs a
+target has to offer the choice. Source Control shows the project's repositories
+and nothing else, which is the point.
 
 The project repository is where `.cf-studio-kit.toml` lives and is what
 `installKit` targets when the caller sends no `repositoryId`, so a portal that

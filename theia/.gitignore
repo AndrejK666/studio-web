@@ -16,6 +16,7 @@ lib
 !browser-app/scripts/
 browser-app/scripts/*
 !browser-app/scripts/start-browser.js
+!browser-app/scripts/start-browser.test.js
 
 # Generated plugin download and test output.
 /plugins/openai.chatgpt/

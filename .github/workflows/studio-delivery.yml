@@ -254,7 +254,11 @@ jobs:
       - run: node theia/docker/gate.test.mjs
       - run: node theia/docker/clone-sources.test.mjs
       - run: node theia/docker/materialize-workspace.test.mjs
+      - run: node theia/docker/workspace-root.test.mjs
       - run: node theia/docker/git-credentials.test.mjs
+      # The launcher's half of the workspace-root contract: a workspace that is
+      # not a git repository is an ordinary workspace.
+      - run: node --test theia/browser-app/scripts/start-browser.test.js
 
   # The one check that spans all three trees: every URL either portal calls has
   # to exist in the backend's committed API surface (rule G3 of

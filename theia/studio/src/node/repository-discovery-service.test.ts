@@ -2,7 +2,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import type { ILogger } from '@theia/core/lib/common';
-import type { GitExecutor } from './git-executor';
+import { GitCommandError, type GitExecutor } from './git-executor';
 import { RepositoryDiscoveryService } from './repository-discovery-service';
 import { RepositoryRegistry, type RepositoryRegistration } from './repository-registry';
 import type { StudioRuntimeConfig } from './studio-runtime-config';
@@ -336,6 +336,66 @@ describe('repository discovery service', () => {
         expect(registry.descriptors).toHaveLength(1);
         expect(registry.descriptors[0]?.rootUri).toContain('/workspace');
         expect(registry.descriptors[0]?.rootUri).not.toContain('/stale');
+        service.dispose();
+    });
+    it('starts over a workspace root that is not a Git repository', async () => {
+        // A managed workspace is a container: the root holds the manifest and
+        // one directory per source. `git rev-parse` there exits 128, and this
+        // used to take the whole Studio backend contribution down with it --
+        // the IDE came up, the Studio half did not.
+        const nestedRepository = path.join(workspaceRoot, 'sources', 'nested');
+        await fs.mkdir(path.join(nestedRepository, '.git'), { recursive: true });
+        const canonicalNested = await fs.realpath(nestedRepository);
+        const warnings: string[] = [];
+        const logger = createLoggerStub();
+        logger.warn = (async (message: unknown) => {
+            warnings.push(String(message));
+        }) as ILogger['warn'];
+        class RootlessDiscoveryService extends RepositoryDiscoveryService {
+            protected override startWatcher(): void {
+                // The test drives rescan explicitly.
+            }
+            protected override rescanInBackground(): void {
+                // The test drives rescan explicitly.
+            }
+        }
+        // `git rev-parse` outside a worktree exits 128, which the executor
+        // reports as a GitCommandError -- exactly what the container does.
+        const git = createGitStub([canonicalNested]);
+        const rootless = {
+            ...git,
+            revParseTopLevel: async (cwd: string) => {
+                if (cwd === workspaceRoot) {
+                    throw new GitCommandError(
+                        'git rev-parse failed with exit code 128',
+                        ['rev-parse', '--show-toplevel'],
+                        128,
+                        '',
+                        'fatal: not a git repository'
+                    );
+                }
+                return git.revParseTopLevel(cwd);
+            },
+            // Enough of a repository for discovery to describe it. No remote,
+            // so the descriptor comes back with publishing disabled -- which is
+            // beside the point here: the assertion is that the source is found
+            // at all once the root has stopped being one.
+            revParseAbbrevHead: async () => 'main',
+            getConfigValue: async () => undefined,
+            getResolvedRemoteUrl: async () => undefined
+        } as unknown as GitExecutor;
+        const service = new RootlessDiscoveryService(rootless, registry, logger);
+
+        await expect(
+            service.initialize(runtimeConfig(workspaceRoot), { mode: 'legacy' })
+        ).resolves.toBeUndefined();
+        expect(registry.descriptors).toHaveLength(0);
+        expect(warnings.join('\n')).toContain('not a Git repository');
+
+        // The sources the workspace does contain still arrive on the rescan.
+        await service.rescan();
+        expect(registry.descriptors.map(descriptor => descriptor.workspaceRelativeRoot))
+            .toEqual(['sources/nested']);
         service.dispose();
     });
 });

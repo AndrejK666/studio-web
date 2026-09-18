@@ -81,9 +81,11 @@ export class RepositoryRegistry implements Disposable {
     }
 
     /**
-     * The repository whose root is the configured repository root: the
-     * synthetic `/workspace` host in a managed workspace, and the single
-     * checkout in a classic one. The project's `.cf-studio-kit.toml` is a
+     * The repository whose root is the configured repository root: the single
+     * checkout in a classic workspace, an adopted root repository where there
+     * is one. A managed workspace is a container whose root is a plain
+     * directory, and there this is legitimately undefined — callers pick a
+     * repository instead. The project's `.cf-studio-kit.toml` is a
      * project-level manifest that lives there, so this is the default target
      * for project-level operations such as kit installation.
      *
@@ -101,6 +103,30 @@ export class RepositoryRegistry implements Disposable {
         return this.repositoriesByDepth.find(candidate =>
             samePath(candidate.canonicalRoot, configuredRoot)
         );
+    }
+
+    /**
+     * The repository a project-level operation targets, or undefined when the
+     * workspace cannot answer that without guessing.
+     *
+     * `configuredRepository` when there is one. Otherwise — a managed workspace,
+     * whose root is a plain directory holding one repository per source — the
+     * single repository it holds, because with one checkout there is nothing to
+     * disambiguate. With several there is no safe guess and the caller has to
+     * name one.
+     *
+     * One answer, asked in two places: the control API derives `kind: 'project'`
+     * from this, and kit installation defaults to it. They used to reason
+     * separately and could disagree about a workspace with no root repository —
+     * the portal preselecting nothing while the node quietly picked the only
+     * checkout there was.
+     */
+    get projectRepository(): RegisteredRepository | undefined {
+        const configured = this.configuredRepository;
+        if (configured) {
+            return configured;
+        }
+        return this.repositoriesByDepth.length === 1 ? this.repositoriesByDepth[0] : undefined;
     }
 
     updateGitDescriptor(repositoryId: string, git: StudioRepositoryGitDescriptor): StudioRepositoryDescriptor {

@@ -107,6 +107,40 @@ describe('kit installer', () => {
         expect(directories).toEqual(['/workspace', '/workspace', '/workspace']);
     });
 
+    it('installs into the only checkout of a workspace whose root is a plain directory', async () => {
+        const directories: string[] = [];
+        jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
+            directories.push(options && typeof options === 'object' ? String(options.cwd) : '');
+            (callback as ExecFileCallback)(null, 'ok', '');
+            return {} as childProcess.ChildProcess;
+        }) as typeof childProcess.execFile);
+
+        // A managed workspace: /workspace holds the manifest and one repository
+        // per source, and is not a repository itself. One source leaves nothing
+        // to disambiguate, so a caller that names no repository still lands
+        // somewhere sensible.
+        const result = await new KitInstallerImpl().install(
+            { kitSlug: 'sdlc', version: 'main' },
+            registry([{ id: 'repo-app', label: 'app', root: '/workspace/app' }])
+        );
+
+        expect(result).toMatchObject({ repositoryId: 'repo-app', repositoryLabel: 'app' });
+        expect(directories.every(directory => directory === '/workspace/app')).toBe(true);
+    });
+
+    it('refuses to guess among several sources when no repository is the project', async () => {
+        const run = jest.spyOn(childProcess, 'execFile');
+
+        await expect(new KitInstallerImpl().install(
+            { kitSlug: 'sdlc', version: 'main' },
+            registry([
+                { id: 'repo-app', label: 'app', root: '/workspace/app' },
+                { id: 'repo-docs', label: 'docs', root: '/workspace/docs' }
+            ])
+        )).rejects.toThrow('repositoryId is required');
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it('reports both streams when cfs fails, with stdout first', async () => {
         jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
             (callback as ExecFileCallback)(
@@ -167,9 +201,14 @@ function registry(
         canonicalRoot: entry.root,
         descriptor: { repositoryId: entry.id, label: entry.label }
     }));
+    const configuredRepository = repositories.find(candidate => candidate.canonicalRoot === configuredRoot);
     return {
         repositories,
-        configuredRepository: repositories.find(candidate => candidate.canonicalRoot === configuredRoot),
+        configuredRepository,
+        // Mirrors RepositoryRegistry.projectRepository: the configured root
+        // when there is one, otherwise the only checkout — a managed workspace
+        // has no repository at its root and still has to have a kit target.
+        projectRepository: configuredRepository ?? (repositories.length === 1 ? repositories[0] : undefined),
         requireRepository: (id: string) => {
             const repository = repositories.find(candidate => candidate.descriptor.repositoryId === id);
             if (!repository) throw new Error(`Unknown repository: ${id}`);

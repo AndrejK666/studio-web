@@ -193,32 +193,52 @@ fi
 # launch contract before Theia discovers workspace sources.
 node /usr/local/lib/studio-materialize-workspace.mjs "$WORKSPACE"
 
-# The Theia launcher requires the workspace ROOT to be a git repository
-# (start-browser.js runs `git rev-parse --show-toplevel` up front). The
-# managed root hosts .cf-workspace.toml and the source subdirectories,
-# which Theia discovers as nested repositories.
-if [ ! -d "$WORKSPACE/.git" ]; then
-    echo "[entrypoint] initializing a fresh git repository in ${WORKSPACE}"
-    git -C "$WORKSPACE" init -b "${STUDIO_GIT_BRANCH:-main}"
-    if [ ! -e "$WORKSPACE/README.md" ]; then
-        {
-            echo "# Workspace ${STUDIO_WORKSPACE_ID:-}"
-            echo
-            echo "Created by Constructor Studio."
-        } > "$WORKSPACE/README.md"
+# >>> studio:workspace-root
+# Workspace volumes created by earlier images still carry the synthetic root
+# repository, and a session that only stops initializing it would keep showing
+# the phantom entry forever. Retire it instead of deleting it: the working tree
+# is untouched, .git simply moves aside, and anything ever committed there stays
+# recoverable. The guard is deliberately narrow — a marker we wrote ourselves,
+# or the exact fingerprint of a root we initialized (no remotes, one commit,
+# that commit's subject) — so a repository a person actually owns is never moved.
+if [ -z "${STUDIO_ROOT_URL:-}" ] && [ -d "$WORKSPACE/.git" ]; then
+    RETIRE_REASON=""
+    if [ -e "$WORKSPACE/.git/cf-studio-managed-root" ]; then
+        RETIRE_REASON="marked as managed"
+    elif [ -z "$(git -C "$WORKSPACE" remote 2>/dev/null)" ] \
+        && [ "$(git -C "$WORKSPACE" rev-list --count HEAD 2>/dev/null || echo 0)" = "1" ] \
+        && [ "$(git -C "$WORKSPACE" log -1 --format=%s 2>/dev/null)" = "Initialize workspace" ]; then
+        RETIRE_REASON="initialized by an earlier session"
     fi
-    # Only the workspace's own files — source subdirectories (clones and
-    # mounts) are separate repositories and stay out of the root repo.
-    git -C "$WORKSPACE" add README.md .cf-workspace.toml 2>/dev/null || true
-    git -C "$WORKSPACE" commit -m "Initialize workspace" --no-verify || true
+    if [ -n "$RETIRE_REASON" ]; then
+        echo "[entrypoint] retiring the synthetic workspace root repository (${RETIRE_REASON})"
+        mkdir -p "$WORKSPACE/.cf-studio"
+        rm -rf "$WORKSPACE/.cf-studio/retired-root.git"
+        mv "$WORKSPACE/.git" "$WORKSPACE/.cf-studio/retired-root.git"
+    fi
 fi
 
-# The root repository above exists only because Theia's launcher requires a
-# git worktree. Mark it so Workspace Sources discovery does not offer the
-# technical container as a user-owned repository.
+# Nothing initializes the root. A workspace whose sources live in
+# subdirectories is a CONTAINER, not a repository, and Source Control should
+# list the project's checkouts and nothing else. The root used to be git-init'd
+# here — README, first commit and all — purely because start-browser.js refused
+# to launch outside a git worktree; the launcher now treats "no repository" as
+# an ordinary answer, so the synthetic root and the phantom entry beside the
+# real repositories are both gone.
+#
+# A root that IS a repository still works: STUDIO_ROOT_URL is adopted above,
+# and a bring-your-own folder keeps whatever it already had.
+if [ ! -d "$WORKSPACE/.git" ]; then
+    echo "[entrypoint] workspace root stays a plain directory — sources are separate repositories"
+fi
+
+# A managed root can still be a repository: an adopted STUDIO_ROOT_URL, or a
+# bring-your-own folder that is one. Keep marking it so Workspace Sources
+# discovery does not offer the technical container as a user-owned repository.
 if [ "${STUDIO_MANAGED_WORKSPACE:-}" = "1" ] && [ -d "$WORKSPACE/.git" ]; then
     : > "$WORKSPACE/.git/cf-studio-managed-root"
 fi
+# <<< studio:workspace-root
 
 # The workspace is prepared — hand the port over to the session gate.
 kill "$SPLASH_PID" 2>/dev/null || true
