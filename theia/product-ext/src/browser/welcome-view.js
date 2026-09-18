@@ -47,7 +47,10 @@ const { ICONS } = require('./icons');
 const { activeProject } = require('./active-project');
 
 const CONNECT_PROJECT_COMMAND_ID = 'studio.connect-project';
-const REPOSITORIES_WIDGET_ID = 'studio-repositories';
+// Theia's file tree. The product's own Projects panel used to stand beside it
+// and this pointed there; one file tree is enough, and Explorer is the one that
+// every extension in the window already talks to.
+const FILE_NAVIGATOR_ID = 'files';
 
 /*
  * The leader lines. Drawn rather than composed out of borders, because the
@@ -309,7 +312,7 @@ class WelcomeView {
         if (act === 'connect' && this.commandRegistry) {
             this.commandRegistry.executeCommand(CONNECT_PROJECT_COMMAND_ID);
         } else if (act === 'projects' && this.shell) {
-            this.shell.activateWidget(REPOSITORIES_WIDGET_ID);
+            this.shell.activateWidget(FILE_NAVIGATOR_ID);
         }
     }
 }

@@ -658,8 +658,8 @@ class QualityStore {
      *
      *  - the DIRECTORY is watched, not any one file inside it, because
      *    `onDidFilesChange` only reports resources something has asked to
-     *    watch (the trap repositories-view.js and comment-log.js both
-     *    document), and a report set can appear in a project that has never
+     *    watch (the trap comment-log.js documents too), and a report set
+     *    can appear in a project that has never
      *    had a `.studio/quality/` directory before this moment;
      *  - the callback fires on a plain debounce rather than tracking this
      *    client's own writes, because re-reading is cheap and idempotent and a

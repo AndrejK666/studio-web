@@ -169,7 +169,7 @@ const ICONS = {
      * file as a hand-built CSS box -- a 11x14px border with a letter pushed
      * through ::after: "M" for markdown, "TS", "JS", ">_", a lozenge for SVG.
      * At the 5-7px those glyphs were set to, "TS" and "JS" were two grey
-     * smudges, and eleven of them meant eleven more rules in REPOS_CSS.
+     * smudges, and eleven of them meant eleven more stylesheet rules.
      *
      * These are the replacement, extracted the way this file's header
      * prescribes rather than redrawn. Deliberately COARSE: one glyph per broad

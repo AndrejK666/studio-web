@@ -295,7 +295,7 @@ class SearchWidget extends Widget {
          *
          * It is deliberately not treated as more than that. `onDidFilesChange`
          * only reports resources something has asked to watch (the trap
-         * documented in comment-log.js and repositories-view.js), and this
+         * documented in comment-log.js and quality-store.js), and this
          * widget registers no watches of its own — so what arrives here is
          * whatever the review pipeline and the open documents already watch.
          * Best-effort by construction, which is fine for a hint and would not
