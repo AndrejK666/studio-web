@@ -97,6 +97,26 @@ backend:
     fetchResources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 256Mi }
+  # Where artifact-ingest clones repositories so File nodes carry their text.
+  #
+  # Text reaches the graph from a checkout on disk, and the gear looks in two
+  # places: the studio-session workspaces root, then its own clone volume
+  # (STUDIO_ARTIFACT_WORKDIR). In Kubernetes the first one is unreachable by
+  # construction — the IDE's clone lands in the session Pod's own per-workspace
+  # claim, which the backend Pod cannot mount — so without this volume every
+  # sync degrades to the connector's tree API: paths and sizes, no content, and
+  # the Specs tab has nothing to classify. It is why that tab works under
+  # docker-compose (one shared filesystem) and not here.
+  #
+  # `emptyDir` on purpose: the clones are shallow and single-branch, and a
+  # re-clone after a pod restart costs less than a per-environment claim. Switch
+  # to a PVC if that stops being true. `sizeLimit` is a real limit — the kubelet
+  # evicts the pod for exceeding it — so size it for the repositories this
+  # environment actually syncs, not for the largest one imaginable.
+  artifactClone:
+    enabled: true
+    sizeLimit: 4Gi
+    mountPath: /var/lib/studio/artifact-clones
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs

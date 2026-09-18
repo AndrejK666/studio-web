@@ -26,8 +26,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
+# git: the artifact-ingest gear shells out to it to clone repositories into
+# STUDIO_ARTIFACT_WORKDIR and walk their files — the same reason Dockerfile.src
+# installs it. Without it a sync in the cluster falls back to the connector's
+# tree API, so File nodes carry paths and sizes but no content, and everything
+# built on document text (the Specs tab) has nothing to read.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1000 studio \
  && useradd --system --uid 1000 --gid 1000 --home /app studio
