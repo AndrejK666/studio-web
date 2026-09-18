@@ -61,14 +61,37 @@ function leaf(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** Merge both sources into one list.
+/** A file the sync ingested that nothing has classified yet.
+ *
+ *  These exist the moment a repository is synced, long before anyone presses
+ *  Scan. Showing them is the difference between "this project has 5785 files,
+ *  none analysed" and an empty screen that reads as "there is nothing here" —
+ *  and the analysis, when it runs, fills in what each one turned out to be
+ *  rather than deciding which of them were worth showing.
+ */
+export interface SpecCandidate {
+  /** Graph node id — how a later scan matches its result back to this file. */
+  nodeId: string;
+  path: string;
+}
+
+/** Merge every source into one list.
  *
  *  Authored documents come first within the same instant, because they are the
  *  ones this project decided to write; beyond that it is newest first, which
  *  is the order somebody scanning for "what moved" wants.
+ *
+ *  A candidate is dropped as soon as a binding exists for the same node: the
+ *  binding is the same file, one step further along, and listing both would
+ *  count one file twice.
  */
-export function specRows(bindings: DocBinding[], docs: Doc[]): SpecRow[] {
+export function specRows(
+  bindings: DocBinding[],
+  docs: Doc[],
+  candidates: SpecCandidate[] = [],
+): SpecRow[] {
   const rows: SpecRow[] = [];
+  const bound = new Set(bindings.map((b) => b.node_id));
 
   for (const b of bindings) {
     rows.push({
@@ -104,6 +127,30 @@ export function specRows(bindings: DocBinding[], docs: Doc[]): SpecRow[] {
     });
   }
 
+  for (const c of candidates) {
+    if (bound.has(c.nodeId)) continue;
+    rows.push({
+      id: `candidate:${c.nodeId}`,
+      // It IS a repository file — the only thing it lacks is a decision. Giving
+      // it a third origin would say the bytes live somewhere else, which is the
+      // question Origin answers.
+      origin: "repository",
+      name: leaf(c.path),
+      path: c.path,
+      typeKey: null,
+      nodeId: c.nodeId,
+      // No binding, so no state: nothing has judged this file yet. That is what
+      // puts it in the "not scanned" queue and keeps it out of "needs review",
+      // which is for files a detector already had an opinion about.
+      state: null,
+      status: null,
+      conforms: null,
+      updatedAt: "",
+      binding: null,
+      doc: null,
+    });
+  }
+
   return rows.sort((a, b) => {
     const at = Date.parse(a.updatedAt);
     const bt = Date.parse(b.updatedAt);
@@ -125,10 +172,15 @@ export function specRows(bindings: DocBinding[], docs: Doc[]): SpecRow[] {
  *  repository file belongs in it — an authored document was written *as* a
  *  type, so there is nothing to review about what it is.
  */
-export type SpecFilter = "needs-review" | "bound" | "not-documents" | "all";
+export type SpecFilter = "not-scanned" | "needs-review" | "bound" | "not-documents" | "all";
 
 export function inFilter(row: SpecRow, filter: SpecFilter): boolean {
   switch (filter) {
+    case "not-scanned":
+      // Ingested and never analysed. Distinct from `needs-review` on purpose:
+      // that queue is for a decision a detector already proposed, this one is
+      // for files nothing has looked at yet.
+      return row.origin === "repository" && row.binding === null;
     case "needs-review":
       return row.origin === "repository" && (row.state === "detected" || row.state === "unknown");
     case "bound":
@@ -147,13 +199,14 @@ export function inFilter(row: SpecRow, filter: SpecFilter): boolean {
 /** Count each queue once, so the chips and the list cannot disagree. */
 export function specCounts(rows: SpecRow[]): Record<SpecFilter, number> {
   const counts: Record<SpecFilter, number> = {
+    "not-scanned": 0,
     "needs-review": 0,
     bound: 0,
     "not-documents": 0,
     all: rows.length,
   };
   for (const row of rows) {
-    for (const filter of ["needs-review", "bound", "not-documents"] as const) {
+    for (const filter of ["not-scanned", "needs-review", "bound", "not-documents"] as const) {
       if (inFilter(row, filter)) counts[filter] += 1;
     }
   }

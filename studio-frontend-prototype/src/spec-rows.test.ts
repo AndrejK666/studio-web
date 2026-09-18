@@ -129,8 +129,70 @@ describe("specCounts", () => {
       [doc({})],
     );
     const counts = specCounts(rows);
-    expect(counts).toEqual({ "needs-review": 1, bound: 2, "not-documents": 1, all: 4 });
-    for (const filter of ["needs-review", "bound", "not-documents", "all"] as const) {
+    expect(counts).toEqual({
+      "not-scanned": 0,
+      "needs-review": 1,
+      bound: 2,
+      "not-documents": 1,
+      all: 4,
+    });
+    for (const filter of ["not-scanned", "needs-review", "bound", "not-documents", "all"] as const) {
+      expect(rows.filter((r) => inFilter(r, filter))).toHaveLength(counts[filter]);
+    }
+  });
+});
+
+describe("candidates", () => {
+  it("lists an ingested text file nothing has classified yet", () => {
+    const rows = specRows([], [], [{ nodeId: "n9", path: "docs/adr/0002-storage.md" }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      origin: "repository",
+      name: "0002-storage.md",
+      path: "docs/adr/0002-storage.md",
+      nodeId: "n9",
+      state: null,
+      binding: null,
+    });
+  });
+
+  it("drops a candidate the moment its file has a binding", () => {
+    // The binding IS that file, one step further along. Listing both would
+    // count one file twice and make the chips disagree with the list.
+    const rows = specRows(
+      [binding({ node_id: "n1" })],
+      [],
+      [{ nodeId: "n1", path: "docs/adr/0001-identity.md" }],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].binding).not.toBeNull();
+  });
+
+  it("belongs to `not scanned`, never to `needs review`", () => {
+    // `needs-review` is a queue of decisions a detector proposed. A file
+    // nothing has read yet has no decision to review, and putting it there
+    // would bury the rows somebody can actually act on.
+    const rows = specRows([], [], [{ nodeId: "n9", path: "README.md" }]);
+    expect(inFilter(rows[0], "not-scanned")).toBe(true);
+    expect(inFilter(rows[0], "needs-review")).toBe(false);
+    expect(inFilter(rows[0], "bound")).toBe(false);
+    expect(inFilter(rows[0], "all")).toBe(true);
+  });
+
+  it("counts candidates in their own chip and in All", () => {
+    const rows = specRows(
+      [binding({ id: "a", node_id: "n1", state: "confirmed" })],
+      [],
+      [
+        { nodeId: "n2", path: "docs/one.md" },
+        { nodeId: "n3", path: "docs/two.md" },
+      ],
+    );
+    const counts = specCounts(rows);
+    expect(counts["not-scanned"]).toBe(2);
+    expect(counts.bound).toBe(1);
+    expect(counts.all).toBe(3);
+    for (const filter of ["not-scanned", "needs-review", "bound", "not-documents", "all"] as const) {
       expect(rows.filter((r) => inFilter(r, filter))).toHaveLength(counts[filter]);
     }
   });
