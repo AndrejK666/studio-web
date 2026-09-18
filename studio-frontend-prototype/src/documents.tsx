@@ -46,7 +46,13 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { relTime } from "./format";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
-import { inFilter, specCounts, specRows, type SpecFilter } from "./spec-rows";
+import {
+  inFilter,
+  specCounts,
+  specRows,
+  type SpecCandidate,
+  type SpecFilter,
+} from "./spec-rows";
 
 /** Human-readable message from an ApiError (title/detail) or any Error. */
 function errText(e: unknown): string {
@@ -714,6 +720,22 @@ const CLASSIFY_BATCH = 25;
 /** Page size when walking the artifact graph's file nodes. */
 const NODE_PAGE = 200;
 
+/** Whether an ingested node is a file this tab should list.
+ *
+ *  Every file, not a guessed subset. What is and is not a document is the
+ *  analysis's answer, and it has one — `not_a_document` is a state a binding
+ *  can hold and a queue this list already shows. Deciding it here by extension
+ *  would be this tab guessing ahead of the detector, and guessing wrong
+ *  silently: a spec named `DESIGN` with no extension would never appear, and
+ *  nothing would say why.
+ *
+ *  So: directories out, everything else in, and the scan sorts them afterwards.
+ */
+function isFileCandidate(value: Record<string, unknown>): boolean {
+  if (value.is_dir === true) return false;
+  return typeof value.path === "string" && value.path.length > 0;
+}
+
 /** Only these need a person: everything else is either settled or not a doc. */
 
 const STATE_LABEL: Record<DocBindingState, string> = {
@@ -843,6 +865,8 @@ function IngestedDocumentsView({
    *  land in one list; failing separately, because losing one must not empty
    *  the other. */
   const [authored, setAuthored] = useState<Doc[]>([]);
+  /** Ingested prose nothing has classified yet — the list before a scan. */
+  const [candidates, setCandidates] = useState<SpecCandidate[]>([]);
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -854,12 +878,43 @@ function IngestedDocumentsView({
     [types],
   );
 
+  /** Walk the ingested file nodes.
+   *
+   *  Metadata only — no text is asked for and no checkout has to exist, which
+   *  is the whole point: this answers "what is in there" the moment a sync has
+   *  run, while reading the content still needs a clone the backend can see.
+   */
+  const readCandidates = useCallback(async (): Promise<SpecCandidate[]> => {
+    const out: SpecCandidate[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await api.listArtifactNodes(token, "file", projectTenantId, cursor, NODE_PAGE);
+      for (const n of page.nodes ?? []) {
+        if (!isFileCandidate(n.value)) continue;
+        const path = typeof n.value.path === "string" ? n.value.path : "";
+        if (path) out.push({ nodeId: n.instance_id, path });
+      }
+      cursor = page.next_cursor;
+    } while (cursor);
+    return out;
+  }, [token, projectTenantId]);
+
   const reload = useCallback(async () => {
     setErr(null);
     try {
       setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
     } catch (e) {
       setErr(errText(e));
+    }
+    // Everything the sync has already ingested, whether or not anything has
+    // classified it. This is what the list shows before a scan has ever run:
+    // the alternative is an empty screen for a project that demonstrably has
+    // documents in it, which reads as "there is nothing here".
+    try {
+      setCandidates(await readCandidates());
+    } catch {
+      // Candidates are a head start, not the record. The bindings above are
+      // the queue that matters, and losing the preview must not cost them.
     }
     try {
       setAuthored((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
@@ -1015,10 +1070,14 @@ function IngestedDocumentsView({
       }
 
       if (files.length === 0) {
+        // Not a dead end any more: the prose is listed under "Not scanned"
+        // from the ingest metadata alone. What is missing is the CONTENT,
+        // which classification needs and only a checkout can provide.
         setNote(
-          `None of the ${nodes.length} ingested files carry their text, and no checkout of ` +
-            "this project's repositories has one either. Open the project in the IDE so the " +
-            "repository is cloned, then scan again.",
+          `The ${nodes.length} ingested files are listed, but none carries its text and no ` +
+            "checkout of this project's repositories has it either — so there is nothing to " +
+            "classify yet. A sync with a clone volume fills this in; opening the project in " +
+            "the IDE also clones it.",
         );
         return;
       }
@@ -1529,7 +1588,10 @@ function IngestedDocumentsView({
   };
 
   /** Every spec the project has, from both origins, newest first. */
-  const rows = useMemo(() => specRows(bindings, authored), [bindings, authored]);
+  const rows = useMemo(
+    () => specRows(bindings, authored, candidates),
+    [bindings, authored, candidates],
+  );
   const counts = useMemo(() => specCounts(rows), [rows]);
 
   /** The types this project's documents actually are, for the picker. Offering
@@ -1548,7 +1610,11 @@ function IngestedDocumentsView({
       return inFilter(row, filter);
     });
     return [...list].sort((a, b) => a.path.localeCompare(b.path));
-  }, [bindings, filter, typeFilter]);
+    // `rows` and `originFilter` belong here: the list is derived from them, and
+    // leaving them out meant a row that appeared without a binding changing —
+    // a candidate arriving from the graph — was not shown until something else
+    // forced a recompute.
+  }, [rows, filter, typeFilter, originFilter]);
 
   /** The row the side panel is about — always a repository one. An authored
    *  document opens in the editor instead, where it can be changed; a panel
@@ -1560,6 +1626,9 @@ function IngestedDocumentsView({
   );
 
   const FILTERS: { id: SpecFilter; label: string; count: number }[] = [
+    // First, because it is the state a freshly synced project is in: prose the
+    // sync found, nothing has read yet.
+    { id: "not-scanned", label: "Not scanned", count: counts["not-scanned"] },
     { id: "needs-review", label: "Needs review", count: counts["needs-review"] },
     { id: "bound", label: "Bound", count: counts.bound },
     { id: "not-documents", label: "Not documents", count: counts["not-documents"] },
@@ -1828,7 +1897,9 @@ function IngestedDocumentsView({
                             ? ` · ${Math.round(b.confidence * 100)}%`
                             : ""
                         }`
-                      : `written here · ${row.doc?.status ?? "draft"}`,
+                      : row.doc
+                        ? `written here · ${row.doc.status ?? "draft"}`
+                        : "ingested · not analysed yet",
                     b?.source ? (SOURCE_LABEL[b.source] ?? b.source) : "",
                     row.conforms == null
                       ? "not validated"
@@ -1848,10 +1919,20 @@ function IngestedDocumentsView({
                       until it is committed and scanned, so it reports its
                       editorial status instead of a finding count it cannot
                       have. */}
-                  {row.origin === "authored" ? (row.doc?.status ?? "draft") : findingLabel(open)}
+                  {row.origin === "authored"
+                    ? (row.doc?.status ?? "draft")
+                    : b
+                      ? findingLabel(open)
+                      : /* Nothing has read this file yet, so it has no verdict
+                           to report — and a finding count of zero would claim
+                           it came back clean. */
+                        "not scanned"}
                 </span>
                 <span className="ing-updated" title={row.updatedAt}>
-                  {relTime(row.updatedAt)}
+                  {/* A candidate carries no timestamp: the graph node's is
+                      about the sync, not about the file, and showing the
+                      sync's time here would read as "this document changed". */}
+                  {row.updatedAt ? relTime(row.updatedAt) : <span className="ing-dash">—</span>}
                 </span>
                 <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
                   {b ? (
