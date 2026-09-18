@@ -1,7 +1,7 @@
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { ILogger, MessageService } from '@theia/core';
 import URI from '@theia/core/lib/common/uri';
-import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
+import { OpenerService, open } from '@theia/core/lib/browser/opener-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import type { StudioOpenInEditorRequest } from '../common/studio-protocol';
@@ -17,11 +17,25 @@ import type { StudioOpenInEditorRequest } from '../common/studio-protocol';
  * under every workspace root AND under each root's immediate subdirectories,
  * open the first that exists, and surface a visible message when nothing
  * matches (instead of failing silently) so a missing checkout is diagnosable.
+ *
+ * OPENED THROUGH THE OPENER SERVICE, NOT THE EDITOR MANAGER, and the difference
+ * is the whole point of this controller.
+ *
+ * `EditorManager.open` is Monaco. It is an opener like any other — it claims
+ * every file at priority 100 — but calling it DIRECTLY skips the contest, so a
+ * Markdown document opened from the portal arrived as its own source: line
+ * numbers, a minimap and the raw `#` characters, in a product whose reason to
+ * exist is that a document reads like a document. The product's surfaces claim
+ * `.md`, `.html` and delimited data at 500 and lose every time the contest does
+ * not happen.
+ *
+ * `open()` runs the contest, so Markdown reaches the Studio editor and a
+ * `.rs` file still reaches Monaco, because Monaco is what wins for it.
  */
 @injectable()
 export class OpenInEditorFrontendController {
-    @inject(EditorManager)
-    protected readonly editorManager!: EditorManager;
+    @inject(OpenerService)
+    protected readonly openerService!: OpenerService;
 
     @inject(WorkspaceService)
     protected readonly workspaceService!: WorkspaceService;
@@ -86,8 +100,11 @@ export class OpenInEditorFrontendController {
         }
 
         try {
-            await this.editorManager.open(target, {
+            await open(this.openerService, target, {
                 mode: 'activate',
+                // Honoured by Monaco, ignored by the document surfaces — a
+                // preview tab is a text-editor idea and the options ride
+                // through to whichever opener wins.
                 preview: request.preview ?? false,
             });
         } catch (error) {
