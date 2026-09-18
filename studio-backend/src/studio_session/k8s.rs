@@ -28,7 +28,9 @@ use kube::api::{Api, DeleteParams, ListParams, PostParams};
 use uuid::Uuid;
 
 use super::config::StudioSessionConfig;
-use super::driver::{AdoptedSession, LaunchSpec, LaunchedSession, SessionAddress, SessionDriver};
+use super::driver::{
+    AdoptedSession, LaunchSpec, LaunchedSession, NoCapacity, SessionAddress, SessionDriver,
+};
 
 const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
@@ -178,6 +180,52 @@ impl KubernetesDriver {
             "studio-session: previous session Pod still terminating — \
              the replacement may wait for its workspace volume"
         );
+    }
+
+    /// Create the session Pod, absorbing the two refusals that are not faults.
+    ///
+    /// The Pod's name is derived from the workspace, so relaunching one while
+    /// its predecessor is still terminating collides with ITSELF — Kubernetes
+    /// answers 409 `AlreadyExists` with "object is being deleted". That is the
+    /// ordinary shape of "open the IDE again right after closing it", and it
+    /// used to surface as an internal error: on the dev stand the portal
+    /// retried 52 times in twenty minutes and every attempt lost the same race.
+    /// Waiting for the old Pod to go and trying once more is the whole fix.
+    ///
+    /// The other is 403 with `exceeded quota`, which no amount of waiting
+    /// clears — somebody has to raise the quota or free a session — so it is
+    /// reported as [`NoCapacity`] rather than retried here.
+    async fn create_pod(&self, name: &str, pod: &Pod) -> anyhow::Result<()> {
+        match self.pods().create(&PostParams::default(), pod).await {
+            Ok(_) => Ok(()),
+            Err(e) => match classify_create(e) {
+                CreateRefusal::Terminating(_) => {
+                    tracing::info!(
+                        pod = %name,
+                        "studio-session: the previous session Pod is still terminating —                          waiting for it before launching the replacement"
+                    );
+                    self.await_pod_gone(name).await;
+                    // Once. A second collision means something other than the
+                    // predecessor holds the name, and retrying forever would
+                    // turn a launch into a hang.
+                    match self.pods().create(&PostParams::default(), pod).await {
+                        Ok(_) => Ok(()),
+                        Err(again) => match classify_create(again) {
+                            CreateRefusal::NoRoom(detail) => Err(anyhow!(NoCapacity { detail })),
+                            CreateRefusal::Terminating(again) | CreateRefusal::Other(again) => {
+                                Err(anyhow::Error::new(again).context(
+                                    "failed to create the session Pod after waiting for its                                      predecessor to terminate",
+                                ))
+                            }
+                        },
+                    }
+                }
+                CreateRefusal::NoRoom(detail) => Err(anyhow!(NoCapacity { detail })),
+                CreateRefusal::Other(e) => {
+                    Err(anyhow::Error::new(e).context("failed to create the session Pod"))
+                }
+            },
+        }
     }
 
     /// `[K=V, …]` → Kubernetes env entries (split on the first `=`).
@@ -436,10 +484,7 @@ impl SessionDriver for KubernetesDriver {
             ..Default::default()
         };
 
-        self.pods()
-            .create(&PostParams::default(), &pod)
-            .await
-            .context("failed to create the session Pod")?;
+        self.create_pod(&name, &pod).await?;
 
         let service = Service {
             metadata: ObjectMeta {
@@ -624,13 +669,97 @@ fn workspace_claim(
     }
 }
 
+/// Why a Pod create was refused, in the only three shapes the launch cares about.
+enum CreateRefusal {
+    /// The name is taken by a Pod on its way out.
+    Terminating(kube::Error),
+    /// The namespace is full. The string is the runtime's own explanation.
+    NoRoom(String),
+    Other(kube::Error),
+}
+
+/// Read the refusal off the API error.
+///
+/// Matched on the status CODE plus the reason text, not on a parsed structure:
+/// `exceeded quota` is what the quota admission controller writes and there is
+/// no typed field for it, and a 403 that is NOT about quota (RBAC, say) is a
+/// deployment fault that must keep looking like one.
+fn classify_create(e: kube::Error) -> CreateRefusal {
+    let kube::Error::Api(ref response) = e else {
+        return CreateRefusal::Other(e);
+    };
+    match response.code {
+        409 if response.message.contains("being deleted") => CreateRefusal::Terminating(e),
+        403 if response.message.contains("exceeded quota") => {
+            CreateRefusal::NoRoom(response.message.clone())
+        }
+        _ => CreateRefusal::Other(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionAddress, StudioSessionConfig, THEIA_PORT, pod_phase_is_live, session_address,
-        workspace_claim, workspace_claim_name,
+        CreateRefusal, SessionAddress, StudioSessionConfig, THEIA_PORT, classify_create,
+        pod_phase_is_live, session_address, workspace_claim, workspace_claim_name,
     };
     use std::collections::BTreeMap;
+
+    /// An API refusal, shaped the way the apiserver actually sends it: the
+    /// code and the sentence are the only parts the classifier reads.
+    fn refusal(code: u16, message: &str) -> kube::Error {
+        kube::Error::Api(Box::new(kube::core::Status {
+            code,
+            message: message.to_string(),
+            ..Default::default()
+        }))
+    }
+
+    /// The Pod's name comes from the workspace, so reopening an IDE straight
+    /// after closing it races the previous Pod's own termination. Reported as
+    /// an internal error, this was the whole of "Could not open … HTTP 500" on
+    /// the dev stand — the portal retried 52 times in twenty minutes and lost
+    /// the same race every time.
+    #[test]
+    fn a_pod_still_terminating_is_something_to_wait_for_not_an_error() {
+        let e = refusal(
+            409,
+            "object is being deleted: pods \"cf-studio-session-01d89b55\" already exists",
+        );
+        assert!(matches!(classify_create(e), CreateRefusal::Terminating(_)));
+    }
+
+    /// A full namespace clears when a session ends or an operator raises the
+    /// quota. Nothing is broken and the caller did nothing wrong, so it must
+    /// not arrive as "an internal error occurred" — and the runtime's own
+    /// sentence is kept, because the quota it names is what has to be raised.
+    #[test]
+    fn a_full_namespace_is_reported_as_having_no_room() {
+        let message = "pods \"cf-studio-session-01d89b55\" is forbidden: exceeded quota:                        studio-dev, requested: limits.cpu=2, used: limits.cpu=8, limited:                        limits.cpu=8";
+        match classify_create(refusal(403, message)) {
+            CreateRefusal::NoRoom(detail) => assert_eq!(detail, message),
+            _ => panic!("a quota refusal has to be recognised as one"),
+        }
+    }
+
+    /// A 403 that is NOT about quota is a deployment fault — a missing Role,
+    /// most likely — and waiting or apologising for capacity would bury it.
+    #[test]
+    fn a_forbidden_that_is_not_about_quota_stays_an_error() {
+        let e = refusal(
+            403,
+            "pods is forbidden: User cannot create resource \"pods\"",
+        );
+        assert!(matches!(classify_create(e), CreateRefusal::Other(_)));
+    }
+
+    /// And a name held by a Pod that is NOT on its way out: waiting would
+    /// never end, so it is not a thing to wait for.
+    #[test]
+    fn a_name_already_taken_by_a_live_pod_is_not_a_termination_race() {
+        let e = refusal(409, "pods \"cf-studio-session-01d89b55\" already exists");
+        assert!(matches!(classify_create(e), CreateRefusal::Other(_)));
+    }
 
     /// A session is reached through its Service, which publishes exactly one
     /// port. The `cf.studio.port` label on the Pod is the Docker driver's
