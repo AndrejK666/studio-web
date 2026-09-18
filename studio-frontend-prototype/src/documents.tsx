@@ -45,6 +45,7 @@ import {
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { errText, relTime } from "./format";
+import { Modal } from "./modal";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
   inFilter,
@@ -2351,8 +2352,7 @@ function SeedModal({
     !!target.connectionId && !!target.repo && branch.trim().length > 0 && selected.size > 0 && !busy;
 
   return (
-    <div style={modalBackdrop} onClick={onClose}>
-      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+    <Modal label="Write the missing documents" onClose={onClose}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Write the missing documents</span>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">
@@ -2466,8 +2466,7 @@ function SeedModal({
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -2752,8 +2751,7 @@ function PublishModal({
     !busy;
 
   return (
-    <div style={modalBackdrop} onClick={onClose}>
-      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+    <Modal label="Publish to a repository" onClose={onClose}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Publish to a repository</span>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">
@@ -2939,8 +2937,7 @@ function PublishModal({
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -2994,8 +2991,7 @@ function QuestionnaireModal({
   const canSubmit = title.trim().length > 0 && missing.length === 0 && !busy;
 
   return (
-    <div style={modalBackdrop} onClick={onCancel}>
-      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+    <Modal label="Intake questionnaire" onClose={onCancel}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>{type.name}</span>
           <span style={{ fontSize: 12, opacity: 0.6 }}>· intake questionnaire</span>
@@ -3039,8 +3035,7 @@ function QuestionnaireModal({
             </span>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -3108,26 +3103,6 @@ function QuestionInput({
   );
 }
 
-const modalBackdrop: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,0.45)",
-  display: "flex",
-  alignItems: "flex-start",
-  justifyContent: "center",
-  padding: "6vh 16px",
-  zIndex: 50,
-  overflowY: "auto",
-};
-const modalCard: CSSProperties = {
-  background: "var(--card)",
-  color: "var(--foreground)",
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  padding: 20,
-  width: "min(640px, 100%)",
-  boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
-};
 const qLabel: CSSProperties = { display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 };
 const qTag: CSSProperties = { marginLeft: 8, fontSize: 10, opacity: 0.6, fontWeight: 400 };
 
@@ -3313,8 +3288,7 @@ function ScaffoldModal({
   };
 
   return (
-    <div style={modalBackdrop} onClick={onClose}>
-      <div style={{ ...modalCard, width: "min(860px, 100%)" }} onClick={(e) => e.stopPropagation()}>
+    <Modal label="Scaffold gear" onClose={onClose} cardStyle={{ width: "min(860px, 100%)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <button onClick={onBack} title="Back to plan">←</button>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Scaffold gear</span>
@@ -3417,8 +3391,7 @@ function ScaffoldModal({
             </pre>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -3436,8 +3409,7 @@ function ComposePlanModal({
   const gaps = plan.filter((r) => r.gap).length;
   const matched = plan.length - gaps;
   return (
-    <div style={modalBackdrop} onClick={onClose}>
-      <div style={{ ...modalCard, width: "min(760px, 100%)" }} onClick={(e) => e.stopPropagation()}>
+    <Modal label="Composition plan" onClose={onClose} cardStyle={{ width: "min(760px, 100%)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Composition plan</span>
           <span style={{ fontSize: 12, opacity: 0.6 }}>· {title}</span>
@@ -3497,8 +3469,7 @@ function ComposePlanModal({
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
