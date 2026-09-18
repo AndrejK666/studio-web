@@ -382,12 +382,30 @@ impl SessionDriver for KubernetesDriver {
                 }]
             });
 
+        /* The requests are what the scheduler reserves and so what has to fit
+         * the hardware; the limits are the burst ceiling and what a namespace
+         * ResourceQuota counts. They are configuration rather than constants
+         * because they are the unit a quota is sized in — an operator staring
+         * at `exceeded quota` should be able to lower a limit as readily as
+         * raise the ceiling, and compare the two. */
         let mut requests = BTreeMap::new();
-        requests.insert("cpu".to_string(), Quantity("250m".to_string()));
-        requests.insert("memory".to_string(), Quantity("512Mi".to_string()));
+        requests.insert(
+            "cpu".to_string(),
+            Quantity(self.cfg.k8s_session_cpu_request.clone()),
+        );
+        requests.insert(
+            "memory".to_string(),
+            Quantity(self.cfg.k8s_session_memory_request.clone()),
+        );
         let mut limits = BTreeMap::new();
-        limits.insert("cpu".to_string(), Quantity("2".to_string()));
-        limits.insert("memory".to_string(), Quantity("2Gi".to_string()));
+        limits.insert(
+            "cpu".to_string(),
+            Quantity(self.cfg.k8s_session_cpu_limit.clone()),
+        );
+        limits.insert(
+            "memory".to_string(),
+            Quantity(self.cfg.k8s_session_memory_limit.clone()),
+        );
 
         let pod = Pod {
             metadata: ObjectMeta {

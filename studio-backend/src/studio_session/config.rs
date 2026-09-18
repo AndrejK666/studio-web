@@ -38,6 +38,29 @@ pub struct StudioSessionConfig {
     /// [`Self::k8s_workspace_persistent`] is set.
     #[serde(default = "default_workspace_volume_size")]
     pub k8s_workspace_volume_size: String,
+    /*
+     * What one session Pod asks for, and what it may burst to.
+     *
+     * Configurable rather than fixed because these four numbers are the unit
+     * a namespace quota is sized in — `limits.cpu` per session times the
+     * people expected at once — and tuning them used to mean a code change and
+     * a release. An operator who has to raise a quota should be able to lower
+     * a limit instead, and compare.
+     *
+     * REQUESTS are what the scheduler reserves, so they are what has to fit
+     * the hardware; LIMITS are the burst ceiling and what a ResourceQuota
+     * counts. The defaults are what the driver used before they could be set:
+     * a quarter CPU reserved, two CPUs available for the seconds when an IDE
+     * is actually compiling something.
+     */
+    #[serde(default = "default_session_cpu_request")]
+    pub k8s_session_cpu_request: String,
+    #[serde(default = "default_session_cpu_limit")]
+    pub k8s_session_cpu_limit: String,
+    #[serde(default = "default_session_memory_request")]
+    pub k8s_session_memory_request: String,
+    #[serde(default = "default_session_memory_limit")]
+    pub k8s_session_memory_limit: String,
     /// StorageClass for that claim; `None` leaves it to the cluster default.
     /// A class with `ReadWriteOnce` is enough — one session at a time holds
     /// a workspace.
@@ -181,6 +204,10 @@ impl Default for StudioSessionConfig {
             k8s_image_pull_secret: None,
             k8s_workspace_persistent: false,
             k8s_workspace_volume_size: default_workspace_volume_size(),
+            k8s_session_cpu_request: default_session_cpu_request(),
+            k8s_session_cpu_limit: default_session_cpu_limit(),
+            k8s_session_memory_request: default_session_memory_request(),
+            k8s_session_memory_limit: default_session_memory_limit(),
             k8s_workspace_storage_class: None,
             k8s_workspace_shared_claim: None,
             k8s_node_name: None,
@@ -264,6 +291,18 @@ fn default_port_end() -> u16 {
 fn default_orca_port() -> u16 {
     6768
 }
+fn default_session_cpu_request() -> String {
+    "250m".to_string()
+}
+fn default_session_cpu_limit() -> String {
+    "2".to_string()
+}
+fn default_session_memory_request() -> String {
+    "512Mi".to_string()
+}
+fn default_session_memory_limit() -> String {
+    "2Gi".to_string()
+}
 fn default_max_session_secs() -> u64 {
     4 * 3600
 }
@@ -313,5 +352,28 @@ impl StudioSessionConfig {
             return format!("{home}/{rest}");
         }
         self.workspaces_root.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StudioSessionConfig;
+
+    /// The chart sizes a namespace quota from these four numbers, and shows the
+    /// arithmetic in `deploy/helm/studio-web/values.yaml`:
+    ///
+    ///     platform baseline + (concurrent sessions + 1) x session limits
+    ///
+    /// A default changed here without that file changing leaves the quota
+    /// describing a session size that no longer exists — and the symptom is not
+    /// a wrong number in a comment, it is sessions refused with `exceeded
+    /// quota` on a stand nobody has touched. So the two are pinned together.
+    #[test]
+    fn the_session_footprint_the_quota_was_sized_against() {
+        let cfg = StudioSessionConfig::default();
+        assert_eq!(cfg.k8s_session_cpu_request, "250m");
+        assert_eq!(cfg.k8s_session_cpu_limit, "2");
+        assert_eq!(cfg.k8s_session_memory_request, "512Mi");
+        assert_eq!(cfg.k8s_session_memory_limit, "2Gi");
     }
 }
