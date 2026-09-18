@@ -535,7 +535,9 @@ impl CatalogEntry for DocumentType {
 }
 
 /// A document's position on the forward-only status ladder.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `ToSchema` for [`DetectionSource`]'s reason.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DocStatus {
     Draft,
@@ -598,7 +600,13 @@ pub struct Document {
 // is never copied here, so a re-sync cannot leave two versions of one file.
 
 /// How a binding's type was decided.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `ToSchema` so the API contract carries the values instead of describing
+/// them in a sentence. It was `"front_matter" | "heuristic" | ..." on a
+/// `String` field, which no client can generate from and nothing checks: a
+/// frontend transcribed the sentence by hand, and adding a variant here left
+/// that copy silently wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionSource {
     /// The document declared it in its front matter.
@@ -633,7 +641,10 @@ impl DetectionSource {
 }
 
 /// Where a binding stands on the question "do we know what this file is?".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `ToSchema` for [`DetectionSource`]'s reason: the contract states the five
+/// values rather than spelling them in prose beside a `String`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingState {
     /// A type was proposed; nobody has looked at it yet.

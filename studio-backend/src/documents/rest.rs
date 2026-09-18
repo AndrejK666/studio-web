@@ -19,8 +19,8 @@ use uuid::Uuid;
 use super::intake::Answer;
 use super::model::{Analysis, AnalysisState, StageStatus};
 use super::model::{
-    Capability, DetectionSource, DocStatus, Document, DocumentBinding, DocumentType, Owner,
-    Question, QuestionKind, Rules, Section, Stage, TemplateSpec,
+    BindingState, Capability, DetectionSource, DocStatus, Document, DocumentBinding, DocumentType,
+    Owner, Question, QuestionKind, Rules, Section, Stage, TemplateSpec,
 };
 use super::service::{BindingAction, BindingDecision, DocumentsService, IngestedFile};
 use super::validate::{SectionStatus, ValidationReport};
@@ -247,8 +247,7 @@ pub struct DocumentDto {
     pub type_key: String,
     pub title: String,
     pub content: String,
-    /// "draft", "review" or "approved".
-    pub status: String,
+    pub status: DocStatus,
     pub conforms: bool,
     /// Capability keys the document declares, from its front matter. The
     /// composer reads these; a client must not parse the body itself.
@@ -381,11 +380,9 @@ pub struct DocumentBindingDto {
     pub path: String,
     /// The bound type, absent while undetermined.
     pub type_key: Option<String>,
-    /// "detected" | "confirmed" | "manual" | "unknown" | "not_a_document".
-    pub state: String,
+    pub state: BindingState,
     pub confidence: Option<f64>,
-    /// "front_matter" | "heuristic" | "spec_quality" | "manual".
-    pub source: Option<String>,
+    pub source: Option<DetectionSource>,
     /// What else it might be — what to offer when correcting the type.
     pub candidates: Vec<TypeCandidateDto>,
     /// Absent when the binding has no type and so nothing to be judged against.
@@ -666,14 +663,6 @@ fn rules_from_dto(r: RulesDto) -> Rules {
     }
 }
 
-fn status_str(s: DocStatus) -> &'static str {
-    match s {
-        DocStatus::Draft => "draft",
-        DocStatus::Review => "review",
-        DocStatus::Approved => "approved",
-    }
-}
-
 fn parse_status(s: &str) -> Option<DocStatus> {
     match s.trim().to_ascii_lowercase().as_str() {
         "draft" => Some(DocStatus::Draft),
@@ -692,7 +681,7 @@ fn document_dto(d: Document, inherited: bool) -> DocumentDto {
         type_key: d.type_key,
         title: d.title,
         content: d.content,
-        status: status_str(d.status).to_string(),
+        status: d.status,
         conforms: d.conforms,
         capabilities: d.capabilities,
         created_by: d.created_by,
@@ -1439,9 +1428,9 @@ fn binding_dto(b: DocumentBinding, inherited: bool) -> DocumentBindingDto {
         node_id: b.node_id,
         path: b.path,
         type_key: b.type_key,
-        state: b.state.as_str().to_string(),
+        state: b.state,
         confidence: b.confidence.map(f64::from),
-        source: b.source.map(|s| s.as_str().to_string()),
+        source: b.source,
         candidates: b
             .candidates
             .into_iter()
