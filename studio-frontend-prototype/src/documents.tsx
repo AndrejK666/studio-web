@@ -878,25 +878,43 @@ function IngestedDocumentsView({
     [types],
   );
 
-  /** Walk the ingested file nodes.
+  /** Walk the ingested file nodes ONCE, and answer both questions about them.
+   *
+   *  This used to be two walks of the same collection, a few lines apart in the
+   *  same reload — one collecting classification candidates, one collecting
+   *  which repository each node came from. Same endpoint, same page size, same
+   *  pages: on a project with 5,785 files that was 58 requests to read 29
+   *  pages, and every node's payload arrived twice.
    *
    *  Metadata only — no text is asked for and no checkout has to exist, which
    *  is the whole point: this answers "what is in there" the moment a sync has
    *  run, while reading the content still needs a clone the backend can see.
+   *
+   *  The two results now fail together, where they used to have a `catch`
+   *  each. That is not a loss: they were always one request sequence, so a
+   *  failure of one was a failure of the other, and the separate handlers only
+   *  made them look independent.
    */
-  const readCandidates = useCallback(async (): Promise<SpecCandidate[]> => {
-    const out: SpecCandidate[] = [];
+  const readFiles = useCallback(async (): Promise<{
+    candidates: SpecCandidate[];
+    repoByNode: Record<string, string>;
+  }> => {
+    const candidates: SpecCandidate[] = [];
+    const repoByNode: Record<string, string> = {};
     let cursor: string | undefined;
     do {
       const page = await api.listArtifactNodes(token, "file", projectTenantId, cursor, NODE_PAGE);
       for (const n of page.nodes ?? []) {
+        // Provenance is wanted for every file, candidate or not: the Specs
+        // table shows the repository beside a bound document too.
+        if (typeof n.value.repo === "string") repoByNode[n.instance_id] = n.value.repo;
         if (!isFileCandidate(n.value)) continue;
         const path = typeof n.value.path === "string" ? n.value.path : "";
-        if (path) out.push({ nodeId: n.instance_id, path });
+        if (path) candidates.push({ nodeId: n.instance_id, path });
       }
       cursor = page.next_cursor;
     } while (cursor);
-    return out;
+    return { candidates, repoByNode };
   }, [token, projectTenantId]);
 
   const reload = useCallback(async () => {
@@ -911,10 +929,13 @@ function IngestedDocumentsView({
     // the alternative is an empty screen for a project that demonstrably has
     // documents in it, which reads as "there is nothing here".
     try {
-      setCandidates(await readCandidates());
+      const files = await readFiles();
+      setCandidates(files.candidates);
+      setRepoByNode(files.repoByNode);
     } catch {
-      // Candidates are a head start, not the record. The bindings above are
-      // the queue that matters, and losing the preview must not cost them.
+      // Candidates are a head start, not the record, and the repository is
+      // provenance rather than identity. The bindings above are the queue that
+      // matters, and losing either of these must not cost them.
     }
     try {
       setAuthored((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
@@ -943,25 +964,7 @@ function IngestedDocumentsView({
     } catch {
       // Leave whatever was already read; the column simply shows nothing.
     }
-    // Which repository each file came from. Paged to the end rather than
-    // capped: a project whose documents live past the first page would
-    // otherwise show "—" for exactly the files furthest down the list, which
-    // reads as "no repository" rather than "not asked".
-    try {
-      const byNode: Record<string, string> = {};
-      let cursor: string | undefined;
-      do {
-        const page = await api.listArtifactNodes(token, "file", projectTenantId, cursor, 200);
-        for (const n of page.nodes) {
-          if (n.value.repo) byNode[n.instance_id] = n.value.repo;
-        }
-        cursor = page.next_cursor;
-      } while (cursor);
-      setRepoByNode(byNode);
-    } catch {
-      // The column falls back to "—"; it is provenance, not identity.
-    }
-    // The names behind those ids. Read separately and allowed to fail
+    // The names behind the repository ids `readFiles` collected above. Read separately and allowed to fail
     // separately: losing the names must leave the ids, not blank the column.
     try {
       const names: Record<string, string> = {};
