@@ -314,7 +314,18 @@ frontendPrototype:
 # The requests are what has to fit the hardware, and they do with room to
 # spare: this namespace's 6 CPU plus studio-test's 8 is 14 of 24.
 capacity:
-  enabled: true
+  # OFF by default, and the default is the whole point.
+  #
+  # A ResourceQuota governs the NAMESPACE, not this release. Where Studio has a
+  # namespace to itself (studio-dev, studio-test) that is what we want. Where it
+  # shares one — the dmz deployment sits in `dev-constructorfabric` alongside
+  # airbyte, argo, clickhouse and twenty-odd other Pods, with no quota at all
+  # today — creating one would put every neighbour under a ceiling nobody asked
+  # for, and the first Pod to exceed it would be somebody else's.
+  #
+  # So this is opted INTO per environment, by somebody who knows the namespace
+  # belongs to Studio. See values-dev.example.yaml and values-test.example.yaml.
+  enabled: false
   # Four people in four workspaces at once, plus one session on its way out.
   # Raise `limits` by 2 CPU / 2Gi for each further concurrent session.
   limits:

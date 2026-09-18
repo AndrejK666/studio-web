@@ -65,3 +65,26 @@ keycloak:
 ingress:
   enabled: true
   className: traefik
+
+# Studio owns this namespace too, and it is the bigger of the two: keep the
+# ceilings it already has rather than inheriting the dev sizing, which would
+# quietly halve them. Measured before writing these down (2026-09-18):
+# limits 16 CPU / 32Gi, requests 8 CPU / 16Gi, 100 pods, 30 services.
+#
+# limits.cpu 16 with a ~4 CPU platform baseline is six concurrent sessions
+# plus one terminating, at 2 CPU each.
+capacity:
+  enabled: true
+  limits:
+    cpu: 16
+    memory: 32Gi
+  requests:
+    cpu: 8
+    memory: 16Gi
+    storage: 200Gi
+  counts:
+    pods: 100
+    services: 30
+    persistentVolumeClaims: 20
+    configMaps: 150
+    secrets: 150

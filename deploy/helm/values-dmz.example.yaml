@@ -65,3 +65,14 @@ ingress:
   # tls:
   #   - hosts: ["studio.dmz.cnstr.me"]
   #     secretName: studio-dmz-tls
+
+# DELIBERATELY OFF, and not an oversight to be tidied up.
+#
+# This deployment shares `dev-constructorfabric` with airbyte, argo, clickhouse
+# and twenty-odd other Pods, and that namespace has no ResourceQuota today. A
+# quota governs the NAMESPACE, so turning this on would put every neighbour
+# under a ceiling nobody asked for — and the first workload refused by it would
+# most likely be somebody else's, failing for a reason they cannot see from
+# their own repository.
+capacity:
+  enabled: false
