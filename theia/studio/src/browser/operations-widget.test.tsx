@@ -8,12 +8,14 @@ import { Container } from '@theia/core/shared/inversify';
 import * as React from '@theia/core/shared/react';
 import { MessageLoop } from '@theia/core/shared/@lumino/messaging';
 import URI from '@theia/core/lib/common/uri';
-import { GitOperationsWidget } from './git-operations-widget';
-import { GitOperationsContribution, GitOperationsFrontendController } from './git-operations-contribution';
+import { OperationsWidget } from './operations-widget';
+import { OperationsContribution } from './operations-contribution';
+import { GitOperationsFrontendController } from './git-operations-contribution';
+import { AuditFrontendController } from './audit-controller';
 
 describe('Git operations browser slice', () => {
     let controller: GitOperationsFrontendController;
-    let widget: GitOperationsWidget;
+    let widget: OperationsWidget;
     let runtime: ReturnType<typeof createRuntime>;
     let statusBar: {
         setElement: jest.Mock;
@@ -86,9 +88,16 @@ describe('Git operations browser slice', () => {
         controller.bindRuntime(runtime);
         const container = new Container();
         container.bind(GitOperationsFrontendController).toConstantValue(controller);
-        container.bind(GitOperationsWidget).toSelf();
+        /* The panel also carries the history half now. This suite is about the
+         * queue, so the journal is bound empty rather than simulated: an empty
+         * one renders its "no entries" state and gets out of the way. */
+        container.bind(AuditFrontendController).toConstantValue({
+            onDidChange: () => ({ dispose: () => undefined }),
+            getEntries: () => []
+        } as unknown as AuditFrontendController);
+        container.bind(OperationsWidget).toSelf();
         React.act(() => {
-            widget = container.resolve(GitOperationsWidget);
+            widget = container.resolve(OperationsWidget);
             MessageLoop.flush();
         });
     });
@@ -358,7 +367,7 @@ describe('Git operations browser slice', () => {
             bindRuntime: jest.fn(),
             onDidInitializeLayout: jest.fn()
         };
-        const contribution = new GitOperationsContribution(lifecycleController as never, runtime as never);
+        const contribution = new OperationsContribution(lifecycleController as never, runtime as never);
 
         contribution.onDidInitializeLayout();
 

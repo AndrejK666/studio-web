@@ -7,8 +7,7 @@ import { PerspectiveContribution } from '@theia/core/lib/browser/perspective-ser
 import { ResourceResolver } from '@theia/core/lib/common/resource';
 import { StudioRuntimeService, studioRuntimeServicePath } from '../common/studio-protocol';
 import { FilesystemSaveableService } from '@theia/filesystem/lib/browser/filesystem-saveable-service';
-import { GitOperationsContribution, GitOperationsFrontendController } from './git-operations-contribution';
-import { GitOperationsWidget } from './git-operations-widget';
+import { GitOperationsFrontendController } from './git-operations-contribution';
 import { ApplicationShellProvider, StudioSaveableService } from './studio-saveable-service';
 import { FixedWorkspaceContribution } from './fixed-workspace-contribution';
 import { ScmHistoryGraphWidget } from '@theia/scm/lib/browser/scm-history-graph-widget';
@@ -32,9 +31,9 @@ import { WorkspaceGraphService, workspaceGraphServicePath } from '../common/grap
 import { AnalyzeApplicationShellProvider, AnalyzeFrontendController } from './analyze-controller';
 import { AnalyzeContribution } from './analyze-contribution';
 import { AnalyzeWidget } from './analyze-widget';
-import { AuditWidget } from './audit-widget';
-import { AuditContribution } from './audit-contribution';
 import { AuditFrontendController } from './audit-controller';
+import { OperationsWidget } from './operations-widget';
+import { OperationsContribution } from './operations-contribution';
 import { StudioRuntimeFrontendClient } from './studio-runtime-client';
 import { WorkspaceSourcesFrontendController } from './workspace-sources-controller';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
@@ -167,11 +166,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // contribution for.
     bind(StudioContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioContribution);
-    bindViewContribution(bind, GitOperationsContribution);
-    bind(FrontendApplicationContribution).toService(GitOperationsContribution);
+    bindViewContribution(bind, OperationsContribution);
+    bind(FrontendApplicationContribution).toService(OperationsContribution);
     bind(FrontendApplicationContribution).toService(AuditFrontendController);
-    bindViewContribution(bind, AuditContribution);
-    bind(FrontendApplicationContribution).toService(AuditContribution);
     bindViewContribution(bind, WorkspaceSourcesContribution);
     bind(FrontendApplicationContribution).toService(WorkspaceSourcesContribution);
     // Orca agents panel. The service is a plain proxy — the runtime pushes
@@ -180,16 +177,15 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         ctx.container.get(WebSocketConnectionProvider).createProxy<OrcaService>(orcaServicePath)
     ).inSingletonScope();
     bindViewContribution(bind, OrcaContribution);
-    bind(GitOperationsWidget).toSelf();
+    bind(OperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();
     bind(AnalyzeWidget).toSelf();
     bind(ObjectDetailsWidget).toSelf();
-    bind(AuditWidget).toSelf();
     bind(WorkspaceSourcesWidget).toSelf();
     bind(OrcaWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
-        id: GitOperationsWidget.ID,
-        createWidget: () => ctx.container.get<GitOperationsWidget>(GitOperationsWidget)
+        id: OperationsWidget.ID,
+        createWidget: () => ctx.container.get<OperationsWidget>(OperationsWidget)
     })).inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: WorkspaceGraphWidget.ID,
@@ -208,10 +204,6 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ObjectDetailsWidget.ID,
         createWidget: () => ctx.container.get<ObjectDetailsWidget>(ObjectDetailsWidget)
-    })).inSingletonScope();
-    bind(WidgetFactory).toDynamicValue(ctx => ({
-        id: AuditWidget.ID,
-        createWidget: () => ctx.container.get<AuditWidget>(AuditWidget)
     })).inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: WorkspaceSourcesWidget.ID,
