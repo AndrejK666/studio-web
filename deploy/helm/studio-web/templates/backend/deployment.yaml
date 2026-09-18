@@ -108,6 +108,10 @@ spec:
               mountPath: /app/models
               readOnly: true
             {{- end }}
+            {{- if .Values.backend.artifactClone.enabled }}
+            - name: artifact-clones
+              mountPath: {{ .Values.backend.artifactClone.mountPath }}
+            {{- end }}
           ports: [{ name: http, containerPort: {{ .Values.backend.port }} }]
           env:
             # Knowledge-graph embeddings: one provider per deployment
@@ -123,6 +127,13 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: embed_api_key, optional: true } }
             - name: STUDIO_ENVIRONMENT
               value: {{ .Values.global.environmentName | quote }}
+            {{- if .Values.backend.artifactClone.enabled }}
+            # Turns on artifact-ingest's own shallow clones. Unset, the gear
+            # reads whatever checkout it can find and otherwise falls back to
+            # the connector's tree API — metadata with no file content.
+            - name: STUDIO_ARTIFACT_WORKDIR
+              value: {{ .Values.backend.artifactClone.mountPath | quote }}
+            {{- end }}
             # OpenTelemetry switches. The backend config expands these textually
             # into its `opentelemetry` block before parsing the YAML, so "true"
             # here becomes a real boolean there — which is why they are plain
@@ -264,4 +275,13 @@ spec:
         - name: embedding-models
           emptyDir:
             sizeLimit: 512Mi
+        {{- end }}
+        {{- if .Values.backend.artifactClone.enabled }}
+        # Shallow, single-branch clones for artifact ingest. Disposable: a
+        # restart re-clones, which is the trade this emptyDir makes against a
+        # per-environment claim. The pod's fsGroup (1000) is what makes it
+        # writable by a container that runs as uid 1000.
+        - name: artifact-clones
+          emptyDir:
+            sizeLimit: {{ .Values.backend.artifactClone.sizeLimit }}
         {{- end }}
