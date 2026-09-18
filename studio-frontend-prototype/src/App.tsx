@@ -2,26 +2,32 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv } from "./env";
 import { errText, matches, relTime } from "./format";
+// Screens that arrive when somebody asks for them — see ./lazy-screens for
+// what is split and what deliberately is not.
+import {
+  ComponentsCatalog,
+  DocumentTypesTab,
+  DocumentsTab,
+  DomainModelGraph,
+  GtsEntitiesTable,
+  IdentityDirectory,
+  LazyScreens,
+  ObjectTypes,
+  ProcessCatalogTab,
+  ProjectKits,
+  SpecQuality,
+} from "./lazy-screens";
 import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
-import { IdentityDirectory } from "./identity-directory";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
-import { SpecQuality } from "./spec-quality";
-import { ComponentsCatalog } from "./components-catalog";
-import { ObjectTypes } from "./object-types";
-import { ProjectKits } from "./kits";
-import { DocumentsTab, DocumentTypesTab } from "./documents";
-import { ProcessCatalogTab } from "./process-catalog";
 import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
-import { DomainModelGraph } from "./domain-model-graph";
-import { GtsEntitiesTable } from "./gts-entities";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -2039,6 +2045,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
       <div className="content" style={activeSpace ? { display: "none" } : undefined}>
         {error && <div className="error">{error}</div>}
+        {/* One boundary for every screen that arrives on demand, wherever in
+            this subtree it is rendered. Per-screen boundaries would mean a
+            fallback to reason about at each site and nothing gained: only one
+            screen is showing at a time. */}
+        <LazyScreens>
         {adminOpen ? (
           <>
             {adminView === "identities" && (
@@ -2221,6 +2232,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             onOpen={(s) => openSpace(studio, s)}
           />
         )}
+        </LazyScreens>
         </div>
       </div>
 
