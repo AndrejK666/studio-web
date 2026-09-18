@@ -22,7 +22,9 @@
  */
 
 const assert = require('node:assert');
-const { gitIdentityConfig } = require('../src/node/viewer-credentials-env');
+const {
+    gitIdentityConfig, writeGitConfig, redirectHome
+} = require('../src/node/viewer-credentials-env');
 
 const CONTAINER = '/home/node/.gitconfig';
 
@@ -88,6 +90,156 @@ test('the file is tab-indented and newline-terminated, as git writes it', () => 
     const config = gitIdentityConfig(CONTAINER, { name: 'Roma' });
     assert.ok(config.endsWith('\n'), JSON.stringify(config));
     assert.ok(/\n\tname = /.test(config), JSON.stringify(config));
+});
+
+// -- the config a home actually receives -------------------------------------
+
+test('a brand-new home comes out with the include AND the person in it', () => {
+    /* Measured on the dev stand, not imagined: `.studio-credentials/oidc-<sub>-<hash>/`
+     * was an EMPTY directory. `setViewer` rewrote the config for a viewer it
+     * already knew, and `home()` wrote it for a home it was asked for, but the
+     * FIRST adoption — the moment a person stops being anonymous — created the
+     * directory and put nothing in it. git in that home then had neither the
+     * include nor a `[user]`, which is the "Make sure you configure your
+     * user.name and user.email" the session answered to the one person who HAD
+     * said who they were. */
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-home-'));
+    try {
+        writeGitConfig(home, { name: 'ANDREI KUCHMA', email: 'andrej.kuchma@constructor.tech' });
+        const config = fs.readFileSync(path.join(home, '.gitconfig'), 'utf8');
+        assert.ok(config.includes('[include]'), config);
+        assert.ok(config.includes('	name = ANDREI KUCHMA'), config);
+        assert.ok(config.includes('	email = andrej.kuchma@constructor.tech'), config);
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test('an anonymous home still gets the include, so a commit is possible at all', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-home-'));
+    try {
+        writeGitConfig(home, undefined);
+        const config = fs.readFileSync(path.join(home, '.gitconfig'), 'utf8');
+        assert.ok(config.includes('[include]'), config);
+        assert.ok(!config.includes('[user]'), config);
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
+});
+
+
+// -- the home the plugin host actually resolves to ----------------------------
+
+const fsx = require('node:fs');
+const osx = require('node:os');
+const pathx = require('node:path');
+
+function root() { return fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'studio-redirect-')); }
+
+/* The session runs on Linux; a developer's checkout may be on Windows, where
+ * creating a symlink needs a privilege an ordinary account does not have. The
+ * behaviour under test IS the symlink, so there is nothing to fall back to:
+ * these say so and skip rather than passing without checking anything. */
+const symlinksWork = (() => {
+    const dir = root();
+    try {
+        fsx.symlinkSync(dir, pathx.join(dir, 'probe'), 'dir');
+        return true;
+    } catch (error) {
+        return false;
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+})();
+
+function testRedirect(name, fn) {
+    if (!symlinksWork) {
+        console.log('  SKIP ' + name + ' (this platform will not create symlinks)');
+        return;
+    }
+    test(name, fn);
+}
+
+testRedirect('the anonymous home becomes a link to the home the viewer owns', () => {
+    const dir = root();
+    try {
+        const anonymous = pathx.join(dir, 'session-1');
+        const stable = pathx.join(dir, 'oidc-a');
+        fsx.mkdirSync(anonymous);
+        fsx.mkdirSync(stable);
+        fsx.writeFileSync(pathx.join(anonymous, 'token'), 'written before anyone said who they were');
+
+        redirectHome(anonymous, stable);
+
+        assert.ok(fsx.lstatSync(anonymous).isSymbolicLink());
+        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+        // What the plugin host wrote while anonymous belongs to this viewer.
+        assert.ok(fsx.existsSync(pathx.join(stable, 'token')));
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+testRedirect('a second adoption repoints the link instead of leaving the first one', () => {
+    /* The defect, measured in a running session: one connection adopted twice —
+     * the IDE's own local identity, then the portal's when it arrived — and the
+     * link kept pointing at the first. `lstat().isDirectory()` is false for a
+     * symlink so the move was skipped, and `existsSync` FOLLOWS a symlink so
+     * the path read as taken and no new link was made. The plugin host went on
+     * resolving to the identity the person had already stopped being. */
+    const dir = root();
+    try {
+        const anonymous = pathx.join(dir, 'session-1');
+        const first = pathx.join(dir, 'local-anon');
+        const second = pathx.join(dir, 'oidc-a');
+        fsx.mkdirSync(anonymous);
+        fsx.mkdirSync(first);
+        fsx.mkdirSync(second);
+
+        redirectHome(anonymous, first);
+        redirectHome(anonymous, second);
+
+        assert.strictEqual(fsx.readlinkSync(anonymous), second);
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+testRedirect('redirecting to where it already points changes nothing', () => {
+    const dir = root();
+    try {
+        const anonymous = pathx.join(dir, 'session-1');
+        const stable = pathx.join(dir, 'oidc-a');
+        fsx.mkdirSync(stable);
+        fsx.symlinkSync(stable, anonymous, 'dir');
+
+        redirectHome(anonymous, stable);
+
+        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+testRedirect('a home that was never created anonymously still gets its link', () => {
+    const dir = root();
+    try {
+        const anonymous = pathx.join(dir, 'session-1');
+        const stable = pathx.join(dir, 'oidc-a');
+        fsx.mkdirSync(stable);
+
+        redirectHome(anonymous, stable);
+
+        assert.strictEqual(fsx.readlinkSync(anonymous), stable);
+    } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 if (failures) {

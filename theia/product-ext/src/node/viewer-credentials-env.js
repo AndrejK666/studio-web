@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 
 /** A key the viewer stored for themselves, or nothing. Never logged. */
+const os = require('os');
+
 function readStoredKey(file) {
     try {
         const value = fs.readFileSync(file, 'utf8').trim();
@@ -111,6 +113,113 @@ function gitIdentityConfig(containerConfigPath, person) {
     return lines.join('\n') + '\n';
 }
 
+/*
+ * A git identity in the viewer's home, because that home IS `$HOME` for the
+ * plugin host.
+ *
+ * THE DEFECT THIS FIXES, measured in a running session. The entrypoint writes a
+ * global git identity with `git config --global`, which lands in the container
+ * user's `~/.gitconfig`. This class then repoints `HOME` for the plugin host so
+ * one viewer's assistant credentials cannot be another's — and the plugin host
+ * is where the built-in git extension runs. With `HOME` moved, git looks for a
+ * global config in a directory that has none, and the IDE's own Commit answers
+ * "Make sure you configure your user.name and user.email in git". Reported from
+ * use; confirmed by reading the plugin host's own environ and finding no
+ * `.gitconfig` in any credential home.
+ *
+ * So each home gets one. It `include`s the container's config first, so
+ * whatever the session was launched with still applies, and then states the
+ * person on top — which is the part worth having: before this, every commit
+ * made from the IDE was authored by a shared "Constructor Studio" whoever made
+ * it, in a product whose whole point is telling collaborators apart.
+ *
+ * The address is only written when the identity provider stated one. Git needs
+ * an address to commit at all, and the include supplies the session's default,
+ * so a person with no address on their account commits under their own name and
+ * the session's address rather than not at all.
+ */
+function writeGitConfig(directory, person) {
+    const target = path.join(directory, '.gitconfig');
+    const body = gitIdentityConfig(path.join(os.homedir(), '.gitconfig'), person);
+    try {
+        // Rewritten only when it would change: this runs on every plugin-host
+        // fork, and a file whose mtime moves for nothing invites a watcher
+        // somewhere to act on it.
+        if (fs.readFileSync(target, 'utf8') === body) { return; }
+    } catch (error) {
+        /* absent or unreadable — write it */
+    }
+    try {
+        fs.writeFileSync(target, body, { mode: 0o600 });
+    } catch (error) {
+        // A home that cannot hold a git config still holds credentials, and the
+        // IDE falls back to the message this exists to remove rather than
+        // failing to start.
+        console.warn('[studio] could not write a git identity for this viewer', error);
+    }
+}
+
+/*
+ * Point this connection's anonymous home at the home its viewer actually owns.
+ *
+ * The plugin host is forked with `HOME=<anonymous>` before anybody has said who
+ * they are — `PluginHostEnvironmentVariable.process` is synchronous, so the
+ * fork cannot wait for identity. The running process keeps the path it was
+ * given, so the path is redirected underneath it instead.
+ *
+ * THREE cases, and the third is the one that was missing. Measured in a running
+ * session, whose credential root read:
+ *
+ *     local-anon-90e726d0-…/
+ *     oidc-46ac15da-…/                      (empty)
+ *     session-cd95393e-… -> local-anon-90e726d0-…
+ *
+ * That is ONE connection adopting twice: the IDE's own local identity first,
+ * then the portal's when it arrived. The first adoption moved the anonymous
+ * directory and left a symlink, correctly. The second created the new home and
+ * did nothing else — `lstat().isDirectory()` is false for a symlink, so the
+ * move was skipped, and `existsSync` FOLLOWS a symlink, so it reported the path
+ * as taken and no new link was made. The plugin host therefore kept resolving
+ * to the identity the person had already stopped being.
+ *
+ * Failure is not fatal in any case: the anonymous home stays in place and
+ * works, the viewer signs in to their assistant again next session, and
+ * nothing is shared with anybody.
+ */
+function redirectHome(anonymous, stable) {
+    try {
+        const existing = fs.lstatSync(anonymous, { throwIfNoEntry: false });
+        if (existing && existing.isSymbolicLink()) {
+            // Already redirected, possibly somewhere else. Repointing is the
+            // whole of "the person changed under a live page".
+            if (fs.readlinkSync(anonymous) === stable) { return; }
+            fs.unlinkSync(anonymous);
+        } else if (existing && existing.isDirectory()) {
+            // Anything the plugin host wrote before identity arrived belongs
+            // to this viewer: it was written by them.
+            for (const entry of fs.readdirSync(anonymous)) {
+                const from = path.join(anonymous, entry);
+                const to = path.join(stable, entry);
+                if (!fs.existsSync(to)) {
+                    fs.renameSync(from, to);
+                }
+            }
+            fs.rmSync(anonymous, { recursive: true, force: true });
+        }
+        if (!fs.lstatSync(anonymous, { throwIfNoEntry: false })) {
+            fs.symlinkSync(stable, anonymous, 'dir');
+        }
+    } catch (error) {
+        console.warn('[studio] could not redirect the anonymous credential home', error);
+    }
+}
+
 module.exports = {
-    assistantEnvironment, gitIdentityConfig, readStoredKey, CREDENTIAL_STORE, HOME_IS_MOVABLE
+    assistantEnvironment,
+    gitIdentityConfig,
+    writeGitConfig,
+    redirectHome,
+    readStoredKey,
+    CREDENTIAL_STORE,
+    HOME_IS_MOVABLE
 };
