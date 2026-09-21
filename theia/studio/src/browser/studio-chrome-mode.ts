@@ -12,15 +12,30 @@
 // exactly what a mode says:
 //
 //   Workbench  — Theia's own menu bar, rendered.
-//   Documents  — no menu bar, and no band where it was.
+//   Documents  — no menu bar, and nothing where it was but the one line that
+//                says who else is in this project.
 //
-// Two levers are needed, because two systems decide. `window.menuBarVisibility`
-// is what Theia acts on — it is the only thing that takes the panel out of the
-// LAYOUT (ApplicationShell.setTopPanelVisibility → Lumino setHidden). The
-// stylesheet below is what takes it back out of the product's blanket
-// `#theia-top-panel { display: none !important }`, which is a PAINT rule and
-// would otherwise leave the restored bar invisible but occupying its height —
-// the same band, earned a different way.
+// WHY DOCUMENTS KEEPS THE ROW NOW. The band is the reason the panel was taken
+// out of the layout, and the band was an argument about an EMPTY row. It is not
+// empty any more: `product-ext`'s collaboration strip mounts into this panel
+// (`area: 'top'`), and it is the only surface that states, while you are
+// reading something else, that a colleague is in the next file or that a thread
+// now mentions you. Measured on the dev stand before this change: the strip was
+// constructed, mounted and repainting on every heartbeat inside a panel that
+// `window.menuBarVisibility: 'hidden'` had removed from the layout, so nobody
+// ever saw a collaborator — the panel's own `setHidden(false)` in
+// `mountCollabStrip` runs at startup and the perspective overrides it after.
+//
+// So Documents pays the 32px and gets the line; what it still does not want is
+// the MENU BAR inside that line, and a mode has two levers because two systems
+// decide. `window.menuBarVisibility` is what Theia acts on — it is the only
+// thing that takes the panel out of the LAYOUT
+// (ApplicationShell.setTopPanelVisibility → Lumino setHidden), so it now says
+// `classic` in both modes and the panel stays. The stylesheet below is what
+// PAINTS: it takes the row back out of the product's blanket
+// `#theia-top-panel { display: none !important }`, and in Documents hides the
+// menu bar and the application icon inside it, leaving the strip — which takes
+// `flex: 1 1 auto` — the whole width.
 
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
@@ -37,8 +52,12 @@ const STYLE_ID = 'studio-chrome-mode';
  * does not decide who is right.
  */
 const CHROME_CSS = `
-body[data-studio-mode="documents"] #theia-top-panel { display: none !important; }
+body[data-studio-mode="documents"] #theia-top-panel,
 body[data-studio-mode="workbench"] #theia-top-panel { display: flex !important; }
+/* Documents keeps the row and loses everything in it but the collaboration
+   strip. A hidden flex child takes no width, so the strip gets the row. */
+body[data-studio-mode="documents"] #theia-top-panel > .lm-MenuBar,
+body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: none !important; }
 /* Source Control. The product hides its activity-bar tab along with Debug,
    Test, Search and Explorer — "a product keeps only the ones it wants" — which
    is right for someone writing a document and wrong for someone who has just
@@ -80,18 +99,21 @@ export class StudioChromeMode implements FrontendApplicationContribution {
 
     protected async apply(): Promise<void> {
         const documents = this.perspectives?.getActivePerspectiveId() === DOCUMENTS_PERSPECTIVE_ID;
-        // The attribute drives the paint; the preference drives the layout.
+        // The attribute drives the paint; the preference drives the layout, and
+        // the layout is the same in both modes because both need the panel —
+        // one for the menu bar, one for the collaboration strip. Only the paint
+        // differs.
         document.body.dataset.studioMode = documents ? 'documents' : 'workbench';
         try {
             await this.preferences.set(
                 'window.menuBarVisibility',
-                documents ? 'hidden' : 'classic',
+                'classic',
                 PreferenceScope.User,
             );
         } catch (error) {
             // Written at User scope, into the throwaway session container. A
-            // failure here costs the menu bar, not the session.
-            console.warn('studio: could not set the menu bar visibility for this mode', error);
+            // failure here costs the top row, not the session.
+            console.warn('studio: could not keep the top panel in the layout for this mode', error);
         }
     }
 }
