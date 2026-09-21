@@ -444,7 +444,7 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 5] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 6] = [
         (
             "dev.yaml",
             "studio-credstore-pg",
@@ -476,6 +476,14 @@ mod tests {
             "studio-scheduler",
             "nothing to schedule where studio-tasks stands down, and it keeps \
              its own state in the same PostgreSQL outbox family",
+        ),
+        (
+            "dev.yaml",
+            "studio-events",
+            "its sequence is an `ON CONFLICT DO UPDATE` taking a row lock and \
+             its window is pruned by range, neither of which SQLite has an \
+             answer for; the channel stands down here and both endpoints say \
+             so, which is the same trade studio-tasks makes in this profile",
         ),
     ];
 

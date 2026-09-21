@@ -472,6 +472,21 @@ gears:
       dbname: "studio_tasks"
     config: {}
 
+  # ── studio-events (the push channel to the portal) ──
+  # The sequence and the replay window are rows rather than process memory,
+  # which is what lets a second replica exist at all. Drop the `database:` and
+  # the channel stands down: both endpoints answer 503 and nothing is
+  # published. See config/k8s.yaml for the full note.
+  studio-events:
+    database:
+      server: "pg_main"
+      dbname: "studio_events"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+    config: {}
+
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into
   # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second

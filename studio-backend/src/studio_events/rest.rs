@@ -16,6 +16,7 @@ use toolkit_security::SecurityContext;
 
 use super::dto::{StudioEventDto, StudioEventPage};
 use super::hub::StudioEventHub;
+use super::store::EventStore;
 
 struct License;
 impl AsRef<str> for License {
@@ -25,9 +26,32 @@ impl AsRef<str> for License {
 }
 impl LicenseFeature for License {}
 
-/// The hub handle carried by the router.
+/// The handles carried by the router. `None` = the gear stood down for want of
+/// a database, and both endpoints say so rather than pretending to be a
+/// channel that delivers nothing.
 #[derive(Clone)]
-pub struct Hub(pub Arc<StudioEventHub>);
+pub struct Channel {
+    hub: Option<Arc<StudioEventHub>>,
+    store: Option<Arc<EventStore>>,
+}
+
+impl Channel {
+    fn hub(&self) -> ApiResult<&Arc<StudioEventHub>> {
+        self.hub.as_ref().ok_or_else(unavailable)
+    }
+
+    fn store(&self) -> ApiResult<&Arc<EventStore>> {
+        self.store.as_ref().ok_or_else(unavailable)
+    }
+}
+
+fn unavailable() -> CanonicalError {
+    CanonicalError::service_unavailable()
+        .with_detail(
+            "the studio events channel is not available in this deployment (studio-events has no database configured)",
+        )
+        .create()
+}
 
 /// How far behind the caller is, and how much it will accept.
 #[derive(Debug, Deserialize)]
@@ -48,31 +72,37 @@ pub struct SinceQuery {
 /// what holds the connection open through idle-timeout intermediaries.
 async fn stream(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(hub): Extension<Hub>,
-) -> impl IntoResponse {
-    hub.0
-        .channel(ctx.subject_tenant_id())
-        .sse_response()
-        .into_response()
+    Extension(channel): Extension<Channel>,
+) -> axum::response::Response {
+    match channel.hub() {
+        Ok(hub) => hub
+            .channel(ctx.subject_tenant_id())
+            .sse_response()
+            .into_response(),
+        Err(error) => error.into_response(),
+    }
 }
 
 /// `GET /studio-events/v1/events?after_seq=N` — replay the gap.
 async fn events(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(hub): Extension<Hub>,
+    Extension(channel): Extension<Channel>,
     Query(q): Query<SinceQuery>,
 ) -> ApiResult<JsonBody<StudioEventPage>> {
-    let limit = q.limit.unwrap_or(200).clamp(1, 500);
-    let (events, latest_seq) =
-        hub.0
-            .since(ctx.subject_tenant_id(), q.after_seq.unwrap_or(0), limit);
+    let limit = q.limit.unwrap_or(200).clamp(1, 500) as u64;
+    let (events, latest_seq) = channel
+        .store()?
+        .after(ctx.subject_tenant_id(), q.after_seq.unwrap_or(0), limit)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(StudioEventPage { events, latest_seq }))
 }
 
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
-    hub: Arc<StudioEventHub>,
+    hub: Option<Arc<StudioEventHub>>,
+    store: Option<Arc<EventStore>>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-events/v1/stream")
         .operation_id("studio_events.stream")
@@ -110,5 +140,5 @@ pub fn register_routes(
         .error_401(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Hub(hub)))
+    router.layer(Extension(Channel { hub, store }))
 }

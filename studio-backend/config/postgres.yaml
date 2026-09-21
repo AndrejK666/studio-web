@@ -402,6 +402,30 @@ gears:
       dbname: "studio_tasks"
     config: {}
 
+  # ── studio-events (the push channel to the portal) ──
+  # The sequence and the replay window are rows, not process memory, which is
+  # what lets a second replica exist: an event published on one is read by all
+  # of them, and `?after_seq=` means the same thing whichever one a reconnect
+  # lands on. Drop the `database:` and the gear stands down — both endpoints
+  # answer 503 and nothing is published, which is deliberate: a channel that
+  # delivers to one replica's worth of users is worse than one that says it
+  # is off.
+  #
+  # `pool` is small on purpose. The traffic is one small insert per event and
+  # one indexed read per subscribed tenant per poll, and every connection here
+  # is counted against the budget on `pg_main` above.
+  studio-events:
+    database:
+      server: "pg_main"
+      dbname: "studio_events"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config: {}
+
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into
   # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second
