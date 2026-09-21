@@ -55,11 +55,15 @@ database:
         #                                                       ---
         #                                                        82
         #
-        # A SECOND REPLICA DOES NOT FIT: the backend's 62 doubles to 124 on its
-        # own. Lowering the shared `max_conns` to 3 brings two replicas to
-        # about 96 including everything else, which is the smallest change that
-        # makes room; raising `max_connections` is the other, and it costs
-        # memory on the server (see deploy/k8s/cloudnative-pg/README.md).
+        # A SECOND REPLICA needs 124 for the backend alone, 144 with everyone
+        # else — which is why `max_connections` is 150 rather than the default
+        # 100 (deploy/k8s/cloudnative-pg/README.md carries the table and the
+        # memory that pays for it).
+        #
+        # Lowering this number is NOT the way to make room, and the arithmetic
+        # says so plainly: at 3 two replicas still come to 118, and only 2 per
+        # gear fits under 100 — three connections for a gear serving a burst
+        # is a queue, not a budget.
         #
         # Raising this by one raises the ceiling by fourteen. Raise a single
         # gear's own `pool` instead.

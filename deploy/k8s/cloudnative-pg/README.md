@@ -33,11 +33,29 @@ The other blocker, a push channel whose sequence lived in process memory, is
 gone: `studio-events` keeps its sequence and its replay window in the database
 listed above, so two replicas agree on what a cursor means.
 
-Two ways to make room, neither free. Lowering the shared `max_conns` from 4 to
-3 brings two replicas to roughly 96 including everything else, at the cost of
-queueing sooner under a burst. Raising `max_connections` costs memory on the
-server — a PostgreSQL backend is a process — so `resources` has to move with
-it. The pooler below is the third way and is not available yet.
+So `max_connections` is **150**, not PostgreSQL's default of 100. The
+arithmetic, which is the whole reason for the number:
+
+| shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
+|---|---|---|---|---|
+| 4 (today) | 62 | 124 | 144 | no |
+| 3 | 49 | 98 | 118 | no |
+| 2 | 36 | 72 | 92 | yes |
+
+Lowering the per-gear pool is therefore not the way to make room: three
+connections per gear still does not fit, and two — the only value that does —
+is a queue rather than a budget for any gear serving a burst.
+
+Raising the ceiling is not free either. A PostgreSQL backend is a process, so
+150 of them is roughly another 400 MB of resident memory at saturation, and
+`resources.limits.memory` moves from 2 Gi to 3 Gi with it. That is the trade
+being made: memory on one server against a second replica of the backend.
+
+The pooler below is the third way and is not available yet.
+
+> **This takes effect on the next Deploy Infra**, and changing
+> `max_connections` restarts PostgreSQL — it is not a reloadable parameter.
+> Plan it like any other database restart.
 
 ### PgBouncer
 

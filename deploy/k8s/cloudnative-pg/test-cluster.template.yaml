@@ -32,12 +32,20 @@ spec:
   # pools against it, and the Keycloak chart caps its pool against it too. An
   # implicit default is not a budget anybody can check.
   #
-  # Raising it is not free: every backend is a process, so 200 connections is
-  # roughly another gigabyte of resident memory and the `resources` below have
-  # to move with it. Prefer lowering a consumer.
+  # 150 rather than PostgreSQL's default 100, and the number is load-bearing:
+  # studio-backend/config/k8s.yaml sizes fifteen gear pools against it and the
+  # Keycloak chart caps its pool against it. Two backend replicas need 124 for
+  # the backend alone and 144 with everyone else — which is what this headroom
+  # is for. The table in README.md shows why lowering the per-gear pools
+  # instead does not work.
+  #
+  # No `resources` change here, unlike dev: this cluster already has 4 Gi, and
+  # 150 backends at saturation is roughly 400 MB more than 100.
+  #
+  # NOT RELOADABLE — changing it restarts PostgreSQL.
   postgresql:
     parameters:
-      max_connections: "100"
+      max_connections: "150"
   enableSuperuserAccess: false
   managed:
     roles:
