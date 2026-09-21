@@ -1,0 +1,25 @@
+{{- /*
+  Same rule as the backend and Keycloak budgets: above one replica only. This
+  is the one that most often renders, because the portal is a static bundle
+  behind nginx — nothing about it resists a second replica, so the deployed
+  environments run two and a node drain can take one of them.
+*/}}
+{{- /*
+  `frontend.replicas` alone, with no autoscaling branch: the frontend has no
+  HPA template, so `frontend.autoscaling.enabled` decides nothing about how
+  many pods exist and a budget derived from it would be derived from a value
+  the cluster never reads.
+*/}}
+{{- if and .Values.frontend.podDisruptionBudget.enabled (gt (int .Values.frontend.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "studio-web.fullname" . }}-frontend
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: {{ .Values.frontend.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+{{- end }}

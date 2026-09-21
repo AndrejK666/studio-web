@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use super::service::{RunQuery, TaskService};
 use super::{RunState, entity, registry};
+use crate::pagination::PageQuery;
 
 /// Errors attributable to a run as a resource.
 #[resource_error(gts_id!("cf.studio.tasks.run.v1~"))]
@@ -95,6 +96,10 @@ pub struct RunDto {
 #[toolkit_macros::api_dto(response)]
 pub struct RunListDto {
     pub items: Vec<RunDto>,
+    /// Runs matching the filter across every page, so a caller can show
+    /// "N of M" and knows a next page exists exactly when
+    /// `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -114,9 +119,11 @@ pub struct RunFilter {
     state: Option<String>,
     #[serde(default)]
     task_type: Option<String>,
-    /// Page size, default 50.
-    #[serde(default)]
-    limit: Option<u64>,
+    /// `?offset=&limit=` — see [`crate::pagination`]. The ceiling used to be
+    /// 500 here and is 200 everywhere else; one contract is worth more than
+    /// this endpoint's extra 300, and no caller asks for more than 200.
+    #[serde(flatten)]
+    page: PageQuery,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,20 +175,22 @@ async fn list_runs(
         })?),
         None => None,
     };
-    let items = svc
+    let (items, total) = svc
         .list(
             &ctx,
             q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
             &RunQuery {
                 state,
                 task_type: q.task_type,
-                limit: q.limit.unwrap_or(50).clamp(1, 500),
+                offset: q.page.offset() as u64,
+                limit: q.page.limit() as u64,
             },
         )
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(RunListDto {
         items: items.into_iter().map(to_dto).collect(),
+        total: u32::try_from(total).unwrap_or(u32::MAX),
     }))
 }
 
@@ -271,6 +280,13 @@ pub fn register_routes(
         .tag("StudioTasks")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first run",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_runs)
         .json_response_with_schema::<RunListDto>(openapi, StatusCode::OK, "Runs")
         .error_400(openapi)

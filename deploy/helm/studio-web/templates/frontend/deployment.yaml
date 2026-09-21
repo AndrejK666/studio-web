@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: frontend
     spec:
       serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.frontend.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -49,6 +50,14 @@ spec:
             - name: STUDIO_DISCORD_URL
               value: {{ .Values.frontend.discordUrl | quote }}
             {{- end }}
+          # The same deregistration pause the backend takes, and for the same
+          # reason: endpoint removal and container shutdown are concurrent, so
+          # without it a rollout serves 502s for whatever kube-proxy routed
+          # into the overlap. nginx itself needs no help finishing a response.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.frontend.preStopDrainSeconds }}"]
           readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 3, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
           resources: {{- toYaml .Values.frontend.resources | nindent 12 }}

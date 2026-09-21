@@ -118,6 +118,23 @@ dashboardProviders:
 dashboardsConfigMaps:
   studio: studio-dashboards
 
+# Alert rules are mounted the same way, and for the same reason: the sidecar
+# that would discover them cannot talk to this cluster's API server, and a rule
+# is one more thing that must not live only in `grafana.db`.
+#
+# Grafana reads every file under this path at startup. `make alerts` builds the
+# ConfigMap; `make grafana` depends on it, so the mount is never missing.
+#
+# Unlike dashboards, this one is NOT re-read on a timer — alerting provisioning
+# runs once at startup. Changing a rule therefore needs the pod restarted:
+#
+#     make alerts && kubectl -n studio-monitoring rollout restart deploy/grafana
+extraConfigmapMounts:
+  - name: studio-alerts
+    mountPath: /etc/grafana/provisioning/alerting
+    configMap: studio-alerts
+    readOnly: true
+
 grafana.ini:
   analytics:
     reporting_enabled: false

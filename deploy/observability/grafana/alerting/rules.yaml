@@ -1,0 +1,344 @@
+# Studio alert rules, provisioned as files — the same contract the dashboards
+# have: the directory is the source, the UI is a scratchpad. A provisioned rule
+# is read-only in Grafana, so "somebody edited the threshold in the browser" is
+# not a state this can reach.
+#
+# `make alerts` builds these into the `studio-alerts` ConfigMap, which Grafana
+# mounts at /etc/grafana/provisioning/alerting.
+#
+# WHY THESE FOUR, AND NOT A WALL OF THEM
+#
+# Every query below is one a dashboard in ./dashboards already draws, against a
+# metric this cluster is known to produce — except the latency rule, which reads
+# the backend's own RED histogram and therefore only has data from the first
+# deploy that carries `backend.telemetry.metrics: true`. That one is the single
+# rule here whose metric name must be confirmed on the stand; see the README.
+#
+# Thresholds are deliberately structural rather than tuned: a container
+# restarting in a loop, a connection pool eating the server's ceiling, an error
+# ratio an order of magnitude above healthy. None of them needs a baseline to be
+# obviously wrong, which is the property that keeps a channel unmuted long
+# enough to earn tuned thresholds later.
+
+apiVersion: 1
+
+groups:
+  # ── The edge: what a browser actually experienced ──────────────────────────
+  - orgId: 1
+    name: studio-edge
+    folder: Studio
+    interval: 1m
+    rules:
+      # Traefik in this cluster is scoped to studio-dev and studio-test
+      # (`--providers.kubernetesingress.namespaces=...`), so every service it
+      # reports is one of ours and the query needs no filter — one that matched
+      # nothing would be a rule that never fires, which is worse than no rule.
+      - uid: studio-edge-5xx
+        title: Edge 5xx ratio above 5%
+        condition: C
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.service }} is answering 5xx for more than 5% of requests"
+          description: >-
+            Measured at Traefik, so it covers the backend being down, the
+            gateway refusing, and anything in between. Check the pod first
+            (`kubectl -n studio-dev get pods`), then the per-service error rate
+            on the Studio / Edge dashboard to see whether one service or the
+            whole ingress is affected.
+        # No traffic means no series, and no series means nothing is broken —
+        # silence is the correct answer to an idle stand at 3am.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: vm
+            model:
+              datasource: { type: prometheus, uid: vm }
+              editorMode: code
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              # The `and` clause is a traffic floor: without it a service that
+              # served one failed request all night sits at ratio 1.0 forever.
+              # 0.05 rps is three requests a minute.
+              expr: >-
+                (
+                  sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
+                  /
+                  clamp_min(sum by (service) (rate(traefik_service_requests_total[5m])), 0.001)
+                )
+                and
+                (sum by (service) (rate(traefik_service_requests_total[5m])) > 0.05)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+
+      # The backend's own histogram rather than Traefik's, for one reason:
+      # Traefik times a REQUEST, and `/studio-events/v1/stream` is a request
+      # that lasts an hour by design, as is the IDE WebSocket proxy. Their
+      # duration would sit in the same bucket set as every API call and drag
+      # the quantile past any threshold worth setting. `http.route` is the
+      # label that can tell them apart, and only the backend emits it.
+      #
+      # The route exclusion matches with or without the `/cf` mount prefix,
+      # because which one appears in `http.route` depends on where the metrics
+      # layer sits relative to the gateway's mount.
+      - uid: studio-backend-latency
+        title: Backend p95 latency above 2s
+        condition: C
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Backend p95 latency in {{ $labels.env }} is above 2s"
+          description: >-
+            Long-lived streams (SSE, the IDE WebSocket) are excluded, so this is
+            ordinary API latency. The usual causes, in the order they have
+            happened: a list endpoint with no pagination answering with the
+            whole table, a gear's connection pool queueing on `acquire_timeout`,
+            and the graph gear re-embedding on a request path. Studio /
+            Resources shows whether CPU is throttled at the same time.
+        # This metric must exist once `backend.telemetry.metrics: true` has
+        # shipped. If it does not, the switch did not take or the series is
+        # named differently — and a rule that quietly evaluates nothing is the
+        # exact failure this whole change exists to remove. So absence is loud.
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: vm
+            model:
+              datasource: { type: prometheus, uid: vm }
+              editorMode: code
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              expr: >-
+                histogram_quantile(
+                  0.95,
+                  sum by (le, env) (
+                    rate(
+                      http_server_request_duration_seconds_bucket{http_route!~".*/studio-events/v1/stream|.*/studio-session/v1/ide.*"}[15m]
+                    )
+                  )
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [2] }
+
+  # ── Workloads: containers that cannot stay up ──────────────────────────────
+  - orgId: 1
+    name: studio-workloads
+    folder: Studio
+    interval: 1m
+    rules:
+      - uid: studio-restart-loop
+        title: Container restarting repeatedly
+        condition: C
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.pod }}/{{ $labels.container }} restarted more than 3 times in an hour"
+          description: >-
+            `kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} --previous`
+            first. On the backend the recurring cause is boot work outrunning
+            the probes — it migrates fourteen gear databases before it serves,
+            and a liveness probe that fires during that kills it mid-migration
+            and starts the loop again.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 7200, to: 0 }
+            datasourceUid: vm
+            model:
+              datasource: { type: prometheus, uid: vm }
+              editorMode: code
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              expr: >-
+                sum by (namespace, pod, container) (
+                  increase(kube_pod_container_status_restarts_total{namespace=~"studio-(dev|test)"}[1h])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [3] }
+
+      # `kube_pod_container_status_last_terminated_reason` latches: it stays 1
+      # for the life of the pod, so alerting on it alone produces a firing alert
+      # that never clears until something reschedules the pod — the textbook way
+      # to teach people to ignore a channel. Multiplying it by a RECENT restart
+      # makes it self-clearing: it fires while the kill is fresh and goes quiet
+      # 15 minutes after the last one.
+      #
+      # Both sides are reduced to the same three labels so the join is
+      # one-to-one; the raw right-hand series carries `reason` and `uid` too.
+      - uid: studio-oomkilled
+        title: Container OOMKilled
+        condition: C
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.pod }}/{{ $labels.container }} was OOMKilled"
+          description: >-
+            The container hit its memory limit, it was not the node. Studio /
+            Resources → "Memory as a share of limit" shows how close the rest
+            are. Raising a limit is a values.yaml edit; note that session Pods
+            are sized against the namespace quota, so raising theirs without
+            raising the quota only moves the failure to admission.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: vm
+            model:
+              datasource: { type: prometheus, uid: vm }
+              editorMode: code
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              expr: >-
+                sum by (namespace, pod, container) (
+                  increase(kube_pod_container_status_restarts_total{namespace=~"studio-(dev|test)"}[15m])
+                )
+                * on (namespace, pod, container)
+                max by (namespace, pod, container) (
+                  kube_pod_container_status_last_terminated_reason{namespace=~"studio-(dev|test)", reason="OOMKilled"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  # ── Postgres: the one resource every gear shares ───────────────────────────
+  - orgId: 1
+    name: studio-postgres
+    folder: Studio
+    interval: 1m
+    rules:
+      # One backend replica opens a pool per gear database — fourteen of them,
+      # ten connections each by config/k8s.yaml — against a server whose default
+      # ceiling is 100. Nothing enforces that arithmetic anywhere, so this is the
+      # alert that notices it being exceeded, and the reason the threshold is an
+      # absolute number rather than a ratio: the exporter's settings family
+      # (`cnpg_pg_settings_setting`, which carries max_connections) is dropped at
+      # the collector as static dead weight, so there is nothing to divide by.
+      # Raise this the day max_connections is raised, and not before.
+      - uid: studio-pg-connections
+        title: Postgres backends above 80
+        condition: C
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.namespace }} Postgres is at {{ $values.B }} backends of ~100"
+          description: >-
+            At the ceiling every gear's `acquire_timeout` (30s) becomes request
+            latency and then 500s, all at once and across unrelated features.
+            Studio / Postgres → "Waiting backends" says whether they are queueing
+            already. The durable fixes are a pooler in front of the server and
+            per-gear pool sizes that add up to less than the ceiling; the
+            immediate one is restarting whatever opened them.
+        noDataState: NoData
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vm
+            model:
+              datasource: { type: prometheus, uid: vm }
+              editorMode: code
+              instant: true
+              range: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              expr: 'sum by (namespace) (cnpg_backends_total{namespace=~"studio-(dev|test)"})'
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [80] }

@@ -44,8 +44,9 @@ the cluster had to be modified to be observed.
 | `cnpg` | CloudNativePG instance pods `:9187` | Postgres: connections, transactions, replication, WAL, database size |
 | (OTLP) | pushed by `studio-backend` | `http_server_request_duration_seconds_*` — RED per `http.route` |
 
-The OTLP receiver listens from day one; the backend does not push yet (see
-**Turning on application metrics**).
+The OTLP receiver listened from day one. The backend pushes from the first
+deploy that carries `backend.telemetry.metrics: true`, which the dev and test
+environment values now set (see **Turning on application metrics**).
 
 ## Dashboards
 
@@ -73,6 +74,103 @@ Two things this arrangement buys, both learned the hard way elsewhere:
   via `kubectl`, never through `tpl`, so a legend format stays written the way
   Grafana wants it instead of being helm-escaped. (Insight, which embeds
   dashboards inline in a values file, has to escape every one of them.)
+
+## Alerts
+
+Five rules, provisioned from `grafana/alerting/rules.yaml` into the same
+**Studio** folder. Grafana's own unified alerting evaluates them against
+VictoriaMetrics — there is still no Alertmanager and no second component to
+operate.
+
+| Rule | Fires when | Severity |
+|---|---|---|
+| `studio-edge-5xx` | A Traefik service answers 5xx for >5% of requests for 10 min, while serving at least 3 req/min | page |
+| `studio-backend-latency` | Backend p95 (streams excluded) above 2 s for 10 min | ticket |
+| `studio-restart-loop` | A container restarts more than 3 times in an hour | page |
+| `studio-oomkilled` | A container was OOMKilled and restarted in the last 15 min | page |
+| `studio-pg-connections` | Postgres holds more than 80 backends for 10 min | page |
+
+Every query but one is lifted from a dashboard panel in `grafana/dashboards`,
+so it runs against a metric this cluster is known to produce. The exception is
+`studio-backend-latency`, which reads the backend's own OTLP histogram — see
+**Verifying the latency rule** below.
+
+### Installing them
+
+```bash
+make alerts ALERT_WEBHOOK_URL=https://hooks.example.com/...   # rules + delivery
+make alerts                                                    # rules only
+```
+
+`make grafana` (and therefore `make all`) depends on `alerts`, so the ConfigMap
+the pod mounts always exists. Alerting provisioning runs **once at startup**,
+unlike the dashboard file provider, so changing a rule needs a restart:
+
+```bash
+make alerts && kubectl -n studio-monitoring rollout restart deploy/grafana
+```
+
+### Where a firing alert goes
+
+Nowhere, until somebody supplies `ALERT_WEBHOOK_URL`. That is not an oversight
+to be tidied up later — it is the one input this repository cannot hold. There
+is no Alertmanager in the cluster and no chat webhook the cluster owns, and a
+URL that grants the right to post into a room does not belong in git.
+
+Without it, `make alerts` installs `rules.yaml` alone, prints that delivery is
+unconfigured, and the alerts are visible in Grafana's Alerting UI. With it, it
+also renders `contactpoints.yaml` and installs `policies.yaml`: everything goes
+to one receiver, `severity: page` repeating every 4 h and `severity: ticket`
+daily. The two files travel together because a notification policy naming a
+receiver that was never provisioned makes Grafana fail provisioning at startup.
+
+Note where the URL ends up: the `studio-alerts` ConfigMap, not a Secret.
+Grafana provisioning reads files and a webhook URL is not a field it accepts as
+a secure setting, so anyone who can read ConfigMaps in `studio-monitoring`
+holds the capability to post into that room.
+
+### Verifying the latency rule
+
+`studio-backend-latency` is the only rule whose metric did not exist when it was
+written — it arrives with the first backend deploy carrying
+`backend.telemetry.metrics: true`. Two things to confirm on the stand once that
+lands, both one query:
+
+```bash
+kubectl -n studio-monitoring port-forward svc/vm-victoria-metrics-single-server 8428:8428
+
+# 1. The series exists under the expected name.
+curl -s 'localhost:8428/api/v1/query?query=count(http_server_request_duration_seconds_bucket)' | jq .
+
+# 2. It carries `env`, so dev and test are separable. Both namespaces push to
+#    one collector, and an OTLP series has no `namespace` label to derive it
+#    from — `env` is copied from the `deployment.environment` resource
+#    attribute by a relabel rule in alloy-metrics/values.yaml.
+curl -s 'localhost:8428/api/v1/query?query=count%20by%20(env)%20(http_server_request_duration_seconds_bucket)' | jq .
+```
+
+If the first returns nothing, the rule is evaluating against an empty result.
+That is why its `noDataState` is `NoData` rather than `OK`: a rule that
+silently measures nothing is the exact failure this stack exists to remove, so
+it is made visible instead of being made quiet. The other rules use `OK`,
+because for them an empty result genuinely means "no traffic, no restarts,
+nothing wrong".
+
+### Thresholds
+
+Structural, not tuned — a container in a restart loop, a connection pool eating
+the server's ceiling, an error ratio an order of magnitude above healthy. None
+of them needs a baseline to be obviously wrong, which is what keeps the channel
+worth reading long enough to earn tuned numbers later. Insight's lesson (a
+threshold picked before the baseline exists is the fastest route to a muted
+channel) is the reason these are deliberately far from the edge rather than the
+reason to have none.
+
+`studio-pg-connections` is an absolute count rather than a fraction of
+`max_connections` on purpose: the exporter family carrying that setting
+(`cnpg_pg_settings_setting`) is dropped at the collector as static dead weight,
+so there is nothing to divide by. Raise the threshold the day `max_connections`
+is raised, and not before.
 
 ## Access: SSO over a port-forward
 
@@ -204,10 +302,15 @@ opentelemetry:
 
 That block is already in `studio-backend/config/k8s.yaml`, and the Helm chart
 wires the switches (`backend.telemetry.metrics` / `.tracing` / `.endpoint` →
-`STUDIO_OTEL_*`). Both default to **off**. Because the config file is baked into
-the image, the flags only take effect from the next image build onward —
-flipping the value on a pod running an older image changes nothing, since that
-image's config never mentions the variable.
+`STUDIO_OTEL_*`). The chart still defaults both to **off**, so an environment
+without a collector is unaffected; `deploy/helm/values-dev.example.yaml` and
+`values-test.example.yaml` turn `metrics` on, because those two clusters have
+one. Tracing stays off everywhere — there is no Tempo, and spans with nowhere
+to go are a batch processor filling up and dropping them.
+
+Because the config file is baked into the image, the flags only take effect from
+the next image build onward — flipping the value on a pod running an older image
+changes nothing, since that image's config never mentions the variable.
 
 Two things make that work, and both are easy to get wrong:
 
@@ -238,9 +341,10 @@ open http://localhost:12345/
 
 - **Logs and traces.** Loki + an Alloy DaemonSet, Tempo for the OTLP spans the
   toolkit already knows how to emit.
-- **Alerts.** Deliberately last. A threshold picked before the baseline exists
-  is the fastest route to a muted channel — Insight recorded that lesson; we get
-  to inherit it rather than repeat it.
+- **A place for an alert to arrive.** The rules exist (see **Alerts**); the
+  destination does not. There is no Alertmanager here and no chat webhook the
+  cluster owns, so until one is supplied `make alerts` installs the rules alone
+  and says so out loud.
 - **Domain metrics for `studio-session`.** Session start latency, failures to
   create, live sessions per tenant, idle reaping. These do not exist in any gear
   yet and need code (the pattern is a meter in the gear, as in

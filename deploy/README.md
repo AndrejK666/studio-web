@@ -65,6 +65,47 @@ One image, any environment:
   `idp_admin_secret` to enable the Keycloak Admin provisioning plugin;
   without them the plugin self-deprioritizes.
 
+## Rollout, restart, and the outage window
+
+**A backend deploy is an outage.** Every environment runs one backend replica
+with `maxUnavailable: 1, maxSurge: 0`, so the old pod stops before the new one
+starts and the API is unavailable for as long as a boot takes. This is written
+down rather than fixed because both ways out are closed today:
+
+- a second replica is refused by the chart while `backend.sessions.enabled` is
+  true, and
+- `studio-events` fans out in-process, so two replicas would each serve half
+  the subscribers their own half of the events.
+
+Surge is not the missing piece either: `maxSurge: 1` needs a second backend's
+worth of CPU and memory free on a stand that already runs at quota with IDE
+sessions active, and it would still be refused by the replica guard.
+
+What the chart does instead is make the window short and side-effect free:
+
+| Setting | Default | What it prevents |
+|---|---|---|
+| `backend.startupBudgetSeconds` | 300 | A liveness probe killing the pod during boot. It migrates fourteen gear databases and may load an embedding model; the startup probe gives that its own budget, and liveness only begins after it passes. Before this, a slow boot looked like a crash loop. |
+| `backend.preStopDrainSeconds` | 10 | 502s during the rollout. Endpoint removal and container shutdown are concurrent in Kubernetes, so without a pause the process starts stopping while kube-proxy still routes to it. |
+| `backend.terminationGracePeriodSeconds` | 60 | In-flight requests being SIGKILLed. It deliberately does **not** cover the long-lived streams (SSE, the IDE WebSocket) — those run for minutes to an hour and waiting for them would mean never rolling. They are cut, and the portal reconnects with `?after_seq=`. |
+
+The chart refuses to render if the drain does not fit inside the grace period,
+and `studio-delivery.yml` asserts that refusal.
+
+**The portal is not an outage.** `frontend.replicas: 2` in the environment
+values, with the same `maxUnavailable: 1, maxSurge: 0`, rolls one pod at a time
+with the other serving — zero downtime, no surge capacity, 50m/64Mi for the
+second pod.
+
+**PodDisruptionBudgets render only above one replica**, for backend, frontend,
+prototype and Keycloak alike. At one replica the choice is between a budget
+that permits the eviction, which protects nothing, and one that forbids it,
+which blocks node drains and cluster upgrades on an operator. Neither is
+availability, and an object in the cluster that looks like a guarantee while
+being neither is worse than the gap being legible in `values.yaml`. So today
+only the frontend budget exists in a deployed environment — which is also an
+accurate statement of where redundancy exists.
+
 ## Install
 
 ```bash

@@ -1557,19 +1557,29 @@ export const api = {
 
   /* ── Studio kit registry (prototype only) ── */
 
-  kits: (token: string) => request<{ items: StudioKit[] }>("/studio-kits/v1/catalog", token),
+  // All three walk their pages. The endpoints are `?offset=&limit=` now — the
+  // server stopped answering with the whole collection — and these screens
+  // filter and lay out the full list client-side, so asking once would render
+  // the first fifty and look complete.
+  kits: async (token: string) => ({
+    items: await requestAllPages<StudioKit>("/studio-kits/v1/catalog", token, "items"),
+  }),
 
-  kitInstallations: (token: string, projectId: string) =>
-    request<{ items: KitInstallation[] }>(
+  kitInstallations: async (token: string, projectId: string) => ({
+    items: await requestAllPages<KitInstallation>(
       `/studio-kits/v1/projects/${encodeURIComponent(projectId)}/installations`,
       token,
+      "items",
     ),
+  }),
 
-  projectRepositories: (token: string, projectId: string) =>
-    request<{ items: ProjectRepository[] }>(
+  projectRepositories: async (token: string, projectId: string) => ({
+    items: await requestAllPages<ProjectRepository>(
       `/studio-kits/v1/projects/${encodeURIComponent(projectId)}/repositories`,
       token,
+      "items",
     ),
+  }),
 
   requestKitInstallation: (
     token: string,

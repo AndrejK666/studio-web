@@ -32,8 +32,57 @@ database:
       password: "${STUDIO_PG_PASSWORD}"
       dbname: "${STUDIO_PG_DBNAME}"  # admin/default db; gears override per-gear below
       pool:
-        max_conns: 10
-        acquire_timeout: "30s"
+        # ── The arithmetic, because nothing else states it ──────────────────
+        #
+        # toolkit-db caches one `Db` PER GEAR (manager.rs, `cache: DashMap<String, Db>`),
+        # and a gear inherits this block unless it declares its own. This is
+        # therefore not "ten connections to pg_main" — it is ten PER GEAR, and
+        # this assembly configures fourteen gear databases. The previous value
+        # of 10 was a ceiling of 140 connections from one backend process
+        # against a server whose own ceiling is 100. It has not been hit
+        # because pools are lazy and one replica serves few people, which is
+        # the kind of margin that disappears without warning.
+        #
+        # The budget, counted as ceilings against `max_connections: 100`:
+        #
+        #   13 gears x 4                                         52
+        #   graph-storage (its own override below)                8
+        #   Keycloak (KC_DB_POOL_MAX_SIZE in the chart)          10
+        #   backend-bootstrap Job, transient                      2
+        #   CloudNativePG instance manager + exporter             5
+        #   superuser_reserved_connections                        3
+        #                                                       ---
+        #                                                        80
+        #
+        # Raising this by one raises the ceiling by fourteen. Raise a single
+        # gear's own `pool` instead.
+        max_conns: 4
+        # Nothing is held open for a gear nobody calls. Fourteen idle pools
+        # each keeping a connection warm is fourteen connections spent on
+        # nothing.
+        min_conns: 0
+        # Was 30s. At that length a saturated pool does not fail, it becomes
+        # thirty seconds of latency and then a 500 — the slowest possible way
+        # to find out, and long enough for the caller to have given up twice.
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        # Shorter than any proxy or firewall idle cutoff is likely to be, and
+        # it also bounds how long a connection can hold a stale server-side
+        # state after a failover.
+        max_lifetime: "30m"
+      params:
+        # Neither of these has a default — toolkit-db forwards what is written
+        # here and nothing more — so until now a single runaway query could
+        # hold a pool connection indefinitely. That is the mechanism that turns
+        # one slow query into a pool exhaustion into an outage of features that
+        # have nothing to do with it.
+        #
+        # `statement_timeout` bounds ONE statement, not a transaction;
+        # `idle_in_transaction_session_timeout` covers the other common way a
+        # connection is held without doing anything.
+        statement_timeout: "30s"
+        lock_timeout: "5s"
+        idle_in_transaction_session_timeout: "60s"
 
 logging:
   default:
@@ -641,6 +690,23 @@ gears:
     database:
       server: "pg_main"
       dbname: "graph_storage"
+      # The one gear that earns more than the shared four. An ingest walks a
+      # repository and writes nodes, edges and embeddings concurrently, and it
+      # is also the gear a search waits on — so it is both the heaviest writer
+      # and the one whose queueing is most visible. Counted in the budget on
+      # `pg_main` above.
+      pool:
+        max_conns: 8
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+      params:
+        # Embedding and graph traversal are legitimately slower than a REST
+        # read, so the shared 30s would abort work that is doing its job.
+        statement_timeout: "120s"
+        lock_timeout: "5s"
+        idle_in_transaction_session_timeout: "60s"
     config:
       traversal_hop: pgq
       # One embedding provider per deployment, chosen by the chart

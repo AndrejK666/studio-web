@@ -1,0 +1,35 @@
+# The routing tree. Installed only alongside a rendered contactpoints.yaml —
+# a policy naming a receiver that was never provisioned fails Grafana's
+# provisioning at startup, so `make alerts` ships the two together or neither.
+#
+# Provisioning a policy REPLACES Grafana's default tree wholesale. That is the
+# intent: one destination, one set of timings, both reviewable here rather than
+# clicked into a database that is deleted with the pod.
+#
+# One destination, two tempos. `severity: page` is something breaking now and
+# repeats every 4 hours until it stops; `severity: ticket` is something getting
+# worse and repeats daily. Splitting them by repeat interval rather than by
+# receiver is what a single room allows — when there is a second destination,
+# give `ticket` its own `routes` entry and leave everything else alone.
+
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: studio-oncall
+    # `env` and `namespace` are in the group key so dev and test never collapse
+    # into one notification: the same alertname firing in both is two problems.
+    group_by: [alertname, env, namespace]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: studio-oncall
+        # Quoted deliberately: a bare `=` is YAML's value-tag indicator and a
+        # parser rejects the sequence outright.
+        object_matchers:
+          - ["severity", "=", "ticket"]
+        group_by: [alertname, env, namespace]
+        group_wait: 1m
+        group_interval: 10m
+        repeat_interval: 24h

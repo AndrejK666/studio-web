@@ -14,6 +14,15 @@
 {{- fail "backend.replicas must be 1 while backend.sessions.enabled is true (multi-replica sessions are not verified on a cluster yet)" }}
 {{- end }}
 {{- end }}
+{{- /*
+  A preStop that outlives the grace period is worse than none: the kubelet
+  SIGKILLs the container mid-sleep, so the drain never finishes AND the process
+  never gets its SIGTERM. Catch it at render time rather than at the first
+  rollout.
+*/}}
+{{- if ge (int .Values.backend.preStopDrainSeconds) (int .Values.backend.terminationGracePeriodSeconds) }}
+{{- fail "backend.preStopDrainSeconds must be smaller than backend.terminationGracePeriodSeconds (the drain runs inside the grace period, not beside it)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,6 +50,12 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      # Long enough for the drain below plus whatever is still in flight when
+      # SIGTERM lands. It is NOT sized for the long-lived streams (SSE, the IDE
+      # WebSocket): those are minutes to an hour, and holding a rollout for them
+      # would mean never rolling. They are cut, and the portal reconnects with
+      # `?after_seq=` — which is what that cursor is for.
+      terminationGracePeriodSeconds: {{ .Values.backend.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       # ghcr packages published by GITHUB_TOKEN start private — without a
       # pull secret the pod never leaves ImagePullBackOff.
@@ -252,8 +267,32 @@ spec:
             - name: STUDIO_IDP_ADMIN_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: idp_admin_secret, optional: true } }
             {{- end }}
-          readinessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 5, periodSeconds: 10 }
-          livenessProbe: { httpGet: { path: /cf/health, port: http }, initialDelaySeconds: 15, periodSeconds: 20 }
+          # Deregistration lag. Removing a pod from a Service's endpoints and
+          # stopping its process are concurrent, not ordered: without this
+          # pause kube-proxy is still sending new connections to a process
+          # that has already begun shutting down, and they fail as 502s at the
+          # edge — during every single deploy.
+          #
+          # The sleep IS the ordering. The process keeps serving normally
+          # throughout; it only delays the SIGTERM.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.backend.preStopDrainSeconds }}"]
+          # Boot is not a request. This binary migrates fourteen gear databases
+          # and, with the graph feature, loads an embedding model before it
+          # serves anything — and a liveness probe that fires during that kills
+          # it mid-migration and starts a crash loop that looks like a broken
+          # image. The startup probe gives boot its own, generous budget;
+          # liveness and readiness do not run until it passes, which is why
+          # neither needs an initialDelay any more.
+          startupProbe:
+            httpGet: { path: /cf/health, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: {{ div (int .Values.backend.startupBudgetSeconds) 5 }}
+          readinessProbe: { httpGet: { path: /cf/health, port: http }, periodSeconds: 10, timeoutSeconds: 3 }
+          livenessProbe: { httpGet: { path: /cf/health, port: http }, periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 3 }
           resources: {{- toYaml .Values.backend.resources | nindent 12 }}
         {{- if .Values.backend.fileStorage.enabled }}
         - name: file-storage-sidecar
@@ -280,6 +319,14 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.s3ExistingSecret }}, key: access_key_id } }
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.s3ExistingSecret }}, key: secret_access_key } }
+          # Both containers get SIGTERM at the same instant. Without this the
+          # data plane stops while the backend is still draining, and an upload
+          # in flight fails at the last moment of a deploy rather than the
+          # first.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.backend.preStopDrainSeconds }}"]
           readinessProbe: { httpGet: { path: /readyz, port: file-storage }, initialDelaySeconds: 5, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /healthz, port: file-storage }, initialDelaySeconds: 10, periodSeconds: 20 }
           resources: {{- toYaml .Values.backend.fileStorage.resources | nindent 12 }}

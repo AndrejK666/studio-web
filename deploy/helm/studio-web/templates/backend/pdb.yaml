@@ -1,0 +1,29 @@
+{{- /*
+  Rendered only above one replica, which is the same rule the Keycloak budget
+  follows — and at a single replica it is the only honest one. A budget with
+  `minAvailable: 1` over one pod forbids every voluntary eviction, so a node
+  drain or a cluster upgrade stops until somebody deletes the object; one with
+  `maxUnavailable: 1` permits the eviction and protects nothing. Neither is
+  availability. The gap belongs in values.yaml, where it is readable, rather
+  than in an object that looks like a guarantee.
+
+  With autoscaling on, `minReplicas` is what the cluster is held to, so that is
+  what decides.
+*/}}
+{{- $replicas := int .Values.backend.replicas }}
+{{- if .Values.backend.autoscaling.enabled }}
+{{- $replicas = int .Values.backend.autoscaling.minReplicas }}
+{{- end }}
+{{- if and .Values.backend.podDisruptionBudget.enabled (gt $replicas 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "studio-web.fullname" . }}-backend
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: {{ .Values.backend.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+{{- end }}

@@ -20,6 +20,7 @@ spec:
         app.kubernetes.io/component: frontend-prototype
     spec:
       serviceAccountName: {{ include "studio-web.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.frontendPrototype.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -37,6 +38,14 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
             - name: STUDIO_OIDC_CLIENT_ID
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: client_id } }
+          # The same deregistration pause the backend takes, and for the same
+          # reason: endpoint removal and container shutdown are concurrent, so
+          # without it a rollout serves 502s for whatever kube-proxy routed
+          # into the overlap. nginx itself needs no help finishing a response.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.frontendPrototype.preStopDrainSeconds }}"]
           readinessProbe: { httpGet: { path: {{ printf "%s/" .Values.frontendPrototype.path | quote }}, port: http }, initialDelaySeconds: 3, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: {{ printf "%s/" .Values.frontendPrototype.path | quote }}, port: http }, initialDelaySeconds: 10, periodSeconds: 20 }
           resources: {{- toYaml .Values.frontendPrototype.resources | nindent 12 }}

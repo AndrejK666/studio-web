@@ -248,6 +248,20 @@ alloy:
       }
 
       otelcol.exporter.prometheus "default" {
+        // Resource attributes become labels. Without this the backend's OTLP
+        // series carry `job` and `instance` and nothing else — and BOTH
+        // application namespaces push to this one collector, so dev's RED
+        // metrics and test's would land on the same series, separable only by
+        // a per-process `instance` uuid. The `deployment.environment` resource
+        // attribute (config/k8s.yaml, fed by STUDIO_ENVIRONMENT) becomes
+        // `deployment_environment`, which the relabel pass below copies to
+        // `env` so pushed series are filtered exactly like scraped ones.
+        //
+        // It converts EVERY resource attribute, which is affordable here: the
+        // backend declares two (service.name, deployment.environment) plus the
+        // toolkit's own, and `instance` already churns per process restart.
+        resource_to_telemetry_conversion = true
+
         forward_to = [prometheus.relabel.drop_noise.receiver]
       }
 
@@ -317,6 +331,18 @@ alloy:
         rule {
           source_labels = ["namespace"]
           regex         = "studio-(dev|test)"
+          target_label  = "env"
+          replacement   = "$1"
+        }
+
+        // The same `env`, for series that arrive over OTLP instead of being
+        // scraped. A pushed series has no `namespace` — the rule above cannot
+        // see it — so it is derived from the resource attribute the backend
+        // sets. Both rules write the same label, and no series carries both
+        // source labels, so they never contend.
+        rule {
+          source_labels = ["deployment_environment"]
+          regex         = "(dev|test)"
           target_label  = "env"
           replacement   = "$1"
         }

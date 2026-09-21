@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{Extension, Router, extract::Path};
+use axum::{Extension, Router, extract::Path, extract::Query};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::service::{
     KitDescriptor, KitInstallation, KitMaterialization, KitRegistryService, ProjectRepository,
 };
+use crate::pagination::{PageQuery, page_of};
 
 #[resource_error(gts_id!("cf.studio.kits.registry.v1~"))]
 pub struct KitRegistryError;
@@ -41,6 +42,9 @@ pub struct KitDto {
 #[toolkit_macros::api_dto(response)]
 pub struct KitListDto {
     pub items: Vec<KitDto>,
+    /// Kits in the catalogue across every page, so a caller can show "N of M" and
+    /// knows a next page exists exactly when `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -87,6 +91,9 @@ pub struct KitInstallationDto {
 #[toolkit_macros::api_dto(response)]
 pub struct KitInstallationListDto {
     pub items: Vec<KitInstallationDto>,
+    /// Installations on this project across every page, so a caller can show "N of M" and
+    /// knows a next page exists exactly when `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -105,6 +112,9 @@ pub struct ProjectRepositoryDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ProjectRepositoryListDto {
     pub items: Vec<ProjectRepositoryDto>,
+    /// Repositories on this project across every page, so a caller can show "N of M" and
+    /// knows a next page exists exactly when `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -198,24 +208,26 @@ fn internal(error: anyhow::Error) -> CanonicalError {
 async fn catalogue(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<KitListDto>> {
-    Ok(Json(KitListDto {
-        items: service.catalogue().into_iter().map(Into::into).collect(),
-    }))
+    let items: Vec<KitDto> = service.catalogue().into_iter().map(Into::into).collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(KitListDto { items, total }))
 }
 
 async fn list_installations(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
     Path(project_id): Path<Uuid>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<KitInstallationListDto>> {
     let items = service
         .list_installations(&ctx, project_id)
         .await
         .map_err(internal)?;
-    Ok(Json(KitInstallationListDto {
-        items: items.into_iter().map(Into::into).collect(),
-    }))
+    let items: Vec<KitInstallationDto> = items.into_iter().map(Into::into).collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(KitInstallationListDto { items, total }))
 }
 
 async fn request_installation(
@@ -267,14 +279,15 @@ async fn list_repositories(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
     Path(project_id): Path<Uuid>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<ProjectRepositoryListDto>> {
     let items = service
         .list_repositories(&ctx, project_id)
         .await
         .map_err(session_unavailable)?;
-    Ok(Json(ProjectRepositoryListDto {
-        items: items.into_iter().map(Into::into).collect(),
-    }))
+    let items: Vec<ProjectRepositoryDto> = items.into_iter().map(Into::into).collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(ProjectRepositoryListDto { items, total }))
 }
 
 async fn materialize_installation(
@@ -318,6 +331,13 @@ pub fn register_routes(
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(catalogue)
         .json_response_with_schema::<KitListDto>(openapi, StatusCode::OK, "Kit catalogue")
         .error_401(openapi)
@@ -335,6 +355,13 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("project_id", "Project tenant id")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_installations)
         .json_response_with_schema::<KitInstallationListDto>(
             openapi,
@@ -402,6 +429,8 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("project_id", "Project tenant id")
+        .query_param_typed("offset", false, "Zero-based index of the first item", "integer")
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_repositories)
         .json_response_with_schema::<ProjectRepositoryListDto>(
             openapi,

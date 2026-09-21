@@ -24,7 +24,7 @@ use super::model::{
 };
 use super::service::{BindingAction, BindingDecision, DocumentsService, IngestedFile};
 use super::validate::{SectionStatus, ValidationReport};
-use crate::pagination::PageQuery;
+use crate::pagination::{PageQuery, page_of};
 
 #[resource_error(gts_id!("cf.studio._.documents.v1~"))]
 pub struct DocumentsError;
@@ -155,6 +155,10 @@ pub struct AnalysisDto {
 #[toolkit_macros::api_dto(response)]
 pub struct AnalysisListDto {
     pub items: Vec<AnalysisDto>,
+    /// Verdicts recorded for this project across every page, so a caller can
+    /// show "N of M" and knows a next page exists exactly when
+    /// `offset + items.len() < total`.
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -974,6 +978,7 @@ async fn list_project_analyses(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+    Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<AnalysisListDto>> {
     service
         .authorize(&ctx, project_id)
@@ -983,9 +988,13 @@ async fn list_project_analyses(
         .list_analyses(workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
-    Ok(Json(AnalysisListDto {
-        items: items.into_iter().map(Into::into).collect(),
-    }))
+    // This is the collection here that grows without a ceiling: one row per
+    // detector per document per run, kept so a stage gate never has to re-run
+    // them. A project that has been analysed for a year answers with a year of
+    // verdicts unless the response is bounded.
+    let items: Vec<AnalysisDto> = items.into_iter().map(Into::into).collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(AnalysisListDto { items, total }))
 }
 
 /// Where a project stands against its workspace's stages.
@@ -1766,6 +1775,13 @@ pub fn register_routes(
     .require_license_features::<License>([])
     .path_param("workspace_id", "Workspace tenant id")
     .path_param("project_id", "Project tenant id")
+    .query_param_typed(
+        "offset",
+        false,
+        "Zero-based index of the first verdict",
+        "integer",
+    )
+    .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
     .handler(list_project_analyses)
     .json_response_with_schema::<AnalysisListDto>(openapi, StatusCode::OK, "Verdicts")
     .error_401(openapi)

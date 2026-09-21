@@ -25,6 +25,18 @@ spec:
     name: studio-postgres-images
     major: 19
   primaryUpdateStrategy: unsupervised
+  # The ceiling every consumer is counted against. PostgreSQL's own default is
+  # also 100, so this changes nothing today — it is written down because the
+  # number is load-bearing: studio-backend/config/k8s.yaml sizes fourteen gear
+  # pools against it, and the Keycloak chart caps its pool against it too. An
+  # implicit default is not a budget anybody can check.
+  #
+  # Raising it is not free: every backend is a process, so 200 connections is
+  # roughly another gigabyte of resident memory and the `resources` below have
+  # to move with it. Prefer lowering a consumer.
+  postgresql:
+    parameters:
+      max_connections: "100"
   enableSuperuserAccess: false
   managed:
     roles:

@@ -58,6 +58,9 @@ pub struct NewRun<'a> {
 pub struct RunQuery {
     pub state: Option<RunState>,
     pub task_type: Option<String>,
+    /// Zero-based index of the first row of the page. Pushed into the SQL, not
+    /// applied to a materialised list.
+    pub offset: u64,
     pub limit: u64,
 }
 
@@ -311,12 +314,20 @@ impl TaskService {
             .await?)
     }
 
+    /// One page of runs, newest first, and how many match the filter in total.
+    ///
+    /// Both halves are SQL. The count is a `COUNT(*)` over the same scoped
+    /// filter rather than the length of a list this process built, because the
+    /// run table is the one collection here that only ever grows — every
+    /// background run this deployment has ever performed is a row — and a
+    /// handler that reads it all to answer "how many" would get slower every
+    /// day it stays up.
     pub async fn list(
         &self,
         _ctx: &SecurityContext,
         tenant: Uuid,
         query: &RunQuery,
-    ) -> anyhow::Result<Vec<entity::Model>> {
+    ) -> anyhow::Result<(Vec<entity::Model>, u64)> {
         let mut filter = Condition::all();
         if let Some(state) = query.state {
             filter = filter.add(entity::Column::State.eq(state.as_str()));
@@ -325,14 +336,21 @@ impl TaskService {
             filter = filter.add(entity::Column::TaskType.eq(task_type));
         }
         let conn = self.db.conn()?;
-        Ok(entity::Entity::find()
+        // One scoped query, used twice: the clone keeps the tenant scope and
+        // the filter identical between the count and the page, which is the
+        // property that makes `total` mean anything.
+        let scoped = entity::Entity::find()
             .secure()
             .scope_with(&AccessScope::for_tenant(tenant))
-            .filter(filter)
+            .filter(filter);
+        let total = scoped.clone().count(&conn).await?;
+        let rows = scoped
             .order_by(entity::Column::CreatedAt, Order::Desc)
+            .offset(query.offset)
             .limit(query.limit.max(1))
             .all(&conn)
-            .await?)
+            .await?;
+        Ok((rows, total))
     }
 }
 
