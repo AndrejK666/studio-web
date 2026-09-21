@@ -20,10 +20,14 @@ KSM_CHART_VERSION     ?= 8.4.1
 ALLOY_CHART_VERSION   ?= 1.12.1
 GRAFANA_CHART_VERSION ?= 10.5.15
 
+# Where firing alerts are delivered. Unset, `make alerts` installs the rules
+# and no routing, and says so — see grafana/alerting/contactpoints.yaml.template.
+ALERT_WEBHOOK_URL ?=
+
 HELM    := helm --kube-context $(CONTEXT) --namespace $(NS)
 KUBECTL := kubectl --context $(CONTEXT) --namespace $(NS)
 
-.PHONY: all repos namespace netpol victoriametrics kube-state-metrics alloy-metrics dashboards grafana status targets uninstall
+.PHONY: all repos namespace netpol victoriametrics kube-state-metrics alloy-metrics dashboards alerts grafana status targets uninstall
 
 all: namespace netpol victoriametrics kube-state-metrics alloy-metrics grafana
 
@@ -74,7 +78,18 @@ dashboards:
 		| kubectl label --local -f - grafana_dashboard=1 -o yaml \
 		| kubectl --context $(CONTEXT) -n $(NS) apply -f -
 
-grafana: namespace dashboards
+# Alert rules, the same way dashboards travel: files in, ConfigMap out, mounted
+# rather than discovered. Grafana's provisioner reads the directory at startup.
+#
+# Routing is conditional on purpose. `contactpoints.yaml` needs a URL that is
+# not in this repository, and a notification policy that names a receiver which
+# was never provisioned makes Grafana fail provisioning at startup — so the two
+# files ship together or neither does, and the rules install either way.
+alerts: namespace
+	CONTEXT=$(CONTEXT) NS=$(NS) ALERT_WEBHOOK_URL='$(ALERT_WEBHOOK_URL)' \
+		bash grafana/alerting/install.sh
+
+grafana: namespace dashboards alerts
 	$(HELM) upgrade --install grafana grafana/grafana \
 		--version $(GRAFANA_CHART_VERSION) \
 		--values grafana/values.yaml \

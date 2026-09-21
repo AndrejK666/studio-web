@@ -9,7 +9,7 @@
 #
 # Adding a line is a deliberate, reviewable act. See ADR-0020.
 #
-# 239 entries at 2026-09-18.
+# 234 entries at 2026-09-21.
 
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
@@ -110,7 +110,7 @@ error-500	GET /studio-events/v1/events
 error-500	GET /studio-events/v1/stream
 error-500	GET /studio-organizations/v1/capabilities
 
-# --- list-envelope (39) ---------------------------------------------------
+# --- list-envelope (34) ---------------------------------------------------
 # Rule B1. A collection that is not `{ items, total }`. Two shapes here:
 # a differently named array (`nodes`, `edges`, `aliases`, `events`, ...) and a
 # missing `total`, which is why several screens cannot say "N of M".
@@ -135,7 +135,6 @@ list-envelope	GET /studio-documents/v1/organizations/{organization_id}/capabilit
 list-envelope	GET /studio-documents/v1/organizations/{organization_id}/stages
 list-envelope	GET /studio-documents/v1/organizations/{organization_id}/types
 list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/capabilities
-list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/analyses
 list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
 list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/stages
 list-envelope	GET /studio-documents/v1/workspaces/{workspace_id}/types
@@ -143,12 +142,8 @@ list-envelope	GET /studio-domain-model/v1/model/versions
 list-envelope	GET /studio-domain-model/v1/objects
 list-envelope	GET /studio-events/v1/events
 list-envelope	GET /studio-identity/v1/users
-list-envelope	GET /studio-kits/v1/catalog
-list-envelope	GET /studio-kits/v1/projects/{project_id}/installations
-list-envelope	GET /studio-kits/v1/projects/{project_id}/repositories
 list-envelope	GET /studio-scheduler/v1/schedules
 list-envelope	GET /studio-session/v1/sessions
-list-envelope	GET /studio-tasks/v1/runs
 list-envelope	GET /studio-tasks/v1/task-types
 list-envelope	GET /studio-user/v1/me/aliases
 list-envelope	GET /studio-user/v1/me/invitations

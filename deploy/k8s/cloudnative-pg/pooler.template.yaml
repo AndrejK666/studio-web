@@ -1,0 +1,89 @@
+# PgBouncer in front of the Studio cluster, as a CloudNativePG `Pooler`.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# DO NOT APPLY THIS YET. Two things in the backend are incompatible with the
+# only pooling mode that would be worth having, and both need a change
+# elsewhere before this file is more than a design.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY IT IS HERE AT ALL
+#
+# One backend process opens a pool per gear — fourteen of them — and a second
+# replica would double that against a server that stops at 100. Connection
+# sizing (studio-backend/config/k8s.yaml) makes today's numbers fit; it does
+# not make them scale. A pooler is what turns "every replica costs fourteen
+# pools" into "every replica costs what it is actually using", and it is the
+# prerequisite for the backend ever running more than one replica.
+#
+# WHY `transaction` AND NOT `session`
+#
+# In `session` mode a client connection holds a server connection for its whole
+# life. The backend's pools are long-lived by construction, so session mode
+# would hand out exactly as many server connections as today and multiplex
+# nothing. The entire benefit is in `transaction` mode.
+#
+# WHAT BLOCKS `transaction` MODE
+#
+#   1. PREPARED STATEMENTS. sqlx — which toolkit-db builds every pool on —
+#      caches server-side prepared statements per connection. In transaction
+#      mode a client does not get the same server connection twice, so the
+#      cached statement handle is not there and the query fails. sqlx can be
+#      told not to (`statement_cache_capacity = 0`), but toolkit-db's `PoolCfg`
+#      exposes no such knob: max_conns, min_conns, acquire_timeout,
+#      idle_timeout, max_lifetime, test_before_acquire, and nothing else. This
+#      needs a toolkit-db change, upstream, before any deployment can use it.
+#
+#   2. ADVISORY LOCKS. studio-scheduler serializes its tick with a PostgreSQL
+#      advisory lock, and toolkit-db holds it on a dedicated session with a
+#      keepalive (`lock_keepalive`). A session-level advisory lock is only
+#      meaningful while the session is the same one, which transaction mode
+#      does not promise. Through a transaction-mode pooler, the guard that
+#      stops two replicas double-firing every schedule silently stops
+#      guarding — the worst failure shape available, because nothing errors.
+#
+#      The route out is either a connection that bypasses the pooler for the
+#      lock session (CNPG keeps the `-rw` Service alongside the pooler, so this
+#      is reachable), or a lock that does not depend on session identity.
+#
+# WHEN BOTH ARE SETTLED
+#
+#   kubectl apply -f pooler.template.yaml
+#
+# and point the backend at it by overriding the host the chart reads from the
+# CNPG-generated Secret — `studio-postgres-pooler-rw` instead of
+# `studio-postgres-rw`. Do that in the environment values, not by editing a
+# Secret the operator owns and will rewrite.
+#
+# Verify with `SHOW POOLS` on the pooler and the `studio-pg-connections` alert:
+# the server-side backend count should drop well below the client-side one.
+# If it does not, the pooler is passing connections through rather than
+# multiplexing them and something above is still unresolved.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: studio-postgres-pooler
+  namespace: studio-dev
+spec:
+  cluster:
+    name: studio-postgres
+  # Reads and writes both: the backend has one endpoint per gear database and
+  # no notion of a read replica, so splitting them here would route nothing.
+  type: rw
+  instances: 2
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      # Server-side connections PgBouncer will hold per user/database pair.
+      # Two instances, so the real ceiling is twice this — counted against the
+      # `max_connections: 100` the cluster declares.
+      default_pool_size: "20"
+      max_client_conn: "200"
+      # A server connection is returned to the pool in a known state.
+      server_reset_query: "DISCARD ALL"
+  template:
+    spec:
+      containers:
+        - name: pgbouncer
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }

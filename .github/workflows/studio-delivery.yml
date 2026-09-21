@@ -361,6 +361,13 @@ jobs:
           # Both ways of asking for a second replica must fail the render.
           refuses --set backend.autoscaling.enabled=true
           refuses --set backend.autoscaling.enabled=false --set backend.replicas=3
+
+          # A preStop drain that does not fit inside the grace period is the
+          # other guard worth exercising: the kubelet would SIGKILL the
+          # container mid-sleep, so the pod would neither drain nor shut down
+          # cleanly — and nothing about the rendered YAML would look wrong.
+          refuses --set backend.preStopDrainSeconds=60
+          refuses --set backend.preStopDrainSeconds=60 --set backend.terminationGracePeriodSeconds=60
   test-complete:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.
@@ -1303,24 +1310,48 @@ jobs:
             grep -q ":$IMAGE_TAG" <<<"$images"
           done
 
-          curl --fail --silent --show-error --retry 6 --retry-all-errors \
-            "https://$host/" >/dev/null
+          # What a browser actually gets: compression, caching, the API
+          # surface and the realm issuer. Everything above this line proves
+          # the pods came up; none of it looked at a response.
+          proto_host=""
           if [ "${{ github.event.inputs.component }}" = all ] || [ "${{ github.event.inputs.component }}" = prototype ]; then
-            curl --fail --silent --show-error --retry 6 --retry-all-errors \
-              "https://${{ steps.target.outputs.prototype_host }}/" >/dev/null
-            curl --fail --silent --show-error --retry 6 --retry-all-errors \
-              "https://${{ steps.target.outputs.prototype_host }}/cf/health" >/dev/null
+            proto_host="${{ steps.target.outputs.prototype_host }}"
           fi
-          curl --fail --silent --show-error --retry 6 --retry-all-errors \
-            "https://$host/cf/health" >/dev/null
-
-          issuer="$(curl --fail --silent --show-error \
-            "https://$host/auth/realms/studio/.well-known/openid-configuration" \
-            | jq -r .issuer)"
-          test "$issuer" = "https://$host/auth/realms/studio"
+          bash scripts/post-deploy-smoke.sh "$host" $proto_host
 
           kubectl get pods -n "$NAMESPACE"
           helm status studio -n "$NAMESPACE"
+
+      # Two assertions the smoke script deliberately cannot make from
+      # outside the cluster.
+      - name: Verify in-cluster configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # COMPRESSION MUST NOT REACH THE EVENT STREAM. nginx's gzip filter
+          # buffers until it has enough bytes to be worth compressing, which
+          # for SSE means holding events back for as long as the client will
+          # wait: the portal goes quiet with nothing in any log to say why.
+          # TLS terminates at Cloudflare, which compresses on its own, so the
+          # only place this is answerable is the config the pod is running.
+          if kubectl get deployment/studio-studio-web-frontend -n "$NAMESPACE" >/dev/null 2>&1; then
+            conf="$(kubectl exec -n "$NAMESPACE" deployment/studio-studio-web-frontend -- nginx -T 2>/dev/null)"
+            grep -q "location /cf/studio-events/v1/stream" <<<"$conf"
+            awk "/location .cf.studio-events.v1.stream/,/}/" <<<"$conf" | grep -q "gzip off"
+            echo "  ok    the event stream location disables gzip"
+          fi
+
+          # THE METRICS SWITCH. The instruments are no-ops without a meter
+          # provider, and the flag lives in an image-baked config file, so an
+          # environment can look configured in values.yaml and export nothing.
+          metrics="$(kubectl get deployment/studio-studio-web-backend -n "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_OTEL_METRICS")].value}')"
+          if [ "$metrics" = "true" ]; then
+            echo "  ok    the backend exports OTLP metrics"
+          else
+            echo "  note  STUDIO_OTEL_METRICS=${metrics:-<unset>}; the RED alerts have no data here" >&2
+          fi
   deploy-infrastructure:
     name: 3. Deploy Infrastructure
     # See deploy-services: a deployment consumes an existing immutable image,

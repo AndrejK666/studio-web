@@ -12,6 +12,44 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+
+# Compression. The portal is a JavaScript bundle and nothing here was
+# compressing it: every load pulled the whole thing at its uncompressed size,
+# on every machine, every time. `gzip_static` is deliberately NOT used — the
+# build does not emit `.gz` siblings, and the directive would silently do
+# nothing while looking like it did something.
+#
+# `gzip_vary` matters because a cache sits in front of this in every deployed
+# topology (Traefik, then Cloudflare): without it they may hand a compressed
+# body to a client that did not ask for one.
+gzip on;
+gzip_vary on;
+gzip_comp_level 5;              # past ~5 the CPU buys almost no extra ratio
+gzip_min_length 1024;           # below this the framing costs more than it saves
+gzip_proxied any;
+gzip_types
+    text/plain
+    text/css
+    text/javascript
+    application/javascript
+    application/json
+    application/manifest+json
+    application/wasm
+    image/svg+xml
+    font/ttf
+    font/otf;
+# text/html is always compressed when gzip is on and needs no entry above.
+
+# index.html, env.js and each MFE's remoteEntry.js name the current immutable
+# bundle, so they must be revalidated after every deployment. Everything under
+# an `assets/` directory is Vite-hashed — the host app's own and each MFE's
+# (`/mfes/<name>/assets/`), which is why the pattern allows a prefix — so its
+# name changes whenever its bytes do and it can be cached forever.
+map $uri $frontend_cache_control {
+    default                "no-store, no-cache, must-revalidate";
+    ~^/(.*/)?assets/       "public, max-age=31536000, immutable";
+}
+
 server {
     # 8080: the image is nginxinc/nginx-unprivileged (runs as uid 101,
     # k8s runAsNonRoot-compatible) — non-root can't bind 80.
@@ -23,7 +61,29 @@ server {
 
     # SPA fallback
     location / {
+        add_header Cache-Control $frontend_cache_control always;
         try_files $uri $uri/ /index.html;
+    }
+
+
+    # Server-sent events, and the one place compression must not reach. The
+    # gzip filter buffers until it has enough bytes to be worth compressing,
+    # which for a stream that emits one small frame at a time means holding
+    # events back for as long as the client is willing to wait. `gzip off`
+    # here is what keeps `proxy_buffering off` above meaning anything.
+    #
+    # A longer prefix wins over `/cf/` in nginx location matching, so this
+    # needs no ordering discipline to keep working.
+    location /cf/studio-events/v1/stream {
+        gzip off;
+        proxy_pass http://${BACKEND_HOST};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
     }
 
     # Backend API (same-origin, mirrors the Vite dev proxy). In k8s the

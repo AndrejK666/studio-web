@@ -10,6 +10,16 @@ backend:
   # Dev commonly runs at CPU quota while IDE session Pods are active. Replace
   # the single replica in place instead of requiring temporary surge capacity.
   rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
+  # ACCEPTED: this is a deploy outage window. One replica, and the old pod is
+  # stopped before the new one starts, so the API is unavailable for the length
+  # of a boot on every deploy. Two things keep it that way and neither is a
+  # setting here: the chart refuses a second backend replica while IDE sessions
+  # are on, and `studio-events` fans out in-process, so a second replica would
+  # deliver events to whichever half of the users happened to land on it.
+  #
+  # What the chart now does is make the window as short as a boot and free of
+  # side effects — `startupBudgetSeconds` stops a slow migration being read as
+  # a crash, and `preStopDrainSeconds` stops the overlap being served as 502s.
   database:
     existingSecret: studio-postgres-app
     keys:
@@ -41,6 +51,17 @@ backend:
     # policy enabled and list approved provider CIDRs explicitly.
     networkPolicy:
       enabled: false
+  # Metrics ON: this cluster has the collector (deploy/observability) and the
+  # OTLP receiver has been listening since it was installed. RED per
+  # `http.route` is what the 5xx and latency alerts read; without it they have
+  # Traefik's edge view only, which cannot separate an API call from an hour
+  # long SSE stream.
+  #
+  # Tracing stays off: there is no Tempo, and spans with nowhere to go are a
+  # batch processor filling up and dropping them.
+  telemetry:
+    metrics: true
+    tracing: false
   configOverride:
     existingConfigMap: ""
   idpAdmin:
@@ -53,8 +74,13 @@ backend:
 frontend:
   image:
     tag: "sha-REPLACE_ME"
-  replicas: 1
+  replicas: 2
   rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
+  # Two replicas, and `maxUnavailable: 1, maxSurge: 0` therefore rolls with one
+  # always serving: zero-downtime deploys for the portal at no surge capacity,
+  # which matters on a stand that runs at CPU quota with sessions active. The
+  # second pod costs 50m/64Mi and also lets a node drain proceed — the
+  # PodDisruptionBudget renders only above one replica.
   autoscaling:
     enabled: false
 

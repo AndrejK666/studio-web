@@ -137,8 +137,10 @@ describe("kit registry client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.kits("token")).resolves.toEqual({ items: [] });
+    // The catalogue is paged now, and the client walks it: the first request
+    // carries the page window, and an empty page ends the walk.
     expect(fetchMock).toHaveBeenCalledWith(
-      "/cf/studio-kits/v1/catalog",
+      "/cf/studio-kits/v1/catalog?offset=0&limit=200",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer token" }),
       }),
@@ -250,7 +252,7 @@ describe("kit registry client", () => {
 
     await expect(api.projectRepositories("token", "project/one")).resolves.toEqual({ items });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/cf/studio-kits/v1/projects/project%2Fone/repositories",
+      "/cf/studio-kits/v1/projects/project%2Fone/repositories?offset=0&limit=200",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer token" }),
       }),

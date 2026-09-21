@@ -1,0 +1,20 @@
+{{- /*
+  Above one replica only, like the others. The prototype portal normally runs
+  one — it is a demonstration surface, not something anybody is paged for — so
+  this usually renders nothing. It exists so that raising `replicas` is the
+  only edit needed, rather than raising it and then discovering the budget was
+  never written.
+*/}}
+{{- if and .Values.frontendPrototype.enabled .Values.frontendPrototype.podDisruptionBudget.enabled (gt (int .Values.frontendPrototype.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "studio-web.fullname" . }}-frontend-prototype
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend-prototype
+spec:
+  minAvailable: {{ .Values.frontendPrototype.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend-prototype
+{{- end }}

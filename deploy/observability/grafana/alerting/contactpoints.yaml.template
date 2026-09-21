@@ -1,0 +1,32 @@
+# Where a firing alert goes. A template rather than a finished file, because
+# the destination is the one part of this stack that does not exist in the
+# repository: there is no Alertmanager here, no chat connection configured for
+# the cluster, and no webhook URL that would be safe to commit.
+#
+# `make alerts ALERT_WEBHOOK_URL=https://...` renders it. Without that variable
+# the target installs the rules alone and says so — alerts are then visible in
+# Grafana's Alerting UI and delivered nowhere, which is a state worth being
+# told about rather than discovering during an incident.
+#
+# The URL ends up in the `studio-alerts` ConfigMap, not in a Secret: Grafana
+# provisioning reads files, and a webhook URL is not one of the fields it
+# accepts as a secure setting. Treat a chat webhook accordingly — it is a
+# capability to post into that room, and anyone who can read ConfigMaps in
+# studio-monitoring holds it.
+#
+# `type: webhook` is the lowest common denominator and posts Grafana's own JSON
+# payload. Slack and Discord both accept it at an incoming-webhook URL; for
+# richer formatting, change `type` to `slack` or `discord` here — the rules and
+# the policy below do not care which.
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: studio-oncall
+    receivers:
+      - uid: studio-oncall-webhook
+        type: webhook
+        settings:
+          url: ${ALERT_WEBHOOK_URL}
+          httpMethod: POST

@@ -4,6 +4,43 @@ This is an experimental PostgreSQL 19 beta deployment. PostgreSQL 19 is not in
 CloudNativePG's supported PostgreSQL range yet; do not use this profile for
 production data.
 
+## Connections
+
+`max_connections` is declared in both templates at PostgreSQL's own default of
+100. It is written down rather than inherited because it is a budget several
+other files spend against, and an implicit ceiling is one nobody can check:
+
+| Consumer | Ceiling | Where it is set |
+|---|---|---|
+| studio-backend, 13 gear pools | 52 | `pool.max_conns: 4` on `pg_main`, `studio-backend/config/k8s.yaml` |
+| studio-backend, graph-storage | 8 | that gear's own `pool` override |
+| Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
+| backend-bootstrap Job | ~2 | transient, one pass per upgrade |
+| CloudNativePG + exporter | ~5 | the operator |
+| `superuser_reserved_connections` | 3 | PostgreSQL default |
+| **Total** | **~80** | |
+
+The thing to know before changing any of it: toolkit-db caches one pool **per
+gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
+number of gear databases — fourteen. Raising it by one raises the ceiling by
+fourteen. Give a single gear its own `pool` block instead, the way
+`graph-storage` has one.
+
+A second backend replica doubles the backend's share, which does not fit. That
+is one of the reasons the chart refuses one, and the reason the pooler below
+exists as a design.
+
+### PgBouncer
+
+`pooler.template.yaml` is a CloudNativePG `Pooler` and is **deliberately not
+applied**. Session pooling would multiplex nothing here (the backend's pools
+are long-lived, so each would simply hold a server connection), and transaction
+pooling is blocked by two things in the backend: sqlx's per-connection prepared
+statement cache, which toolkit-db exposes no way to disable, and
+studio-scheduler's session-level advisory lock, which transaction pooling would
+quietly stop enforcing. The file states both in full, along with what to change
+and how to verify it afterwards.
+
 ## Ordering
 
 1. Create an `infra-v*` tag on a tested commit from `main` and wait for the
