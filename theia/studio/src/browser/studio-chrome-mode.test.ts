@@ -30,19 +30,24 @@ describe('the chrome a mode implies', () => {
         await Promise.resolve();
 
         // Both levers, because two systems decide: the preference is the only
-        // thing that puts the panel back in the LAYOUT, and the attribute is
-        // what overrides the product's blanket paint rule.
+        // thing that puts the panel in the LAYOUT, and the attribute is what
+        // overrides the product's blanket paint rule.
         expect(preferences.set).toHaveBeenCalledWith('window.menuBarVisibility', 'classic', expect.anything());
         expect(document.body.dataset.studioMode).toBe('workbench');
     });
 
-    it('takes it away while writing, layout and all', async () => {
+    it('takes the menu bar away while writing, but keeps the row it was in', async () => {
         const { contribution, preferences } = chrome('studio.documents');
         contribution.onDidInitializeLayout();
         await Promise.resolve();
+        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
 
-        expect(preferences.set).toHaveBeenCalledWith('window.menuBarVisibility', 'hidden', expect.anything());
+        // The panel stays in the LAYOUT in both modes now: the collaboration
+        // strip mounts into it, and a panel Theia has hidden paints nothing
+        // however many heartbeats the strip runs.
+        expect(preferences.set).toHaveBeenCalledWith('window.menuBarVisibility', 'classic', expect.anything());
         expect(document.body.dataset.studioMode).toBe('documents');
+        expect(css).toContain('body[data-studio-mode="documents"] #theia-top-panel > .lm-MenuBar');
     });
 
     it('follows a switch', async () => {
@@ -55,7 +60,7 @@ describe('the chrome a mode implies', () => {
         await Promise.resolve();
 
         expect(document.body.dataset.studioMode).toBe('documents');
-        expect(preferences.set).toHaveBeenLastCalledWith('window.menuBarVisibility', 'hidden', expect.anything());
+        expect(preferences.set).toHaveBeenLastCalledWith('window.menuBarVisibility', 'classic', expect.anything());
     });
 
     it('gives Source Control back to the workbench and not to writing', () => {

@@ -31,9 +31,26 @@ const { TaskList } = require('@tiptap/extension-task-list');
 const { TaskItem } = require('@tiptap/extension-task-item');
 const { TextSelection } = require('@tiptap/pm/state');
 const { Widget } = require('@theia/core/shared/@lumino/widgets');
-const { FileChangeType } = require('@theia/filesystem/lib/common/files');
 const { BinaryBuffer } = require('@theia/core/lib/common/buffer');
 const URI = require('@theia/core/lib/common/uri').default;
+
+/*
+ * `FileChangeType` is a TypeScript `const enum` in @theia/filesystem: the
+ * compiler inlines its members and emits no runtime object, so
+ * `require(...).FileChangeType` is `undefined` and reading `.UPDATED` off it
+ * throws on every file-change event, for every open document. Asked of the
+ * session image rather than assumed:
+ *
+ *     node -e 'console.log(require(".../filesystem/lib/common/files.js").FileChangeType)'
+ *     undefined
+ *
+ * The listener it guards is the one that notices a colleague's save, so the
+ * throw left co-editing to the two-second mtime poll below and filled the
+ * session log with the same stack. The value is declared in `files.d.ts` and is
+ * part of the watcher protocol; naming it here is what the compiler would have
+ * inlined anyway.
+ */
+const FILE_CHANGE_UPDATED = 0;
 
 const { markdownToDoc, docToMarkdown, repairMarkdown, splitFrontmatter, joinFrontmatter, unsupportedConstructs, contentWords } = require('./markdown');
 const { newId } = require('./comments-store');
@@ -2550,7 +2567,7 @@ class MarkdownEditorWidget extends Widget {
         try { this.disposables.push(this.fileService.watch(this.uri)); }
         catch (e) { console.warn('[studio] could not watch', this.uri.toString(), e); }
         this.disposables.push(this.fileService.onDidFilesChange(event => {
-            if (!event.contains(this.uri, FileChangeType.UPDATED)) { return; }
+            if (!event.contains(this.uri, FILE_CHANGE_UPDATED)) { return; }
             // Coalesce: an editor writing a file can emit several events.
             clearTimeout(this.externalTimer);
             this.externalTimer = setTimeout(() => this.onExternalChange(), 120);

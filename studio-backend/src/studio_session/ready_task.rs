@@ -93,8 +93,11 @@ impl TaskHandler for SessionReadyTask {
             }
 
             // This read IS the probe: it connects to the session port and
-            // promotes `starting` to `running` when the IDE answers.
-            let Some(session) = self.service.get(ctx.tenant, payload.session_id).await else {
+            // promotes `starting` to `running` when the IDE answers. It makes
+            // no access decision and needs none -- a TaskContext is not a
+            // SecurityContext, and this run exists because `create` already
+            // authorized the launch it is waiting for.
+            let Some(session) = self.service.probe(payload.session_id).await else {
                 // Destroyed while we waited, or never ours. Either way there is
                 // nothing left to wait for, and retrying cannot bring it back.
                 return TaskOutcome::Failed(format!(

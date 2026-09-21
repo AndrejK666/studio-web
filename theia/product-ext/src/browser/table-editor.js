@@ -58,7 +58,10 @@ const {
     DELIMITERS, labelFor, detectDialect, parse, serialize,
     columnCount, setCell, insertRow, insertColumn, deleteRow, deleteColumn, parseClipboardGrid
 } = require('./table-data');
-const { FileChangeType } = require('@theia/filesystem/lib/common/files');
+
+/* Erased at compile time, so there is nothing to require; see the note beside
+ * the same constant in `markdown-editor.js`. */
+const FILE_CHANGE_UPDATED = 0;
 
 // Same three keys and the same labels as the Markdown editor's switch, because
 // it is the same control answering the same question. Only the hints differ,
@@ -977,7 +980,7 @@ class TableEditorWidget extends Widget {
         try { this.disposables.push(this.fileService.watch(this.uri)); }
         catch (e) { console.warn('[studio] could not watch', this.uri.toString(), e); }
         this.disposables.push(this.fileService.onDidFilesChange(event => {
-            if (!event.contains(this.uri, FileChangeType.UPDATED)) { return; }
+            if (!event.contains(this.uri, FILE_CHANGE_UPDATED)) { return; }
             clearTimeout(this.externalTimer);
             this.externalTimer = setTimeout(() => this.onExternalChange(), 120);
         }));

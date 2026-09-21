@@ -7,6 +7,7 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
+use super::access::TenantMembership;
 use super::config::StudioSessionConfig;
 use super::docker::DockerDriver;
 use super::driver::SessionDriver;
@@ -94,17 +95,33 @@ impl Gear for StudioSessionGear {
             ),
         }
 
-        // account-management client: reads the caller's IdP record so a
-        // session's commits carry the person's name rather than the
-        // product's (optional — a session without it starts and pushes just
-        // the same, its commits simply keep the fallback author).
+        // account-management client, doing two jobs. It reads the caller's IdP
+        // record so a session's commits carry the person's name rather than the
+        // product's, and it answers whether the caller reaches the workspace at
+        // all.
+        //
+        // The first job was optional and the second is not: a session without
+        // attribution starts and pushes just the same, but an authorization
+        // question nobody can answer is not a yes. Without this client the
+        // service refuses every session and says so per call — see
+        // `SessionService::may_reach`.
         match ctx
             .client_hub()
             .get::<dyn account_management_sdk::AccountManagementClient>()
         {
-            Ok(client) => service.set_account_management(client).await,
+            Ok(client) => {
+                // Two jobs from one client, and the second is the one with teeth:
+                // it decides who reaches a workspace at all (see `access.rs`).
+                service
+                    .set_workspace_access(Arc::new(TenantMembership::new(Arc::clone(&client))))
+                    .await;
+                service.set_account_management(client).await;
+            }
             Err(e) => {
-                warn!("studio-session: account-management unavailable ({e}); commits unattributed")
+                warn!(
+                    "studio-session: account-management unavailable ({e}); \
+                     commits unattributed AND no session can be authorized"
+                )
             }
         }
 

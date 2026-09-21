@@ -10,6 +10,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::access::NotReachable;
 use super::driver::NoCapacity;
 use super::service::{RepoKind, RepoSpec, Session, SessionService};
 
@@ -287,19 +288,33 @@ async fn create_session(
     let (session, existed) = svc
         .create(&ctx, req.workspace_id, req.root_path, root_repo, repos)
         .await
-        .map_err(|e| match e.downcast_ref::<NoCapacity>() {
-            // A full namespace is not an internal error: nothing is broken,
-            // the caller did nothing wrong, and it clears when a session ends
-            // or an operator raises the quota. 503 says exactly that, and the
-            // detail names the quota so the person reading it knows what to
-            // raise instead of opening the backend's logs to find out.
-            Some(no_room) => CanonicalError::service_unavailable()
-                .with_detail(format!(
-                    "no capacity for an IDE session right now: {}.                      Close a running session, or raise the namespace quota.",
-                    no_room.detail
-                ))
-                .create(),
-            None => CanonicalError::internal(format!("session launch failed: {e:#}")).create(),
+        .map_err(|e| {
+            // A workspace the caller does not reach is not an internal error
+            // and not a launch failure: it is the 404 `get_session` and
+            // `delete_session` already answer, for the reason they answer it —
+            // naming the difference between "not yours" and "not there" would
+            // be telling somebody it exists.
+            if let Some(refused) = e.downcast_ref::<NotReachable>() {
+                return StudioSessionError::not_found("Workspace not found")
+                    .with_resource(refused.workspace_id.to_string())
+                    .create();
+            }
+            match e.downcast_ref::<NoCapacity>() {
+                // A full namespace is not an internal error: nothing is broken,
+                // the caller did nothing wrong, and it clears when a session
+                // ends or an operator raises the quota. 503 says exactly that,
+                // and the detail names the quota so the person reading it knows
+                // what to raise instead of opening the backend's logs to find
+                // out.
+                Some(no_room) => CanonicalError::service_unavailable()
+                    .with_detail(format!(
+                        "no capacity for an IDE session right now: {}. \
+                         Close a running session, or raise the namespace quota.",
+                        no_room.detail
+                    ))
+                    .create(),
+                None => CanonicalError::internal(format!("session launch failed: {e:#}")).create(),
+            }
         })?;
     let status = if existed {
         StatusCode::OK
@@ -327,7 +342,7 @@ async fn list_sessions(
         return Ok(Json(SessionListDto { items: Vec::new() }));
     };
     let items = svc
-        .list(ctx.subject_tenant_id())
+        .list(&ctx)
         .await
         .into_iter()
         .map(|s| to_dto(svc, s))
@@ -341,7 +356,7 @@ async fn get_session(
     Path(id): Path<Uuid>,
 ) -> ApiResult<JsonBody<SessionDto>> {
     let svc = sessions.get()?;
-    let session = svc.get(ctx.subject_tenant_id(), id).await.ok_or_else(|| {
+    let session = svc.get(&ctx, id).await.ok_or_else(|| {
         StudioSessionError::not_found("Session not found")
             .with_resource(id.to_string())
             .create()
@@ -356,7 +371,7 @@ async fn delete_session(
 ) -> ApiResult<impl IntoResponse> {
     let svc = sessions.get()?;
     let removed = svc
-        .stop(ctx.subject_tenant_id(), id)
+        .stop(&ctx, id)
         .await
         .map_err(|e| CanonicalError::internal(format!("session stop failed: {e:#}")).create())?;
     if !removed {
