@@ -14,11 +14,12 @@ other files spend against, and an implicit ceiling is one nobody can check:
 |---|---|---|
 | studio-backend, 13 gear pools | 52 | `pool.max_conns: 4` on `pg_main`, `studio-backend/config/k8s.yaml` |
 | studio-backend, graph-storage | 8 | that gear's own `pool` override |
+| studio-backend, studio-events | 2 | that gear's own `pool` override |
 | Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
 | backend-bootstrap Job | ~2 | transient, one pass per upgrade |
 | CloudNativePG + exporter | ~5 | the operator |
 | `superuser_reserved_connections` | 3 | PostgreSQL default |
-| **Total** | **~80** | |
+| **Total** | **~82** | |
 
 The thing to know before changing any of it: toolkit-db caches one pool **per
 gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
@@ -26,9 +27,17 @@ number of gear databases — fourteen. Raising it by one raises the ceiling by
 fourteen. Give a single gear its own `pool` block instead, the way
 `graph-storage` has one.
 
-A second backend replica doubles the backend's share, which does not fit. That
-is one of the reasons the chart refuses one, and the reason the pooler below
-exists as a design.
+A second backend replica doubles the backend's share — 124 on its own — which
+does not fit, and this is now the **main** thing in the way of running one.
+The other blocker, a push channel whose sequence lived in process memory, is
+gone: `studio-events` keeps its sequence and its replay window in the database
+listed above, so two replicas agree on what a cursor means.
+
+Two ways to make room, neither free. Lowering the shared `max_conns` from 4 to
+3 brings two replicas to roughly 96 including everything else, at the cost of
+queueing sooner under a burst. Raising `max_connections` costs memory on the
+server — a PostgreSQL backend is a process — so `resources` has to move with
+it. The pooler below is the third way and is not available yet.
 
 ### PgBouncer
 
