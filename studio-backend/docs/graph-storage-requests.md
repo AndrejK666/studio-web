@@ -5,9 +5,13 @@
 
 We built the Studio domain model on graph-storage: 140 entity types, their
 relations, and the objects people create against them, all in the graph. It
-works. Along the way we hit four things that the gear cannot express, and
+works. Along the way we hit five things that the gear cannot express, and
 worked around each one — this is what those workarounds cost and what would
 remove them.
+
+*Item 5 was added 2026-09-21, from profiling the artifact listing rather than
+from building the model. It is the most expensive of the five at runtime; it is
+last because renumbering the others would break every reference to them.*
 
 Nothing here is a bug report. Each item is a capability that is *almost* there:
 the mechanism exists, and something small keeps us from using it.
@@ -189,6 +193,54 @@ expressible in general.
 
 ---
 
+## 5. Let the projection filter and order on payload attributes
+
+Every read of the artifact listing pulls the whole graph for a tenant, because
+the three things it narrows by all live in the payload.
+
+`GET /studio-artifact-ingest/v1/nodes` filters by `scope` (a node's
+`workspace_id` or `project_id`), optionally by `repo`, and orders either by the
+artifact's own `updated_at` or by key. The projection's `$filter`/`$orderby`
+accept `node_key`, `name`, `created_at` and `updated_at`; a `$filter` on
+`payload/...` is refused, and the `index` trait that names the indexable paths
+is stored but not wired to the filter surface.
+
+So the adapter does the only thing it can: it walks `project_nodes` by cursor to
+exhaustion, then filters, sorts and slices one page in our process. Every page
+request re-reads the entire typed node set.
+
+**What that costs, measured on one real project** — 5,785 file nodes, the gear's
+`projection_max_page` of 200:
+
+| | `project_nodes` calls | node rows materialised |
+|---|---|---|
+| one page request | 29 | 5,785 |
+| a client walking all 29 pages | **841** | **~167,765** |
+
+That is 167,765 rows read, with payloads, to deliver 5,785 rows once. The
+portal has twice been optimised to make fewer requests against this endpoint;
+both times the multiplier inside it stayed. (A thirtieth call per request, to
+re-register our types, is no longer among them — this process now remembers
+that per tenant. The projection calls are what is left, and they are yours.)
+
+**Ordering cannot even be approximated.** We considered pushing `$orderby` down
+for the `sort=updated` case and cannot: the projection's `updated_at` is when
+the row was last written to the graph, and `NodeSpec` carries no `updated_at`
+for us to set, so on a re-sync it means "when the sync touched this" — which is
+unrelated to when the issue was updated on the forge. Pushing it down would
+silently reorder the screen rather than speed it up.
+
+*Need:* `$filter` and `$orderby` over the payload paths a type declares — the
+`index` trait already names them, so the declaration exists and only the
+binding is missing. Failing that, `updated_at` as a caller-supplied field on
+`NodeSpec` would fix ordering alone, which is the smaller half.
+
+Until one of them exists, the workaround is a per-tenant cache of the
+projection in our process, invalidated on ingest — which is a cache of a query
+we should have been able to write.
+
+---
+
 ## What we are not asking for
 
 **GTS major versions of a type** (`requirement.v2~` alongside `v1~`). We looked
@@ -210,6 +262,7 @@ sooner.
 | 2 | Node version on the read path | write-only `expected_version` | every update is last-writer-wins |
 | 3 | A published schema can change | one immutable column, registry not read | indexing cannot follow the model |
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
+| 5 | `$filter`/`$orderby` on payload attributes | key/name/timestamps only | every listing page re-reads the whole tenant graph — 841 projection calls to deliver 5,785 rows |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is

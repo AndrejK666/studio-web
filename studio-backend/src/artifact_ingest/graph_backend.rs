@@ -11,10 +11,12 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use toolkit_odata::ODataQuery;
 
@@ -55,23 +57,85 @@ const MAX_PAYLOAD_BYTES: usize = 60_000;
 const MAX_TEXT_EXCERPT_CHARS: usize = 8_000;
 /// Per-arm candidate count for hybrid search, before fusion.
 const SEARCH_ARM_LIMIT: u32 = 50;
+/// How long a tenant's type registration is taken as still true.
+///
+/// The types themselves are compile-time constants, so this is not about them
+/// changing — it is a backstop for the registry changing underneath us. A
+/// graph-storage database restored from a backup, or wiped, drops the rows
+/// this process believes it wrote; without an expiry it would keep skipping
+/// the registration and every read would fail on an unknown type until
+/// somebody restarted the backend. Ten minutes bounds that to ten minutes,
+/// and still removes the call from ~99.9% of operations.
+///
+/// The same shape as the PDP's membership cache: an age that is only a
+/// backstop, not the mechanism.
+const TYPE_REGISTRATION_TTL: Duration = Duration::from_secs(600);
 
 pub struct GraphStorageBackend {
     client: Arc<dyn GraphStorageClientV1>,
+    /// When this process last registered our types for a tenant.
+    ///
+    /// Keyed by tenant because the registry is: graph-storage scopes every
+    /// operation to the caller's tenant and publishes the base ontology on a
+    /// tenant's first registration, so one tenant's registration says nothing
+    /// about another's.
+    registered: Mutex<HashMap<Uuid, Instant>>,
 }
 
 impl GraphStorageBackend {
     pub fn new(client: Arc<dyn GraphStorageClientV1>) -> Self {
-        Self { client }
+        Self {
+            client,
+            registered: Mutex::new(HashMap::new()),
+        }
     }
 
-    /// Register our artifact node and relation types.
+    /// Register our artifact node and relation types, once per tenant.
     ///
     /// One atomic batch, idempotent: a byte-identical re-registration
-    /// converges, so this runs before every write without cost. Each type
-    /// derives from a graph-storage family — a free-form type has no chain to
-    /// validate against and is refused.
+    /// converges. Each type derives from a graph-storage family — a free-form
+    /// type has no chain to validate against and is refused.
+    ///
+    /// IDEMPOTENT IS NOT FREE, which is what this used to assume. Every public
+    /// operation on this backend calls it first — list, search, node read,
+    /// every ingest chunk — so a listing that walks a large repository paid a
+    /// round trip per inner page to re-register eight node types and their
+    /// relations, all of which are `const` in this binary and cannot have
+    /// changed since the last call a millisecond earlier.
+    ///
+    /// Now it is remembered per tenant, with [`TYPE_REGISTRATION_TTL`] as the
+    /// backstop. A failed registration is NOT remembered: the entry is written
+    /// only after the gear has accepted the batch, so a transient failure is
+    /// retried by the next caller rather than being cached as success.
     async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        let tenant = ctx.subject_tenant_id();
+        if self.registration_is_fresh(tenant) {
+            return Ok(());
+        }
+        self.register_types_now(ctx).await?;
+        if let Ok(mut registered) = self.registered.lock() {
+            registered.insert(tenant, Instant::now());
+        }
+        Ok(())
+    }
+
+    /// Has this process registered for `tenant` recently enough to skip it?
+    ///
+    /// The lock is taken and released around a map lookup and is never held
+    /// across an await — two callers racing the first registration both
+    /// perform it, which the gear absorbs (the batch is idempotent) and which
+    /// is cheaper than serialising every caller behind one in-flight request.
+    fn registration_is_fresh(&self, tenant: Uuid) -> bool {
+        let Ok(mut registered) = self.registered.lock() else {
+            // A poisoned lock means some caller panicked mid-update. Registering
+            // again is always safe; skipping wrongly is not.
+            return false;
+        };
+        registration_is_fresh_in(&mut registered, tenant)
+    }
+
+    /// The registration itself, unconditional.
+    async fn register_types_now(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
             .into_iter()
             .chain(gts::graph_edge_type_schemas())
@@ -419,9 +483,69 @@ fn parse_cursor(raw: &str) -> anyhow::Result<toolkit_odata::CursorV1> {
         .map_err(|e| anyhow::anyhow!("graph-storage returned an undecodable cursor: {e}"))
 }
 
+/// The freshness rule, over the map alone.
+///
+/// A free function rather than a method so it is testable without a
+/// `GraphStorageClientV1` double — the same reason the PDP keeps its decision
+/// pure. Expiring entries are removed on the way past, which is all the
+/// eviction this map needs: it is keyed by tenant, and a deployment has as
+/// many tenants as it has organizations.
+fn registration_is_fresh_in(registered: &mut HashMap<Uuid, Instant>, tenant: Uuid) -> bool {
+    match registered.get(&tenant) {
+        Some(at) if at.elapsed() < TYPE_REGISTRATION_TTL => true,
+        Some(_) => {
+            registered.remove(&tenant);
+            false
+        }
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TENANT: Uuid = Uuid::from_u128(0x7e1a);
+    const OTHER: Uuid = Uuid::from_u128(0x7e1b);
+
+    /// An `Instant` far enough in the past to be expired.
+    fn stale() -> Instant {
+        Instant::now()
+            .checked_sub(TYPE_REGISTRATION_TTL + Duration::from_secs(1))
+            .expect("the process has not been running long enough to subtract the TTL")
+    }
+
+    #[test]
+    fn a_tenant_we_have_never_registered_for_is_not_fresh() {
+        let mut registered = HashMap::new();
+        assert!(!registration_is_fresh_in(&mut registered, TENANT));
+    }
+
+    #[test]
+    fn a_recent_registration_is_fresh() {
+        let mut registered = HashMap::from([(TENANT, Instant::now())]);
+        assert!(registration_is_fresh_in(&mut registered, TENANT));
+    }
+
+    /// The backstop, and the eviction that goes with it: an expired entry is
+    /// not merely ignored, it is dropped, so the map cannot fill with tenants
+    /// nobody is asking about any more.
+    #[test]
+    fn an_expired_registration_is_not_fresh_and_is_forgotten() {
+        let mut registered = HashMap::from([(TENANT, stale())]);
+        assert!(!registration_is_fresh_in(&mut registered, TENANT));
+        assert!(!registered.contains_key(&TENANT));
+    }
+
+    /// The registry is per tenant — graph-storage scopes every operation to the
+    /// caller's tenant and publishes the base ontology on a tenant's first
+    /// registration — so one tenant's entry must never answer for another's.
+    #[test]
+    fn one_tenants_registration_does_not_answer_for_another() {
+        let mut registered = HashMap::from([(TENANT, Instant::now())]);
+        assert!(!registration_is_fresh_in(&mut registered, OTHER));
+        assert!(registration_is_fresh_in(&mut registered, TENANT));
+    }
 
     #[test]
     fn file_text_becomes_a_bounded_excerpt() {
