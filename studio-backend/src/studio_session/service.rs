@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::access::{NotReachable, WorkspaceAccess};
 use super::config::StudioSessionConfig;
 use super::driver::{AdoptedSession, LaunchSpec, LocalBind, SessionAddress, SessionDriver};
 
@@ -143,6 +144,12 @@ pub struct SessionService {
     /// without it still launches sessions, their commits just keep the
     /// product's name.
     account_management: RwLock<Option<Arc<dyn AccountManagementClient>>>,
+    /// Answers whether a caller reaches a workspace at all. Wired from the same
+    /// account-management client beside it, behind a trait so the rule can be
+    /// tested without one (see `access.rs`). `None` means unwired, and an
+    /// authorization question nobody can answer is refused rather than waved
+    /// through.
+    access: RwLock<Option<Arc<dyn WorkspaceAccess>>>,
     /// Wakes the background image keeper (see [`Self::image_keeper`]) for a
     /// refresh pull. Launch requests never pull inline: a registry pull of a
     /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
@@ -164,6 +171,7 @@ impl SessionService {
             sessions: RwLock::new(SessionCache::default()),
             credstore: RwLock::new(None),
             account_management: RwLock::new(None),
+            access: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
         })
     }
@@ -266,6 +274,39 @@ impl SessionService {
 
     pub async fn set_credstore(&self, client: Arc<dyn CredStoreClientV1>) {
         *self.credstore.write().await = Some(client);
+    }
+
+    pub async fn set_workspace_access(&self, access: Arc<dyn WorkspaceAccess>) {
+        *self.access.write().await = Some(access);
+    }
+
+    /// May this caller reach this workspace?
+    ///
+    /// The one question every surface here asks, and the reason `access.rs`
+    /// exists — read its header for what this replaced and what that cost.
+    ///
+    /// FAILS CLOSED. The account-management client this is wired from is
+    /// optional in `gear.rs` because commit attribution can do without it; an
+    /// authorization guard cannot. An assembly that did not wire it refuses
+    /// sessions rather than hands them out unchecked, and says which of the two
+    /// it is rather than failing silently.
+    pub async fn may_reach(&self, ctx: &SecurityContext, workspace_id: Uuid) -> bool {
+        // Cloned out of the lock: the answer is a call into another gear and
+        // must not hold this one's read guard while it waits.
+        let access = {
+            let guard = self.access.read().await;
+            guard.as_ref().map(Arc::clone)
+        };
+        match access {
+            Some(access) => access.may_reach(ctx, workspace_id).await,
+            None => {
+                tracing::warn!(
+                    workspace_id = %workspace_id,
+                    "studio-session: no workspace-access client wired — refusing, because an unanswerable authorization question is not a yes"
+                );
+                false
+            }
+        }
     }
 
     pub async fn set_account_management(&self, client: Arc<dyn AccountManagementClient>) {
@@ -509,12 +550,24 @@ impl SessionService {
         // and the one we record.
         let tenant_id = ctx.subject_tenant_id();
         let actor_id = ctx.subject_id();
+        // Before anything is read or launched: this is the whole access
+        // decision, and it is about the WORKSPACE (see `access.rs`).
+        if !self.may_reach(ctx, workspace_id).await {
+            return Err(NotReachable { workspace_id }.into());
+        }
         {
-            let existing = self.snapshot().await.into_values().find(|s| {
-                s.workspace_id == workspace_id
-                    && s.tenant_id == tenant_id
-                    && s.state != SessionState::Stopped
-            });
+            // Keyed by the workspace ALONE, because that is what a session is
+            // keyed by everywhere else that decides: `session_id_for` derives
+            // its id from the workspace, the runtime names the Pod
+            // `cf-studio-session-<workspace>`, and this endpoint's own contract
+            // says "idempotent per workspace". Adding the caller's tenant here
+            // never isolated two sessions — one name admits one Pod — it only
+            // ever missed a live one and sent the driver off to destroy it.
+            let existing = self
+                .snapshot()
+                .await
+                .into_values()
+                .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped);
             if let Some(existing) = existing {
                 // Reuse only when the runtime is actually alive. The listing
                 // can be up to `registry_ttl_secs` old, and a container removed
@@ -772,16 +825,12 @@ impl SessionService {
                 // won has a session running with its own tokens, and that is
                 // the session to hand back — the ones minted here reach
                 // nothing. Ask the runtime rather than trust the reason.
-                if let Some(existing) =
-                    self.refresh()
-                        .await
-                        .unwrap_or_default()
-                        .into_values()
-                        .find(|s| {
-                            s.workspace_id == workspace_id
-                                && s.tenant_id == tenant_id
-                                && s.state != SessionState::Stopped
-                        })
+                if let Some(existing) = self
+                    .refresh()
+                    .await
+                    .unwrap_or_default()
+                    .into_values()
+                    .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped)
                 {
                     tracing::info!(
                         session_id = %existing.id,
@@ -968,11 +1017,22 @@ impl SessionService {
 
     /// Refresh state: Starting → Running once the session port accepts a
     /// connection (driver probe).
-    pub async fn get(&self, tenant_id: Uuid, id: Uuid) -> Option<Session> {
-        let mut session = self.snapshot().await.remove(&id)?;
-        if session.tenant_id != tenant_id {
-            return None; // tenant isolation: not yours == not found
+    pub async fn get(&self, ctx: &SecurityContext, id: Uuid) -> Option<Session> {
+        let workspace_id = self.snapshot().await.get(&id)?.workspace_id;
+        if !self.may_reach(ctx, workspace_id).await {
+            return None; // not yours == not there; saying which would say it exists
         }
+        self.probe(id).await
+    }
+
+    /// A session by id with NO access decision.
+    ///
+    /// For the caller that cannot make one: the scheduled `await_ready` run
+    /// holds a `TaskContext`, not a `SecurityContext`, and it exists only
+    /// because [`Self::create`] already authorized this very launch. Everything
+    /// a person reaches goes through [`Self::get`].
+    pub async fn probe(&self, id: Uuid) -> Option<Session> {
+        let mut session = self.snapshot().await.remove(&id)?;
         if session.state != SessionState::Starting {
             return Some(session);
         }
@@ -1021,12 +1081,14 @@ impl SessionService {
         if !self.cfg.theia_control_enabled {
             return None;
         }
-        let tenant_id = ctx.subject_tenant_id();
-        let session = self.snapshot().await.into_values().find(|s| {
-            s.workspace_id == workspace_id
-                && s.tenant_id == tenant_id
-                && s.state != SessionState::Stopped
-        })?;
+        if !self.may_reach(ctx, workspace_id).await {
+            return None;
+        }
+        let session = self
+            .snapshot()
+            .await
+            .into_values()
+            .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped)?;
         if session.control_token.is_empty() {
             return None;
         }
@@ -1069,19 +1131,29 @@ impl SessionService {
             })
     }
 
-    pub async fn list(&self, tenant_id: Uuid) -> Vec<Session> {
-        self.snapshot()
-            .await
-            .into_values()
-            .filter(|s| s.tenant_id == tenant_id)
-            .collect()
+    /// The sessions this caller reaches.
+    ///
+    /// One access question per session, in sequence rather than concurrently:
+    /// the runtime admits one session per workspace and a namespace holds a
+    /// handful, so this is a short loop, and fanning it out would trade
+    /// readability for a saving nobody can measure.
+    pub async fn list(&self, ctx: &SecurityContext) -> Vec<Session> {
+        let mut reachable = Vec::new();
+        for session in self.snapshot().await.into_values() {
+            if self.may_reach(ctx, session.workspace_id).await {
+                reachable.push(session);
+            }
+        }
+        reachable
     }
 
-    pub async fn stop(&self, tenant_id: Uuid, id: Uuid) -> anyhow::Result<bool> {
-        let session = match self.snapshot().await.remove(&id) {
-            Some(s) if s.tenant_id == tenant_id => s,
-            _ => return Ok(false),
+    pub async fn stop(&self, ctx: &SecurityContext, id: Uuid) -> anyhow::Result<bool> {
+        let Some(session) = self.snapshot().await.remove(&id) else {
+            return Ok(false);
         };
+        if !self.may_reach(ctx, session.workspace_id).await {
+            return Ok(false); // not yours == not there, as in `get`
+        }
         self.driver.destroy(&session.handle).await?;
         self.cache_forget(id).await;
         Ok(true)
@@ -1285,10 +1357,11 @@ mod tests {
     use anyhow::anyhow;
     use async_trait::async_trait;
 
+    use super::super::access::WorkspaceAccess;
     use super::super::driver::{
         AdoptedSession, LaunchSpec, LaunchedSession, SessionAddress, SessionDriver,
     };
-    use super::{Arc, SessionService, SessionState, StudioSessionConfig};
+    use super::{Arc, SecurityContext, SessionService, SessionState, StudioSessionConfig};
 
     #[derive(Default)]
     struct FakeRuntime {
@@ -1353,6 +1426,35 @@ mod tests {
 
     const TENANT: Uuid = Uuid::from_u128(0x11);
 
+    /// Reachability, faked at the seam `access.rs` exists to provide. The real
+    /// answer is account-management resolving the workspace tenant under the
+    /// caller's own context; what these tests are about is what this gear does
+    /// with a yes and with a no.
+    struct Reachable(bool);
+
+    #[async_trait]
+    impl WorkspaceAccess for Reachable {
+        async fn may_reach(&self, _ctx: &SecurityContext, _workspace_id: Uuid) -> bool {
+            self.0
+        }
+    }
+
+    /// A caller in a given home tenant. The home tenant is exactly what these
+    /// lookups used to key on and now must not: two of these differing is the
+    /// state that used to destroy a live session.
+    fn caller(tenant: Uuid) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xC0))
+            .subject_type("user")
+            .subject_tenant_id(tenant)
+            .build()
+            .expect("security context")
+    }
+
+    fn ctx() -> SecurityContext {
+        caller(TENANT)
+    }
+
     fn running_session(workspace: Uuid, port: u16) -> AdoptedSession {
         AdoptedSession {
             workspace_id: workspace,
@@ -1369,15 +1471,22 @@ mod tests {
 
     /// `registry_ttl_secs: 0` — every read asks the runtime, which is what
     /// most of these tests want to observe.
-    fn service(runtime: Arc<FakeRuntime>) -> Arc<SessionService> {
-        SessionService::new(
-            StudioSessionConfig {
-                registry_ttl_secs: 0,
-                theia_control_enabled: true,
-                ..StudioSessionConfig::default()
-            },
-            runtime,
-        )
+    fn config() -> StudioSessionConfig {
+        StudioSessionConfig {
+            registry_ttl_secs: 0,
+            theia_control_enabled: true,
+            ..StudioSessionConfig::default()
+        }
+    }
+
+    /// A service every caller reaches, which is the uninteresting half of the
+    /// access question and the right default for tests about everything else.
+    async fn service(runtime: Arc<FakeRuntime>) -> Arc<SessionService> {
+        let service = SessionService::new(config(), runtime);
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        service
     }
 
     /// The property the whole change is for: two services sharing a runtime
@@ -1386,10 +1495,13 @@ mod tests {
     async fn two_services_over_one_runtime_agree() {
         let ws = Uuid::from_u128(0xA1);
         let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
-        let (one, two) = (service(runtime.clone()), service(runtime.clone()));
+        let (one, two) = (
+            service(runtime.clone()).await,
+            service(runtime.clone()).await,
+        );
 
-        let from_one = one.list(TENANT).await;
-        let from_two = two.list(TENANT).await;
+        let from_one = one.list(&ctx()).await;
+        let from_two = two.list(&ctx()).await;
         assert_eq!(from_one.len(), 1);
         assert_eq!(from_one[0].id, from_two[0].id);
         assert_eq!(from_one[0].handle, from_two[0].handle);
@@ -1397,20 +1509,74 @@ mod tests {
         // Including by id — the one lookup a process-local registry could not
         // answer for a session another replica had launched.
         let id = from_one[0].id;
-        assert!(two.get(TENANT, id).await.is_some());
+        assert!(two.get(&ctx(), id).await.is_some());
         assert!(two.proxy_target(id).await.is_some());
+    }
+
+    /// THE REGRESSION THIS GUARD EXISTS FOR: two people, one project.
+    ///
+    /// These two differ in exactly the way the dev stand's two accounts did — a
+    /// member of the workspace's tenant and a platform administrator, whose
+    /// home tenant is the platform root. Keyed on the home tenant, neither
+    /// found the other's session; `create` answered that miss by destroying the
+    /// live container to launch a replacement, and the person typing in it was
+    /// thrown out. Keyed on the workspace, there is one session and both reach
+    /// it.
+    #[tokio::test]
+    async fn two_callers_reach_one_workspace_session() {
+        let ws = Uuid::from_u128(0xB3);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = service(runtime.clone()).await;
+
+        let member = caller(TENANT);
+        let administrator = caller(Uuid::from_u128(1));
+        let id = service.list(&member).await[0].id;
+
+        assert!(service.get(&member, id).await.is_some());
+        assert!(
+            service.get(&administrator, id).await.is_some(),
+            "a session is reached through its workspace, not through whose home \
+             tenant happened to launch it"
+        );
+    }
+
+    /// The other half: reachability is a question, not a formality.
+    #[tokio::test]
+    async fn a_workspace_the_caller_does_not_reach_has_no_session() {
+        let ws = Uuid::from_u128(0xAA);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = SessionService::new(config(), runtime);
+        service
+            .set_workspace_access(Arc::new(Reachable(false)))
+            .await;
+
+        assert!(service.list(&ctx()).await.is_empty());
+        assert!(service.get(&ctx(), session_id_for(ws)).await.is_none());
+        assert!(!service.stop(&ctx(), session_id_for(ws)).await.unwrap());
+    }
+
+    /// And an assembly that wired no client at all refuses, rather than
+    /// treating a question nobody can answer as a yes.
+    #[tokio::test]
+    async fn an_unwired_access_client_reaches_nothing() {
+        let ws = Uuid::from_u128(0xAB);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        let service = SessionService::new(config(), runtime);
+
+        assert!(service.list(&ctx()).await.is_empty());
+        assert!(service.get(&ctx(), session_id_for(ws)).await.is_none());
     }
 
     #[tokio::test]
     async fn a_session_the_runtime_dropped_is_gone() {
         let ws = Uuid::from_u128(0xA2);
         let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
-        let service = service(runtime.clone());
-        let id = service.list(TENANT).await[0].id;
+        let service = service(runtime.clone()).await;
+        let id = service.list(&ctx()).await[0].id;
 
         runtime.set(Vec::new());
-        assert!(service.list(TENANT).await.is_empty());
-        assert!(service.get(TENANT, id).await.is_none());
+        assert!(service.list(&ctx()).await.is_empty());
+        assert!(service.get(&ctx(), id).await.is_none());
     }
 
     /// A container that stopped on its own reads as stopped, without anyone
@@ -1420,8 +1586,8 @@ mod tests {
         let ws = Uuid::from_u128(0xA3);
         let mut stopped = running_session(ws, 41000);
         stopped.running = false;
-        let service = service(FakeRuntime::with(vec![stopped]));
-        assert_eq!(service.list(TENANT).await[0].state, SessionState::Stopped);
+        let service = service(FakeRuntime::with(vec![stopped])).await;
+        assert_eq!(service.list(&ctx()).await[0].state, SessionState::Stopped);
     }
 
     /// A session the runtime listed without a creation time is NOT an expired
@@ -1435,7 +1601,7 @@ mod tests {
         let mut ageless = running_session(ws, 41000);
         ageless.created_at_epoch_secs = 0;
         let runtime = FakeRuntime::with(vec![ageless]);
-        let service = service(runtime.clone());
+        let service = service(runtime.clone()).await;
 
         let outcome = service.reap_expired().await.expect("the pass runs");
 
@@ -1455,7 +1621,7 @@ mod tests {
         let mut old = running_session(ws, 41000);
         old.created_at_epoch_secs = 1; // 1970, but stated rather than missing
         let runtime = FakeRuntime::with(vec![old]);
-        let service = service(runtime.clone());
+        let service = service(runtime.clone()).await;
 
         let outcome = service.reap_expired().await.expect("the pass runs");
 
@@ -1469,21 +1635,21 @@ mod tests {
     async fn running_survives_the_next_listing() {
         let ws = Uuid::from_u128(0xA4);
         let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
-        let service = service(runtime.clone());
-        let id = service.list(TENANT).await[0].id;
+        let service = service(runtime.clone()).await;
+        let id = service.list(&ctx()).await[0].id;
 
         assert_eq!(
-            service.list(TENANT).await[0].state,
+            service.list(&ctx()).await[0].state,
             SessionState::Starting,
             "a listed session starts out only started"
         );
         assert_eq!(
-            service.get(TENANT, id).await.unwrap().state,
+            service.get(&ctx(), id).await.unwrap().state,
             SessionState::Running,
             "the reachability probe promotes it"
         );
         assert_eq!(
-            service.list(TENANT).await[0].state,
+            service.list(&ctx()).await[0].state,
             SessionState::Running,
             "and a fresh listing does not undo that"
         );
@@ -1500,9 +1666,12 @@ mod tests {
             },
             runtime.clone(),
         );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
 
         for _ in 0..5 {
-            assert_eq!(service.list(TENANT).await.len(), 1);
+            assert_eq!(service.list(&ctx()).await.len(), 1);
         }
         assert_eq!(
             runtime.listings(),
@@ -1516,11 +1685,11 @@ mod tests {
     async fn a_runtime_that_cannot_be_listed_leaves_the_last_answer_standing() {
         let ws = Uuid::from_u128(0xA6);
         let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
-        let service = service(runtime.clone());
-        assert_eq!(service.list(TENANT).await.len(), 1);
+        let service = service(runtime.clone()).await;
+        assert_eq!(service.list(&ctx()).await.len(), 1);
 
         runtime.start_failing();
-        assert_eq!(service.list(TENANT).await.len(), 1);
+        assert_eq!(service.list(&ctx()).await.len(), 1);
     }
 
     /// Stopping must take effect at once, not when the listing next expires.
@@ -1535,22 +1704,13 @@ mod tests {
             },
             runtime.clone(),
         );
-        let id = service.list(TENANT).await[0].id;
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let id = service.list(&ctx()).await[0].id;
 
-        assert!(service.stop(TENANT, id).await.unwrap());
-        assert!(service.list(TENANT).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn another_tenants_session_is_not_found() {
-        let ws = Uuid::from_u128(0xA8);
-        let service = service(FakeRuntime::with(vec![running_session(ws, 41000)]));
-        let id = service.list(TENANT).await[0].id;
-        let stranger = Uuid::from_u128(0x99);
-
-        assert!(service.get(stranger, id).await.is_none());
-        assert!(service.list(stranger).await.is_empty());
-        assert!(!service.stop(stranger, id).await.unwrap());
+        assert!(service.stop(&ctx(), id).await.unwrap());
+        assert!(service.list(&ctx()).await.is_empty());
     }
 
     /// The bridge's authentication primitive, resolved on a service that never
@@ -1558,7 +1718,7 @@ mod tests {
     #[tokio::test]
     async fn a_control_token_resolves_on_a_service_that_never_minted_it() {
         let ws = Uuid::from_u128(0xA9);
-        let elsewhere = service(FakeRuntime::with(vec![running_session(ws, 41000)]));
+        let elsewhere = service(FakeRuntime::with(vec![running_session(ws, 41000)])).await;
 
         let identity = elsewhere.resolve_control_token("s2s").await.unwrap();
         assert_eq!(identity.workspace_id, ws);

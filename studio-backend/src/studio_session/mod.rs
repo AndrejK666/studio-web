@@ -6,6 +6,7 @@
 //! Pods behind the backend's proxy — same REST contract either way. See
 //! docs/adr/0003-theia-sessions.md for the architecture and the k8s path.
 
+pub mod access;
 pub mod config;
 pub mod docker;
 pub mod driver;
