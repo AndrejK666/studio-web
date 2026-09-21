@@ -277,6 +277,12 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-api-usage.mjs
+      # The other contract both portals owe, and the reason it lives in this
+      # job rather than test-frontend: the event stream must not be
+      # compressed, and a config change that breaks it is invisible in
+      # review, invisible in a rendered chart and invisible from outside the
+      # cluster (TLS terminates at Cloudflare, which compresses on its own).
+      - run: bash scripts/check-portal-nginx.sh
 
   test-infra:
     needs: test-changes
@@ -1322,35 +1328,31 @@ jobs:
           kubectl get pods -n "$NAMESPACE"
           helm status studio -n "$NAMESPACE"
 
-      # Two assertions the smoke script deliberately cannot make from
-      # outside the cluster.
-      - name: Verify in-cluster configuration
+      # Informational, and deliberately unable to fail the deploy: the
+      # rollout has already succeeded by this point, and a report about it
+      # must not turn a good deploy red.
+      #
+      # It reads a Deployment, which the deployer may do. The check that
+      # used to sit beside it did a `kubectl exec ... nginx -T`, which needs
+      # `create` on `pods/exec` — a permission this ServiceAccount does not
+      # have and must not be given. It now runs as a static assertion over
+      # the template in this repository, in the contract job, where it
+      # belongs: scripts/check-portal-nginx.sh.
+      - name: Report the deployed telemetry switch
         shell: bash
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          # COMPRESSION MUST NOT REACH THE EVENT STREAM. nginx's gzip filter
-          # buffers until it has enough bytes to be worth compressing, which
-          # for SSE means holding events back for as long as the client will
-          # wait: the portal goes quiet with nothing in any log to say why.
-          # TLS terminates at Cloudflare, which compresses on its own, so the
-          # only place this is answerable is the config the pod is running.
-          if kubectl get deployment/studio-studio-web-frontend -n "$NAMESPACE" >/dev/null 2>&1; then
-            conf="$(kubectl exec -n "$NAMESPACE" deployment/studio-studio-web-frontend -- nginx -T 2>/dev/null)"
-            grep -q "location /cf/studio-events/v1/stream" <<<"$conf"
-            awk "/location .cf.studio-events.v1.stream/,/}/" <<<"$conf" | grep -q "gzip off"
-            echo "  ok    the event stream location disables gzip"
-          fi
-
-          # THE METRICS SWITCH. The instruments are no-ops without a meter
-          # provider, and the flag lives in an image-baked config file, so an
-          # environment can look configured in values.yaml and export nothing.
+          # The instruments are no-ops without a meter provider, and the flag
+          # lives in an image-baked config file — so an environment can look
+          # configured in values.yaml and still export nothing.
           metrics="$(kubectl get deployment/studio-studio-web-backend -n "$NAMESPACE" \
-            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_OTEL_METRICS")].value}')"
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_OTEL_METRICS")].value}' 2>/dev/null)"
           if [ "$metrics" = "true" ]; then
             echo "  ok    the backend exports OTLP metrics"
           else
-            echo "  note  STUDIO_OTEL_METRICS=${metrics:-<unset>}; the RED alerts have no data here" >&2
+            echo "  note  STUDIO_OTEL_METRICS=${metrics:-<unset>}; the RED alerts have no data here"
           fi
   deploy-infrastructure:
     name: 3. Deploy Infrastructure
