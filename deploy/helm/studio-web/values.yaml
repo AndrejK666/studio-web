@@ -192,7 +192,11 @@ backend:
     secretRevision: ""
     resources:
       requests: { cpu: "50m", memory: 64Mi }
-      limits: { cpu: "500m", memory: 512Mi }
+      # 200m, measured: this signs URLs and proxies bytes, and its 24-hour peak
+      # on studio-dev is 0.001 CPU. A 500m ceiling is 500x a load that does not
+      # exist — and in a namespace whose quota counts limits, that is a quarter
+      # of an IDE session spent on nothing.
+      limits: { cpu: "200m", memory: 512Mi }
   # LLM egress endpoint (non-secret half; the key lives in appSecrets).
   # Any OpenAI-compatible provider; defaults = Groq free tier.
   llm:
@@ -304,7 +308,10 @@ frontend:
   discordUrl: ""
   resources:
     requests: { cpu: 50m, memory: 64Mi }
-    limits: { cpu: 250m, memory: 256Mi }
+    # 100m, measured: nginx serving a static bundle peaks at 0.000 CPU over
+    # 24 hours on studio-dev. Memory is left alone — 4% of 256Mi is not a
+    # number worth tuning, and the namespace quota has memory to spare.
+    limits: { cpu: 100m, memory: 256Mi }
   autoscaling:
     enabled: false
 
@@ -339,7 +346,10 @@ frontendPrototype:
     minAvailable: 1
   resources:
     requests: { cpu: 50m, memory: 64Mi }
-    limits: { cpu: 250m, memory: 256Mi }
+    # 100m, measured: nginx serving a static bundle peaks at 0.000 CPU over
+    # 24 hours on studio-dev. Memory is left alone — 4% of 256Mi is not a
+    # number worth tuning, and the namespace quota has memory to spare.
+    limits: { cpu: 100m, memory: 256Mi }
 
 # How much of the namespace this deployment may use.
 #
@@ -356,19 +366,42 @@ frontendPrototype:
 # Sessions were failing on the declared ceiling, not on the machines.
 #
 # PLATFORM BASELINE in studio-dev, counted as limits.cpu:
-#   postgres 1 + backend 1.5 + frontend .25 + prototype .25 + keycloak 1 = 4
+#   postgres 1 + backend 1 + file-storage .2 + frontend .1 x2
+#   + prototype .1 + keycloak .5                                  = 3.0
 #   plus 0.5 for the database bootstrap hook while it runs
 #
-# ONE IDE SESSION: requests 250m/512Mi, limits 2 CPU/2Gi (studio-session sets
-# these; they are configurable there).
+# It was 4.0 with one frontend replica, and the difference is not a smaller
+# deployment — it is ceilings that were set by habit and have now been set by
+# measurement. Peak usage over 24 hours on studio-dev, against the old limits:
+# frontend 0.2%, file-storage 0.2%, prototype 1.8%, keycloak 1.0%. The backend
+# keeps its whole CPU (8.7% on a quiet day, but its cost is a repository sync
+# with embeddings, which a quiet day does not show) and so does Postgres, at
+# 37.5%.
 #
-# limits.cpu    = 4.5 + (4 sessions + 1 terminating) x 2 = 14.5  -> 16
+# WHY THIS IS WORTH DOING AT ALL, given none of it was throttling: a
+# ResourceQuota counts limits, not usage. A ceiling nobody reaches is still
+# spent, and in this namespace it is spent in units of IDE session.
+#
+# ONE IDE SESSION: requests 250m/512Mi, limits 2 CPU/2Gi (studio-session sets
+# these; they are configurable there). Theia peaks at 62% of that CPU while
+# somebody is working in it, so it is the one ceiling here that is sized about
+# right.
+#
+# limits.cpu    = 3.5 + (4 sessions + 1 terminating) x 2 = 13.5  -> 16
 # limits.memory = 5Gi + 0.5 + 5 x 2Gi                  = 15.5Gi -> 24Gi
 # requests.cpu  = 1.15 + 5 x 250m                      = 2.4    -> 6
 # requests.mem  = 2Gi  + 5 x 512Mi                     = 4.5Gi  -> 8Gi
 #
-# The requests are what has to fit the hardware, and they do with room to
+# The limits ceiling is unchanged at 16 even though the baseline dropped: the
+# headroom now buys six concurrent sessions instead of four, which is the
+# point. Requests are what has to fit the hardware, and they do with room to
 # spare: this namespace's 6 CPU plus studio-test's 8 is 14 of 24.
+#
+# NB the quota LIVE in studio-dev is 8 CPU / 16Gi, not this — it predates the
+# chart and `capacity.enabled` is false there, because the deployer may not
+# write a ResourceQuota (deploy/README.md, "Namespace capacity"). Under that
+# 8 the baseline above is what decides: 4.25 allowed one session, 3.0 allows
+# two. Four needs the Role and this block actually applied.
 capacity:
   # OFF by default, and the default is the whole point.
   #
@@ -489,6 +522,13 @@ keycloak:
     tls: []
   resources:
     requests: { cpu: 200m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1Gi }
+    # 500m, measured: a 24-hour peak of 0.010 CPU, so this is still fifty times
+    # the observed load. Not lower, because Keycloak's CPU cost is password
+    # hashing on sign-in — a burst that a quiet day does not show, and the one
+    # moment a person is watching a spinner.
+    #
+    # Memory is untouched at 1Gi: it sits at 64% of it, which is a working set
+    # rather than slack.
+    limits: { cpu: 500m, memory: 1Gi }
   podDisruptionBudget:
     enabled: true
