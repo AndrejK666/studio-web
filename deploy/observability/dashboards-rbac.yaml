@@ -1,0 +1,69 @@
+# The identity CI uses to publish Grafana dashboards, applied once by an
+# administrator.
+#
+#   kubectl --kubeconfig /path/to/admin.kubeconfig apply -f dashboards-rbac.yaml
+#
+# WHY THIS EXISTS RATHER THAN REUSING THE DEPLOYER
+#
+# The service deploys authenticate as `studio-deployer` in studio-dev and
+# studio-test. That account cannot write to studio-monitoring — it answers `no`
+# to `auth can-i create configmaps -n studio-monitoring` — and it should not be
+# given the right: it is the credential a product deploy runs with, and the
+# monitoring namespace is where the evidence about that deploy lives.
+#
+# So dashboards get an account of their own, in their own namespace, that can
+# do exactly one thing.
+#
+# WHAT IT DELIBERATELY CANNOT DO
+#
+# No `delete`, so a broken pipeline cannot remove the boards; the ConfigMap is
+# replaced in place by an apply. No `secrets`, no `deployments`, nothing in any
+# other namespace. If this token leaks, what it buys is the ability to change a
+# graph.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dashboard-deployer
+  namespace: studio-monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dashboard-deployer
+  namespace: studio-monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    # `get` and `list` so an apply can diff; `create` for the first run;
+    # `patch` and `update` for every run after it. Deliberately no `delete`.
+    verbs: ["get", "list", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dashboard-deployer
+  namespace: studio-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dashboard-deployer
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-deployer
+    namespace: studio-monitoring
+---
+# A long-lived token, because CI needs one that outlives a `kubectl create
+# token` default of an hour. Kubernetes stopped minting these automatically in
+# 1.24, so it is requested explicitly here.
+#
+# It is a credential: whoever can read Secrets in this namespace holds it.
+# That set is already small, and what the token grants is one ConfigMap.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dashboard-deployer-token
+  namespace: studio-monitoring
+  annotations:
+    kubernetes.io/service-account.name: dashboard-deployer
+type: kubernetes.io/service-account-token
