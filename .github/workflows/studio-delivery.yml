@@ -89,6 +89,7 @@ jobs:
       theia: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.theia }}
       infra: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.infra }}
       deployment: ${{ steps.filter.outputs.deployment }}
+      dashboards: ${{ steps.filter.outputs.dashboards }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -122,6 +123,12 @@ jobs:
             deployment:
               - 'deploy/**'
               - '.github/workflows/studio-delivery.yml'
+            # Narrower than `deployment` on purpose: a Grafana board is the
+            # one thing under deploy/ that can be shipped on its own, to a
+            # namespace no service deploy touches, without an image.
+            dashboards:
+              - 'deploy/observability/grafana/dashboards/**'
+              - 'scripts/check-dashboards.mjs'
 
 
   test-backend:
@@ -331,6 +338,14 @@ jobs:
           # execute in their component jobs; this step validates workflow YAML,
           # expressions, job dependencies, actions and event schemas.
           "$RUNNER_TEMP/actionlint" -color -shellcheck=
+
+      # Nothing else looks at these files before they reach a cluster, and
+      # every way they break — a datasource uid that does not exist, a uid
+      # that collides, a ConfigMap over the size a ConfigMap may be — shows
+      # up as an empty panel, which reads like "no data" rather than like a
+      # broken board.
+      - name: Validate Grafana dashboards
+        run: node scripts/check-dashboards.mjs
 
       - uses: azure/setup-helm@v4
         with:
@@ -1373,6 +1388,90 @@ jobs:
           else
             echo "  note  STUDIO_OTEL_METRICS=${metrics:-<unset>}; the RED alerts have no data here"
           fi
+  # Dashboards ship on their own, because they can: a board is a file, its
+  # blast radius is one ConfigMap, and Grafana's file provider re-reads the
+  # directory within 30 seconds without a restart. Tying them to a service
+  # deploy would mean a graph fix waits for an image.
+  #
+  # THIS NEEDS A CREDENTIAL THAT DOES NOT EXIST YET. The deploy jobs above
+  # authenticate as `studio-deployer` in studio-dev / studio-test, and that
+  # account cannot write to studio-monitoring — verified, it answers `no` to
+  # `auth can-i create configmaps -n studio-monitoring`, and it must not be
+  # given the right, for the same reason it may not administer RBAC or write
+  # a ResourceQuota.
+  #
+  # So this job wants its own namespace-scoped ServiceAccount and a
+  # MONITORING_KUBE_CONFIG_B64 repository secret. Until both exist it says
+  # so and stops, green: a red main on every dashboard edit would teach
+  # people to ignore the colour, and there is nothing here for them to fix.
+  # deploy/observability/dashboards-rbac.yaml is the account and the Role, for
+  # an administrator to apply once; dashboards-kubeconfig.sh mints the value
+  # the secret wants from it.
+  deploy-dashboards:
+    name: Deploy Grafana dashboards
+    needs: [test-complete, test-changes]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.test-complete.result == 'success'
+      && needs.test-changes.outputs.dashboards == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      NAMESPACE: studio-monitoring
+      KUBECONFIG: /tmp/monitoring-kubeconfig
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure namespace-scoped cluster access
+        id: access
+        env:
+          KUBE_CONFIG_B64: ${{ secrets.MONITORING_KUBE_CONFIG_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${KUBE_CONFIG_B64:-}" ]; then
+            echo "::warning title=Dashboards not deployed::MONITORING_KUBE_CONFIG_B64 is not set, so the boards in this commit are not in the cluster. See deploy/observability/README.md."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf %s "$KUBE_CONFIG_B64" | base64 --decode > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+
+          # The same two guards the service deploys use: prove the one
+          # permission needed, and refuse a credential that has every
+          # permission.
+          kubectl auth can-i create configmaps -n "$NAMESPACE" | grep -qx yes
+          if kubectl auth can-i '*' '*' --all-namespaces | grep -qx yes; then
+            echo "Refusing to deploy with a cluster-admin credential" >&2
+            exit 1
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      # `make dashboards` rather than an inline kubectl: one definition of
+      # how a board becomes a ConfigMap, shared with whoever runs it by hand.
+      - name: Apply the dashboards
+        if: steps.access.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          context=$(kubectl config current-context)
+          make -C deploy/observability dashboards CONTEXT="$context" NS="$NAMESPACE"
+
+      # Grafana re-reads the directory on a timer, so this is a read, not a
+      # restart: it proves the ConfigMap the pod will pick up carries the
+      # boards this commit contains.
+      - name: Verify what the cluster now holds
+        if: steps.access.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          keys=$(kubectl get configmap studio-dashboards -n "$NAMESPACE" -o json \
+            | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin)["data"])))')
+          echo "in the cluster: $keys"
+          for file in deploy/observability/grafana/dashboards/*.json; do
+            grep -qw "$(basename "$file")" <<<"$keys" || {
+              echo "$(basename "$file") did not reach the ConfigMap" >&2; exit 1; }
+          done
+
   deploy-infrastructure:
     name: 3. Deploy Infrastructure
     # See deploy-services: a deployment consumes an existing immutable image,
