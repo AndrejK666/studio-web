@@ -71,6 +71,49 @@ const SEARCH_ARM_LIMIT: u32 = 50;
 /// backstop, not the mechanism.
 const TYPE_REGISTRATION_TTL: Duration = Duration::from_secs(600);
 
+/// How long a tenant's node projection is served from memory.
+///
+/// THE READ THIS AVOIDS IS NOT A QUERY, IT IS A WALK. `/v1/nodes` narrows by
+/// `scope`, `repo` and an `updated_at` order, and all three live in the node
+/// payload, which graph-storage's projection cannot filter or order on. So
+/// [`GraphStorageBackend::list`] does the only thing it can: it pages the whole
+/// typed node set into this process and narrows it here. Measured on studio-dev
+/// (28,717 nodes across the four listable types, 31 MB of payload): one request
+/// is 144 SEQUENTIAL round trips, and a client walking the pages of its own
+/// result repeats them for every page.
+///
+/// Sixty seconds is chosen against the one thing this cache cannot see: a
+/// second replica's ingest. A local ingest drops the entry exactly (see
+/// [`GraphStorageBackend::invalidate_listings`]), so the TTL is only the bound
+/// on how long THIS process can serve a listing that ANOTHER process changed.
+/// A minute of that is acceptable for an artifact listing after a sync; it is
+/// deliberately not longer, because nothing else detects the drift.
+///
+/// `STUDIO_ARTIFACT_LIST_CACHE_TTL_SECS=0` turns the cache off.
+const LIST_CACHE_TTL_DEFAULT: Duration = Duration::from_secs(60);
+
+/// How many cached nodes this process will hold across all tenants.
+///
+/// A budget in NODES rather than entries, because entries differ by three
+/// orders of magnitude — a `?type=repo` listing is tens of nodes and the
+/// default one is tens of thousands. The backend's memory limit is 1 GiB
+/// against a ~500 MiB working set, and a node here is a parsed
+/// `serde_json::Value`, several times the 1.1 KB its payload measures on disk.
+/// 40,000 is about one default listing at today's size: enough that paging
+/// through a result costs one walk instead of one per page, and small enough
+/// that the cache cannot be what fills the pod.
+///
+/// Tune it with `STUDIO_ARTIFACT_LIST_CACHE_MAX_NODES` — the fill log line
+/// carries the node count, so the number to set is measured rather than
+/// guessed.
+const LIST_CACHE_MAX_NODES_DEFAULT: usize = 40_000;
+
+/// One tenant's projection for one type set, and when it was read.
+struct CachedListing {
+    nodes: Arc<Vec<GtsNode>>,
+    read_at: Instant,
+}
+
 pub struct GraphStorageBackend {
     client: Arc<dyn GraphStorageClientV1>,
     /// When this process last registered our types for a tenant.
@@ -80,6 +123,25 @@ pub struct GraphStorageBackend {
     /// tenant's first registration, so one tenant's registration says nothing
     /// about another's.
     registered: Mutex<HashMap<Uuid, Instant>>,
+    /// Node projections, keyed by tenant and the type set that was asked for.
+    ///
+    /// KEYED BY TENANT AND NOT BY CALLER, which is only correct because the
+    /// projection is not narrowed per caller. `project_nodes` in graph-storage
+    /// authorizes once — `READ` on the node resource — and then scopes the
+    /// store context to the tenant; `resolve_patterns` resolves the requested
+    /// patterns against the registered types and does NOT intersect them with
+    /// anything the caller holds. Two authorized callers in one tenant
+    /// therefore see identical rows, and one filling this cache for the other
+    /// discloses nothing.
+    ///
+    /// If graph-storage ever gains row-level or per-principal authorization,
+    /// THIS KEY BECOMES A LEAK and has to grow the principal. That is the one
+    /// assumption worth re-checking when the gear's authz changes.
+    listings: Mutex<HashMap<(Uuid, String), CachedListing>>,
+    /// See [`LIST_CACHE_TTL_DEFAULT`]. Zero disables the cache entirely.
+    cache_ttl: Duration,
+    /// See [`LIST_CACHE_MAX_NODES_DEFAULT`].
+    cache_max_nodes: usize,
 }
 
 impl GraphStorageBackend {
@@ -87,6 +149,56 @@ impl GraphStorageBackend {
         Self {
             client,
             registered: Mutex::new(HashMap::new()),
+            listings: Mutex::new(HashMap::new()),
+            cache_ttl: env_duration_secs("STUDIO_ARTIFACT_LIST_CACHE_TTL_SECS")
+                .unwrap_or(LIST_CACHE_TTL_DEFAULT),
+            cache_max_nodes: env_usize("STUDIO_ARTIFACT_LIST_CACHE_MAX_NODES")
+                .unwrap_or(LIST_CACHE_MAX_NODES_DEFAULT),
+        }
+    }
+
+    /// A cached projection for this tenant and type set, if one is fresh.
+    ///
+    /// A poisoned lock is treated as a miss rather than an error: the cache is
+    /// an optimisation, and failing a listing because a previous thread
+    /// panicked while holding it would turn a performance feature into an
+    /// availability one.
+    fn cached_listing(&self, key: &(Uuid, String)) -> Option<Arc<Vec<GtsNode>>> {
+        if self.cache_ttl.is_zero() {
+            return None;
+        }
+        let mut listings = self.listings.lock().ok()?;
+        cached_listing_in(&mut listings, key, self.cache_ttl)
+    }
+
+    /// Remember a projection, evicting oldest-first until the node budget holds.
+    ///
+    /// Eviction is by read time, not by use: an entry's value is bounded by the
+    /// TTL anyway, so the oldest is always the one closest to being useless.
+    fn remember_listing(&self, key: (Uuid, String), nodes: &Arc<Vec<GtsNode>>) {
+        if self.cache_ttl.is_zero() || nodes.len() > self.cache_max_nodes {
+            // A single listing over budget is never cached: admitting it would
+            // evict everything else to hold one entry that the next listing
+            // evicts again.
+            return;
+        }
+        let Ok(mut listings) = self.listings.lock() else {
+            return;
+        };
+        remember_listing_in(&mut listings, key, nodes, self.cache_max_nodes);
+    }
+
+    /// Drop every cached projection for a tenant.
+    ///
+    /// Called after an ingest the moment graph-storage has accepted it, so a
+    /// sync is visible to the next listing on THIS process immediately. It is
+    /// deliberately the whole tenant and not the type sets the batch touched:
+    /// an ingest that adds the first node of a type would otherwise leave a
+    /// cached listing that is correct for every type it knows about and silently
+    /// missing the new one.
+    fn invalidate_listings(&self, tenant: Uuid) {
+        if let Ok(mut listings) = self.listings.lock() {
+            listings.retain(|(t, _), _| *t != tenant);
         }
     }
 
@@ -311,6 +423,9 @@ impl GraphStore for GraphStorageBackend {
             upserted += res.counts.nodes_inserted + res.counts.nodes_updated;
             revision = res.revision.revision;
         }
+        // After the gear has accepted the batch, never before: an invalidation
+        // on a failed ingest would drop a listing that is still correct.
+        self.invalidate_listings(ctx.subject_tenant_id());
         tracing::info!(
             batch = nodes.len(),
             nodes_upserted = upserted,
@@ -385,7 +500,7 @@ impl GraphStore for GraphStorageBackend {
         &self,
         ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<Vec<GtsNode>> {
+    ) -> anyhow::Result<Arc<Vec<GtsNode>>> {
         // Ensure our types exist before narrowing by them, so a read before the
         // first ingest returns empty rather than tripping on an unknown type.
         self.register_types(ctx).await?;
@@ -395,9 +510,24 @@ impl GraphStore for GraphStorageBackend {
             .map(gts::graph_type_id)
             .collect();
         if patterns.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Arc::new(Vec::new()));
         }
 
+        // The type set, not the caller's `type_filter` string: `issue` and the
+        // full `gts.cf.studio.artifact.issue.v1~` resolve to the same patterns
+        // and must not be two entries for one projection.
+        let key = (ctx.subject_tenant_id(), patterns.join(","));
+        if let Some(hit) = self.cached_listing(&key) {
+            tracing::debug!(
+                nodes = hit.len(),
+                types = patterns.len(),
+                "studio-artifact-ingest: projection served from cache"
+            );
+            return Ok(hit);
+        }
+
+        let started = Instant::now();
+        let mut pages = 0u32;
         let mut out: Vec<GtsNode> = Vec::new();
         let mut query = ODataQuery::default().with_limit(u64::from(LIST_PAGE));
         loop {
@@ -416,6 +546,7 @@ impl GraphStore for GraphStorageBackend {
                     value: row.payload.unwrap_or_else(|| json!({})),
                 });
             }
+            pages += 1;
             let Some(next) = page.page_info.next_cursor else {
                 break;
             };
@@ -423,7 +554,18 @@ impl GraphStore for GraphStorageBackend {
                 .with_limit(u64::from(LIST_PAGE))
                 .with_cursor(parse_cursor(&next)?);
         }
-        Ok(out)
+        // The node count is the number to set STUDIO_ARTIFACT_LIST_CACHE_MAX_NODES
+        // from, and `pages` is the round-trip count this walk actually cost —
+        // both are the evidence for whether the cache is sized right.
+        tracing::info!(
+            nodes = out.len(),
+            pages,
+            elapsed_ms = started.elapsed().as_millis(),
+            "studio-artifact-ingest: projection walked"
+        );
+        let nodes = Arc::new(out);
+        self.remember_listing(key, &nodes);
+        Ok(nodes)
     }
 
     async fn list_relations(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsEdgeView>> {
@@ -438,9 +580,9 @@ impl GraphStore for GraphStorageBackend {
         let seeds: Vec<String> = self
             .list(ctx, None)
             .await?
-            .into_iter()
+            .iter()
             .filter(|n| n.type_id != gts::USER_TYPE && n.type_id != gts::FILE_TYPE)
-            .map(|n| n.instance_id)
+            .map(|n| n.instance_id.clone())
             .collect();
 
         let mut seen: HashSet<String> = HashSet::new();
@@ -478,6 +620,34 @@ impl GraphStore for GraphStorageBackend {
 }
 
 /// Decode a `CursorV1` continuation token handed back by the projection.
+/// A duration from an environment variable, in whole seconds.
+///
+/// An unparsable value is ignored rather than fatal — the caller falls back to
+/// the compiled default. A cache knob is not worth refusing to boot over, and
+/// the alternative (a typo in a Helm value taking the backend down) is worse
+/// than the alternative it guards against.
+fn env_duration_secs(key: &str) -> Option<Duration> {
+    let raw = std::env::var(key).ok()?;
+    match raw.trim().parse::<u64>() {
+        Ok(secs) => Some(Duration::from_secs(secs)),
+        Err(_) => {
+            tracing::warn!(%key, value = %raw, "studio-artifact-ingest: not a number; using the default");
+            None
+        }
+    }
+}
+
+fn env_usize(key: &str) -> Option<usize> {
+    let raw = std::env::var(key).ok()?;
+    match raw.trim().parse::<usize>() {
+        Ok(n) => Some(n),
+        Err(_) => {
+            tracing::warn!(%key, value = %raw, "studio-artifact-ingest: not a number; using the default");
+            None
+        }
+    }
+}
+
 fn parse_cursor(raw: &str) -> anyhow::Result<toolkit_odata::CursorV1> {
     toolkit_odata::CursorV1::decode(raw)
         .map_err(|e| anyhow::anyhow!("graph-storage returned an undecodable cursor: {e}"))
@@ -490,6 +660,49 @@ fn parse_cursor(raw: &str) -> anyhow::Result<toolkit_odata::CursorV1> {
 /// pure. Expiring entries are removed on the way past, which is all the
 /// eviction this map needs: it is keyed by tenant, and a deployment has as
 /// many tenants as it has organizations.
+/// A fresh entry, or `None`. An expired entry is dropped on the way past, so
+/// the map cannot accumulate projections for tenants nobody is asking about.
+fn cached_listing_in(
+    listings: &mut HashMap<(Uuid, String), CachedListing>,
+    key: &(Uuid, String),
+    ttl: Duration,
+) -> Option<Arc<Vec<GtsNode>>> {
+    match listings.get(key) {
+        Some(hit) if hit.read_at.elapsed() < ttl => Some(Arc::clone(&hit.nodes)),
+        Some(_) => {
+            listings.remove(key);
+            None
+        }
+        None => None,
+    }
+}
+
+/// Insert, then evict oldest-first until the node budget holds.
+fn remember_listing_in(
+    listings: &mut HashMap<(Uuid, String), CachedListing>,
+    key: (Uuid, String),
+    nodes: &Arc<Vec<GtsNode>>,
+    max_nodes: usize,
+) {
+    listings.insert(
+        key,
+        CachedListing {
+            nodes: Arc::clone(nodes),
+            read_at: Instant::now(),
+        },
+    );
+    while listings.values().map(|e| e.nodes.len()).sum::<usize>() > max_nodes {
+        let Some(oldest) = listings
+            .iter()
+            .min_by_key(|(_, e)| e.read_at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        listings.remove(&oldest);
+    }
+}
+
 fn registration_is_fresh_in(registered: &mut HashMap<Uuid, Instant>, tenant: Uuid) -> bool {
     match registered.get(&tenant) {
         Some(at) if at.elapsed() < TYPE_REGISTRATION_TTL => true,
@@ -545,6 +758,126 @@ mod tests {
         let mut registered = HashMap::from([(TENANT, Instant::now())]);
         assert!(!registration_is_fresh_in(&mut registered, OTHER));
         assert!(registration_is_fresh_in(&mut registered, TENANT));
+    }
+
+    // ---- the projection cache ------------------------------------------
+    //
+    // These exercise the rules, not a graph-storage client: the cache is a
+    // HashMap and three decisions over it, and the decisions are what can be
+    // wrong.
+
+    fn listing(n: usize) -> Arc<Vec<GtsNode>> {
+        Arc::new(
+            (0..n)
+                .map(|i| GtsNode {
+                    type_id: gts::ISSUE_TYPE,
+                    instance_id: format!("node-{i}"),
+                    value: json!({ "n": i }),
+                })
+                .collect(),
+        )
+    }
+
+    fn key(tenant: Uuid, patterns: &str) -> (Uuid, String) {
+        (tenant, patterns.to_owned())
+    }
+
+    #[test]
+    fn a_projection_we_have_never_read_is_a_miss() {
+        let mut listings = HashMap::new();
+        assert!(
+            cached_listing_in(&mut listings, &key(TENANT, "issue"), LIST_CACHE_TTL_DEFAULT)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_recent_projection_is_served_without_a_walk() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "issue"), &listing(3), 100);
+        let hit = cached_listing_in(&mut listings, &key(TENANT, "issue"), LIST_CACHE_TTL_DEFAULT);
+        assert_eq!(hit.expect("a fresh entry is a hit").len(), 3);
+    }
+
+    /// The TTL is the only thing that bounds how long this process can serve a
+    /// listing another replica has already changed, so an expired entry must
+    /// be a miss AND must not be left behind.
+    #[test]
+    fn an_expired_projection_is_a_miss_and_is_forgotten() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "issue"), &listing(3), 100);
+        assert!(cached_listing_in(&mut listings, &key(TENANT, "issue"), Duration::ZERO).is_none());
+        assert!(listings.is_empty());
+    }
+
+    /// The key carries the tenant because the projection does: serving one
+    /// tenant's nodes to another would be the worst bug this file could have.
+    #[test]
+    fn one_tenants_projection_never_answers_for_another() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "issue"), &listing(3), 100);
+        assert!(
+            cached_listing_in(&mut listings, &key(OTHER, "issue"), LIST_CACHE_TTL_DEFAULT)
+                .is_none()
+        );
+    }
+
+    /// Two type sets are two projections. `?type=issue` must not be answered
+    /// from the unfiltered listing, which holds four types, nor the reverse.
+    #[test]
+    fn one_type_set_never_answers_for_another() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "issue"), &listing(3), 100);
+        assert!(
+            cached_listing_in(
+                &mut listings,
+                &key(TENANT, "issue,file"),
+                LIST_CACHE_TTL_DEFAULT
+            )
+            .is_none()
+        );
+    }
+
+    /// The budget is in nodes, and it is a ceiling on the whole map rather
+    /// than on one entry.
+    #[test]
+    fn the_node_budget_evicts_the_oldest_entry_first() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "old"), &listing(6), 10);
+        remember_listing_in(&mut listings, key(TENANT, "new"), &listing(6), 10);
+        assert!(
+            cached_listing_in(&mut listings, &key(TENANT, "old"), LIST_CACHE_TTL_DEFAULT).is_none(),
+            "the older entry is the one evicted"
+        );
+        assert!(
+            cached_listing_in(&mut listings, &key(TENANT, "new"), LIST_CACHE_TTL_DEFAULT).is_some(),
+            "the entry that caused the eviction survives it"
+        );
+    }
+
+    /// Invalidation is the whole tenant, because an ingest that adds the first
+    /// node of a type leaves every other listing correct and that one wrong.
+    #[test]
+    fn an_ingest_drops_every_projection_for_its_tenant_and_no_others() {
+        let mut listings = HashMap::new();
+        remember_listing_in(&mut listings, key(TENANT, "issue"), &listing(2), 100);
+        remember_listing_in(&mut listings, key(TENANT, "file"), &listing(2), 100);
+        remember_listing_in(&mut listings, key(OTHER, "issue"), &listing(2), 100);
+
+        listings.retain(|(t, _), _| *t != TENANT);
+
+        assert!(
+            cached_listing_in(&mut listings, &key(TENANT, "issue"), LIST_CACHE_TTL_DEFAULT)
+                .is_none()
+        );
+        assert!(
+            cached_listing_in(&mut listings, &key(TENANT, "file"), LIST_CACHE_TTL_DEFAULT)
+                .is_none()
+        );
+        assert!(
+            cached_listing_in(&mut listings, &key(OTHER, "issue"), LIST_CACHE_TTL_DEFAULT)
+                .is_some()
+        );
     }
 
     #[test]

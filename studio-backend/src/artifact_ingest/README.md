@@ -24,6 +24,41 @@ of the disk that already holds it:
    session has run.
 3. **The connector tree API** — metadata only, when there is no disk to use.
 
+## Reading nodes back is a walk, not a query
+
+`GET /nodes` narrows by `scope`, by `repo`, and orders by the artifact's own
+`updated_at`. All three live in the node payload, and graph-storage's
+projection can filter and order on `node_key`, `name`, `created_at` and
+`updated_at` only — never on a payload path. So this gear pages the whole typed
+node set into the process and narrows it here.
+
+On studio-dev that is **28,717 nodes, 31 MB of payload, 144 sequential round
+trips** for one request, and the endpoint's p95 is **8.06 s** — the slowest
+surface in the product by a factor of five. The cost is linear in the size of
+the project and has no ceiling.
+
+A per-tenant cache of the projection makes a client's walk through its own
+pages cost one graph walk instead of one per page. It is dropped the moment an
+ingest is accepted, and expires after 60 s so that another replica's ingest
+cannot be served stale for longer than that.
+
+| variable | default | |
+|---|---|---|
+| `STUDIO_ARTIFACT_LIST_CACHE_TTL_SECS` | `60` | `0` turns the cache off |
+| `STUDIO_ARTIFACT_LIST_CACHE_MAX_NODES` | `40000` | budget across all tenants |
+
+The budget is in nodes rather than entries because entries differ by three
+orders of magnitude, and it is deliberately about one default listing: the pod
+has a 1 GiB limit against a ~500 MiB working set, and a cached node is a parsed
+`serde_json::Value`, several times the 1.1 KB its payload measures on disk. The
+`projection walked` log line carries the node count, the page count and the
+elapsed time, so the number to set is measured rather than guessed.
+
+**This is a cache of a query we should have been able to write.** The real fix
+is `$filter`/`$orderby` over the payload paths a type already declares in its
+`index` trait — request 5 in [`../../docs/graph-storage-requests.md`](../../docs/graph-storage-requests.md),
+which also records where in the platform that change lives.
+
 ## What it owns
 
 Nothing durable of its own. Nodes and edges belong to graph-storage; the sync's

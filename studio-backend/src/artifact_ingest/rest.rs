@@ -568,8 +568,11 @@ async fn list_nodes(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_lowercase);
+    // `nodes` is the store's shared projection — possibly a cache entry other
+    // requests are reading. Narrow by reference and clone only what survives:
+    // the filters below typically keep a page out of tens of thousands.
     let mut nodes: Vec<_> = nodes
-        .into_iter()
+        .iter()
         .filter(|n| node_in_scope(&n.value, scope))
         // Optional repository filter: keep nodes whose `repo` matches. Repo
         // nodes themselves carry no `repo` field, so they drop out when a repo
@@ -603,13 +606,13 @@ async fn list_nodes(
             // File nodes carry full text content; drop it from the listing
             // so the payload stays small (`has_text` still flags it). A
             // dedicated content endpoint can serve the body when needed.
-            let mut value = n.value;
+            let mut value = n.value.clone();
             if let Some(obj) = value.as_object_mut() {
                 obj.remove("text");
             }
             ArtifactNodeDto {
                 type_id: n.type_id.to_string(),
-                instance_id: n.instance_id,
+                instance_id: n.instance_id.clone(),
                 value,
             }
         })
@@ -680,9 +683,9 @@ async fn list_edges(
             .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
         Some(
             nodes
-                .into_iter()
+                .iter()
                 .filter(|n| node_in_scope(&n.value, scope))
-                .map(|n| n.instance_id)
+                .map(|n| n.instance_id.clone())
                 .collect(),
         )
     } else {

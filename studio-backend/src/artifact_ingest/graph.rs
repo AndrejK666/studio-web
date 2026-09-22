@@ -16,7 +16,7 @@
 //! text only.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -77,11 +77,20 @@ pub trait GraphStore: Send + Sync {
 
     /// Stored nodes for the listing: the four first-class artifacts by default,
     /// or one type when `type_filter` names it (full GTS id, or the bare leaf).
+    ///
+    /// SHARED, NOT OWNED. The real store cannot narrow this read — `scope`,
+    /// `repo` and the `updated_at` order all live in the node payload, which
+    /// graph-storage's projection cannot filter or order on — so one call
+    /// returns the whole typed node set and the caller narrows it. On
+    /// studio-dev that is 28,717 nodes; handing every caller its own copy
+    /// would replace a slow read with a large memcpy, and the cache behind
+    /// this would be paying for itself only once. Callers that need owned
+    /// values clone the ones they keep, which is a page rather than the set.
     async fn list(
         &self,
         ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<Vec<GtsNode>>;
+    ) -> anyhow::Result<Arc<Vec<GtsNode>>>;
 
     /// The relations the UI draws — authored_by / modifies / artifact_of /
     /// contains — as endpoint instance-id pairs.
@@ -142,7 +151,7 @@ impl GraphStore for InMemoryGraphStore {
         &self,
         _ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<Vec<GtsNode>> {
+    ) -> anyhow::Result<Arc<Vec<GtsNode>>> {
         let out = {
             let map = self
                 .nodes
@@ -154,7 +163,7 @@ impl GraphStore for InMemoryGraphStore {
                 .cloned()
                 .collect()
         };
-        Ok(out)
+        Ok(Arc::new(out))
     }
 
     async fn list_relations(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<GtsEdgeView>> {
