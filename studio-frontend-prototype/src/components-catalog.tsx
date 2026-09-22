@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { CatalogNode, Connection, DocType, FieldSchema, StudioKit } from "./api";
+import type { CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
 import { ViewToggle, useViewMode } from "./view-mode";
 import {
@@ -98,13 +98,6 @@ const GEAR_TYPE = "gts.cf.studio.catalog.gear.v1~";
  *  synthesised built-ins and the synced nodes cannot drift apart into two
  *  types that render as two rows in the type picker. */
 const KIT_TYPE = "gts.cf.studio.catalog.kit.v1~";
-/** The document-type node type, as studio-documents registers it.
- *
- *  Note the namespace: `doc`, not `catalog`. A document type is a component --
- *  a named thing an organization publishes and a project takes -- but a
- *  different gear owns it, and it keeps that gear's identity here. The
- *  catalogue lists it; it does not annex it. */
-const DOCUMENT_TYPE = "gts.cf.studio.doc.document_type.v1~";
 
 /** The presentation for one component type.
  *
@@ -471,27 +464,6 @@ function componentCategory(g: CatalogNode, profile: Record<string, unknown> | un
 
 
 
-/** A document type as a catalogue node.
- *
- *  What it has and a gear does not is a template, a section checklist and an
- *  intake questionnaire; what it lacks is versions and downloads. Hence a type
- *  of its own, and a mapping that fills what the catalogue renders rather than
- *  inventing the fields it cannot.
- */
-function docTypeAsNode(t: DocType): CatalogNode {
-  return {
-    type_id: DOCUMENT_TYPE,
-    instance_id: `doc-type:${t.key}`,
-    value: {
-      name: t.key,
-      kind: "document",
-      description: t.description || t.name,
-      keywords: [t.owner, `${t.sections.length} sections`],
-      categories: ["document"],
-    },
-  };
-}
-
 /** A kit as a catalogue node.
  *
  *  A kit IS a component: a named, versioned, published thing a project takes
@@ -656,8 +628,7 @@ export function ComponentsCatalog({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const [componentResponse, profileResponse, kitResponse, docTypeResponse] =
-        await Promise.all([
+      const [componentResponse, profileResponse, kitResponse] = await Promise.all([
         api.listComponents(token),
         api.listComponentProfiles(token).catch((error): { nodes: CatalogNode[] } => {
           if (error instanceof ApiError && error.status === 404) return { nodes: [] };
@@ -666,12 +637,6 @@ export function ComponentsCatalog({
         // Its own gear, so its own failure: a kit registry that is down leaves
         // the gears listed rather than blanking the whole catalogue.
         api.kits(token).catch((): { items: StudioKit[] } => ({ items: [] })),
-        // Same again, and only when there is an organization to ask about:
-        // document types resolve per tenant, and this page is the
-        // organization's.
-        tenantId
-          ? api.orgDocTypes(token, tenantId).catch((): { items: DocType[] } => ({ items: [] }))
-          : Promise.resolve({ items: [] as DocType[] }),
       ]);
       // The registry's built-in kits and the kits a sync found from a
       // repository are the same things under the same slugs. A synced node
@@ -692,11 +657,21 @@ export function ComponentsCatalog({
       // sets below are synthesised here from other gears' data, so they are
       // filtered against the same marks rather than appearing whatever the
       // organization decided.
-      setGears([
-        ...nodes,
-        ...builtIns,
-        ...(docTypeResponse.items ?? []).map(docTypeAsNode),
-      ]);
+      // Document types are NOT here any more.
+      //
+      // They were synthesised onto this list as a "Document type" filter of
+      // seven, and this page's own description says what it is a catalogue of:
+      // gears, tools and SDKs from the Gears repository, micro-frontends from
+      // FrontX, and kits. A document type is none of those. It is a kind of
+      // spec — a template with sections and rules — and it is neither something
+      // a product is assembled from nor something a project installs, which is
+      // the one thing everything else in this list has in common.
+      //
+      // It already has two homes that are about it: the Objects screen, where
+      // an organization decides which types exist, and the Specs tab, where the
+      // documents written against them live. A third listing here meant the
+      // component counts on this page answered a question nobody asked of it.
+      setGears([...nodes, ...builtIns]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
