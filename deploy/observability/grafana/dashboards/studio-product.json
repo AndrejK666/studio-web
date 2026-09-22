@@ -38,8 +38,8 @@
   "panels": [
     {
       "type": "stat",
-      "title": "Organizations",
-      "description": "Tenants account-management holds in `active`. The number Studio is for.",
+      "title": "Tenants (all levels)",
+      "description": "EVERY tenant row in `active`, not organizations — account-management counts the platform root, organizations, workspaces and projects in one gauge. On studio-dev today that is 1 root + 6 organizations + 7 workspaces + 9 projects = 23. Splitting them here is not possible: am_tenants carries only status and self_managed, no depth or tenant type.",
       "datasource": {
         "type": "prometheus",
         "uid": "vm"
