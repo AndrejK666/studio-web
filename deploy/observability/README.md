@@ -205,7 +205,7 @@ URIs cover the port-forward, so the whole flow works today without any public
 hostname. The client is **public, with PKCE** — the same shape `studio-portal`
 uses — so there is no client secret anywhere to seal, rotate, or leak.
 
-### The hostname: `monitoring.cfabric.org`
+### The hostname: `studio.monitoring.cfabric.org`
 
 Everything on this side is prepared and committed — `ingress.enabled: true`,
 `ingress.hosts`, `grafana.ini.server.domain`, `root_url`, and the redirect URI
@@ -214,10 +214,10 @@ and web origin on the `grafana` client in `keycloak/realm-studio.json`.
 **Two things outside this repository have to land before it answers**, and
 they were requested together because either alone is worse than neither:
 
-1. **A DNS record for `monitoring.cfabric.org`.** There is no wildcard, so the
-   name must exist on its own — of `grafana.studio-dev.cfabric.org`,
-   `grafana-dev.cfabric.org` and `monitoring.cfabric.org`, none resolved when
-   this was written. The origin is the Traefik LoadBalancer, `188.42.240.112`,
+1. **A DNS record for `studio.monitoring.cfabric.org`.** Nothing under
+   `monitoring.cfabric.org` resolves today — not the zone apex and not this
+   name — so it has to be created rather than inherited from a wildcard. The
+   origin is the Traefik LoadBalancer, `188.42.240.112`,
    the same entry the product's hostnames use, with Cloudflare in front
    terminating TLS. The cluster has no cert-manager `Issuer`, which is why the
    ingress values here carry no `tls` block and no annotations — the
@@ -229,10 +229,13 @@ they were requested together because either alone is worse than neither:
    Traefik cannot see it. That is a one-line change to a cluster-wide Traefik
    release this repository does not own.
 
-The name is deliberately environment-neutral. One Grafana serves studio-dev and
-studio-test, so `grafana.studio-dev…` would misdescribe what it shows, and
-"monitoring" outlives the tool — the `grafana/grafana` chart is flagged
-deprecated upstream and the name should survive replacing it.
+The name is environment-neutral on purpose, and product-scoped on purpose. One
+Grafana serves studio-dev and studio-test, so `grafana.studio-dev…` would
+misdescribe what it shows; `monitoring` outlives the tool, since the
+`grafana/grafana` chart is flagged deprecated upstream and the name should
+survive replacing it; and the `studio.` prefix leaves `monitoring.cfabric.org`
+a shared zone where other products get siblings rather than argue over an
+apex.
 
 A path on the existing host was considered and does not work: an Ingress cannot
 point at a Service in another namespace and `allowExternalNameServices` is off.

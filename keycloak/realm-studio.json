@@ -131,12 +131,12 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
-        "https://monitoring.cfabric.org/login/generic_oauth",
+        "https://studio.monitoring.cfabric.org/login/generic_oauth",
         "http://localhost:3000/login/generic_oauth",
         "http://127.0.0.1:3000/login/generic_oauth"
       ],
       "webOrigins": [
-        "https://monitoring.cfabric.org",
+        "https://studio.monitoring.cfabric.org",
         "http://localhost:3000",
         "http://127.0.0.1:3000"
       ],
