@@ -1128,7 +1128,7 @@ impl IngestService {
         &self,
         ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<Vec<GtsNode>> {
+    ) -> anyhow::Result<std::sync::Arc<Vec<GtsNode>>> {
         self.graph.list(ctx, type_filter).await
     }
 

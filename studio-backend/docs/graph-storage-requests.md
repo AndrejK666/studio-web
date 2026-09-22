@@ -209,19 +209,29 @@ So the adapter does the only thing it can: it walks `project_nodes` by cursor to
 exhaustion, then filters, sorts and slices one page in our process. Every page
 request re-reads the entire typed node set.
 
-**What that costs, measured on one real project** — 5,785 file nodes, the gear's
-`projection_max_page` of 200:
+**What that costs, re-measured on studio-dev on 2026-09-22** against the graph
+as it now stands, at the gear's `projection_max_page` of 200:
 
 | | `project_nodes` calls | node rows materialised |
 |---|---|---|
-| one page request | 29 | 5,785 |
-| a client walking all 29 pages | **841** | **~167,765** |
+| one page request | 144 | 28,717 (31 MB of payload) |
+| a client walking all 144 pages | **20,736** | **~4.1 M** |
 
-That is 167,765 rows read, with payloads, to deliver 5,785 rows once. The
-portal has twice been optimised to make fewer requests against this endpoint;
-both times the multiplier inside it stayed. (A thirtieth call per request, to
-re-register our types, is no longer among them — this process now remembers
-that per tenant. The projection calls are what is left, and they are yours.)
+The p95 of `GET /studio-artifact-ingest/v1/nodes` is **8.06 s**, measured at the
+backend over 24 hours; the next-slowest endpoint in the product is 1.67 s. The
+walk is sequential — a cursor cannot be split — so those 144 round trips are
+144 latencies in series, and that is the whole of the 8 seconds.
+
+The earlier figures in this document were 29 calls and 5,785 rows on one
+project. Nothing regressed; the graph grew. **That is the point worth taking
+from the re-measurement: the cost is linear in the size of the project, and
+nothing about the shape of this read has a ceiling.**
+
+The portal has twice been optimised to make fewer requests against this
+endpoint; both times the multiplier inside it stayed. (A thirtieth call per
+request, to re-register our types, is no longer among them — this process now
+remembers that per tenant. The projection calls are what is left, and they are
+yours.)
 
 **Ordering cannot even be approximated.** We considered pushing `$orderby` down
 for the `sort=updated` case and cannot: the projection's `updated_at` is when
@@ -235,9 +245,65 @@ silently reorder the screen rather than speed it up.
 binding is missing. Failing that, `updated_at` as a caller-supplied field on
 `NodeSpec` would fix ordering alone, which is the smaller half.
 
-Until one of them exists, the workaround is a per-tenant cache of the
-projection in our process, invalidated on ingest — which is a cache of a query
-we should have been able to write.
+### Where this change lives, as far as we can see it
+
+This is not a one-line addition in graph-storage, and it is worth saying where
+the weight actually is before anyone scopes it as one. Read on 2026-09-22
+against `gears-rust` at `719ab47`:
+
+1. **`libs/toolkit-db/src/odata/sea_orm_filter.rs` — the real blocker, and it
+   is platform-wide rather than graph-storage's.** `FieldToColumn::map_field`
+   is typed `fn(F) -> Self::Column` where `Column: ColumnTrait + Iden +
+   IntoSimpleExpr`. A filter field IS a table column, by construction. A
+   payload path is an expression — `payload #>> '{repo}'` — and there is no
+   way to return one through that signature. Until this trait can carry an
+   expression-backed field, no gear in the platform can filter on a JSON path.
+
+2. **`libs/toolkit-odata-macros/src/odata_filterable.rs`.** The filterable set
+   is generated at compile time from `#[odata(filter(kind = "..."))]`
+   attributes on the row DTO. Payload index paths are declared per type, at
+   runtime, by whoever registers the type — so the generated field enum needs
+   a dynamic variant (`Payload(String)`) alongside its static ones. This is
+   the part that makes the request a design change rather than a mapping.
+
+3. **`gears/graph-storage/graph-storage-sdk/src/models.rs`** — the row DTO
+   carrying those attributes, from which `NodeQueryFilterField` (re-exported as
+   `NodeFilterField`) is generated. The wire contract.
+
+4. **`gears/graph-storage/graph-storage/src/infra/storage/odata_mapper.rs`** —
+   41 lines, four arms, one per filterable field. This is where a payload path
+   would become a JSONB expression, and where `extract_cursor_value` would have
+   to learn to read one back out for the continuation token.
+
+5. **`gears/graph-storage/graph-storage/src/domain/ontology.rs:192`** —
+   `index: string_array(merged.get("index"))`. The trait is already parsed into
+   `EffectiveTraits`, stored in `gts_type.effective_traits`, and echoed back by
+   `api/rest/dto.rs`. It is read by nothing else. This is where "is this path
+   declared indexable for this type?" belongs, and it is the reason we keep
+   saying the declaration exists and only the binding is missing.
+
+6. **`infra/storage/migrations/`** — `payload` is `JSONB` with **no index**.
+   The schema creates indexes for edge src/dst/type, node type, the lexical
+   `search` vector and the embedding, and nothing on payload. So a `$filter` on
+   a payload path would be correct and still be a sequential scan; making it
+   fast needs either a GIN index on `payload` or an expression index per
+   declared path, created when the type is registered.
+
+We would rather be wrong about any of this than have it scoped from the API
+surface alone.
+
+### What we did in the meantime
+
+The workaround named above is now implemented on our side: a per-tenant cache
+of the projection in the backend process, dropped the moment an ingest is
+accepted and expiring after 60 s so a second replica's ingest cannot be served
+stale for longer than that. It turns a client's walk through its own pages from
+one graph walk per page into one in total.
+
+It is still a cache of a query we should have been able to write, it is bounded
+by a node budget because it holds parsed payloads in a pod with a 1 GiB limit,
+and it does nothing for the first request after any write. None of that is
+fixed by making the cache better.
 
 ---
 
