@@ -185,32 +185,30 @@ impl RepoEnricher {
             } else {
                 dir.rsplit('/').next().unwrap_or(dir.as_str())
             };
-            let slug = toml_string(&body, "slug").unwrap_or_else(|| fallback.to_string());
-            let name = toml_string(&body, "name").unwrap_or_else(|| slug.clone());
-            let description = toml_string(&body, "description");
-            let publisher = toml_string(&body, "publisher");
-
-            let payload = json!({
-                "title": name,
-                "name": slug,
-                "slug": slug,
-                "kind": "kit",
-                "description": description,
-                "publisher": publisher,
-                "source": "github",
-                "repository": format!("https://github.com/{}", self.repo),
-                "git_ref": self.git_ref,
-                "manifest_path": path,
-            });
-            out.push(RepoGear {
-                crate_name: slug,
-                description,
-                fields: Value::Null,
-                uml: Vec::new(),
-                kind: Some("kit".to_string()),
-                category: Some("kit".to_string()),
-                payload: Some(payload),
-            });
+            for kit in manifest_kits(&body, fallback) {
+                let payload = json!({
+                    "title": kit.name,
+                    "name": kit.slug,
+                    "slug": kit.slug,
+                    "kind": "kit",
+                    "description": kit.description,
+                    "publisher": kit.publisher,
+                    "version": kit.version,
+                    "source": "github",
+                    "repository": format!("https://github.com/{}", self.repo),
+                    "git_ref": self.git_ref,
+                    "manifest_path": path,
+                });
+                out.push(RepoGear {
+                    crate_name: kit.slug,
+                    description: kit.description,
+                    fields: Value::Null,
+                    uml: Vec::new(),
+                    kind: Some("kit".to_string()),
+                    category: Some("kit".to_string()),
+                    payload: Some(payload),
+                });
+            }
         }
 
         info!(
@@ -1194,6 +1192,113 @@ struct CommitActor {
 
 /// One top-level `key = "value"` out of a TOML document.
 ///
+/// One kit as the catalogue records it.
+#[derive(Debug, PartialEq, Eq)]
+struct ManifestKit {
+    slug: String,
+    name: String,
+    description: Option<String>,
+    publisher: Option<String>,
+    version: Option<String>,
+}
+
+/// The kits one `.cf-studio-kit.toml` declares.
+///
+/// A manifest holds `[[kits]]` blocks, one per installable kit, and both kit
+/// repositories that exist are shaped that way — `cfs` reads them to offer the
+/// `--kit` selector on install. Reading only the top level found none of it:
+/// every entry came back named after its REPOSITORY, with no description and no
+/// version, which is what `studio-kit-sdlc` was doing sitting in the catalogue
+/// beside the `sdlc` it is. Three kits in one repository would have come back
+/// as one.
+///
+/// A manifest with no `[[kits]]` block is read the old way — top-level keys,
+/// directory name as the slug — because that shape is legal and this is a
+/// catalogue, not a validator.
+fn manifest_kits(body: &str, fallback_slug: &str) -> Vec<ManifestKit> {
+    let mut out: Vec<ManifestKit> = Vec::new();
+    let mut current: Option<ManifestKit> = None;
+    let mut in_kit = false;
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            if let Some(kit) = current.take() {
+                out.push(kit);
+            }
+            // `[[kits.resources]]` and friends are a kit's contents, not a kit:
+            // they carry an `id`, a `description` and a `kind` of their own,
+            // and reading one would describe the kit as its first template.
+            in_kit = line.starts_with("[[kits]]");
+            if in_kit {
+                current = Some(ManifestKit {
+                    slug: String::new(),
+                    name: String::new(),
+                    description: None,
+                    publisher: None,
+                    version: None,
+                });
+            }
+            continue;
+        }
+        let Some(kit) = current.as_mut() else {
+            continue;
+        };
+        if !in_kit || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim() {
+            "slug" => kit.slug = value.to_string(),
+            "name" => kit.name = value.to_string(),
+            "description" => kit.description = Some(value.to_string()),
+            "publisher" => kit.publisher = Some(value.to_string()),
+            "version" => kit.version = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    if let Some(kit) = current.take() {
+        out.push(kit);
+    }
+
+    if out.is_empty() {
+        let slug = toml_string(body, "slug").unwrap_or_else(|| fallback_slug.to_string());
+        let name = toml_string(body, "name").unwrap_or_else(|| slug.clone());
+        return vec![ManifestKit {
+            slug,
+            name,
+            description: toml_string(body, "description"),
+            publisher: toml_string(body, "publisher"),
+            version: toml_string(body, "version"),
+        }];
+    }
+
+    for kit in &mut out {
+        if kit.slug.is_empty() {
+            kit.slug = fallback_slug.to_string();
+        }
+        if kit.name.is_empty() {
+            kit.name = kit.slug.clone();
+        }
+    }
+    // A repository that declares the same slug twice would otherwise write the
+    // same catalogue node twice, and the second write would win silently.
+    let mut seen: Vec<String> = Vec::new();
+    out.retain(|k| {
+        if seen.iter().any(|s| s == &k.slug) {
+            return false;
+        }
+        seen.push(k.slug.clone());
+        true
+    });
+    out
+}
+
 /// Deliberately not a TOML parse: the manifest's full schema belongs to the kit
 /// registry, and the catalogue needs four strings out of it. A dependency, and a
 /// second definition of the manifest's shape to go with it, would each be larger
@@ -1236,6 +1341,91 @@ is_plugin = false
 has_plugins = false
 has_extension_point = false
 "#;
+
+    /// `constructorfabric/studio-kit-sdlc/.cf-studio-kit.toml`, trimmed to the
+    /// shape that matters: one `[[kits]]` block and resources under it.
+    const SDLC_KIT_MANIFEST: &str = r#"# Generated by cfs kit normalize.
+
+manifest_version = "1.0"
+
+[[kits]]
+slug = "sdlc"
+name = "sdlc"
+version = "1.0"
+
+[[kits.resources]]
+id = "adr_template"
+kind = "template"
+source = "artifacts/ADR/template.md"
+description = "ADR artifact template"
+"#;
+
+    #[test]
+    fn a_kit_is_named_after_itself_and_not_after_its_repository() {
+        // This is what `studio-kit-sdlc` was doing in the catalogue: an entry
+        // named after the repository, with no description and no version,
+        // sitting beside the `sdlc` it is.
+        let kits = manifest_kits(SDLC_KIT_MANIFEST, "studio-kit-sdlc");
+        assert_eq!(kits.len(), 1);
+        assert_eq!(kits[0].slug, "sdlc");
+        assert_eq!(kits[0].name, "sdlc");
+        assert_eq!(kits[0].version.as_deref(), Some("1.0"));
+    }
+
+    #[test]
+    fn a_kits_resources_do_not_describe_the_kit() {
+        // `[[kits.resources]]` blocks carry an `id`, a `kind` and a
+        // `description` of their own; reading one would describe the kit as its
+        // first template.
+        let kits = manifest_kits(SDLC_KIT_MANIFEST, "fallback");
+        assert_eq!(kits[0].description, None);
+    }
+
+    #[test]
+    fn every_kit_in_a_repository_is_its_own_component() {
+        let body = "manifest_version = \"1.0\"\n\n\
+                    [[kits]]\nslug = \"compete\"\nname = \"Competitive Analysis\"\n\n\
+                    [[kits.resources]]\nid = \"x\"\n\n\
+                    [[kits]]\nslug = \"discovery\"\nname = \"Discovery\"\n";
+        let kits = manifest_kits(body, "studio-kits-pm");
+        assert_eq!(
+            kits.iter().map(|k| k.slug.as_str()).collect::<Vec<_>>(),
+            vec!["compete", "discovery"]
+        );
+        assert_eq!(kits[0].name, "Competitive Analysis");
+    }
+
+    #[test]
+    fn a_manifest_with_no_kits_block_is_still_read_the_old_way() {
+        // That shape is legal, and this is a catalogue rather than a validator.
+        let kits = manifest_kits(
+            "name = \"Legacy\"\ndescription = \"A flat one.\"\n\n[install]\nslug = \"not-the-kit\"\n",
+            "legacy-dir",
+        );
+        assert_eq!(kits.len(), 1);
+        // `[install] slug` is a different key; reading it would name the kit
+        // after one of its sections.
+        assert_eq!(kits[0].slug, "legacy-dir");
+        assert_eq!(kits[0].name, "Legacy");
+        assert_eq!(kits[0].description.as_deref(), Some("A flat one."));
+    }
+
+    #[test]
+    fn a_kit_block_with_no_slug_falls_back_to_where_it_was_found() {
+        let kits = manifest_kits("[[kits]]\nname = \"Unnamed\"\n", "from-the-directory");
+        assert_eq!(kits[0].slug, "from-the-directory");
+    }
+
+    #[test]
+    fn a_slug_declared_twice_is_one_component() {
+        // Two nodes under one key means the second write wins silently.
+        let kits = manifest_kits(
+            "[[kits]]\nslug = \"dup\"\nname = \"First\"\n\n[[kits]]\nslug = \"dup\"\nname = \"Second\"\n",
+            "repo",
+        );
+        assert_eq!(kits.len(), 1);
+        assert_eq!(kits[0].name, "First");
+    }
 
     #[test]
     fn a_manifest_under_a_gear_table_is_read() {
