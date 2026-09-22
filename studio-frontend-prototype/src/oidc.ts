@@ -23,14 +23,42 @@ import { env } from "./env";
 const ISSUER: string = env.oidcIssuer ?? "https://localhost:8443/realms/studio";
 const CLIENT_ID: string = env.oidcClientId ?? "studio-portal";
 
+/** The route the portal mirrors an open space on (`App.tsx` owns the pair). */
+const SPACE_ROUTE = /\/space(\/[0-9a-f-]*)?\/?$/;
+
 // Vite's relative base (`./`) lets one image run at `/` on the dedicated POC
-// host and at a legacy nested mount. Resolve it against the current document
-// so the OIDC callback and post-logout redirect return to the same mount point.
+// host and at a legacy nested mount, so the mount point has to be recovered
+// from the address bar rather than read from a constant.
+//
+// IT USED TO BE `new URL(import.meta.env.BASE_URL, window.location.href)`, and
+// that is wrong in exactly one place, which happens to be the place people sign
+// in from. `BASE_URL` is `./`, and `./` resolves against the DIRECTORY of the
+// current URL — it drops the last segment:
+//
+//     /                                    ->  /          (worked)
+//     /space/01d89b55-aef7-4ca4-921a-...    ->  /space/    (did not)
+//
+// So signing in with a project open handed Keycloak `redirect_uri=/space/`, and
+// Keycloak faithfully returned the person to `/space/?code=...` — a path the
+// portal has no route for, which is why the tab sat blank and why opening `/`
+// by hand then signed them straight in. Both were the same bug seen from its
+// two ends.
+//
+// The mount point is the address minus the route, and there is one route with a
+// path: `/space/{id}`. Query and fragment go too — a `redirect_uri` is a place,
+// and the token exchange must send back character-for-character what the
+// authorization request sent.
 function applicationUrl(): string {
-  return new URL(import.meta.env.BASE_URL, window.location.href).toString();
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(SPACE_ROUTE, "");
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url.toString();
 }
 
 const VERIFIER_KEY = "studio.oidc.verifier";
+const RETURN_KEY = "studio.oidc.return";
 const REFRESH_KEY = "studio.oidc.refresh";
 const ID_TOKEN_KEY = "studio.oidc.id";
 
@@ -106,17 +134,63 @@ function storeSession(body: {
 export async function startSsoLogin(idpHint?: string): Promise<void> {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   sessionStorage.setItem(VERIFIER_KEY, verifier);
+  /*
+   * `state` carries the way back.
+   *
+   * `redirect_uri` is now the application's root and only that — one place, and
+   * one the IdP has registered — so the route the person was on cannot ride
+   * home in it. `state` is the parameter for exactly this: the IdP returns it
+   * untouched, and it binds the response to the request this tab made. Before
+   * this, nothing was sent in it at all.
+   *
+   * Per tab, beside the PKCE verifier and for its reason: this is one sign-in
+   * attempt, not a session, and two tabs signing in are two places to return
+   * to.
+   */
+  const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  try {
+    const path = window.location.pathname + window.location.search + window.location.hash;
+    sessionStorage.setItem(RETURN_KEY, JSON.stringify({ state, path }));
+  } catch {
+    /* No storage, no return trip — sign-in itself still works, and landing on
+       the portal root is where it landed before any of this. */
+  }
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     redirect_uri: applicationUrl(),
     response_type: "code",
     scope: "openid",
+    state,
     code_challenge: b64url(new Uint8Array(digest)),
     code_challenge_method: "S256",
   });
   if (idpHint) params.set("kc_idp_hint", idpHint);
   window.location.href = `${ISSUER}/protocol/openid-connect/auth?${params.toString()}`;
+}
+
+/** The return trip this tab stored, consumed so a reload cannot replay it. */
+function takeReturnIntent(): { state: string; path: string } | null {
+  try {
+    const raw = sessionStorage.getItem(RETURN_KEY);
+    sessionStorage.removeItem(RETURN_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as { state?: unknown }).state !== "string" ||
+      // Same-document paths only. A stored value is this tab's own, but it
+      // decides where the browser goes next, and "//evil.example" is a path
+      // that is not one.
+      !/^\/(?!\/)/.test(String((parsed as { path?: unknown }).path ?? ""))
+    ) {
+      return null;
+    }
+    return parsed as { state: string; path: string };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -129,8 +203,23 @@ export async function completeSsoLogin(): Promise<SsoSession | null> {
   const verifier = sessionStorage.getItem(VERIFIER_KEY);
   if (!code || !verifier) return null;
   sessionStorage.removeItem(VERIFIER_KEY);
+
+  // The token exchange has to repeat the redirect_uri the authorization request
+  // sent, so it is read here — while the address bar still holds what the IdP
+  // redirected to — and reused below rather than recomputed after the URL has
+  // been rewritten.
+  const redirectUri = applicationUrl();
+
+  const intent = takeReturnIntent();
+  if (intent && url.searchParams.get("state") !== intent.state) {
+    throw new Error("SSO state does not match the sign-in this tab started");
+  }
+
   for (const p of ["code", "state", "session_state", "iss"]) url.searchParams.delete(p);
-  window.history.replaceState({}, "", url.pathname + (url.search || ""));
+  // Back where they were, not at the root the IdP had to be pointed at. The
+  // main application reads the path on mount, and it mounts after this
+  // resolves, so rewriting it here is what puts the open project back.
+  window.history.replaceState({}, "", intent?.path ?? url.pathname + (url.search || ""));
 
   const res = await fetch(tokenEndpoint(), {
     method: "POST",
@@ -139,7 +228,7 @@ export async function completeSsoLogin(): Promise<SsoSession | null> {
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
       code,
-      redirect_uri: applicationUrl(),
+      redirect_uri: redirectUri,
       code_verifier: verifier,
     }),
   });
