@@ -255,6 +255,26 @@ mod tests {
     }
 
     #[test]
+    fn the_first_answer_alone_seeds_the_domain_capability() {
+        // Project creation sends exactly this one answer for a `product`
+        // project: the card's brief IS this question, word for word ("What are
+        // we building? Describe the product and its core domain"). The project
+        // then opens with one capability for the component matcher to work
+        // from instead of an empty spec, so a single-answer intake is a
+        // supported shape rather than an accident.
+        let ty = app_spec();
+        let answers = vec![text("product", "A billing portal for resellers.")];
+        assert_eq!(seeded_capabilities(&ty, &answers), vec!["domain"]);
+
+        let body = generate(&ty, "Reseller Billing", &answers);
+        assert_eq!(declared_capabilities(&body), vec!["domain"]);
+        assert!(body.contains("A billing portal for resellers."));
+        // Every other section is still emitted, so the document reads as a
+        // spec with the rest to fill in rather than as a one-line note.
+        assert!(body.contains("## Deployment"));
+    }
+
+    #[test]
     fn a_no_answer_does_not_seed_its_capability() {
         // "Do you need billing? No" must not put `billing` in front of the
         // composer -- but it is still an answer, so it is not simply skipped.

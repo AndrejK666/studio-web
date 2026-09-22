@@ -3304,11 +3304,11 @@ function WorkspaceProjects({
       .catch(() => setStageCatalogue([]));
   }, [creating, token, workspace.id]);
 
-  // A gear project needs somewhere to put the gear, and both roads to one start
-  // at a connection. Loaded only for that kind, because the other two do not
-  // touch a repository at creation.
+  // Both kinds that create or attach a repository start at a connection. Not
+  // loaded for `existing`, which attaches its repository afterwards rather than
+  // at creation.
   useEffect(() => {
-    if (!creating || newKind !== "new_gears") return;
+    if (!creating || (newKind !== "new_gears" && newKind !== "product")) return;
     api
       .connections(token, workspace.id)
       .then((r) => setConnections(r.items ?? []))
@@ -3504,7 +3504,81 @@ function WorkspaceProjects({
       });
     }
 
-    // 5) Kits the project asked for, as DESIRED state.
+    // 5) A product's repository, and the one document the assembly reads.
+    //
+    //    The type's own subtitle promises both -- "Assemble a product from
+    //    gears. A new repository is created." -- and until now it did neither:
+    //    `product` differed from `existing` in `mode` and in that sentence, and
+    //    in nothing else.
+    //
+    //    The order is the only order that works. Components cannot be chosen
+    //    before the product says what it needs, so creation ends at the App
+    //    Spec rather than at a list of gears: its questionnaire is what turns
+    //    prose into capabilities, and the capabilities are what the matcher
+    //    reads (`compose.ts`). The brief is already the answer to that
+    //    questionnaire's FIRST question, word for word -- "What are we
+    //    building? Describe the product and its core domain." -- so the card
+    //    stops filing it under `brief` and never asking again, and hands it
+    //    over as the answer it is.
+    if (newKind === "product") {
+      steps.push({
+        key: "repo",
+        label: `Repository · ${repoNameValue}`,
+        check: async (ctx) => {
+          const attached = await api
+            .getProjectGearRepo(token, ctx.tenantId)
+            .then((r) => r.nodes?.[0]?.value)
+            .catch(() => undefined);
+          if (!attached?.repo) return false;
+          ctx.repoFull = attached.repo;
+          ctx.branch = attached.branch || "main";
+          return true;
+        },
+        run: async (ctx) => {
+          // Recorded as the project's gear repo, which is also where a gear
+          // scaffolded for a capability nothing covers will be written -- so
+          // the gap half of the matcher works from the first minute.
+          const created = await api.createProjectRepo(token, ctx.tenantId, {
+            tenant: workspace.id,
+            connection_id: connId || null,
+            ...(repoOwner.trim() ? { owner: repoOwner.trim() } : {}),
+            is_org: repoIsOrg,
+            name: repoNameValue,
+            private: repoPrivate,
+          });
+          ctx.repoFull = created.full_name;
+          ctx.branch = created.default_branch;
+          ctx.cloneUrl = created.html_url;
+        },
+      });
+
+      if (brief.trim()) {
+        steps.push({
+          key: "spec",
+          label: "App Spec",
+          check: async (ctx) => {
+            const docs = await api
+              .projectDocuments(token, workspace.id, ctx.tenantId)
+              .then((r) => r.items)
+              .catch(() => []);
+            return docs.some((d) => d.type_key === "app_spec");
+          },
+          run: async (ctx) => {
+            // One answer, not a whole questionnaire: the rest is asked in
+            // Specs, where there is room for it. This one seeds the `domain`
+            // capability, so the project opens with something for the
+            // component matching to work from rather than an empty spec.
+            await api.createProjectDocument(token, workspace.id, ctx.tenantId, {
+              type_key: "app_spec",
+              title: name,
+              answers: [{ question_id: "product", text: brief.trim() }],
+            });
+          },
+        });
+      }
+    }
+
+    // 6) Kits the project asked for, as DESIRED state.
     //
     //    Requesting is idempotent by slug, and materialization is somebody
     //    else's job: the registry records `pending`, and a trusted `cfs` runner
@@ -3746,7 +3820,7 @@ function WorkspaceProjects({
               </>
             )}
 
-            {current.key === "repository" && (
+            {current.key === "repository" && layout.gearRepository && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                   Gear repository
@@ -3801,97 +3875,34 @@ function WorkspaceProjects({
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 11, opacity: 0.8 }}>Connection</span>
-                    <select
-                      value={connId}
-                      disabled={prov !== null}
-                      onChange={(e) => {
-                        setConnId(e.target.value);
-                        setExistingRepo(null);
-                      }}
-                    >
-                      <option value="">
-                        {repoMode === "new"
-                          ? "Default — the first GitHub connection"
-                          : "Select a connection…"}
-                      </option>
-                      {gitConnections.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label} · {c.account}
-                        </option>
-                      ))}
-                    </select>
-                    {gitConnections.length === 0 && (
-                      <span style={{ fontSize: 11, opacity: 0.7 }}>
-                        No GitHub connection on this workspace yet — add one in Integrations.
-                      </span>
-                    )}
-                  </label>
+                  <ConnectionField
+                    connections={gitConnections}
+                    value={connId}
+                    disabled={prov !== null}
+                    onChange={(id) => {
+                      setConnId(id);
+                      setExistingRepo(null);
+                    }}
+                    emptyLabel={
+                      repoMode === "new"
+                        ? "Default — the first GitHub connection"
+                        : "Select a connection…"
+                    }
+                  />
 
                   {repoMode === "new" ? (
-                    <>
-                      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                        <label
-                          style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}
-                        >
-                          <span style={{ fontSize: 11, opacity: 0.8 }}>Owner</span>
-                          <input
-                            placeholder="Leave empty for your own account"
-                            value={repoOwner}
-                            disabled={prov !== null}
-                            onChange={(e) => setRepoOwner(e.target.value)}
-                          />
-                        </label>
-                        <label
-                          style={{
-                            display: "inline-flex",
-                            gap: 6,
-                            alignItems: "center",
-                            fontSize: 12,
-                            paddingBottom: 6,
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={repoIsOrg}
-                            disabled={prov !== null}
-                            onChange={(e) => setRepoIsOrg(e.target.checked)}
-                          />
-                          organization
-                        </label>
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                        <label
-                          style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}
-                        >
-                          <span style={{ fontSize: 11, opacity: 0.8 }}>Repository name</span>
-                          <input
-                            placeholder={repoNameValue}
-                            value={repoName}
-                            disabled={prov !== null}
-                            onChange={(e) => setRepoName(e.target.value)}
-                          />
-                        </label>
-                        <label
-                          style={{
-                            display: "inline-flex",
-                            gap: 6,
-                            alignItems: "center",
-                            fontSize: 12,
-                            paddingBottom: 6,
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={repoPrivate}
-                            disabled={prov !== null}
-                            onChange={(e) => setRepoPrivate(e.target.checked)}
-                          />
-                          private
-                        </label>
-                      </div>
-                    </>
+                    <NewRepoFields
+                      owner={repoOwner}
+                      setOwner={setRepoOwner}
+                      isOrg={repoIsOrg}
+                      setIsOrg={setRepoIsOrg}
+                      name={repoName}
+                      setName={setRepoName}
+                      namePlaceholder={repoNameValue}
+                      isPrivate={repoPrivate}
+                      setPrivate={setRepoPrivate}
+                      disabled={prov !== null}
+                    />
                   ) : (
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <span style={{ fontSize: 11, opacity: 0.8 }}>Repository</span>
@@ -4045,6 +4056,40 @@ function WorkspaceProjects({
                     })}
                   </div>
                 )}
+              </div>
+            )}
+
+            {current.key === "repository" && layout.productRepository && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Repository
+                </div>
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  A product gets its own, new — the gears it is assembled from stay where
+                  they are and are depended on. This is also where a gear scaffolded for a
+                  capability nothing in the catalogue covers will be written.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <ConnectionField
+                    connections={gitConnections}
+                    value={connId}
+                    disabled={prov !== null}
+                    onChange={setConnId}
+                    emptyLabel="Default — the first GitHub connection"
+                  />
+                  <NewRepoFields
+                    owner={repoOwner}
+                    setOwner={setRepoOwner}
+                    isOrg={repoIsOrg}
+                    setIsOrg={setRepoIsOrg}
+                    name={repoName}
+                    setName={setRepoName}
+                    namePlaceholder={repoNameValue}
+                    isPrivate={repoPrivate}
+                    setPrivate={setRepoPrivate}
+                    disabled={prov !== null}
+                  />
+                </div>
               </div>
             )}
 
@@ -4378,6 +4423,128 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // Ours, kept after the product's list rather than interleaved with it.
   { id: "automation", icon: "shield", label: "Automation" },
 ];
+
+
+/** The connection a repository is created or read through.
+ *
+ *  GitHub only, and not as a shortcut: creating a repository resolves "the
+ *  first GitHub connection" server-side, and the scaffold writer speaks
+ *  GitHub's git API directly (components_catalog/scaffold.rs). Offering a
+ *  connection neither of them can use would only fail later. */
+function ConnectionField({
+  connections,
+  value,
+  onChange,
+  disabled,
+  emptyLabel,
+}: {
+  connections: Connection[];
+  value: string;
+  onChange: (id: string) => void;
+  disabled: boolean;
+  emptyLabel: string;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontSize: 11, opacity: 0.8 }}>Connection</span>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{emptyLabel}</option>
+        {connections.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.label} · {c.account}
+          </option>
+        ))}
+      </select>
+      {connections.length === 0 && (
+        <span style={{ fontSize: 11, opacity: 0.7 }}>
+          No GitHub connection on this workspace yet — add one in Integrations.
+        </span>
+      )}
+    </label>
+  );
+}
+
+/** Owner, name and visibility for a repository about to be created.
+ *
+ *  Shared by both repository pages rather than written twice: a gear's new
+ *  store and a product's repository are created by the same call with the same
+ *  four fields, and two copies would be two things to keep in step. */
+function NewRepoFields({
+  owner,
+  setOwner,
+  isOrg,
+  setIsOrg,
+  name,
+  setName,
+  namePlaceholder,
+  isPrivate,
+  setPrivate,
+  disabled,
+}: {
+  owner: string;
+  setOwner: (v: string) => void;
+  isOrg: boolean;
+  setIsOrg: (v: boolean) => void;
+  name: string;
+  setName: (v: string) => void;
+  namePlaceholder: string;
+  isPrivate: boolean;
+  setPrivate: (v: boolean) => void;
+  disabled: boolean;
+}) {
+  const row = { display: "flex", gap: 8, alignItems: "flex-end" } as const;
+  const check = {
+    display: "inline-flex",
+    gap: 6,
+    alignItems: "center",
+    fontSize: 12,
+    paddingBottom: 6,
+  } as const;
+  return (
+    <>
+      <div style={row}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+          <span style={{ fontSize: 11, opacity: 0.8 }}>Owner</span>
+          <input
+            placeholder="Leave empty for your own account"
+            value={owner}
+            disabled={disabled}
+            onChange={(e) => setOwner(e.target.value)}
+          />
+        </label>
+        <label style={check}>
+          <input
+            type="checkbox"
+            checked={isOrg}
+            disabled={disabled}
+            onChange={(e) => setIsOrg(e.target.checked)}
+          />
+          organization
+        </label>
+      </div>
+      <div style={row}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+          <span style={{ fontSize: 11, opacity: 0.8 }}>Repository name</span>
+          <input
+            placeholder={namePlaceholder}
+            value={name}
+            disabled={disabled}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label style={check}>
+          <input
+            type="checkbox"
+            checked={isPrivate}
+            disabled={disabled}
+            onChange={(e) => setPrivate(e.target.checked)}
+          />
+          private
+        </label>
+      </div>
+    </>
+  );
+}
 
 /** Level 3: one project (its own AM tenant). The tabs live in the sidebar; this
  *  renders the active one for the code context (sources, IDE, artifacts,

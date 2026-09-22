@@ -17,6 +17,10 @@ export type RepoMode = "new" | "existing";
 export interface CreateFormLayout {
   /** Where the gear is written. Only a gear project has one. */
   gearRepository: boolean;
+  /** The repository a product is assembled in. Its own field rather than a
+   *  wider `gearRepository`, because the two pages ask different things: a gear
+   *  may go into a store somebody else keeps, a product is always new. */
+  productRepository: boolean;
   /** The kit picker. */
   components: boolean;
   /** One line saying why there is no kit picker, when there is not. */
@@ -29,6 +33,7 @@ export function createFormLayout(kind: ProjectKind, repoMode: RepoMode): CreateF
   const sharedStore = gear && repoMode === "existing";
   return {
     gearRepository: gear,
+    productRepository: kind === "product",
     components: !sharedStore,
     componentsNote: sharedStore,
   };
@@ -64,6 +69,13 @@ export function createSteps(kind: ProjectKind, repoMode: RepoMode): CreateStep[]
       hint: "Where the gear is written, and what it is called there.",
     });
   }
+  if (layout.productRepository) {
+    steps.push({
+      key: "repository",
+      label: "Repository",
+      hint: "The repository this product is assembled in. Its own, and new.",
+    });
+  }
   steps.push({
     key: "brief",
     label: "Brief",
@@ -72,7 +84,7 @@ export function createSteps(kind: ProjectKind, repoMode: RepoMode): CreateStep[]
         ? "What the gear is for. Becomes the problem statement in its PRD."
         : kind === "existing"
           ? "What this app is, and what is being modernized."
-          : "What is being built, and why.",
+          : "What is being built. Becomes the App Spec's first answer, which is what the component matching reads.",
   });
   if (layout.components) {
     steps.push({
@@ -106,7 +118,9 @@ export function stepBlocker(
 ): string | null {
   if (step === "project") return form.name.trim() ? null : "Name the project.";
   if (step === "repository")
-    return gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+    return form.kind === "product"
+      ? null
+      : gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
   return null;
 }
 

@@ -93,14 +93,37 @@ describe("createSteps", () => {
     ]);
   });
 
-  it("gives the other kinds three pages and no repository page", () => {
-    for (const kind of ["product", "existing"] as const) {
-      expect(createSteps(kind, "new").map((s) => s.key), kind).toEqual([
-        "project",
-        "brief",
-        "components",
-      ]);
-    }
+  it("asks a product where its repository goes, because it promises to create one", () => {
+    // "Assemble a product from gears. A new repository is created." — it said
+    // so and created nothing; `product` differed from `existing` in `mode` and
+    // in that sentence, and in nothing else.
+    expect(createSteps("product", "new").map((s) => s.key)).toEqual([
+      "project",
+      "repository",
+      "brief",
+      "components",
+    ]);
+  });
+
+  it("gives an imported app three pages and no repository page", () => {
+    // It arrives with one; attaching it is not part of creating the project.
+    expect(createSteps("existing", "new").map((s) => s.key)).toEqual([
+      "project",
+      "brief",
+      "components",
+    ]);
+  });
+
+  it("keeps the repository road out of a product's page list", () => {
+    // `repoMode` is a gear's question. A product's repository is always new.
+    expect(createSteps("product", "new")).toEqual(createSteps("product", "existing"));
+  });
+
+  it("labels the two repository pages differently, because they ask different things", () => {
+    const label = (kind: "new_gears" | "product") =>
+      createSteps(kind, "new").find((s) => s.key === "repository")!.label;
+    expect(label("new_gears")).toBe("Gear repository");
+    expect(label("product")).toBe("Repository");
   });
 
   it("gives every page a hint, because a numbered page says nothing", () => {
@@ -111,11 +134,16 @@ describe("createSteps", () => {
     }
   });
 
-  it("tells a gear its brief lands in the PRD, and a product that it does not", () => {
+  it("says where each kind's brief actually lands", () => {
+    // The brief is not a note filed under `brief` any more. A gear's becomes
+    // the problem statement in its PRD; a product's becomes the App Spec's
+    // first answer, which is the questionnaire question it already was, word
+    // for word — "What are we building? Describe the product and its core
+    // domain."
     const hint = (kind: "new_gears" | "product") =>
       createSteps(kind, "new").find((s) => s.key === "brief")!.hint;
     expect(hint("new_gears")).toContain("PRD");
-    expect(hint("product")).not.toContain("PRD");
+    expect(hint("product")).toContain("App Spec");
   });
 });
 
@@ -156,6 +184,13 @@ describe("stepBlocker", () => {
     const gear = { ...form, name: "x", kind: "new_gears" as const, repoMode: "existing" as const };
     expect(stepBlocker("repository", gear)).toBe("Pick the connection that holds the gear store.");
     expect(stepBlocker("repository", { ...gear, connectionId: "c", storePicked: true })).toBeNull();
+  });
+
+  it("blocks nothing on a product's repository page", () => {
+    // There is nothing to pick: the connection defaults to the first GitHub one
+    // server-side and the name defaults to the project's.
+    const product = { ...form, name: "x", kind: "product" as const };
+    expect(stepBlocker("repository", product)).toBeNull();
   });
 
   it("blocks nothing on the optional pages", () => {
