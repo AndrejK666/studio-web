@@ -126,6 +126,66 @@ describe('StudioContribution', () => {
         );
     });
 
+    /* The release image is built without the Orca runtime, while the deployment
+       still sets STUDIO_ORCA_ENABLED=1. Measured on the dev stand: no `orca` on
+       PATH, no `orca serve` running, and the right flank expanded on a panel
+       whose only content was an explanation of why it had none. The header
+       above keeps the Workspace Graph and Object Details out of a fresh session
+       for exactly this reason; the Agents panel differs only in that it is true
+       of some sessions and not others, so it is asked per session. */
+    it('leaves the Agents panel out when the image carries no Orca runtime', async () => {
+        const widgetManager = {
+            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
+        };
+        const shell = {
+            addWidget: jest.fn(async (widget: { isAttached: boolean }, _options: unknown) => {
+                widget.isAttached = true;
+            }),
+            activateWidget: jest.fn()
+        };
+        const contribution = new StudioContribution(widgetManager as never);
+        Object.defineProperty(contribution, 'orca', {
+            value: { status: async () => ({ reachable: false, cliMissing: true }) }
+        });
+
+        await contribution.initializeLayout({ shell } as never);
+
+        expect(shell.addWidget).toHaveBeenCalledTimes(2);
+        expect(shell.addWidget).not.toHaveBeenCalledWith(
+            expect.objectContaining({ id: OrcaWidget.ID }),
+            expect.anything()
+        );
+        // And the right flank is not expanded onto it either, which is the half
+        // a person actually sees.
+        expect(shell.activateWidget).not.toHaveBeenCalled();
+    });
+
+    /* A runtime that is merely not running is one `orca serve` away, and the
+       panel's own hint says so — that is worth a flank. */
+    it('keeps the Agents panel when the runtime is installed but not running', async () => {
+        const widgetManager = {
+            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
+        };
+        const shell = {
+            addWidget: jest.fn(async (widget: { isAttached: boolean }, _options: unknown) => {
+                widget.isAttached = true;
+            }),
+            activateWidget: jest.fn()
+        };
+        const contribution = new StudioContribution(widgetManager as never);
+        Object.defineProperty(contribution, 'orca', {
+            value: { status: async () => ({ reachable: false, cliMissing: false }) }
+        });
+
+        await contribution.initializeLayout({ shell } as never);
+
+        expect(shell.addWidget).toHaveBeenCalledWith(
+            expect.objectContaining({ id: OrcaWidget.ID }),
+            { area: 'right' }
+        );
+        expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
+    });
+
     it('does not compose the default layout when Theia restores a saved layout', async () => {
         const contribution = new StudioContribution({ getOrCreateWidget: jest.fn() } as never);
         const initializeLayout = jest.spyOn(contribution, 'initializeLayout');

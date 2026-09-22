@@ -215,6 +215,25 @@ describe('AnalyzeFrontendController', () => {
         expect(controller.getViewModel().documentUri).toBeUndefined();
     });
 
+    /* The product's OWN Markdown editor, which is not the fixture above: it is a
+       plain Widget whose `editor` is a TipTap `Editor`, and it implements
+       neither Navigatable nor Saveable. Reading `.document.uri` off whatever a
+       widget calls `editor` threw on every activation of a Markdown tab — nine
+       times in one session on the dev stand — and the analyze panel is not even
+       the thing that broke, because the throw beat it to the question. */
+    it('leaves alone a widget whose "editor" is not a text editor', async () => {
+        const editorEvents = new Emitter<TextEditor | undefined>();
+        const activeWidgetEvents = new Emitter<void>();
+        const tiptapLike = { id: 'studio-md:file:///workspace/AGENTS.md', editor: { state: { doc: {} }, commands: {} } };
+        const shell = createShell(activeWidgetEvents, tiptapLike);
+        const editorManager = createEditorManager(editorEvents, undefined);
+        const controller = createController(editorManager, shell);
+
+        await expect(controller.onStart()).resolves.not.toThrow();
+        expect(controller.getViewModel().status).toBe('empty');
+        expect(controller.getViewModel().documentUri).toBeUndefined();
+    });
+
     it('recognizes a markdown-like navigatable saveable widget and tracks stale changes', async () => {
         const editorEvents = new Emitter<TextEditor | undefined>();
         const activeWidgetEvents = new Emitter<void>();
