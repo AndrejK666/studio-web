@@ -529,7 +529,36 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   border-radius: var(--radius-lg); font-size: 18px; cursor: pointer;
 }
 .bar-burger:hover { background: var(--muted); color: var(--foreground); }
-.appbar .brand { display: flex; align-items: center; gap: 10px; margin-left: 0.75rem; }
+/* Stretched to the bar's full height on purpose: the menu is anchored to
+   `100%` of this element, and a 36px wrap inside a 48px bar put the popover's
+   top edge two pixels INSIDE the bar. */
+.appbar .brand-wrap { position: relative; display: flex; align-self: stretch; align-items: center; }
+.appbar .brand {
+  display: flex; align-items: center; gap: 10px; margin-left: 0.75rem;
+  border: none; background: none; padding: 4px 8px 4px 0; border-radius: var(--radius-md);
+  font: inherit; color: inherit; cursor: pointer;
+}
+.appbar .brand:hover { background: var(--studio-control-hover-neutral); }
+.appbar .brand .chev { font-size: 10px; color: var(--muted-foreground); }
+/* Takes the metrics of the path bar's own menus rather than inventing a second
+   popover look in the same bar. */
+.product-menu {
+  position: absolute; top: calc(100% + 4px); left: 0.75rem; z-index: 60;
+  min-width: 200px; padding: 4px;
+  background: var(--popover, var(--card)); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 12%));
+}
+.product-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 10px; border: none; background: none; border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--text-body-size); color: var(--foreground);
+  text-align: left; cursor: pointer;
+}
+.product-menu button:hover { background: var(--studio-control-hover-neutral); }
+.product-menu button.on { color: var(--primary); font-weight: 600; }
+.product-menu .ico { display: grid; place-items: center; width: 16px; flex: none; }
+.product-menu .check { margin-left: auto; color: var(--primary); }
+
 .appbar .brand strong {
   font-size: 16px; font-weight: 600; line-height: 1.5rem; white-space: nowrap;
   color: var(--foreground);
@@ -952,18 +981,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 /* Group break (e.g. Work → Monitor) reads as a short centered divider instead
    of a random gap. */
 
-/* ── Product switcher & connector catalog ── */
-/* The product family at the foot of the drawer: ordinary menu rows, so they
-   take the row metrics above rather than a switcher of their own. Separated
-   from the working areas by a rule, the way the shell's drawer separates its
-   tenant band. */
-.drawer-products {
-  margin-top: auto;
-  width: 240px; flex: none;
-  padding-top: 8px;
-  border-top: 1px solid var(--left-menu-border);
-}
-.drawer-products .check { margin-left: auto; color: var(--primary); }
+/* ── Connector catalog ── */
 .catalog { margin-top: 10px; }
 .catalog-row {
   display: grid; grid-template-columns: 2fr 1fr 120px 110px;
@@ -1041,38 +1059,47 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   flex: 1; min-width: 0; min-height: 0;
   flex-direction: column; background: var(--background);
 }
-.space-bar {
-  display: flex; gap: 12px; align-items: center;
-  padding: 4px 12px; font-size: 12.5px; color: var(--muted-foreground);
-  border-bottom: 1px solid var(--border);
-}
-.space-bar a { margin-left: auto; font-size: 12px; }
 .space-frames { flex: 1; position: relative; }
 .space-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.nav-spaces { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
-.nav-spaces-title {
-  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--muted-foreground); padding: 0 10px 4px;
+/* Open sessions, as a strip above the work area. Deliberately the same band
+   metrics as `.project-sections` — both answer "what is open", and two bands
+   that stack must not disagree about how tall a band is. */
+.space-tabs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px;
+  min-height: var(--studio-section-height); flex: none;
+  padding: 6px 1.5rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
 }
-/* A space is FOUR controls on one row, and the rail sizes every nav button as
-   a full 232px row of its own (`.drawer nav button`). Left alone, the three
-   actions each claimed a whole row: ~960px inside a 240px rail, so the name —
-   the only one that could shrink — was squeezed to nothing and the drawer grew
-   a horizontal scrollbar. The row is the row here; the buttons inside it are
-   not. */
-.space-row {
-  display: flex; align-items: center; gap: 2px;
-  width: 232px; margin-inline: 4px;
+.stab {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 12px; max-width: 220px; flex: none;
+  border: none; background: none; border-radius: var(--radius-md);
+  font: inherit; font-size: var(--text-body-size); font-weight: 500;
+  color: var(--muted-foreground); white-space: nowrap; cursor: pointer;
 }
-.drawer nav .space-row button { width: auto; margin-inline: 0; }
-.drawer nav .space-row button:first-child { flex: 1; min-width: 0; }
+.stab .ico { display: grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.stab:hover { color: var(--foreground); background: var(--studio-control-hover-neutral); }
+.stab.on { color: var(--primary); background: var(--studio-selection-subtle); }
+/* The close button is a sibling, not a child: a button inside a button is not
+   valid HTML and the inner one never receives a click. */
+.stab-wrap { display: inline-flex; align-items: center; border-radius: var(--radius-md); }
+.stab-wrap.on { background: var(--studio-selection-subtle); }
+.stab-wrap .stab { padding-right: 4px; }
+.stab-x {
+  border: none; background: none; cursor: pointer; flex: none;
+  padding: 0 8px 0 2px; height: 28px; font-size: 11px;
+  color: var(--muted-foreground); border-radius: var(--radius-md);
+}
+.stab-x:hover { color: var(--foreground); background: var(--studio-control-hover-neutral); }
 /* The label is a span so it can ellipsize: the button is a flex container, and
    text-overflow does nothing to a bare text node inside one. */
-.space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drawer nav .space-row .space-x,
-.drawer nav .space-row .space-refresh,
-.drawer nav .space-row .space-stop { flex: 0 0 auto; padding-inline: 6px; }
-.space-refresh { font-size: 15px; }
+.stab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-tools { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+/* Sized to the tabs, not to a default button: a 36px control in a 6px-padded
+   band makes it 48px tall and the section band beneath it stays 44. */
+.space-tools button { height: 28px; padding: 0 10px; font-size: var(--text-body-size); }
+.space-tools a { font-size: 12px; }
 .space-stop { font-size: 10px; color: var(--destructive); }
 .dirty-dot { color: var(--warning); margin-left: 6px; font-size: 10px; }
 .content > h1 { margin-bottom: 0.25rem; }

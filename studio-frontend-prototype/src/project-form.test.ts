@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { createFormLayout, gearRepoBlocker } from "./project-form";
+import { clampStep, createFormLayout, createSteps, gearRepoBlocker, stepBlocker } from "./project-form";
 
 describe("createFormLayout", () => {
   it("asks a gear project where the gear goes, and asks nobody else", () => {
@@ -36,14 +36,6 @@ describe("createFormLayout", () => {
         expect(l.components).not.toBe(l.componentsNote);
       }
     }
-  });
-
-  it("drops the journey chips for a gear and keeps them for a product", () => {
-    // intent/BRD/PRD/architecture/UI design/user stories/testing is a product's
-    // path; a gear has a PRD and a DESIGN, and the skeleton writes both.
-    expect(createFormLayout("new_gears", "new").journeyStages).toBe(false);
-    expect(createFormLayout("product", "new").journeyStages).toBe(true);
-    expect(createFormLayout("existing", "new").journeyStages).toBe(true);
   });
 
   it("keeps the repository road out of everything but the gear sections", () => {
@@ -79,5 +71,95 @@ describe("gearRepoBlocker", () => {
 
   it("clears once both are picked", () => {
     expect(gearRepoBlocker("new_gears", "existing", "conn-1", true)).toBeNull();
+  });
+});
+
+describe("createSteps", () => {
+  it("asks a gear project where the gear goes, as a page of its own", () => {
+    expect(createSteps("new_gears", "new").map((s) => s.key)).toEqual([
+      "project",
+      "repository",
+      "brief",
+      "components",
+    ]);
+  });
+
+  it("does not give a gear going into a shared store a kit page", () => {
+    // There is no kit picker for that road, so there is nothing on the page.
+    expect(createSteps("new_gears", "existing").map((s) => s.key)).toEqual([
+      "project",
+      "repository",
+      "brief",
+    ]);
+  });
+
+  it("gives the other kinds three pages and no repository page", () => {
+    for (const kind of ["product", "existing"] as const) {
+      expect(createSteps(kind, "new").map((s) => s.key), kind).toEqual([
+        "project",
+        "brief",
+        "components",
+      ]);
+    }
+  });
+
+  it("gives every page a hint, because a numbered page says nothing", () => {
+    for (const kind of ["new_gears", "product", "existing"] as const) {
+      for (const step of createSteps(kind, "new")) {
+        expect(step.hint.length, `${kind}/${step.key}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("tells a gear its brief lands in the PRD, and a product that it does not", () => {
+    const hint = (kind: "new_gears" | "product") =>
+      createSteps(kind, "new").find((s) => s.key === "brief")!.hint;
+    expect(hint("new_gears")).toContain("PRD");
+    expect(hint("product")).not.toContain("PRD");
+  });
+});
+
+describe("clampStep", () => {
+  it("keeps a page index inside a list that just got shorter", () => {
+    // Switching a gear from a new repository to a shared store drops the kit
+    // page while the card is on it.
+    const shorter = createSteps("new_gears", "existing");
+    expect(clampStep(3, shorter)).toBe(shorter.length - 1);
+  });
+
+  it("leaves a valid index alone and floors a negative one", () => {
+    const steps = createSteps("new_gears", "new");
+    expect(clampStep(2, steps)).toBe(2);
+    expect(clampStep(-1, steps)).toBe(0);
+  });
+
+  it("answers 0 for an empty list rather than -1", () => {
+    expect(clampStep(3, [])).toBe(0);
+  });
+});
+
+describe("stepBlocker", () => {
+  const form = {
+    name: "",
+    kind: "product" as const,
+    repoMode: "new" as const,
+    connectionId: "",
+    storePicked: false,
+  };
+
+  it("will not leave the first page unnamed", () => {
+    expect(stepBlocker("project", form)).toBe("Name the project.");
+    expect(stepBlocker("project", { ...form, name: "  x  " })).toBeNull();
+  });
+
+  it("carries the gear repository's own rule onto its page", () => {
+    const gear = { ...form, name: "x", kind: "new_gears" as const, repoMode: "existing" as const };
+    expect(stepBlocker("repository", gear)).toBe("Pick the connection that holds the gear store.");
+    expect(stepBlocker("repository", { ...gear, connectionId: "c", storePicked: true })).toBeNull();
+  });
+
+  it("blocks nothing on the optional pages", () => {
+    expect(stepBlocker("brief", form)).toBeNull();
+    expect(stepBlocker("components", form)).toBeNull();
   });
 });

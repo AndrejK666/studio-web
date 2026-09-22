@@ -81,7 +81,13 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearSlug, scaffoldGear } from "./scaffold";
-import { createFormLayout, gearRepoBlocker, type RepoMode } from "./project-form";
+import {
+  clampStep,
+  createFormLayout,
+  createSteps,
+  stepBlocker,
+  type RepoMode,
+} from "./project-form";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -761,6 +767,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   /** Whether the navigation rail is PINNED open. Not "is it visible" — the rail
    *  is always visible and opens on hover; this is only the latch that keeps it
    *  open once the pointer leaves. Unpinned is the resting state. */
+  const [productMenu, setProductMenu] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   /** Whether the Studio AI dock is open (368px) rather than railed (48px).
    *  Owned here because the shell grid sizes the track — see .shell-body. */
@@ -1493,9 +1500,55 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         >
           ☰
         </button>
-        <span className="brand">
-          <img className="logo" src={PRODUCT_MARK} alt="" />
-          <strong>Constructor Studio</strong>
+        {/* The product family hangs off the wordmark again.
+            It was moved to the foot of the drawer on the reasoning that the
+            portal is one door and the API docs and the IdP admin are others,
+            so none of them should hang off the name of one. True, and it cost
+            more than it bought: reaching Docs or Admin meant opening the
+            navigation rail, scrolling past every section of the thing you had
+            open, and finding them under the fold. The wordmark is where a
+            product family is looked for, and a menu names all three rather
+            than implying the first owns the other two. */}
+        <span className="brand-wrap" onMouseLeave={() => setProductMenu(false)}>
+          <button
+            type="button"
+            className="brand"
+            aria-haspopup="menu"
+            aria-expanded={productMenu}
+            title="Switch product"
+            onClick={() => setProductMenu((v) => !v)}
+          >
+            <img className="logo" src={PRODUCT_MARK} alt="" />
+            <strong>Constructor Studio</strong>
+            <span className="chev" aria-hidden>▾</span>
+          </button>
+          {productMenu && (
+            <div className="product-menu" role="menu">
+              <button role="menuitem" className="on" onClick={() => setProductMenu(false)}>
+                <span className="ico" aria-hidden>▦</span> Studio
+                <span className="check" aria-hidden>✓</span>
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  window.open("/cf/docs", "_blank", "noopener");
+                  setProductMenu(false);
+                }}
+              >
+                <span className="ico" aria-hidden>⧉</span> Docs &amp; API
+              </button>
+              <button
+                role="menuitem"
+                title="Organizations, members, workspaces administration"
+                onClick={() => {
+                  setProductMenu(false);
+                  openAdmin();
+                }}
+              >
+                <span className="ico" aria-hidden>🛡</span> Admin
+              </button>
+            </div>
+          )}
         </span>
         <span className="bar-sep" aria-hidden />
         {/* Where the session is: organization › workspace › project. It used to
@@ -1823,72 +1876,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 }
                 </>
               )}
-              {spaces.length > 0 && (
-                <div className="nav-spaces">
-                  <div className="nav-spaces-title">Spaces</div>
-                  {spaces.map((s) => (
-                    <div key={s.wsId} className="space-row">
-                      <button
-                        className={activeSpace === s.wsId ? "active" : ""}
-                        onClick={() => {
-                          setActiveSpace(s.wsId);
-                          setAdminOpen(false); // a space is a Studio surface
-                        }}
-                        title={`Switch to ${s.wsName}${
-                          spaceDirty[s.wsId] ? ` — ${spaceDirty[s.wsId]} unsaved file(s)` : ""
-                        }`}
-                      >
-                        <span className="ico">⚙</span>
-                        <span className="space-name">{s.wsName}</span>
-                        {(spaceDirty[s.wsId] ?? 0) > 0 && <span className="dirty-dot">●</span>}
-                      </button>
-                      <button
-                        className="ghost space-x"
-                        title="Hide space (the IDE session keeps running)"
-                        onClick={() => closeSpace(s.wsId)}
-                      >
-                        ✕
-                      </button>
-                      <button
-                        className="ghost space-refresh"
-                        title="Refresh IDE without stopping the session"
-                        onClick={() => refreshSpace(s.wsId)}
-                      >
-                        ↻
-                      </button>
-                      <button
-                        className="ghost space-stop"
-                        title="Stop IDE session and release Kubernetes resources"
-                        onClick={() => void stopSpace(s.wsId)}
-                      >
-                        Stop
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </nav>
-            {/* The product family, at the foot of the drawer rather than
-                hanging off the wordmark: the portal is one door, the API docs
-                and the IdP admin are the others. */}
-            <nav className="drawer-products">
-              <button className="active" onClick={() => setMenuOpen(false)}>
-                <span className="ico">▦</span> Studio <span className="check">✓</span>
-              </button>
-              <button
-                onClick={() => {
-                  window.open("/cf/docs", "_blank", "noopener");
-                  setMenuOpen(false);
-                }}
-              >
-                <span className="ico">⧉</span> Docs &amp; API
-              </button>
-              <button
-                title="Organizations, members, workspaces administration"
-                onClick={() => openAdmin()}
-              >
-                <span className="ico">🛡</span> Admin
-              </button>
             </nav>
           </aside>
 
@@ -1896,6 +1883,93 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           inside it — exactly one of the two is showing — so neither can claim
           the viewport out from under the bar. */}
       <div className="screen">
+      {/* Open sessions, as tabs.
+          They were a list in the navigation rail, which is where you go to
+          change WHERE you are -- and a running IDE is not a place you navigate
+          to, it is a thing you have open, like a document. Four controls on a
+          240px row also left the name, the only part that could shrink, with
+          nothing to shrink into. As a strip above the work area they read the
+          way every other set of open things reads, and the way back to the
+          portal becomes a tab of its own rather than a side effect of clicking
+          something else in the rail. */}
+      {spaces.length > 0 && (
+        <nav className="space-tabs" aria-label="Open sessions">
+          <button
+            className={`stab${!activeSpace ? " on" : ""}`}
+            aria-current={!activeSpace ? "page" : undefined}
+            onClick={() => setActiveSpace(null)}
+            title="Back to the portal"
+          >
+            <span className="ico" aria-hidden>
+              <NavIcon name="home" />
+            </span>
+            Portal
+          </button>
+          {spaces.map((sp) => {
+            const on = activeSpace === sp.wsId;
+            const dirty = spaceDirty[sp.wsId] ?? 0;
+            return (
+              <span key={sp.wsId} className={`stab-wrap${on ? " on" : ""}`}>
+                <button
+                  className={`stab${on ? " on" : ""}`}
+                  aria-current={on ? "page" : undefined}
+                  onClick={() => {
+                    setActiveSpace(sp.wsId);
+                    setAdminOpen(false); // a space is a Studio surface
+                  }}
+                  title={`Switch to ${sp.wsName}${
+                    dirty ? ` — ${dirty} unsaved file(s)` : ""
+                  }`}
+                >
+                  <span className="ico" aria-hidden>
+                    ⚙
+                  </span>
+                  <span className="stab-name">{sp.wsName}</span>
+                  {dirty > 0 && <span className="dirty-dot">●</span>}
+                </button>
+                <button
+                  className="stab-x"
+                  title="Hide space (the IDE session keeps running)"
+                  aria-label={`Hide ${sp.wsName}`}
+                  onClick={() => closeSpace(sp.wsId)}
+                >
+                  ✕
+                </button>
+              </span>
+            );
+          })}
+          {/* Refresh, Stop and the external link belong to the session you are
+              looking at, so they sit once at the end rather than four times
+              across the strip. */}
+          {activeSpace && (
+            <span className="space-tools">
+              <button
+                className="ghost"
+                title="Refresh IDE without stopping the session"
+                aria-label="Refresh IDE"
+                onClick={() => refreshSpace(activeSpace)}
+              >
+                ↻
+              </button>
+              <button
+                className="ghost space-stop"
+                title="Stop IDE session and release Kubernetes resources"
+                onClick={() => void stopSpace(activeSpace)}
+              >
+                Stop
+              </button>
+              {(() => {
+                const sp = spaces.find((x) => x.wsId === activeSpace);
+                return sp ? (
+                  <a href={sp.url} target="_blank" rel="noopener noreferrer">
+                    open in tab ↗
+                  </a>
+                ) : null;
+              })()}
+            </span>
+          )}
+        </nav>
+      )}
       {/* The project's sections, as the product draws them: a 44px band across
           the top of the work area, not a list inside the navigation rail.
 
@@ -1963,18 +2037,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               }
         }
       >
-        {activeSpace &&
-          (() => {
-            const sp = spaces.find((s) => s.wsId === activeSpace);
-            return sp ? (
-              <div className="space-bar">
-                <span>⚙ {sp.wsName}</span>
-                <a href={sp.url} target="_blank" rel="noopener noreferrer">
-                  open in tab ↗
-                </a>
-              </div>
-            ) : null;
-          })()}
         {activeSpace && !spaces.some((s) => s.wsId === activeSpace) && (
           <p className="hint" style={{ padding: 16 }}>
             Reconnecting the space…
@@ -3149,10 +3211,18 @@ function WorkspaceProjects({
   // Journey framing captured at creation (previously dead in the UI): a free-text
   // brief and the opt-in journey stages (Intent is always applied).
   const [brief, setBrief] = useState("");
-  const [stageSel, setStageSel] = useState<Set<string>>(new Set());
+  // Which page of the card is showing. An index rather than a key, because the
+  // pages are a list whose length depends on the answers -- see `clampStep`.
+  const [step, setStep] = useState(0);
   // The workspace's effective stage catalogue: names, order, and which are
   // required. It was a constant in api.ts until ADR-0014 s7 moved it to the
   // server, because the journey is a thing an organization configures.
+  // Read for `normalizeStages`, which has to know which entries are required.
+  // Nothing picks from it here any more: a project's `stages` is not a gate --
+  // no backend code reads it, `stage_status` computes against the workspace's
+  // whole catalogue -- it only filtered the chips on the project's Overview.
+  // Asking for a display filter before the project exists put the question at
+  // the one moment nobody can answer it.
   const [stageCatalogue, setStageCatalogue] = useState<import("./api").JourneyStage[]>([]);
   // Resumable provisioning: the live checklist and the context that accumulates
   // ids across steps, kept in a ref so Retry reuses the same run.
@@ -3296,7 +3366,23 @@ function WorkspaceProjects({
   // needs before it can be created — both decided in project-form.ts, where the
   // branches can be read without the JSX around them.
   const layout = createFormLayout(newKind, repoMode);
-  const gearBlocker = gearRepoBlocker(newKind, repoMode, connId, existingRepo !== null);
+  // The card's pages, and which one is showing. The list changes length when
+  // the type or the repository road changes, so the index is clamped on every
+  // render rather than corrected in the handlers that could change it.
+  const steps = createSteps(newKind, repoMode);
+  const stepIndex = clampStep(step, steps);
+  const current = steps[stepIndex];
+  const formState = {
+    name: newName,
+    kind: newKind,
+    repoMode,
+    connectionId: connId,
+    storePicked: existingRepo !== null,
+  };
+  const pageBlocker = stepBlocker(current.key, formState);
+  // What blocks creating at all, wherever it sits. The last page cannot assume
+  // an earlier one is still answered: somebody can walk back and clear a field.
+  const createBlocker = steps.map((s) => stepBlocker(s.key, formState)).find(Boolean) ?? null;
 
   /** Build the idempotent create plan for the current form inputs. Each step
    *  probes real backend state in `check` so a retry resumes cleanly instead of
@@ -3342,7 +3428,7 @@ function WorkspaceProjects({
           ...cfg,
           mode,
           kind: newKind,
-          stages: normalizeStages([...stageSel], stageCatalogue),
+          stages: normalizeStages(cfg.stages ?? [], stageCatalogue),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
           source_git_url: ctx.cloneUrl || cfg.source_git_url,
@@ -3491,7 +3577,7 @@ function WorkspaceProjects({
     setProvOk(false);
     setNewName("");
     setBrief("");
-    setStageSel(new Set());
+    setStep(0);
     setKitSel(new Set());
     setRepoMode("new");
     setConnId("");
@@ -3513,14 +3599,6 @@ function WorkspaceProjects({
       scaffolded: false,
     };
   };
-
-  const toggleStage = (key: string) =>
-    setStageSel((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
 
   const startEdit = (p: { id: string; name: string }) => {
     setEditingId(p.id);
@@ -3579,52 +3657,96 @@ function WorkspaceProjects({
             <h2>New project</h2>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 640 }}>
-            <input
-              placeholder="Project name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(
-                  [
-                    ["new_gears", "New Gears", "Build new gears. Create a new repo, or use an existing gear store."],
-                    ["product", "Product from Gears", "Assemble a product from gears. A new repository is created."],
-                    ["existing", "Existing Gears app", "Import a gears-based app already built. Attach its repository."],
-                  ] as [import("./api").ProjectKind, string, string][]
-                ).map(([k, title, desc]) => (
-                  <label
-                    key={k}
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      alignItems: "flex-start",
-                      padding: "8px 10px",
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      background: newKind === k ? "var(--accent)" : "transparent",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="pkind"
-                      checked={newKind === k}
-                      onChange={() => setNewKind(k)}
-                      style={{ marginTop: 2 }}
-                    />
-                    <span>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
-                      <div style={{ fontSize: 11, opacity: 0.7 }}>{desc}</div>
-                    </span>
-                  </label>
-                ))}
+            {/* One page at a time. The card used to ask everything at once, which
+                made a project that needs four answers look like a project that
+                needs eleven, and put the two questions a gear never has to answer
+                between the two it does. */}
+            {prov === null && (
+              <div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {steps.map((s, i) => {
+                    const done = i < stepIndex;
+                    const here = i === stepIndex;
+                    return (
+                      <button
+                        key={s.key}
+                        onClick={() => done && setStep(i)}
+                        aria-current={here ? "step" : undefined}
+                        disabled={!done}
+                        style={{
+                          display: "inline-flex",
+                          gap: 6,
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          border: "1px solid var(--border)",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          background: here ? "var(--accent)" : "transparent",
+                          fontWeight: here ? 600 : 400,
+                          opacity: here || done ? 1 : 0.5,
+                          cursor: done ? "pointer" : "default",
+                        }}
+                      >
+                        <span style={{ opacity: 0.6 }}>{done ? "✓" : i + 1}</span>
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "8px 0 0" }}>{current.hint}</p>
               </div>
-            </div>
+            )}
 
-            {layout.gearRepository && (
+            {current.key === "project" && prov === null && (
+              <>
+              <input
+                placeholder="Project name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {(
+                    [
+                      ["new_gears", "New Gears", "Build new gears. Create a new repo, or use an existing gear store."],
+                      ["product", "Product from Gears", "Assemble a product from gears. A new repository is created."],
+                      ["existing", "Existing Gears app", "Import a gears-based app already built. Attach its repository."],
+                    ] as [import("./api").ProjectKind, string, string][]
+                  ).map(([k, title, desc]) => (
+                    <label
+                      key={k}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                        padding: "8px 10px",
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        background: newKind === k ? "var(--accent)" : "transparent",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="pkind"
+                        checked={newKind === k}
+                        onChange={() => setNewKind(k)}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>{desc}</div>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              </>
+            )}
+
+            {current.key === "repository" && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                   Gear repository
@@ -3864,7 +3986,7 @@ function WorkspaceProjects({
               </div>
             )}
 
-            {layout.components && (
+            {current.key === "components" && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
                   Components{" "}
@@ -3926,7 +4048,7 @@ function WorkspaceProjects({
               </div>
             )}
 
-            {layout.componentsNote && (
+            {current.key === "repository" && layout.componentsNote && (
               <p style={{ fontSize: 11, opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
                 No components are offered for a shared gear store. A kit installs with
                 <code> copy</code> across every repository the project has, and this one
@@ -3935,83 +4057,59 @@ function WorkspaceProjects({
               </p>
             )}
 
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Brief <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
-              </div>
-              <textarea
-                placeholder={
-                  newKind === "existing"
-                    ? "What is this app, and what are we modernizing?"
-                    : isGearProject
-                      ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
-                      : "What are we building, and why? Seeds the Intent stage."
-                }
-                value={brief}
-                onChange={(e) => setBrief(e.target.value)}
-                rows={3}
-                style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
-                disabled={prov !== null}
-              />
-            </div>
-
-            {/* The journey is a product's: intent, BRD, PRD, architecture, UI design,
-                user stories, testing. A gear has none of those — it has a PRD and a
-                DESIGN, and the skeleton writes both. Hiding the picker is not the same
-                as deciding the catalogue: `intent` is still applied, because
-                `normalizeStages` always keeps the required entries, and the project can
-                take stages later if it grows into a product. */}
-            {layout.journeyStages && (
+            {current.key === "brief" && (
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {stageCatalogue.map((s) => {
-                    const on = s.required || stageSel.has(s.key);
-                    return (
-                      <label
-                        key={s.key}
-                        title={s.required ? "Always applied" : undefined}
-                        style={{
-                          display: "inline-flex",
-                          gap: 6,
-                          alignItems: "center",
-                          padding: "4px 10px",
-                          border: "1px solid var(--border)",
-                          borderRadius: 999,
-                          fontSize: 12,
-                          background: on ? "var(--accent)" : "transparent",
-                          cursor: s.required || prov !== null ? "default" : "pointer",
-                          opacity: prov !== null && !on ? 0.5 : 1,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          disabled={s.required || prov !== null}
-                          onChange={() => toggleStage(s.key)}
-                        />
-                        {s.label}
-                      </label>
-                    );
-                  })}
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Brief <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
                 </div>
+                <textarea
+                  placeholder={
+                    newKind === "existing"
+                      ? "What is this app, and what are we modernizing?"
+                      : isGearProject
+                        ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
+                        : "What are we building, and why?"
+                  }
+                  value={brief}
+                  onChange={(e) => setBrief(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+                  disabled={prov !== null}
+                />
               </div>
             )}
 
             {prov === null ? (
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button
-                  className="primary"
-                  onClick={() => void create()}
-                  disabled={!newName.trim() || busy || gearBlocker !== null}
-                >
-                  {busy ? "Creating…" : "Create project"}
-                </button>
+                {stepIndex > 0 && (
+                  <button className="ghost" onClick={() => setStep(stepIndex - 1)}>
+                    Back
+                  </button>
+                )}
+                {stepIndex < steps.length - 1 ? (
+                  <button
+                    className="primary"
+                    onClick={() => setStep(stepIndex + 1)}
+                    disabled={pageBlocker !== null}
+                  >
+                    Next
+                  </button>
+                ) : (
+                  <button
+                    className="primary"
+                    onClick={() => void create()}
+                    disabled={busy || createBlocker !== null}
+                  >
+                    {busy ? "Creating…" : "Create project"}
+                  </button>
+                )}
                 <button className="ghost" onClick={resetCreate}>
                   Cancel
                 </button>
-                {gearBlocker && (
-                  <span style={{ fontSize: 11, opacity: 0.7 }}>{gearBlocker}</span>
+                {(pageBlocker ?? createBlocker) && (
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>
+                    {pageBlocker ?? createBlocker}
+                  </span>
                 )}
               </div>
             ) : (
@@ -4251,18 +4349,24 @@ function NotBuiltYet({ title, what, why }: { title: string; what: string; why: s
  *  that links to them; this is the shell rail's rendering of the list (the
  *  active tab is stored on the shell, not inside ProjectScreen). */
 const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
-  // The product's seven, in the product's order (see ProjTab). Icons are the
-  // lucide names the shipped project-sidebar picks for each.
+  // In the order the work happens, which is not the order the sections were
+  // added. Icons are the lucide names the shipped project-sidebar picks.
   { id: "overview", icon: "home", label: "Overview" },
+  // Specs first, because everything after it is downstream of a document: the
+  // components a product is composed from are matched against what its specs
+  // declare, and the artifacts are what came out. Reading the row left to right
+  // is reading the project's own order -- what we decided, what we build it
+  // from, what exists. It used to sit fourth, behind the two sections that
+  // depend on it.
+  //
+  // The name is the product's: this screen was called Documents here and the
+  // shipped project-sidebar calls it Specs (`/v1/projects/<id>/specs`), and a
+  // prototype that renames the product's sections is a prototype of a
+  // different product.
+  { id: "specs", icon: "scan", label: "Specs" },
   { id: "components", icon: "package", label: "Components" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
-  // Specs, then Sources — the product's own order and the product's own word.
-  // It called this section Documents here and the shipped project-sidebar calls
-  // it Specs (`/v1/projects/<id>/specs`), and a prototype that renames the
-  // product's sections is a prototype of a different product. The screen is
-  // unchanged: the same three views of the same documents.
-  { id: "specs", icon: "scan", label: "Specs" },
-  // Sources sits beside them because it is where they come from: a sync run
+  // Sources sits after them because it is where they come from: a sync run
   // here is what puts anything in Artifacts at all. It was a card near the
   // bottom of Overview, which buried the project's only long-running action
   // under six panels people read and then leave. The shipped sidebar has since
@@ -4271,7 +4375,7 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "activity", icon: "activity", label: "Activity" },
   { id: "timeline", icon: "clock", label: "Timeline" },
   { id: "people", icon: "users", label: "Team" },
-  // Ours, kept below the product's list rather than interleaved with it.
+  // Ours, kept after the product's list rather than interleaved with it.
   { id: "automation", icon: "shield", label: "Automation" },
 ];
 

@@ -21,16 +21,9 @@ export interface CreateFormLayout {
   components: boolean;
   /** One line saying why there is no kit picker, when there is not. */
   componentsNote: boolean;
-  /** The journey-stage chips. */
-  journeyStages: boolean;
 }
 
-/** Which sections the card shows.
- *
- *  Hiding the stage chips is not the same as deciding the stage catalogue: the
- *  catalogue moved to the server precisely so an organization owns it (ADR-0014
- *  §7), `intent` stays required, and `normalizeStages` keeps the required
- *  entries whatever the form showed. */
+/** Which sections the card shows. */
 export function createFormLayout(kind: ProjectKind, repoMode: RepoMode): CreateFormLayout {
   const gear = kind === "new_gears";
   const sharedStore = gear && repoMode === "existing";
@@ -38,8 +31,83 @@ export function createFormLayout(kind: ProjectKind, repoMode: RepoMode): CreateF
     gearRepository: gear,
     components: !sharedStore,
     componentsNote: sharedStore,
-    journeyStages: !gear,
   };
+}
+
+/** One page of the New project card. */
+export type StepKey = "project" | "repository" | "brief" | "components";
+
+export interface CreateStep {
+  key: StepKey;
+  label: string;
+  /** What this page is for, under its title — a wizard that only numbers its
+   *  pages makes people click through to find out what each one wants. */
+  hint: string;
+}
+
+/** The pages this project kind walks, in order.
+ *
+ *  Not a fixed list: a gear project is asked where the gear goes and the other
+ *  two are not, and a gear going into somebody else's store is not offered a
+ *  kit (see `createFormLayout`). The page count therefore changes when the type
+ *  or the repository road changes, which is why nothing may hold on to a page
+ *  INDEX across such a change — `clampStep` exists for exactly that. */
+export function createSteps(kind: ProjectKind, repoMode: RepoMode): CreateStep[] {
+  const layout = createFormLayout(kind, repoMode);
+  const steps: CreateStep[] = [
+    { key: "project", label: "Project", hint: "What to call it, and what kind of project it is." },
+  ];
+  if (layout.gearRepository) {
+    steps.push({
+      key: "repository",
+      label: "Gear repository",
+      hint: "Where the gear is written, and what it is called there.",
+    });
+  }
+  steps.push({
+    key: "brief",
+    label: "Brief",
+    hint:
+      kind === "new_gears"
+        ? "What the gear is for. Becomes the problem statement in its PRD."
+        : kind === "existing"
+          ? "What this app is, and what is being modernized."
+          : "What is being built, and why.",
+  });
+  if (layout.components) {
+    steps.push({
+      key: "components",
+      label: "Components",
+      hint: "What the project takes from the shared catalogue. All optional.",
+    });
+  }
+  return steps;
+}
+
+/** Keep a page index inside a list that just changed length. */
+export function clampStep(index: number, steps: readonly CreateStep[]): number {
+  if (steps.length === 0) return 0;
+  return Math.min(Math.max(index, 0), steps.length - 1);
+}
+
+/** Why this page cannot be left yet, as a sentence, or `null`.
+ *
+ *  Per page rather than per form: a wizard that validates everything on the
+ *  last page is a long form with extra clicks. */
+export function stepBlocker(
+  step: StepKey,
+  form: {
+    name: string;
+    kind: ProjectKind;
+    repoMode: RepoMode;
+    connectionId: string;
+    storePicked: boolean;
+  },
+): string | null {
+  if (step === "project") return form.name.trim() ? null : "Name the project.";
+  if (step === "repository")
+    return gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+  return null;
 }
 
 /** Why the gear project cannot be created yet, as a sentence for the button to
