@@ -80,7 +80,7 @@ import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
-import { gearSlug, scaffoldGear } from "./scaffold";
+import { gearParentDir, gearSlug } from "./scaffold";
 import {
   clampStep,
   createFormLayout,
@@ -3199,6 +3199,11 @@ function WorkspaceProjects({
   // Both empty means "follow the project name"; typing pins them.
   const [repoName, setRepoName] = useState("");
   const [gearName, setGearName] = useState("");
+  // Where under the repository the gear's own directory goes. Only thirteen
+  // of the forty-two gears in `gears-rust` sit at `gears/<slug>/`; the rest
+  // are under a family, so a scaffold that can only write the top level
+  // writes to the wrong place in most of the monorepo.
+  const [gearDir, setGearDir] = useState("");
   const [repoPrivate, setRepoPrivate] = useState(true);
   const [repoSearch, setRepoSearch] = useState("");
   const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[] | null>(null);
@@ -3361,6 +3366,7 @@ function WorkspaceProjects({
   // connection neither of them can use would only fail later.
   const gitConnections = connections.filter((c) => c.provider === "github");
   const gearSlugValue = gearSlug(gearName.trim() || newName.trim() || "gear");
+  const gearDirValue = gearParentDir(gearDir);
   const repoNameValue = gearSlug(repoName.trim() || newName.trim() || "project");
   // Which sections this project kind is actually asked about, and what it still
   // needs before it can be created — both decided in project-form.ts, where the
@@ -3487,16 +3493,17 @@ function WorkspaceProjects({
 
       steps.push({
         key: "scaffold",
-        label: `Starter gear · gears/${gearSlugValue}`,
+        label: `Starter gear · ${gearDirValue}/${gearSlugValue}`,
         check: (ctx) => ctx.scaffolded,
         run: async (ctx) => {
-          const skeleton = scaffoldGear(gearSlugValue, name, {
+          // No files: the skeleton is the server's to compose, so this asks
+          // for one rather than posting one. An agent makes the same call.
+          await api.scaffoldGearToRepo(token, ctx.tenantId, {
+            slug: gearSlugValue,
+            app_title: name,
             problem: brief.trim(),
             origin: "Scaffolded when the project was created.",
-          });
-          await api.scaffoldGearToRepo(token, ctx.tenantId, {
-            slug: skeleton.slug,
-            files: skeleton.files,
+            parent_dir: gearDirValue,
             open_pr: openPr,
           });
           ctx.scaffolded = true;
@@ -3659,6 +3666,7 @@ function WorkspaceProjects({
     setRepoIsOrg(false);
     setRepoName("");
     setGearName("");
+    setGearDir("");
     setRepoPrivate(true);
     setRepoSearch("");
     setRemoteRepos(null);
@@ -3976,9 +3984,25 @@ function WorkspaceProjects({
                       onChange={(e) => setGearName(e.target.value)}
                     />
                     <span style={{ fontSize: 11, opacity: 0.7 }}>
-                      Scaffolded into <code>gears/{gearSlugValue}/</code> — gear.toml, the crate,
-                      the <code>#[toolkit::gear]</code> entrypoint, PRD and DESIGN. In a shared
-                      store the gear is not the project, so this is its own field.
+                      gear.toml, the crate, the <code>#[toolkit::gear]</code> entrypoint, PRD and
+                      DESIGN. In a shared store the gear is not the project, so this is its own
+                      field.
+                    </span>
+                  </label>
+
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, opacity: 0.8 }}>Directory</span>
+                    <input
+                      placeholder={gearDirValue}
+                      value={gearDir}
+                      disabled={prov !== null}
+                      onChange={(e) => setGearDir(e.target.value)}
+                    />
+                    <span style={{ fontSize: 11, opacity: 0.7 }}>
+                      Scaffolded into <code>{gearDirValue}/{gearSlugValue}/</code>. A shared store
+                      usually groups them — in <code>gears-rust</code> only thirteen of
+                      forty-two gears sit at <code>gears/</code>, the rest under a family like{" "}
+                      <code>gears/system</code> or <code>gears/bss</code>.
                     </span>
                   </label>
 

@@ -202,32 +202,58 @@ pub struct SaveFieldSchemaRequest {
     pub schema: Value,
 }
 
-/// One file of a scaffolded gear to write into the repo.
+/// One file of a scaffolded gear: sent in to be written, or handed back to say
+/// what was written — which is why it is both halves of the contract.
 #[derive(Debug)]
-#[toolkit_macros::api_dto(request)]
+#[toolkit_macros::api_dto(request, response)]
 pub struct ScaffoldFileDto {
     pub path: String,
     pub content: String,
 }
 
 /// Write a scaffolded gear skeleton into the project's connected gear repo.
+///
+/// `files` is optional, and leaving it out is the ordinary case: the canonical
+/// skeleton is generated here (`skeleton.rs`) from `capability` and the rest.
+/// It used to be required, which meant the layout of a gear was known only to
+/// whatever client had a copy of it — so "create a new gear" could not be asked
+/// for without a browser, and a second copy of the layout was the price of
+/// asking any other way.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct ScaffoldRequest {
-    /// Gear slug, used for the branch name `scaffold/<slug>`.
+    /// Gear slug, used for the branch name `scaffold/<slug>`. With no `files`
+    /// it is also what the skeleton is generated from, and what the gear's
+    /// directory and crate are named after.
     pub slug: String,
-    pub files: Vec<ScaffoldFileDto>,
+    /// Explicit files to write. Omit to have the canonical skeleton generated.
+    pub files: Option<Vec<ScaffoldFileDto>>,
+    /// What the gear is being built for; named in its manifest and its PRD.
+    pub app_title: Option<String>,
+    /// The PRD's opening sentence. Omitted falls back to the capability-gap one.
+    pub problem: Option<String>,
+    /// Provenance note for the manifest and the crate header.
+    pub origin: Option<String>,
+    /// Directory the gear's own directory goes under (default `gears`). A
+    /// shared store usually groups them — `gears/system`, `gears/bss`.
+    pub parent_dir: Option<String>,
+    /// Return the files that WOULD be written and touch nothing. Lets a caller
+    /// show them first without a second generator to keep in step.
+    pub dry_run: Option<bool>,
     /// Open a pull request back into the base branch (default false).
     pub open_pr: Option<bool>,
 }
 
-/// Where the scaffold landed.
+/// Where the scaffold landed, and what it wrote.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ScaffoldResultDto {
     pub branch: String,
     pub commit_sha: String,
     pub pr_url: Option<String>,
+    /// The files written, or — on a dry run — the ones that would be. Always
+    /// returned, so a caller never has to guess what it just asked for.
+    pub files: Vec<ScaffoldFileDto>,
 }
 
 /// Create a new repository via the connector and set it as the project's gear repo.
@@ -682,14 +708,42 @@ async fn scaffold_gear(
     Path(project_id): Path<Uuid>,
     Json(body): Json<ScaffoldRequest>,
 ) -> ApiResult<JsonBody<ScaffoldResultDto>> {
-    let files = body
-        .files
-        .into_iter()
-        .map(|f| super::scaffold::ScaffoldFile {
-            path: f.path,
-            content: f.content,
+    // Explicit files win, because a caller that has already decided what to
+    // write is not asking for a skeleton. Everything else is generated here.
+    let files: Vec<super::scaffold::ScaffoldFile> = match body.files {
+        Some(files) => files
+            .into_iter()
+            .map(|f| super::scaffold::ScaffoldFile {
+                path: f.path,
+                content: f.content,
+            })
+            .collect(),
+        None => {
+            super::skeleton::generate(&super::skeleton::SkeletonSpec {
+                capability: body.slug.clone(),
+                app_title: body.app_title.clone().unwrap_or_default(),
+                problem: body.problem.clone().unwrap_or_default(),
+                origin: body.origin.clone().unwrap_or_default(),
+                parent_dir: body.parent_dir.clone().unwrap_or_default(),
+            })
+            .1
+        }
+    };
+    let written: Vec<ScaffoldFileDto> = files
+        .iter()
+        .map(|f| ScaffoldFileDto {
+            path: f.path.clone(),
+            content: f.content.clone(),
         })
         .collect();
+    if body.dry_run.unwrap_or(false) {
+        return Ok(Json(ScaffoldResultDto {
+            branch: format!("scaffold/{}", super::skeleton::gear_slug(&body.slug)),
+            commit_sha: String::new(),
+            pr_url: None,
+            files: written,
+        }));
+    }
     let w = catalog
         .service
         .scaffold_into_repo(
@@ -709,6 +763,7 @@ async fn scaffold_gear(
         branch: w.branch,
         commit_sha: w.commit_sha,
         pr_url: w.pr_url,
+        files: written,
     }))
 }
 

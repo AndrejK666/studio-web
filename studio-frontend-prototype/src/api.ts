@@ -1365,6 +1365,12 @@ export interface DocValidation {
 
 /** The gear repository connected to a project — where its gears live and where
  *  scaffolded gears are written. */
+/** One file of a scaffolded gear, as the endpoint sends and returns it. */
+export interface ScaffoldFile {
+  path: string;
+  content: string;
+}
+
 export interface ProjectGearRepo {
   project_id?: string;
   tenant?: string;
@@ -2521,12 +2527,36 @@ export const api = {
     ),
   /** Write a scaffolded gear skeleton into the project's connected gear repo
    *  (branch off the connected base branch, one commit, optional PR). */
+  /** Scaffold a starter gear into the project's connected gear repo.
+   *
+   *  The skeleton is generated SERVER-side (`components_catalog/skeleton.rs`).
+   *  This used to send the files, which made the browser the only thing that
+   *  knew what a gear looks like — so the same request could not be made
+   *  without one, and any other caller had to reinvent the layout. `files` is
+   *  still accepted for a caller that has already decided what to write.
+   *
+   *  `dry_run` returns what WOULD be written and touches nothing, which is how
+   *  a preview stays honest without a second generator to keep in step. */
   scaffoldGearToRepo: (
     token: string,
     projectId: string,
-    body: { slug: string; files: { path: string; content: string }[]; open_pr?: boolean },
+    body: {
+      slug: string;
+      app_title?: string;
+      problem?: string;
+      origin?: string;
+      parent_dir?: string;
+      files?: ScaffoldFile[];
+      dry_run?: boolean;
+      open_pr?: boolean;
+    },
   ) =>
-    request<{ branch: string; commit_sha: string; pr_url?: string | null }>(
+    request<{
+      branch: string;
+      commit_sha: string;
+      pr_url?: string | null;
+      files: ScaffoldFile[];
+    }>(
       `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },
