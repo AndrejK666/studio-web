@@ -129,22 +129,53 @@ make alerts && kubectl -n studio-monitoring rollout restart deploy/grafana
 
 ### Where a firing alert goes
 
-Nowhere, until somebody supplies `ALERT_WEBHOOK_URL`. That is not an oversight
-to be tidied up later — it is the one input this repository cannot hold. There
-is no Alertmanager in the cluster and no chat webhook the cluster owns, and a
-URL that grants the right to post into a room does not belong in git.
+The Zulip stream **#CF-Studio-web-alerts** on `chat.constr.dev`, once somebody
+supplies `ALERT_WEBHOOK_URL`. The URL carries a bot's API key, which is why it
+is not in git:
 
-Without it, `make alerts` installs `rules.yaml` alone, prints that delivery is
-unconfigured, and the alerts are visible in Grafana's Alerting UI. With it, it
-also renders `contactpoints.yaml` and installs `policies.yaml`: everything goes
-to one receiver, `severity: page` repeating every 4 h and `severity: ticket`
-daily. The two files travel together because a notification policy naming a
-receiver that was never provisioned makes Grafana fail provisioning at startup.
+```bash
+make alerts ALERT_WEBHOOK_URL='https://chat.constr.dev/api/v1/external/grafana?api_key=<BOT_KEY>&stream=CF-Studio-web-alerts'
+```
 
-Note where the URL ends up: the `studio-alerts` ConfigMap, not a Secret.
+The bot is an **incoming webhook** bot (Zulip: Settings → Personal → Bots),
+subscribed to the stream. `&topic=` is optional and worth setting if the stream
+carries more than these alerts.
+
+The path ends in `/external/grafana` rather than `/external/generic` because
+Zulip ships a Grafana integration: it parses Grafana's own alert payload and
+renders the title, state and annotations, instead of posting raw JSON into the
+room. Grafana has no Zulip contact-point type, so the two meet in the middle
+with `type: webhook` and no adapter.
+
+Without the variable, `make alerts` installs `rules.yaml` alone, prints that
+delivery is unconfigured, and the alerts are visible in Grafana's Alerting UI.
+With it, it also renders `contactpoints.yaml` and installs `policies.yaml`:
+everything goes to one receiver, `severity: page` repeating every 4 h and
+`severity: ticket` daily. The two files travel together because a notification
+policy naming a receiver that was never provisioned makes Grafana fail
+provisioning at startup.
+
+**Verify it before trusting it.** An alert channel that silently fails is worse
+than no channel: the rules evaluate, Grafana reports `health=ok`, and the room
+stays quiet for the one reason nobody checks.
+
+```bash
+grafana/alerting/test-delivery.sh 'https://chat.constr.dev/api/v1/external/grafana?…'
+```
+
+It posts one message shaped like a real firing alert — this deployment's own
+restart-loop rule — straight at the destination, so what lands in the stream is
+what an incident will look like, and a failure names which half is wrong: 400
+the payload, 401/403 the key or the bot's stream access, 404 the stream name.
+
+Egress is not in the way: the Grafana pod reaches `chat.constr.dev` and
+`studio-monitoring` carries no NetworkPolicy.
+
+Note where the key ends up: the `studio-alerts` ConfigMap, not a Secret.
 Grafana provisioning reads files and a webhook URL is not a field it accepts as
 a secure setting, so anyone who can read ConfigMaps in `studio-monitoring`
-holds the capability to post into that room.
+holds the capability to post into that stream as that bot. Give the bot exactly
+that and nothing else.
 
 ### Verifying the latency rule
 

@@ -1,23 +1,46 @@
-# Where a firing alert goes. A template rather than a finished file, because
-# the destination is the one part of this stack that does not exist in the
-# repository: there is no Alertmanager here, no chat connection configured for
-# the cluster, and no webhook URL that would be safe to commit.
+# Where a firing alert goes: the Zulip stream #CF-Studio-web-alerts on
+# chat.constr.dev.
 #
-# `make alerts ALERT_WEBHOOK_URL=https://...` renders it. Without that variable
-# the target installs the rules alone and says so — alerts are then visible in
-# Grafana's Alerting UI and delivered nowhere, which is a state worth being
-# told about rather than discovering during an incident.
+# A template rather than a finished file, because the URL carries a bot's API
+# key and that is not a thing to commit.
 #
-# The URL ends up in the `studio-alerts` ConfigMap, not in a Secret: Grafana
-# provisioning reads files, and a webhook URL is not one of the fields it
-# accepts as a secure setting. Treat a chat webhook accordingly — it is a
-# capability to post into that room, and anyone who can read ConfigMaps in
-# studio-monitoring holds it.
+#   make alerts ALERT_WEBHOOK_URL='https://chat.constr.dev/api/v1/external/grafana?api_key=<BOT_KEY>&stream=CF-Studio-web-alerts'
 #
-# `type: webhook` is the lowest common denominator and posts Grafana's own JSON
-# payload. Slack and Discord both accept it at an incoming-webhook URL; for
-# richer formatting, change `type` to `slack` or `discord` here — the rules and
-# the policy below do not care which.
+# Without that variable the target installs the rules alone and says so —
+# alerts are then visible in Grafana's Alerting UI and delivered nowhere, which
+# is a state worth being told about rather than discovering during an incident.
+#
+# HOW TO GET THE URL
+#
+# In Zulip: Settings -> Personal -> Bots -> Add a new bot, of type "Incoming
+# webhook", and subscribe it to the stream. Its API key goes in `api_key`, the
+# stream name in `stream`. `&topic=` is optional and worth setting if the
+# stream carries more than these alerts — without one, Zulip files every alert
+# under the integration's default topic.
+#
+# Zulip ships a `grafana` integration, which is why the path ends in
+# `/external/grafana` rather than `/external/generic`: it parses Grafana's own
+# alert payload and renders the title, the state and the annotations, instead
+# of posting raw JSON into the room.
+#
+# VERIFY IT BEFORE TRUSTING IT. An alert channel that silently fails is worse
+# than no channel, and nothing here proves the URL works until something
+# fires:
+#
+#   ./test-delivery.sh 'https://chat.constr.dev/api/v1/external/grafana?...'
+#
+# It posts one message shaped like a real firing alert, so what lands in the
+# stream is what an incident will look like.
+#
+# THE KEY LIVES IN A CONFIGMAP, not a Secret: Grafana provisioning reads files,
+# and a webhook URL is not a field it accepts as a secure setting. Treat it
+# accordingly — it is the capability to post into that stream as that bot, and
+# anyone who can read ConfigMaps in studio-monitoring holds it. The bot should
+# therefore be able to do exactly that and nothing else.
+#
+# `type: webhook` is deliberate. Grafana has no Zulip type, and Zulip's
+# integration is built to receive exactly this payload, so the two meet in the
+# middle with no adapter.
 
 apiVersion: 1
 
