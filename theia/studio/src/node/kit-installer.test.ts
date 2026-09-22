@@ -71,6 +71,39 @@ describe('kit installer', () => {
         ]);
     });
 
+    it('names the kit when its repository holds more than one', async () => {
+        // `studio-kits-pm` carries a `[[kits]]` entry per kit in one root
+        // manifest, so `cfs` offers a selector and installing without `--kit`
+        // does not identify anything. The slug in the request is the KIT.
+        const calls: string[][] = [];
+        jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+        jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
+            calls.push([String(executable), ...(args ?? []).map(String)]);
+            (callback as ExecFileCallback)(null, 'ok', '');
+            return {} as childProcess.ChildProcess;
+        }) as typeof childProcess.execFile);
+
+        await new KitInstallerImpl().install(
+            { kitSlug: 'compete', version: 'main' },
+            registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }])
+        );
+
+        expect(calls).toEqual([
+            [
+                'cfs',
+                'kit',
+                'install',
+                'constructorfabric/studio-kits-pm',
+                '--kit',
+                'compete',
+                '--version',
+                'main',
+                '--force'
+            ],
+            ['cfs', 'generate-agents']
+        ]);
+    });
+
     it('rejects unknown kits and option-like refs before executing a process', async () => {
         const run = jest.spyOn(childProcess, 'execFile');
         const repositories = registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }]);

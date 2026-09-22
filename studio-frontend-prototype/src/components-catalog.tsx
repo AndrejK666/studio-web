@@ -337,6 +337,7 @@ interface Sources {
   gears: RepoSel;
   frontx: RepoSel;
   kits: RepoSel;
+  kitsPm: RepoSel;
 }
 
 /** The branches worth one click. `HEAD` is the repository's default branch —
@@ -372,6 +373,16 @@ const DEFAULT_SOURCES: Sources = {
     enabled: false,
     connectionId: "",
     repo: "constructorfabric/studio-kit-sdlc",
+    gitRef: "HEAD",
+  },
+  // The second kit repository, and the reason the field above is not the only
+  // one: `studio-kits-pm` is a MULTI-kit repository -- its root manifest holds
+  // one `[[kits]]` entry per kit -- so "a kit source" is a repository to scan,
+  // not a kit. Whatever it grows, the scan finds.
+  kitsPm: {
+    enabled: false,
+    connectionId: "",
+    repo: "constructorfabric/studio-kits-pm",
     gitRef: "HEAD",
   },
 };
@@ -415,6 +426,7 @@ function syncBody(
     ["gears", s.gears],
     ["frontx", s.frontx],
     ["kits", s.kits],
+    ["kits", s.kitsPm],
   ];
   for (const [mode, sel] of pairs) {
     if (!sel.enabled) continue;
@@ -560,7 +572,7 @@ export function ComponentsCatalog({
       return next;
     });
 
-  const setRepo = (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) =>
+  const setRepo = (which: "gears" | "frontx" | "kits" | "kitsPm", patch: Partial<RepoSel>) =>
     setSources((cur) => {
       const next = { ...cur, [which]: { ...cur[which], ...patch } };
       saveSources(next);
@@ -805,6 +817,7 @@ export function ComponentsCatalog({
   const sourceSummary = [
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
+    (sources.kits.enabled || sources.kitsPm.enabled) && "kits",
     sources.cratesIo && "crates.io",
   ]
     .filter(Boolean)
@@ -1123,7 +1136,7 @@ function SourcesPanel({
 }: {
   sources: Sources;
   setSrc: (patch: Partial<Sources>) => void;
-  setRepo: (which: "gears" | "frontx" | "kits", patch: Partial<RepoSel>) => void;
+  setRepo: (which: "gears" | "frontx" | "kits" | "kitsPm", patch: Partial<RepoSel>) => void;
   connections: Connection[];
   tenantId: string | undefined;
 }) {
@@ -1146,10 +1159,18 @@ function SourcesPanel({
         tenantId={tenantId}
       />
       <RepoSourceEditor
-        title="Kits"
+        title="Kits · delivery lifecycle"
         note="Every `.cf-studio-kit.toml` in the repository — one at the root, or several in subdirectories. A kit is installed into a project's repositories rather than depended on, so it carries a repository and a ref instead of a version ladder."
         sel={sources.kits}
         onChange={(p) => setRepo("kits", p)}
+        connections={connections}
+        tenantId={tenantId}
+      />
+      <RepoSourceEditor
+        title="Kits · product management"
+        note="`studio-kits-pm` — one repository, several kits: its root manifest carries a `[[kits]]` entry each, so the scan finds whatever has been added since. Competitive analysis is the one there today."
+        sel={sources.kitsPm}
+        onChange={(p) => setRepo("kitsPm", p)}
         connections={connections}
         tenantId={tenantId}
       />

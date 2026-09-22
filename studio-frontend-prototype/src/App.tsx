@@ -80,6 +80,8 @@ import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
+import { gearSlug, scaffoldGear } from "./scaffold";
+import { createFormLayout, gearRepoBlocker, type RepoMode } from "./project-form";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -3085,6 +3087,14 @@ interface CreateCtx {
   repoFull: string;
   branch: string;
   cloneUrl: string;
+  /** Set once the starter gear's branch exists.
+   *
+   *  Unlike every other step, this one cannot probe its own result: writing a
+   *  scaffold ends in `POST /git/refs`, which fails outright when the branch is
+   *  already there (components_catalog/scaffold.rs). So Retry reads the flag
+   *  rather than re-creating the branch — and a genuinely re-run creation gets
+   *  the connector's own "does it already exist?" instead of a silent no-op. */
+  scaffolded: boolean;
 }
 
 /** Level 2: the projects (child tenants of type `project`) inside a workspace,
@@ -3114,6 +3124,28 @@ function WorkspaceProjects({
   // anything else: by picking it from the list, not by naming a repository.
   const [kitCatalog, setKitCatalog] = useState<import("./api").StudioKit[]>([]);
   const [kitSel, setKitSel] = useState<Set<string>>(new Set());
+  // Where a new gear's repository comes from. The `new_gears` radio has always
+  // promised two roads in its own subtitle -- "Create a new repo, or use an
+  // existing gear store" -- and the form asked for neither, so every gear
+  // project was created with nowhere to put a gear.
+  const [repoMode, setRepoMode] = useState<RepoMode>("new");
+  const [connections, setConnections] = useState<Connection[]>([]);
+  // "" means "let the backend take the first GitHub connection", which it does.
+  const [connId, setConnId] = useState("");
+  const [repoOwner, setRepoOwner] = useState("");
+  const [repoIsOrg, setRepoIsOrg] = useState(false);
+  // Both empty means "follow the project name"; typing pins them.
+  const [repoName, setRepoName] = useState("");
+  const [gearName, setGearName] = useState("");
+  const [repoPrivate, setRepoPrivate] = useState(true);
+  const [repoSearch, setRepoSearch] = useState("");
+  const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[] | null>(null);
+  const [reposNote, setReposNote] = useState<string | null>(null);
+  const [existingRepo, setExistingRepo] = useState<RemoteRepo | null>(null);
+  // A gear store belongs to whoever already keeps gears in it, so the skeleton
+  // arrives as a pull request. A repository created a moment ago has no such
+  // owner, and a PR against an empty repo is ceremony.
+  const [openPr, setOpenPr] = useState(false);
   // Journey framing captured at creation (previously dead in the UI): a free-text
   // brief and the opt-in journey stages (Intent is always applied).
   const [brief, setBrief] = useState("");
@@ -3126,7 +3158,13 @@ function WorkspaceProjects({
   // ids across steps, kept in a ref so Retry reuses the same run.
   const [prov, setProv] = useState<StepState[] | null>(null);
   const [provOk, setProvOk] = useState(false);
-  const provCtx = useRef<CreateCtx>({ tenantId: "", repoFull: "", branch: "main", cloneUrl: "" });
+  const provCtx = useRef<CreateCtx>({
+    tenantId: "",
+    repoFull: "",
+    branch: "main",
+    cloneUrl: "",
+    scaffolded: false,
+  });
   // Inline row editing (rename) + per-row busy for edit/delete.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -3196,6 +3234,45 @@ function WorkspaceProjects({
       .catch(() => setStageCatalogue([]));
   }, [creating, token, workspace.id]);
 
+  // A gear project needs somewhere to put the gear, and both roads to one start
+  // at a connection. Loaded only for that kind, because the other two do not
+  // touch a repository at creation.
+  useEffect(() => {
+    if (!creating || newKind !== "new_gears") return;
+    api
+      .connections(token, workspace.id)
+      .then((r) => setConnections(r.items ?? []))
+      .catch(() => setConnections([]));
+  }, [creating, newKind, token, workspace.id]);
+
+  // The gear stores to choose from. A connection is required here (unlike
+  // creating a repository, where the backend picks the first GitHub one) --
+  // there is no listing without one to list through.
+  useEffect(() => {
+    if (!creating || newKind !== "new_gears" || repoMode !== "existing" || !connId) {
+      setRemoteRepos(null);
+      return;
+    }
+    let alive = true;
+    setReposNote(null);
+    const t = setTimeout(() => {
+      api
+        .connectionRepositories(token, connId, workspace.id, repoSearch)
+        .then((r) => {
+          if (alive) setRemoteRepos(r.items ?? []);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setRemoteRepos([]);
+          setReposNote(errText(e));
+        });
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [creating, newKind, repoMode, connId, repoSearch, token, workspace.id]);
+
   const toggleKit = (slug: string) =>
     setKitSel((prev) => {
       const next = new Set(prev);
@@ -3203,6 +3280,23 @@ function WorkspaceProjects({
       else next.add(slug);
       return next;
     });
+
+  // The gear project's derived names. Both fields follow the project name until
+  // somebody types in one: in a shared gear store the gear is not the project,
+  // and neither is the repository.
+  const isGearProject = newKind === "new_gears";
+  // GitHub only, and not as a shortcut: creating a repository resolves "the
+  // first GitHub connection" server-side, and the scaffold writer speaks
+  // GitHub's git API directly (components_catalog/scaffold.rs). Offering a
+  // connection neither of them can use would only fail later.
+  const gitConnections = connections.filter((c) => c.provider === "github");
+  const gearSlugValue = gearSlug(gearName.trim() || newName.trim() || "gear");
+  const repoNameValue = gearSlug(repoName.trim() || newName.trim() || "project");
+  // Which sections this project kind is actually asked about, and what it still
+  // needs before it can be created — both decided in project-form.ts, where the
+  // branches can be read without the JSX around them.
+  const layout = createFormLayout(newKind, repoMode);
+  const gearBlocker = gearRepoBlocker(newKind, repoMode, connId, existingRepo !== null);
 
   /** Build the idempotent create plan for the current form inputs. Each step
    *  probes real backend state in `check` so a retry resumes cleanly instead of
@@ -3256,7 +3350,75 @@ function WorkspaceProjects({
       },
     });
 
-    // 3) Kits the project asked for, as DESIRED state.
+    // 4) The gear's repository, and the gear.
+    //
+    //    Only a `new_gears` project has these: it is the one kind whose whole
+    //    purpose is a gear, and a gear needs a directory in a repository before
+    //    it is anything at all. The two roads end in the same place -- the
+    //    project's gear repo -- so only the `run` differs.
+    if (isGearProject) {
+      steps.push({
+        key: "repo",
+        label: repoMode === "new" ? `Gear repository · ${repoNameValue}` : "Gear store",
+        check: async (ctx) => {
+          const attached = await api
+            .getProjectGearRepo(token, ctx.tenantId)
+            .then((r) => r.nodes?.[0]?.value)
+            .catch(() => undefined);
+          if (!attached?.repo) return false;
+          ctx.repoFull = attached.repo;
+          ctx.branch = attached.branch || "main";
+          return true;
+        },
+        run: async (ctx) => {
+          if (repoMode === "new") {
+            const created = await api.createProjectRepo(token, ctx.tenantId, {
+              tenant: workspace.id,
+              connection_id: connId || null,
+              ...(repoOwner.trim() ? { owner: repoOwner.trim() } : {}),
+              is_org: repoIsOrg,
+              name: repoNameValue,
+              private: repoPrivate,
+            });
+            ctx.repoFull = created.full_name;
+            ctx.branch = created.default_branch;
+            ctx.cloneUrl = created.html_url;
+            return;
+          }
+          if (!existingRepo) throw new Error("No gear store selected");
+          const branch = existingRepo.default_branch || "main";
+          await api.setProjectGearRepo(token, ctx.tenantId, {
+            tenant: workspace.id,
+            connection_id: connId || null,
+            repo: existingRepo.full_path,
+            branch,
+          });
+          ctx.repoFull = existingRepo.full_path;
+          ctx.branch = branch;
+          ctx.cloneUrl = existingRepo.clone_url;
+        },
+      });
+
+      steps.push({
+        key: "scaffold",
+        label: `Starter gear · gears/${gearSlugValue}`,
+        check: (ctx) => ctx.scaffolded,
+        run: async (ctx) => {
+          const skeleton = scaffoldGear(gearSlugValue, name, {
+            problem: brief.trim(),
+            origin: "Scaffolded when the project was created.",
+          });
+          await api.scaffoldGearToRepo(token, ctx.tenantId, {
+            slug: skeleton.slug,
+            files: skeleton.files,
+            open_pr: openPr,
+          });
+          ctx.scaffolded = true;
+        },
+      });
+    }
+
+    // 5) Kits the project asked for, as DESIRED state.
     //
     //    Requesting is idempotent by slug, and materialization is somebody
     //    else's job: the registry records `pending`, and a trusted `cfs` runner
@@ -3311,7 +3473,13 @@ function WorkspaceProjects({
   const create = async () => {
     // Fresh run: reset the accumulated ids. `check` rehydrates them from the
     // backend anyway, so this is just hygiene for a brand-new attempt.
-    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+    provCtx.current = {
+      tenantId: "",
+      repoFull: "",
+      branch: "main",
+      cloneUrl: "",
+      scaffolded: false,
+    };
     setProvOk(false);
     await runCreate();
   };
@@ -3325,7 +3493,25 @@ function WorkspaceProjects({
     setBrief("");
     setStageSel(new Set());
     setKitSel(new Set());
-    provCtx.current = { tenantId: "", repoFull: "", branch: "main", cloneUrl: "" };
+    setRepoMode("new");
+    setConnId("");
+    setRepoOwner("");
+    setRepoIsOrg(false);
+    setRepoName("");
+    setGearName("");
+    setRepoPrivate(true);
+    setRepoSearch("");
+    setRemoteRepos(null);
+    setReposNote(null);
+    setExistingRepo(null);
+    setOpenPr(false);
+    provCtx.current = {
+      tenantId: "",
+      repoFull: "",
+      branch: "main",
+      cloneUrl: "",
+      scaffolded: false,
+    };
   };
 
   const toggleStage = (key: string) =>
@@ -3438,62 +3624,316 @@ function WorkspaceProjects({
               </div>
             </div>
 
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Components
-              </div>
-              <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
-                What this project takes from the shared catalogue. Requested now, written
-                into the project&apos;s repositories when it has them — so a project can
-                want a kit before it has anywhere to put it.
-              </p>
-              {kitCatalog.length === 0 ? (
-                <div style={{ fontSize: 12, opacity: 0.7 }}>
-                  The catalogue is empty, or could not be read. A project can be created
-                  without components and take them later from its Kits tab.
+            {layout.gearRepository && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Gear repository
                 </div>
-              ) : (
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  Where the gear is written. Either road ends the same way — a skeleton on
+                  branch <code>scaffold/{gearSlugValue}</code>, never on the base branch.
+                </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {kitCatalog.map((k) => {
-                    const on = kitSel.has(k.slug);
-                    return (
-                      <label
-                        key={k.slug}
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "flex-start",
-                          padding: "6px 10px",
-                          border: "1px solid var(--border)",
-                          borderRadius: 8,
-                          background: on ? "var(--accent)" : "transparent",
-                          cursor: prov !== null ? "default" : "pointer",
-                          opacity: prov !== null && !on ? 0.5 : 1,
+                  {(
+                    [
+                      ["new", "New repository", "Created now; the gear is its first commit."],
+                      [
+                        "existing",
+                        "Existing gear store",
+                        "A repository that already holds gears. The skeleton arrives as a branch.",
+                      ],
+                    ] as ["new" | "existing", string, string][]
+                  ).map(([m, title, desc]) => (
+                    <label
+                      key={m}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                        padding: "8px 10px",
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        background: repoMode === m ? "var(--accent)" : "transparent",
+                        cursor: prov !== null ? "default" : "pointer",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="grepo"
+                        checked={repoMode === m}
+                        disabled={prov !== null}
+                        onChange={() => {
+                          setRepoMode(m);
+                          // A gear store belongs to whoever already keeps gears
+                          // in it; a repository created a moment ago does not.
+                          setOpenPr(m === "existing");
                         }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          disabled={prov !== null}
-                          onChange={() => toggleKit(k.slug)}
-                          style={{ marginTop: 2 }}
-                        />
-                        <span>
-                          <span style={{ fontSize: 12, fontWeight: 600 }}>{k.name}</span>
-                          <span style={{ fontSize: 11, opacity: 0.6 }}>
-                            {" "}
-                            · {k.publisher} · {k.default_version}
-                          </span>
-                          <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>
-                            {k.description}
-                          </div>
-                        </span>
-                      </label>
-                    );
-                  })}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>{desc}</div>
+                      </span>
+                    </label>
+                  ))}
                 </div>
-              )}
-            </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, opacity: 0.8 }}>Connection</span>
+                    <select
+                      value={connId}
+                      disabled={prov !== null}
+                      onChange={(e) => {
+                        setConnId(e.target.value);
+                        setExistingRepo(null);
+                      }}
+                    >
+                      <option value="">
+                        {repoMode === "new"
+                          ? "Default — the first GitHub connection"
+                          : "Select a connection…"}
+                      </option>
+                      {gitConnections.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label} · {c.account}
+                        </option>
+                      ))}
+                    </select>
+                    {gitConnections.length === 0 && (
+                      <span style={{ fontSize: 11, opacity: 0.7 }}>
+                        No GitHub connection on this workspace yet — add one in Integrations.
+                      </span>
+                    )}
+                  </label>
+
+                  {repoMode === "new" ? (
+                    <>
+                      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                        <label
+                          style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}
+                        >
+                          <span style={{ fontSize: 11, opacity: 0.8 }}>Owner</span>
+                          <input
+                            placeholder="Leave empty for your own account"
+                            value={repoOwner}
+                            disabled={prov !== null}
+                            onChange={(e) => setRepoOwner(e.target.value)}
+                          />
+                        </label>
+                        <label
+                          style={{
+                            display: "inline-flex",
+                            gap: 6,
+                            alignItems: "center",
+                            fontSize: 12,
+                            paddingBottom: 6,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={repoIsOrg}
+                            disabled={prov !== null}
+                            onChange={(e) => setRepoIsOrg(e.target.checked)}
+                          />
+                          organization
+                        </label>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                        <label
+                          style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}
+                        >
+                          <span style={{ fontSize: 11, opacity: 0.8 }}>Repository name</span>
+                          <input
+                            placeholder={repoNameValue}
+                            value={repoName}
+                            disabled={prov !== null}
+                            onChange={(e) => setRepoName(e.target.value)}
+                          />
+                        </label>
+                        <label
+                          style={{
+                            display: "inline-flex",
+                            gap: 6,
+                            alignItems: "center",
+                            fontSize: 12,
+                            paddingBottom: 6,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={repoPrivate}
+                            disabled={prov !== null}
+                            onChange={(e) => setRepoPrivate(e.target.checked)}
+                          />
+                          private
+                        </label>
+                      </div>
+                    </>
+                  ) : (
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, opacity: 0.8 }}>Repository</span>
+                      <input
+                        placeholder={connId ? "Search…" : "Pick a connection first"}
+                        value={repoSearch}
+                        disabled={prov !== null || !connId}
+                        onChange={(e) => setRepoSearch(e.target.value)}
+                      />
+                      {reposNote && (
+                        <span style={{ fontSize: 11, color: "var(--danger, #c33)" }}>
+                          {reposNote}
+                        </span>
+                      )}
+                      {connId && remoteRepos !== null && (
+                        <div
+                          style={{
+                            maxHeight: 180,
+                            overflowY: "auto",
+                            border: "1px solid var(--border)",
+                            borderRadius: 8,
+                          }}
+                        >
+                          {remoteRepos.length === 0 ? (
+                            <div style={{ fontSize: 12, opacity: 0.7, padding: "8px 10px" }}>
+                              Nothing matched.
+                            </div>
+                          ) : (
+                            remoteRepos.map((r) => (
+                              <label
+                                key={r.id}
+                                style={{
+                                  display: "flex",
+                                  gap: 8,
+                                  alignItems: "center",
+                                  padding: "6px 10px",
+                                  fontSize: 12,
+                                  background:
+                                    existingRepo?.id === r.id ? "var(--accent)" : "transparent",
+                                  cursor: prov !== null ? "default" : "pointer",
+                                }}
+                              >
+                                <input
+                                  type="radio"
+                                  name="gstore"
+                                  checked={existingRepo?.id === r.id}
+                                  disabled={prov !== null}
+                                  onChange={() => setExistingRepo(r)}
+                                />
+                                <span>
+                                  {r.full_path}
+                                  <span style={{ opacity: 0.6 }}>
+                                    {" "}
+                                    · {r.default_branch || "main"}
+                                  </span>
+                                </span>
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </label>
+                  )}
+
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, opacity: 0.8 }}>Gear name</span>
+                    <input
+                      placeholder={gearSlugValue}
+                      value={gearName}
+                      disabled={prov !== null}
+                      onChange={(e) => setGearName(e.target.value)}
+                    />
+                    <span style={{ fontSize: 11, opacity: 0.7 }}>
+                      Scaffolded into <code>gears/{gearSlugValue}/</code> — gear.toml, the crate,
+                      the <code>#[toolkit::gear]</code> entrypoint, PRD and DESIGN. In a shared
+                      store the gear is not the project, so this is its own field.
+                    </span>
+                  </label>
+
+                  <label
+                    style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={openPr}
+                      disabled={prov !== null}
+                      onChange={(e) => setOpenPr(e.target.checked)}
+                    />
+                    Open a pull request
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {layout.components && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  Components{" "}
+                  {isGearProject && (
+                    <span style={{ opacity: 0.6, fontWeight: 400 }}>· optional</span>
+                  )}
+                </div>
+                <p style={{ fontSize: 11, opacity: 0.7, margin: "0 0 8px", lineHeight: 1.5 }}>
+                  {isGearProject
+                    ? "The skeleton already writes the gear's own PRD and DESIGN. A kit is the step after that — the workflows that keep them honest — so nothing here is picked for you."
+                    : "What this project takes from the shared catalogue. Requested now, written into the project's repositories when it has them — so a project can want a kit before it has anywhere to put it."}
+                </p>
+                {kitCatalog.length === 0 ? (
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    The catalogue is empty, or could not be read. A project can be created
+                    without components and take them later from its Kits tab.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {kitCatalog.map((k) => {
+                      const on = kitSel.has(k.slug);
+                      return (
+                        <label
+                          key={k.slug}
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "flex-start",
+                            padding: "6px 10px",
+                            border: "1px solid var(--border)",
+                            borderRadius: 8,
+                            background: on ? "var(--accent)" : "transparent",
+                            cursor: prov !== null ? "default" : "pointer",
+                            opacity: prov !== null && !on ? 0.5 : 1,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={prov !== null}
+                            onChange={() => toggleKit(k.slug)}
+                            style={{ marginTop: 2 }}
+                          />
+                          <span>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{k.name}</span>
+                            <span style={{ fontSize: 11, opacity: 0.6 }}>
+                              {" "}
+                              · {k.publisher} · {k.default_version}
+                            </span>
+                            <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>
+                              {k.description}
+                            </div>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {layout.componentsNote && (
+              <p style={{ fontSize: 11, opacity: 0.7, margin: 0, lineHeight: 1.5 }}>
+                No components are offered for a shared gear store. A kit installs with
+                <code> copy</code> across every repository the project has, and this one
+                already belongs to the gears in it — it has its own conventions to keep.
+                The project can still take a kit later, from its Components tab.
+              </p>
+            )}
 
             <div>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
@@ -3503,7 +3943,9 @@ function WorkspaceProjects({
                 placeholder={
                   newKind === "existing"
                     ? "What is this app, and what are we modernizing?"
-                    : "What are we building, and why? Seeds the Intent stage."
+                    : isGearProject
+                      ? "What is this gear for? Becomes ## Problem in its docs/PRD.md."
+                      : "What are we building, and why? Seeds the Intent stage."
                 }
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
@@ -3513,53 +3955,64 @@ function WorkspaceProjects({
               />
             </div>
 
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {stageCatalogue.map((s) => {
-                  const on = s.required || stageSel.has(s.key);
-                  return (
-                    <label
-                      key={s.key}
-                      title={s.required ? "Always applied" : undefined}
-                      style={{
-                        display: "inline-flex",
-                        gap: 6,
-                        alignItems: "center",
-                        padding: "4px 10px",
-                        border: "1px solid var(--border)",
-                        borderRadius: 999,
-                        fontSize: 12,
-                        background: on ? "var(--accent)" : "transparent",
-                        cursor: s.required || prov !== null ? "default" : "pointer",
-                        opacity: prov !== null && !on ? 0.5 : 1,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        disabled={s.required || prov !== null}
-                        onChange={() => toggleStage(s.key)}
-                      />
-                      {s.label}
-                    </label>
-                  );
-                })}
+            {/* The journey is a product's: intent, BRD, PRD, architecture, UI design,
+                user stories, testing. A gear has none of those — it has a PRD and a
+                DESIGN, and the skeleton writes both. Hiding the picker is not the same
+                as deciding the catalogue: `intent` is still applied, because
+                `normalizeStages` always keeps the required entries, and the project can
+                take stages later if it grows into a product. */}
+            {layout.journeyStages && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Journey stages</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {stageCatalogue.map((s) => {
+                    const on = s.required || stageSel.has(s.key);
+                    return (
+                      <label
+                        key={s.key}
+                        title={s.required ? "Always applied" : undefined}
+                        style={{
+                          display: "inline-flex",
+                          gap: 6,
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          border: "1px solid var(--border)",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          background: on ? "var(--accent)" : "transparent",
+                          cursor: s.required || prov !== null ? "default" : "pointer",
+                          opacity: prov !== null && !on ? 0.5 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={s.required || prov !== null}
+                          onChange={() => toggleStage(s.key)}
+                        />
+                        {s.label}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {prov === null ? (
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button
                   className="primary"
                   onClick={() => void create()}
-                  disabled={!newName.trim() || busy}
+                  disabled={!newName.trim() || busy || gearBlocker !== null}
                 >
                   {busy ? "Creating…" : "Create project"}
                 </button>
                 <button className="ghost" onClick={resetCreate}>
                   Cancel
                 </button>
+                {gearBlocker && (
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>{gearBlocker}</span>
+                )}
               </div>
             ) : (
               <div
@@ -3901,7 +4354,9 @@ function ProjectScreen({
         {tab === "artifacts" && (
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} />
         )}
-        {tab === "components" && <ProjectKits token={token} projectId={proj.id} />}
+        {tab === "components" && (
+          <ProjectKits token={token} projectId={proj.id} workspaceId={workspace.id} />
+        )}
         {tab === "sources" && (
           <>
             <h1>Sources</h1>

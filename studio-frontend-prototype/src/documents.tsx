@@ -18,7 +18,6 @@ import {
 import {
   api,
   ArtifactNode,
-  CatalogNode,
   Connection,
   ConnectorProvider,
   Doc,
@@ -46,6 +45,8 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
+import { composePlan, profilesByName, type PlanRow } from "./compose";
+import { scaffoldGear, type Scaffold } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
   inFilter,
@@ -428,11 +429,7 @@ function DocumentsView({
         api.listComponentProfiles(token).catch(() => ({ nodes: [] as import("./api").CatalogNode[] })),
         api.capabilities(token, workspaceId),
       ]);
-      const profiles: Record<string, Record<string, unknown>> = {};
-      for (const n of profs.nodes ?? []) {
-        const nm = (n.value as Record<string, unknown>).gear_name;
-        if (typeof nm === "string") profiles[nm] = n.value as Record<string, unknown>;
-      }
+      const profiles = profilesByName(profs.nodes ?? []);
       const caps = selected.capabilities ?? [];
       setPlan(composePlan(caps, components.nodes ?? [], profiles, vocab.items ?? []));
     } catch (e) {
@@ -3108,75 +3105,9 @@ const qTag: CSSProperties = { marginLeft: 8, fontSize: 10, opacity: 0.6, fontWei
 
 
 // ── Compose (v1): match the App Spec's capabilities to catalog components ─────
-
-
-type Candidate = { name: string; kind: string; score: number; why: string[] };
-type PlanRow = { capability: string; candidates: Candidate[]; gap: boolean };
-
-function profileText(profile?: Record<string, unknown>): string {
-  const auto = profile?.auto;
-  if (auto && typeof auto === "object") {
-    const d = (auto as Record<string, unknown>).description;
-    if (d && typeof d === "object") {
-      const s = (d as Record<string, unknown>).s;
-      if (typeof s === "string") return s;
-    }
-    if (typeof d === "string") return d;
-  }
-  return "";
-}
-
-function componentHaystack(g: CatalogNode, profile?: Record<string, unknown>): string {
-  const v = g.value;
-  return [
-    v.name ?? "",
-    v.description ?? "",
-    v.kind ?? "",
-    (v.keywords ?? []).join(" "),
-    (v.categories ?? []).join(" "),
-    profileText(profile),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-/** Resolve capabilities to candidate components.
- *
- *  `vocabulary` is the workspace's effective capability catalogue, which used to
- *  be a `CAP_KEYWORDS` constant in this file. A workspace that invents a
- *  capability can now give it search terms instead of getting zero candidates
- *  and no explanation (ADR-0014 s5). A capability the catalogue does not know is
- *  still matched against its own name, exactly as before. */
-function composePlan(
-  caps: string[],
-  gears: CatalogNode[],
-  profiles: Record<string, Record<string, unknown>>,
-  vocabulary: readonly import("./api").Capability[],
-): PlanRow[] {
-  const terms = new Map(vocabulary.map((c) => [c.key, c.terms]));
-  const geared = gears.filter((g) => typeof g.value.name === "string");
-  return caps.map((cap) => {
-    const kws = terms.get(cap)?.length ? terms.get(cap)! : [cap];
-    const candidates = geared
-      .map((g) => {
-        const hay = componentHaystack(g, profiles[g.value.name as string]);
-        const why = new Set<string>();
-        for (const k of kws) if (hay.includes(k)) why.add(k);
-        if (hay.includes(cap)) why.add(cap);
-        return {
-          name: g.value.name as string,
-          kind: g.value.kind ?? "gear",
-          score: why.size,
-          why: Array.from(why),
-        };
-      })
-      .filter((c) => c.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-    return { capability: cap, candidates, gap: candidates.length === 0 };
-  });
-}
+//
+// The matcher lives in compose.ts: the project's Components tab asks the same
+// question from the other end, and two answers to it would be one too many.
 
 function shortName(name: string): string {
   return name.replace(/^cf-gears-/, "").replace(/^@[^/]+\//, "");
@@ -3193,61 +3124,9 @@ function kindColor(kind: string): string {
 }
 
 // ── Scaffolding: generate a starter gear for a capability gap ─────────────────
-
-type ScaffoldFile = { path: string; content: string };
-type Scaffold = { capability: string; slug: string; files: ScaffoldFile[] };
-
-function pascal(s: string): string {
-  return s.replace(/(^|[-_ ])(\w)/g, (_m, _sep, c: string) => c.toUpperCase());
-}
-
-/** A canonical toolkit-gear skeleton for a missing capability: manifest, crate,
- *  the `#[toolkit::gear]` entrypoint, and PRD/DESIGN stubs (so it reads well in
- *  the catalog immediately). This is the harness an agent then fills in. */
-function scaffoldGear(capability: string, appTitle: string): Scaffold {
-  const slug = capability.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "capability";
-  const crate = `cf-gears-${slug}`;
-  const Gear = `${pascal(slug)}Gear`;
-  const gearToml =
-    `name = "${crate}"\n` +
-    `description = "${capability} capability for ${appTitle}. Scaffolded from an App Spec gap."\n` +
-    `category = "platform"\n` +
-    `capabilities = ["${capability}"]\n\n` +
-    `[plugins]\ndeclared = false\n`;
-  const cargoToml =
-    `[package]\nname = "${crate}"\nversion = "0.1.0"\nedition = "2021"\n\n` +
-    `[dependencies]\ntoolkit = { workspace = true }\nasync-trait = { workspace = true }\nanyhow = { workspace = true }\n`;
-  const lib =
-    `//! ${crate} — the \`${capability}\` capability. Scaffolded from an App Spec gap;\n` +
-    `//! fill in the service, GTS types and REST surface.\n\n` +
-    `use async_trait::async_trait;\nuse toolkit::{Gear, GearCtx};\n\n` +
-    `#[toolkit::gear(\n    name = "${crate}",\n    deps = [],\n    capabilities = [rest]\n)]\n` +
-    `#[derive(Default)]\npub struct ${Gear};\n\n` +
-    `#[async_trait]\nimpl Gear for ${Gear} {\n` +
-    `    async fn init(&self, _ctx: &GearCtx) -> anyhow::Result<()> {\n` +
-    `        // TODO: register GTS types, resolve dependencies, wire the ${capability} service.\n` +
-    `        Ok(())\n    }\n}\n`;
-  const prd =
-    `---\nstatus: draft\nowner: \n---\n\n# PRD — ${capability} gear\n\n` +
-    `## Problem\n\n${appTitle} needs the \`${capability}\` capability, and no catalogued component provides it.\n\n` +
-    `## Goals\n\n- Provide \`${capability}\` as a reusable gear other apps can compose.\n\n` +
-    `## Non-Goals\n\n## Users & Use Cases\n\n## Requirements\n\n## Success Metrics\n`;
-  const design =
-    `---\nstatus: draft\n---\n\n# Design — ${capability} gear\n\n## Overview\n\n` +
-    `## Architecture\n\n\`\`\`mermaid\ngraph LR\n    Client --> G["${capability}"]\n    G --> DB[(storage)]\n\`\`\`\n\n` +
-    `## Data Model\n\n## Interfaces\n\n## Trade-offs\n`;
-  return {
-    capability,
-    slug,
-    files: [
-      { path: `gears/${slug}/gear.toml`, content: gearToml },
-      { path: `gears/${slug}/Cargo.toml`, content: cargoToml },
-      { path: `gears/${slug}/src/lib.rs`, content: lib },
-      { path: `gears/${slug}/docs/PRD.md`, content: prd },
-      { path: `gears/${slug}/docs/DESIGN.md`, content: design },
-    ],
-  };
-}
+//
+// The skeleton itself lives in scaffold.ts: project creation scaffolds a gear
+// too, and two copies of the canonical layout would drift.
 
 function ScaffoldModal({
   scaffold,
@@ -3426,7 +3305,8 @@ function ComposePlanModal({
           <>
             <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 14px" }}>
               {plan.length} capabilities · {matched} matched · {gaps} gap{gaps === 1 ? "" : "s"} to
-              build. Candidates ranked by how well each component's catalog metadata matches.
+              build. Components that have been built rank above ones the catalogue has only
+              documents for; within each, by how well the metadata matches.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {plan.map((r) => (
@@ -3445,17 +3325,52 @@ function ComposePlanModal({
                         </button>
                       </>
                     ) : (
-                      <span style={{ fontSize: 11, opacity: 0.6 }}>
-                        {r.candidates.length} candidate{r.candidates.length === 1 ? "" : "s"}
-                      </span>
+                      <>
+                        <span style={{ fontSize: 11, opacity: 0.6 }}>
+                          {r.candidates.length} candidate{r.candidates.length === 1 ? "" : "s"}
+                        </span>
+                        {/* Candidates, but nothing anyone can build from yet: closer to a
+                            gap than to a match, and the one state a keyword ranking used
+                            to hide completely. */}
+                        {r.unbuilt && (
+                          <>
+                            <span style={{ ...gapBadge, opacity: 0.75 }}>NOT BUILT</span>
+                            <button
+                              onClick={() => onScaffold(r.capability)}
+                              style={{ marginLeft: "auto", fontSize: 11 }}
+                              title="Generate a starter gear for this capability"
+                            >
+                              Scaffold gear →
+                            </button>
+                          </>
+                        )}
+                      </>
                     )}
                   </div>
                   {!r.gap && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {r.candidates.map((c) => (
-                        <span key={c.name} title={`matched: ${c.why.join(", ")}`} style={{ ...composeChip, borderLeftColor: kindColor(c.kind) }}>
+                        <span
+                          key={c.name}
+                          title={
+                            `matched: ${c.why.join(", ")}` +
+                            (c.built === "docs-only"
+                              ? " · the catalogue found no crate under this component — docs and a manifest only"
+                              : "")
+                          }
+                          style={{
+                            ...composeChip,
+                            borderLeftColor: kindColor(c.kind),
+                            opacity: c.built === "docs-only" ? 0.65 : 1,
+                          }}
+                        >
                           <span style={{ fontWeight: 600 }}>{shortName(c.name)}</span>
                           <span style={{ opacity: 0.6, marginLeft: 6, fontSize: 10 }}>{c.kind}</span>
+                          {c.built === "docs-only" && (
+                            <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700 }}>
+                              docs only
+                            </span>
+                          )}
                         </span>
                       ))}
                     </div>
@@ -3464,8 +3379,9 @@ function ComposePlanModal({
               ))}
             </div>
             <div style={{ marginTop: 16, fontSize: 11, opacity: 0.6 }}>
-              v1 heuristic match (name · description · keywords). Next: agent-driven matching and
-              scaffolding gears for the gaps.
+              v1 heuristic match (name · description · keywords), with built components first —
+              a gear directory holding only docs is not a gear you can compose from. Next:
+              agent-driven matching.
             </div>
           </>
         )}
