@@ -175,6 +175,10 @@ export function DocumentsTab({
             setOpenDoc(id);
             setView("authored");
           }}
+          onWriteDoc={() => {
+            setOpenDoc(null);
+            setView("authored");
+          }}
         />
       </div>
       <div hidden={view !== "authored"}>
@@ -832,6 +836,7 @@ function IngestedDocumentsView({
   types,
   onOpenFile,
   onOpenDoc,
+  onWriteDoc,
 }: {
   token: string;
   workspaceId: string;
@@ -842,6 +847,9 @@ function IngestedDocumentsView({
   /** An authored row was clicked. The editor is where such a document is read
    *  and written; this list is an inventory, not a second editor. */
   onOpenDoc: (id: string) => void;
+  /** Hand over to the editor with nothing open — the "write the first one"
+   *  route out of the empty state. */
+  onWriteDoc: () => void;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
   const [filter, setFilter] = useState<SpecFilter>("needs-review");
@@ -1675,6 +1683,12 @@ function IngestedDocumentsView({
     [shown, selectedId],
   );
 
+  /** Whether the sync has pulled any prose in at all.
+   *
+   *  It separates the two empty states this screen can be in, which want
+   *  different first moves: files waiting to be read, or nothing to read. */
+  const filesPulled = candidates.length > 0;
+
   const FILTERS: { id: SpecFilter; label: string; count: number }[] = [
     // First, because it is the state a freshly synced project is in: prose the
     // sync found, nothing has read yet.
@@ -1796,11 +1810,38 @@ function IngestedDocumentsView({
       </div>
 
       {shown.length === 0 ? (
-        <p className="empty">
-          {counts.all === 0
-            ? "Nothing scanned yet. Run Scan repository to see what is in there."
-            : "Nothing in this view."}
-        </p>
+        counts.all === 0 ? (
+          /* A project with no documents is the ordinary state of a project that
+             was created a minute ago, and this is the screen that owns its
+             documentation — so it opens with the two ways to have some, not
+             with a sentence about having none. Which one is first depends on
+             where the documents would come from: an imported app already has
+             them and needs reading, a new one has to write them.
+             Both routes stay offered either way, because a new project can
+             inherit a repository and an old one can still need a PRD. */
+          <div className="ing-start">
+            <h3>{filesPulled ? "Nothing read yet" : "No documents yet"}</h3>
+            <p>
+              This is where the project&apos;s documentation lives — what it declares, what
+              type each document is, and what the detectors find in them.
+            </p>
+            <div className="ing-start-routes">
+              <button className="primary" onClick={scan} disabled={busy}>
+                {busy ? "Working…" : "Scan the repository"}
+              </button>
+              <button onClick={onWriteDoc} disabled={busy}>
+                Write the first one
+              </button>
+            </div>
+            <p className="ing-start-note">
+              {filesPulled
+                ? "A scan reads the files the sync pulled in and works out which template each was written against. Anything it cannot place waits here for you to say."
+                : "Connect a repository under Sources and a scan will read whatever prose is already in it. Until then, documents written here are the project's."}
+            </p>
+          </div>
+        ) : (
+          <p className="empty">Nothing in this view.</p>
+        )
       ) : (
         <div className="ing-split">
           {view === "tiles" ? (
@@ -2570,6 +2611,11 @@ function JourneyPanel({
 
 const INGESTED_CSS = `
 .ingested { display: flex; flex-direction: column; gap: 12px; }
+.ing-start { border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; max-width: 70ch; }
+.ing-start h3 { margin: 0 0 6px; font-size: 15px; }
+.ing-start p { margin: 0; font-size: 13px; color: var(--muted-foreground); }
+.ing-start-routes { display: flex; gap: 8px; margin: 14px 0 12px; flex-wrap: wrap; }
+.ing-start-note { font-size: 12px; }
 .ing-head h2 { margin: 0 0 4px; font-size: 16px; }
 .ing-head p { margin: 0; font-size: 13px; color: var(--muted-foreground); max-width: 70ch; }
 .ing-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
