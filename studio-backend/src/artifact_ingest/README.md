@@ -59,6 +59,34 @@ is `$filter`/`$orderby` over the payload paths a type already declares in its
 `index` trait — request 5 in [`../../docs/graph-storage-requests.md`](../../docs/graph-storage-requests.md),
 which also records where in the platform that change lives.
 
+## Reading relations back is bounded, and the bound is not a speed limit
+
+`GET /edges` used to read one node per seed for its adjacency: **8,825 reads**
+for one request on studio-dev. It was also wrong. A node read is capped at the
+gear's `node_read_max_adjacency`, so every node whose degree exceeded it came
+back clipped — **27,852 of 79,184 relations, 35%, dropped** with nothing in the
+response to say so.
+
+It is now one seeded traversal per 400 seeds — about **twenty calls** — with
+`EdgeRef`s carrying explicit endpoints. The gear budgets a traversal by *total
+nodes, seeds included*, so a batch that exhausts its budget is **halved and
+re-read**, which finds the node that filled it in about `log2(400) ≈ 9` steps
+and hands it the whole budget when it gets there. Retrying seed-by-seed instead
+would cost 400 calls per fat node, and this graph has three.
+
+| | relations unreachable |
+|---|---|
+| per-node read, adjacency 100 | 27,852 |
+| traversal, budget 10,000 | 5,944 — three nodes |
+
+The residual is **not ours to fix**. Neither call pages: `node_read_max_adjacency`
+is validated to 1,000 and `traversal_max_nodes` to 10,000, and a node past that
+has relations no sequence of calls will return. Request 6 in the same document
+asks for a cursor over edges.
+
+`traversal_max_nodes: 10000` is set in every config profile for this reason —
+the default of 1,000 would truncate a 400-seed chunk immediately.
+
 ## What it owns
 
 Nothing durable of its own. Nodes and edges belong to graph-storage; the sync's

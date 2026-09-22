@@ -24,8 +24,8 @@ use super::graph::{GraphStore, GtsEdge, GtsEdgeView, GtsNode};
 use super::gts;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
-    AdjacencySide, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest,
-    TypeRegistration,
+    EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest, TraversalResponse,
+    TraverseRequest, TypeRegistration,
 };
 
 /// Nodes per ingest batch.
@@ -42,10 +42,30 @@ const EDGE_INGEST_CHUNK: usize = 256;
 /// Page size when reading nodes back for the portal. At the gear's
 /// `projection_max_page` (200): a larger `$top` is refused, not clamped.
 const LIST_PAGE: u32 = 200;
-/// Incident edges to read per node. Above the fan-out of an issue or PR in
-/// this graph (author, repo, changed files), and truncation is logged rather
-/// than silently dropping relations.
-const ADJACENCY_LIMIT: u32 = 100;
+/// Seeds per traversal when reading the relation graph back.
+///
+/// `/edges` used to read one node per seed to get its adjacency. On studio-dev
+/// that is 8,825 reads for one request, and it was also WRONG: a node read is
+/// capped at the gear's `node_read_max_adjacency`, so the six nodes whose
+/// degree exceeds it came back clipped and 27,852 of the graph's 79,184
+/// relations — 35% — were dropped with nothing in the response to say so.
+///
+/// A seeded traversal reads many seeds at once and returns `EdgeRef`s with
+/// explicit endpoints. The chunk exists because the gear budgets a traversal
+/// by TOTAL NODES, seeds included: `seeds.len()` must fit inside `max_nodes`,
+/// and whatever is left is the room the expansion has. 400 seeds against a
+/// 10,000-node budget leaves 24 neighbours per seed, against a measured mean
+/// of 9 and a 99th percentile of 86.
+const TRAVERSE_SEED_CHUNK: usize = 400;
+
+/// Node budget for one traversal, seeds included.
+///
+/// The ceiling the gear's own validation allows (`traversal_max_nodes` is
+/// range-checked to 1..=10,000), and our deployment config raises the limit to
+/// match — the default is 1,000. It is set to the ceiling because the budget is
+/// what bounds correctness here, not speed: an exhausted budget truncates, and
+/// a truncated traversal silently omits relations.
+const TRAVERSE_NODE_BUDGET: u32 = 10_000;
 /// Keep a node payload comfortably under the gear's 64 KiB ceiling; an oversized
 /// one would fail the whole atomic batch.
 const MAX_PAYLOAD_BYTES: usize = 60_000;
@@ -186,6 +206,34 @@ impl GraphStorageBackend {
             return;
         };
         remember_listing_in(&mut listings, key, nodes, self.cache_max_nodes);
+    }
+
+    /// One depth-1 traversal over a set of seeds.
+    ///
+    /// Depth 1 because the relations the portal draws are the seeds' own edges;
+    /// a deeper walk would spend the node budget on nodes nobody asked for. The
+    /// node-type filter is left empty deliberately — it narrows the OUTPUT node
+    /// set, and narrowing it would discard the far endpoints whose keys are the
+    /// only thing we take from the response.
+    async fn traverse_from(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+        edge_patterns: &[String],
+    ) -> anyhow::Result<TraversalResponse> {
+        self.client
+            .traverse(
+                ctx,
+                TraverseRequest {
+                    seeds: seeds.to_vec(),
+                    depth: 1,
+                    edge_type_patterns: edge_patterns.to_vec(),
+                    node_type_patterns: Vec::new(),
+                    max_nodes: Some(TRAVERSE_NODE_BUDGET),
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))
     }
 
     /// Drop every cached projection for a tenant.
@@ -571,12 +619,10 @@ impl GraphStore for GraphStorageBackend {
     async fn list_relations(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsEdgeView>> {
         self.register_types(ctx).await?;
 
-        // The sources of the cross-relations the portal draws. Their outgoing
-        // edges come back with the node itself: a node read carries bounded
-        // adjacency, so the relations need no separate edge listing. Users are
-        // only edge targets; files are excluded to avoid a per-file read on
-        // large repos (file↔file duplicate links are the one relation this
-        // omits — a known follow-up).
+        // The sources of the cross-relations the portal draws. Users are only
+        // edge targets; files are excluded because their edges are reached from
+        // the other end anyway (file↔file duplicate links are the one relation
+        // this omits — a known follow-up).
         let seeds: Vec<String> = self
             .list(ctx, None)
             .await?
@@ -584,37 +630,77 @@ impl GraphStore for GraphStorageBackend {
             .filter(|n| n.type_id != gts::USER_TYPE && n.type_id != gts::FILE_TYPE)
             .map(|n| n.instance_id.clone())
             .collect();
+        if seeds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sources: HashSet<&str> = seeds.iter().map(String::as_str).collect();
+        let edge_patterns: Vec<String> = gts::ALL_EDGE_TYPES
+            .into_iter()
+            .map(gts::graph_type_id)
+            .collect();
 
         let mut seen: HashSet<String> = HashSet::new();
         let mut out: Vec<GtsEdgeView> = Vec::new();
-        for key in seeds {
-            let view = self
-                .client
-                .get_node(ctx, &key, Some(ADJACENCY_LIMIT))
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage node read: {e}"))?;
-            if view.adjacency_truncated {
-                tracing::warn!(
-                    node = %key,
-                    limit = ADJACENCY_LIMIT,
-                    "studio-artifact-ingest: adjacency truncated; some relations are not shown"
-                );
-            }
-            for entry in view.adjacency {
-                if entry.side != AdjacencySide::Outgoing {
+        let mut traversals = 0u32;
+        let mut clipped = 0u32;
+
+        // A truncated batch is HALVED rather than exploded into one call per
+        // seed. Retrying a 400-seed chunk seed-by-seed costs 400 calls to find
+        // the one node that exhausted the budget, and this graph has three of
+        // them — which would put the call count straight back where it started.
+        // Halving finds the same node in about log2(400) ≈ 9 steps, and gives it
+        // the whole budget to itself when it gets there. A single seed that
+        // still truncates is a node whose own degree exceeds 10,000, and no call
+        // this gear offers will return the rest of it.
+        let mut batches: Vec<&[String]> = seeds.chunks(TRAVERSE_SEED_CHUNK).collect();
+        while let Some(batch) = batches.pop() {
+            let response = self.traverse_from(ctx, batch, &edge_patterns).await?;
+            traversals += 1;
+
+            if let Some(reason) = response.truncated {
+                if batch.len() > 1 {
+                    // Drop this response and re-read both halves: a truncated
+                    // walk is missing edges anywhere, not only at its tail.
+                    let (left, right) = batch.split_at(batch.len() / 2);
+                    batches.push(left);
+                    batches.push(right);
                     continue;
                 }
-                let type_id = our_edge_type(&entry.edge_type_id);
-                let to = entry.neighbor_key;
-                if seen.insert(format!("{type_id}|{key}|{to}")) {
+                clipped += 1;
+                tracing::warn!(
+                    ?reason,
+                    seed = %batch[0],
+                    budget = TRAVERSE_NODE_BUDGET,
+                    "studio-artifact-ingest: node degree exceeds the traversal budget;                      some of its relations cannot be read at all"
+                );
+            }
+
+            for edge in response.edges {
+                // The walk is undirected, so a batch sees each edge from
+                // whichever end it reached first. Keeping only the ones leaving
+                // a seed reproduces the outgoing-side view the portal has always
+                // been given.
+                if !sources.contains(edge.src.as_str()) {
+                    continue;
+                }
+                let type_id = our_edge_type(&edge.edge_type_id);
+                if seen.insert(format!("{type_id}|{}|{}", edge.src, edge.dst)) {
                     out.push(GtsEdgeView {
                         type_id,
-                        from: key.clone(),
-                        to,
+                        from: edge.src,
+                        to: edge.dst,
                     });
                 }
             }
         }
+
+        tracing::info!(
+            seeds = seeds.len(),
+            traversals,
+            truncated = clipped,
+            edges = out.len(),
+            "studio-artifact-ingest: relation graph read"
+        );
         Ok(out)
     }
 }
