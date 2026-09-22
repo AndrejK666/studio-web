@@ -743,6 +743,15 @@ gears:
         lock_timeout: "5s"
         idle_in_transaction_session_timeout: "60s"
     config:
+      # The relation graph is read back by one traversal per 400 seeds, and the
+      # gear budgets a traversal by TOTAL NODES with the seeds counted in. The
+      # default of 1,000 would leave 600 for the expansion of 400 seeds, and an
+      # exhausted budget does not slow the read down — it TRUNCATES it, dropping
+      # relations with nothing in the response to say so. 10,000 is the ceiling
+      # the gear's own validation allows, and at it exactly three nodes on the
+      # dev graph are still clipped (5,944 of 79,184 relations) against 27,852
+      # under the per-node read this replaced.
+      traversal_max_nodes: 10000
       traversal_hop: pgq
       # One embedding provider per deployment, chosen by the chart
       # (backend.embedding.provider): `onnx` loads the MiniLM model the init

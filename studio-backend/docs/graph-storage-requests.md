@@ -307,6 +307,52 @@ fixed by making the cache better.
 
 ---
 
+## 6. Let us read all the relations of a high-degree node
+
+There is no call in this gear that returns the complete adjacency of a node
+past ten thousand, and one real repository already has more.
+
+Reading the relation graph back for the portal has two shapes available, and
+both are capped:
+
+| call | what bounds it | ceiling its validation allows |
+|---|---|---|
+| `get_node` | `node_read_max_adjacency` | 1,000 |
+| `traverse` | `traversal_max_nodes`, seeds included | 10,000 |
+
+Neither pages. `project_nodes` pages the node set with a cursor; the edge side
+has no equivalent, so once a node's degree passes the ceiling the remainder is
+not reachable by any sequence of calls.
+
+**Measured on studio-dev**, over the 8,825 nodes whose relations the portal
+draws, 79,184 relations between them:
+
+| | relations unreachable |
+|---|---|
+| `get_node` per seed, adjacency 100 (what we shipped before) | 27,852 — **35%** |
+| `get_node` per seed, adjacency at its 1,000 ceiling | 13,288 |
+| `traverse`, seeds chunked, budget at its 10,000 ceiling | 5,944 — three nodes |
+
+We have taken the last row: it is also 8,825 calls down to about twenty. But
+the remaining three nodes are a repository and its two busiest artifacts, which
+are exactly the nodes a graph view is drawn around, and their missing edges are
+the `contains` and `artifact_of` relations that give the picture its shape.
+
+Worse, the omission is silent by construction. A truncated traversal sets
+`truncated`, and we log it — but the portal is handed a relation set that is
+simply incomplete, with no way to ask for the rest. A caller cannot distinguish
+"these are the relations" from "these are the first ten thousand".
+
+*Need:* a cursor over edges — the shape `project_nodes` already has. Either an
+edge projection bound to the same `OData` options, or a continuation token on
+`traverse` so an exhausted budget can be resumed rather than only reported.
+
+Failing that, raising `traversal_max_nodes`' validated ceiling would buy time
+and not much else: degree here grows with the repository, so any fixed ceiling
+is a date rather than a fix.
+
+---
+
 ## What we are not asking for
 
 **GTS major versions of a type** (`requirement.v2~` alongside `v1~`). We looked
@@ -328,11 +374,14 @@ sooner.
 | 2 | Node version on the read path | write-only `expected_version` | every update is last-writer-wins |
 | 3 | A published schema can change | one immutable column, registry not read | indexing cannot follow the model |
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
-| 5 | `$filter`/`$orderby` on payload attributes | key/name/timestamps only | every listing page re-reads the whole tenant graph — 841 projection calls to deliver 5,785 rows |
+| 5 | `$filter`/`$orderby` on payload attributes | key/name/timestamps only | every listing page re-reads the whole tenant graph — 144 projection calls and 31 MB per request, an 8.06 s p95 |
+| 6 | A cursor over edges | adjacency capped at 1,000, traversal at 10,000, neither pages | the relation graph comes back incomplete and says it is complete — 5,944 of 79,184 relations unreachable |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is
-three separate small ones that happen to share a consequence.
+three separate small ones that happen to share a consequence. Items 5 and 6 are
+the same shape from two directions: the node side pages and cannot be narrowed,
+the edge side can be narrowed and does not page.
 
 Happy to open these as individual issues, provide reproductions against a
 stand, or test a branch. The Studio domain-model gear
