@@ -81,6 +81,7 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
+import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pins";
 import {
   clampStep,
   createFormLayout,
@@ -547,10 +548,22 @@ function NavIcon({ name }: { name: string }) {
 // project the unit rather than a folder you have to select first.
 const NAV_SECTIONS: {
   title: string | null;
+  /** Drawn only inside the "+" picker: pinnable, but not a group of its own. */
+  hidden?: boolean;
   items: { id: View; icon: string; label: string }[];
 }[] = [
   {
-    title: "Work",
+    // Was a group called WORK, holding these three. That was not a category so
+    // much as what concept v2 left over after everything else moved onto a
+    // project, and three unrelated destinations under a heading claiming they
+    // belong together is a heading that has stopped meaning anything.
+    //
+    // The slot is the rail's most valuable one, so it holds what this person
+    // always needs instead (see pins.ts). These three stay the defaults, so
+    // nothing moves on first use, and they remain here as the list the "+"
+    // picker offers — unpinning one must not put it out of reach.
+    title: "Organization",
+    hidden: true,
     items: [
       { id: "projects", icon: "grid", label: "Workspaces" },
       { id: "people", icon: "users", label: "People" },
@@ -768,6 +781,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  is always visible and opens on hover; this is only the latch that keeps it
    *  open once the pointer leaves. Unpinned is the resting state. */
   const [productMenu, setProductMenu] = useState(false);
+  // What sits above PLATFORM in the rail. Persisted per browser; see pins.ts
+  // for why the group it replaced had stopped meaning anything.
+  const [pins, setPins] = useState<Pin[]>(() => loadPins());
+  const [pinPicker, setPinPicker] = useState(false);
+  const setPinned = (next: Pin[]) => {
+    setPins(next);
+    savePins(next);
+  };
   const [menuOpen, setMenuOpen] = useState(false);
   /** Whether the Studio AI dock is open (368px) rather than railed (48px).
    *  Owned here because the shell grid sizes the track — see .shell-body. */
@@ -1847,9 +1868,31 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     the band across the top of the work area (.project-sections).
                     Listing them in both places was the same navigation twice,
                     and the rail is for context, not for the open thing's parts. */}
+                <PinnedSection
+                  pins={pins}
+                  setPins={setPinned}
+                  picker={pinPicker}
+                  setPicker={setPinPicker}
+                  sections={NAV_SECTIONS}
+                  activeView={activeSpace ? null : view}
+                  activeProjectId={activeSpace ? undefined : crumb.nestedId}
+                  activeTab={projectTab}
+                  onOpenView={(id) => {
+                    setActiveSpace(null); // portal navigation leaves the space
+                    setCrumb({});
+                    setView(id);
+                  }}
+                  onOpenProject={(pin) => {
+                    setActiveSpace(null);
+                    setProjectLabel(pin.name);
+                    setCrumb({ projectId: pin.workspaceId, nestedId: pin.projectId });
+                    setProjectTab(pin.tab as ProjTab);
+                    setView("projects");
+                  }}
+                />
                 {
                   // ── Organization context: work surfaces of the whole org ──
-                  NAV_SECTIONS.map((sec) => {
+                  NAV_SECTIONS.filter((sec) => !sec.hidden).map((sec) => {
                     const items = sec.items;
                     return (
                       <div
@@ -1993,6 +2036,36 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               {t.label}
             </button>
           ))}
+          {/* Pinning a project section belongs on the section, not in the rail:
+              the rail cannot know which project is open, and a picker listing
+              every project x every section is a list nobody reads. */}
+          {(() => {
+            const pin: Pin = {
+              kind: "project",
+              projectId: crumb.nestedId ?? "",
+              workspaceId: crumb.projectId ?? "",
+              name: projectLabel ?? "Project",
+              tab: projectTab,
+            };
+            const already = isPinned(pins, pin);
+            return (
+              <button
+                className={`psection psection-pin${already ? " on" : ""}`}
+                aria-pressed={already}
+                title={
+                  already
+                    ? "Unpin this section from the rail"
+                    : "Pin this section to the top of the rail"
+                }
+                onClick={() => setPinned(togglePin(pins, pin))}
+              >
+                <span className="ico" aria-hidden>
+                  {already ? "★" : "☆"}
+                </span>
+                {already ? "Pinned" : "Pin"}
+              </button>
+            );
+          })()}
         </nav>
       )}
       {/* A workspace gets the same band, because it is the same kind of thing:
@@ -4448,6 +4521,118 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "automation", icon: "shield", label: "Automation" },
 ];
 
+
+/** The top of the navigation rail: what this person always needs.
+ *
+ *  It replaced a group called WORK, whose three entries were what concept v2
+ *  left over rather than a category (see pins.ts). Those three are still the
+ *  defaults and still listed in the picker, because a slot you can empty must
+ *  not be a slot that loses things.
+ *
+ *  A pin naming a destination this build no longer has is drawn as its own id
+ *  rather than dropped: losing somebody's row to a rename they never saw is
+ *  worse than one row that says something unfamiliar. */
+function PinnedSection({
+  pins,
+  setPins,
+  picker,
+  setPicker,
+  sections,
+  activeView,
+  activeProjectId,
+  activeTab,
+  onOpenView,
+  onOpenProject,
+}: {
+  pins: Pin[];
+  setPins: (next: Pin[]) => void;
+  picker: boolean;
+  setPicker: (open: boolean | ((v: boolean) => boolean)) => void;
+  sections: { items: { id: View; icon: string; label: string }[] }[];
+  /** `null` while a space is open: nothing in the rail is current then. */
+  activeView: View | null;
+  activeProjectId?: string;
+  activeTab: ProjTab;
+  onOpenView: (id: View) => void;
+  onOpenProject: (pin: Extract<Pin, { kind: "project" }>) => void;
+}) {
+  const everyItem = sections.flatMap((sec) => sec.items);
+  return (
+    <div className="nav-section nav-section-pinned">
+      <div className="nav-section-title">
+        Pinned
+        <button
+          className="nav-pin-add"
+          aria-label="Pin a destination"
+          aria-expanded={picker}
+          title="Pin a destination"
+          onClick={() => setPicker((v) => !v)}
+        >
+          +
+        </button>
+      </div>
+      {pins.length === 0 && !picker && (
+        <p className="nav-pin-empty">Nothing pinned. Use + to keep a screen here.</p>
+      )}
+      {pins.map((pin) => {
+        const entry = pin.kind === "view" ? everyItem.find((i) => i.id === pin.id) : undefined;
+        const label = pin.kind === "view" ? (entry?.label ?? pin.id) : pin.name;
+        const icon = pin.kind === "view" ? (entry?.icon ?? "grid") : "home";
+        const on =
+          pin.kind === "view"
+            ? activeView === pin.id && !activeProjectId
+            : activeProjectId === pin.projectId && activeTab === pin.tab;
+        return (
+          <div key={pinKey(pin)} className="nav-pin">
+            <button
+              className={on ? "active" : ""}
+              title={pin.kind === "view" ? label : `${pin.name} · ${pin.tab}`}
+              onClick={() => (pin.kind === "view" ? onOpenView(pin.id as View) : onOpenProject(pin))}
+            >
+              <span className="ico">
+                <NavIcon name={icon} />
+              </span>
+              <span className="nav-pin-name">{label}</span>
+              {pin.kind === "project" && <span className="nav-pin-tab">{pin.tab}</span>}
+            </button>
+            <button
+              className="nav-pin-x"
+              aria-label={`Unpin ${label}`}
+              title="Unpin"
+              onClick={() => setPins(togglePin(pins, pin))}
+            >
+              ✕
+            </button>
+          </div>
+        );
+      })}
+      {picker && (
+        <div className="nav-pin-picker">
+          {everyItem.map((n) => {
+            const pin: Pin = { kind: "view", id: n.id };
+            const already = isPinned(pins, pin);
+            return (
+              <button
+                key={n.id}
+                className={already ? "on" : ""}
+                onClick={() => setPins(togglePin(pins, pin))}
+              >
+                <span className="ico">
+                  <NavIcon name={n.icon} />
+                </span>
+                {n.label}
+                <span className="check">{already ? "✓" : "+"}</span>
+              </button>
+            );
+          })}
+          <p className="nav-pin-empty">
+            A project&apos;s own section is pinned from the band above it.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** The connection a repository is created or read through.
  *
