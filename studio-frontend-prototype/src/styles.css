@@ -688,6 +688,60 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted-foreground); padding: 8px 10px 2px;
 }
+/* The pinned section's heading carries its own control, so it is a row rather
+   than a label. */
+.nav-section-pinned .nav-section-title {
+  display: flex; align-items: center; gap: 6px;
+}
+/* Scoped through `.drawer nav` on purpose: that selector sizes EVERY button in
+   the rail as a full 232x40 row, and a 20px control in a heading loses to it.
+   Measured, not guessed — the + took a whole row of its own. */
+.drawer nav .nav-section-title .nav-pin-add {
+  margin-left: auto; width: 20px; min-width: 20px;
+  height: 20px; min-height: 20px; max-height: 20px; flex: none;
+  margin-inline: 0; padding: 0;
+  border: none; background: none; border-radius: var(--radius-sm);
+  color: var(--muted-foreground); font-size: 14px; line-height: 1; cursor: pointer;
+}
+.drawer nav .nav-section-title .nav-pin-add:hover {
+  color: var(--foreground); background: var(--studio-control-hover-neutral);
+}
+.nav-pin-empty {
+  margin: 2px 10px 6px; font-size: 11px; line-height: 1.5;
+  color: var(--muted-foreground);
+}
+/* The close button is a SIBLING of the row, not a child: a button inside a
+   button is not valid HTML and the inner one never receives a click. The rail
+   sizes every nav button as a full-width row, so the row is the row here and
+   the buttons inside it are not. */
+.nav-pin { display: flex; align-items: center; width: 232px; margin-inline: 4px; }
+.drawer nav .nav-pin button { width: auto; margin-inline: 0; }
+.drawer nav .nav-pin button:first-child { flex: 1; min-width: 0; }
+.nav-pin-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Which section of the project this pin opens. Quiet, because the project's
+   name is what identifies the row. */
+.nav-pin-tab {
+  margin-left: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted-foreground); flex: none;
+}
+.drawer nav .nav-pin .nav-pin-x {
+  flex: 0 0 auto; padding-inline: 8px; font-size: 11px;
+  color: var(--muted-foreground); opacity: 0;
+}
+.nav-pin:hover .nav-pin-x, .nav-pin-x:focus-visible { opacity: 1; }
+.nav-pin-picker {
+  margin: 4px; padding: 4px; border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--card);
+}
+.drawer nav .nav-pin-picker button { width: 100%; margin-inline: 0; }
+.nav-pin-picker button.on { color: var(--primary); }
+.nav-pin-picker .check { margin-left: auto; color: var(--muted-foreground); }
+.nav-pin-picker button.on .check { color: var(--primary); }
+.nav-pin-picker .nav-pin-empty { margin: 4px 8px 2px; }
+/* Pinning sits at the end of the band, away from the sections it is not one
+   of. */
+.psection-pin { margin-left: auto; }
+.psection-pin.on { color: var(--primary); }
 /* In the bar the identity is the avatar and nothing else — the product's
    UserMenu is a 36px round trigger, and the name and scope the old footer
    button printed beside it are in the menu it opens. */
