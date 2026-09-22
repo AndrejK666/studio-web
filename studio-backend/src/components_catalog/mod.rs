@@ -14,6 +14,7 @@ mod repo_enrich;
 mod rest;
 mod scaffold;
 mod service;
+mod skeleton;
 mod sync_task;
 
 use std::sync::Arc;

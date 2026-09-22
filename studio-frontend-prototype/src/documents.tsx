@@ -29,6 +29,7 @@ import {
   DocType,
   DocValidation,
   RemoteRepo,
+  ScaffoldFile,
   SpecFinding,
   StageStatus,
   WrittenFile,
@@ -46,7 +47,7 @@ import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { composePlan, profilesByName, type PlanRow } from "./compose";
-import { scaffoldGear, type Scaffold } from "./scaffold";
+import { gearSlug } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
   inFilter,
@@ -302,7 +303,9 @@ function DocumentsView({
   const [newTitle, setNewTitle] = useState("");
   const [showQ, setShowQ] = useState(false);
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
-  const [scaffold, setScaffold] = useState<Scaffold | null>(null);
+  /** The capability a gap flow asked for a gear for. The skeleton itself is
+   *  the server's to compose, so this holds the question, not the answer. */
+  const [scaffold, setScaffold] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<Doc | null>(null);
   const [composeBusy, setComposeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -679,7 +682,7 @@ function DocumentsView({
         <ComposePlanModal
           plan={plan}
           title={selected?.title ?? "App Spec"}
-          onScaffold={(cap) => setScaffold(scaffoldGear(cap, selected?.title ?? "App Spec"))}
+          onScaffold={(cap) => setScaffold(cap)}
           onClose={() => setPlan(null)}
         />
       )}
@@ -693,7 +696,7 @@ function DocumentsView({
       )}
       {scaffold && (
         <ScaffoldModal
-          scaffold={scaffold}
+          capability={scaffold}
           token={token}
           projectTenantId={workspaceId}
           onBack={() => setScaffold(null)}
@@ -3169,19 +3172,21 @@ function kindColor(kind: string): string {
   return m[kind] ?? "var(--avatar-grey)";
 }
 
-// ── Scaffolding: generate a starter gear for a capability gap ─────────────────
+// ── Scaffolding: a starter gear for a capability gap ──────────────────────
 //
-// The skeleton itself lives in scaffold.ts: project creation scaffolds a gear
-// too, and two copies of the canonical layout would drift.
+// The skeleton is generated server-side (components_catalog/skeleton.rs). This
+// screen asks for it with `dry_run` to show it, then asks again to write it --
+// rather than composing the files here and posting them, which is what made the
+// browser the only thing that knew what a gear looks like.
 
 function ScaffoldModal({
-  scaffold,
+  capability,
   token,
   projectTenantId,
   onBack,
   onClose,
 }: {
-  scaffold: Scaffold;
+  capability: string;
   token: string;
   projectTenantId: string;
   onBack: () => void;
@@ -3192,16 +3197,39 @@ function ScaffoldModal({
   const [pushing, setPushing] = useState(false);
   const [pushErr, setPushErr] = useState<string | null>(null);
   const [result, setResult] = useState<{ branch: string; pr_url?: string | null } | null>(null);
-  const file = scaffold.files[active];
-  const copy = () => navigator.clipboard?.writeText(file.content).catch(() => {});
+  const [files, setFiles] = useState<ScaffoldFile[] | null>(null);
+  const slug = gearSlug(capability);
+
+  // The preview is the server's own answer, asked for with nothing written.
+  // A preview composed here would be a second generator, and a second
+  // generator is a promise the write does not have to keep.
+  useEffect(() => {
+    let alive = true;
+    setPushErr(null);
+    api
+      .scaffoldGearToRepo(token, projectTenantId, { slug: capability, dry_run: true })
+      .then((r) => {
+        if (alive) setFiles(r.files);
+      })
+      .catch((e) => {
+        if (alive) setPushErr(errText(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, projectTenantId, capability]);
+
+  const file = files?.[active];
+  const copy = () => {
+    if (file) navigator.clipboard?.writeText(file.content).catch(() => {});
+  };
 
   const push = async () => {
     setPushing(true);
     setPushErr(null);
     try {
       const r = await api.scaffoldGearToRepo(token, projectTenantId, {
-        slug: scaffold.slug,
-        files: scaffold.files,
+        slug: capability,
         open_pr: openPr,
       });
       setResult({ branch: r.branch, pr_url: r.pr_url });
@@ -3217,12 +3245,12 @@ function ScaffoldModal({
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <button onClick={onBack} title="Back to plan">←</button>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Scaffold gear</span>
-          <code style={{ fontSize: 12 }}>cf-gears-{scaffold.slug}</code>
+          <code style={{ fontSize: 12 }}>cf-gears-{slug}</code>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">✕</button>
         </div>
         <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
-          Starter skeleton for the <code>{scaffold.capability}</code> gap. Review, then push it to the
-          project's connected gear repo on a <code>scaffold/{scaffold.slug}</code> branch — the session
+          Starter skeleton for the <code>{capability}</code> gap. Review, then push it to the
+          project's connected gear repo on a <code>scaffold/{slug}</code> branch — the session
           agent fills it in, and a re-sync registers it in the catalog.
         </p>
         <div
@@ -3272,7 +3300,7 @@ function ScaffoldModal({
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, minHeight: 300 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {scaffold.files.map((f, i) => (
+            {(files ?? []).map((f, i) => (
               <button
                 key={f.path}
                 onClick={() => setActive(i)}
@@ -3287,14 +3315,16 @@ function ScaffoldModal({
                   fontFamily: "ui-monospace, Menlo, monospace",
                 }}
               >
-                {f.path.replace(`gears/${scaffold.slug}/`, "")}
+                {f.path.replace(new RegExp(`^.*/${slug}/`), "")}
               </button>
             ))}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <code style={{ fontSize: 11, opacity: 0.7 }}>{file.path}</code>
-              <button onClick={copy} style={{ marginLeft: "auto", fontSize: 11 }}>
+              <code style={{ fontSize: 11, opacity: 0.7 }}>
+                {file?.path ?? (files ? "—" : "asking the server…")}
+              </code>
+              <button onClick={copy} disabled={!file} style={{ marginLeft: "auto", fontSize: 11 }}>
                 Copy
               </button>
             </div>
@@ -3312,7 +3342,7 @@ function ScaffoldModal({
                 whiteSpace: "pre",
               }}
             >
-              {file.content}
+              {file?.content ?? ""}
             </pre>
           </div>
         </div>

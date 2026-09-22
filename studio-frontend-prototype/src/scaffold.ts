@@ -1,96 +1,33 @@
-//! The starter-gear skeleton, shared by the two places that ask for one.
+//! What the browser still needs to know about a scaffolded gear: its path.
 //!
-//! It was a private function in documents.tsx, where the only caller was the
-//! App Spec's capability-gap flow. Project creation now scaffolds a gear too —
-//! that is the whole point of a `new_gears` project — and a second copy of the
-//! canonical layout is exactly the kind of drift that makes two gears in the
-//! same catalogue disagree about where `gear.toml` lives.
+//! The skeleton itself is generated server-side now
+//! (`components_catalog/skeleton.rs`), and this file used to hold it. That was
+//! not a duplicate for tidiness' sake — it was the ONLY place the layout
+//! existed, so `POST /projects/{id}/scaffold` took a list of files, and
+//! anything asking for a gear without a browser had to invent one.
+//! Interviewing Acronis (2026-09-18) the ask was exactly that: a tool that
+//! handles the requirements well should "вызовет бэкэнд […] и просто сама
+//! скажет new gear, и это всё создастся без всякого IDE".
 //!
-//! The two callers differ only in *why* the gear is being made, so that is what
-//! they pass: a gap flow says "no catalogued component provides it", creation
-//! says what the brief says.
+//! Slugging stays here because a form has to show the path it is about to write
+//! before it writes anything. The server slugs again on the way in — the same
+//! rule, and the one that decides — so this is a preview, not the contract.
 
-export type ScaffoldFile = { path: string; content: string };
-export type Scaffold = { capability: string; slug: string; files: ScaffoldFile[] };
-
-/** `My Gear` / `my gear` / `My-Gear` → `my-gear`. Also what the skeleton's own
- *  directory is named, so a form can show the real path before writing it. */
+/** `My Gear` / `my gear` / `My-Gear` → `my-gear`. Never empty: `gears/` plus
+ *  nothing would write into the store's own root. */
 export function gearSlug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "capability";
 }
 
-function pascal(s: string): string {
-  return s.replace(/(^|[-_ ])(\w)/g, (_m, _sep, c: string) => c.toUpperCase());
-}
-
-/** A canonical toolkit-gear skeleton for a missing capability: manifest, crate,
- *  the `#[toolkit::gear]` entrypoint, and PRD/DESIGN stubs (so it reads well in
- *  the catalog immediately). This is the harness an agent then fills in.
+/** `gears` / `/gears/bss/` → `gears/bss`, with the same fallback the server
+ *  applies.
  *
- *  `problem` replaces the PRD's opening sentence and `origin` the manifest's
- *  provenance note — a gear scaffolded from a project brief was not found by
- *  reading an App Spec, and saying so in its own PRD would be a lie the next
- *  reader has to unpick. */
-export function scaffoldGear(
-  capability: string,
-  appTitle: string,
-  opts?: { problem?: string; origin?: string },
-): Scaffold {
-  const slug = gearSlug(capability);
-  const crate = `cf-gears-${slug}`;
-  const Gear = `${pascal(slug)}Gear`;
-  /** `audit-log` -> `Audit Log`: the manifest's `name` is what a person reads
-   *  in the catalogue, not the crate. */
-  const title = slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const origin = opts?.origin ?? "Scaffolded from an App Spec gap.";
-  const problem =
-    opts?.problem?.trim() ||
-    `${appTitle} needs the \`${capability}\` capability, and no catalogued component provides it.`;
-  // The shape every gear in `gears-rust` actually has: one `[gear]` table, a
-  // HUMAN name rather than the crate's, and the three plugin booleans. The
-  // skeleton used to write bare top-level keys plus a `[plugins]` table and a
-  // `capabilities` array, and no real manifest is shaped that way -- which made
-  // the one file a scaffolded gear is judged by the one file that did not look
-  // like its neighbours.
-  const gearToml =
-    `[gear]\n` +
-    `name = "${title}"\n` +
-    `description = "${capability} capability for ${appTitle}. ${origin}"\n` +
-    `category = "platform"\n` +
-    `is_plugin = false\n` +
-    `has_plugins = false\n` +
-    `has_extension_point = false\n`;
-  const cargoToml =
-    `[package]\nname = "${crate}"\nversion = "0.1.0"\nedition = "2021"\n\n` +
-    `[dependencies]\ntoolkit = { workspace = true }\nasync-trait = { workspace = true }\nanyhow = { workspace = true }\n`;
-  const lib =
-    `//! ${crate} — the \`${capability}\` capability. ${origin}\n` +
-    `//! Fill in the service, GTS types and REST surface.\n\n` +
-    `use async_trait::async_trait;\nuse toolkit::{Gear, GearCtx};\n\n` +
-    `#[toolkit::gear(\n    name = "${crate}",\n    deps = [],\n    capabilities = [rest]\n)]\n` +
-    `#[derive(Default)]\npub struct ${Gear};\n\n` +
-    `#[async_trait]\nimpl Gear for ${Gear} {\n` +
-    `    async fn init(&self, _ctx: &GearCtx) -> anyhow::Result<()> {\n` +
-    `        // TODO: register GTS types, resolve dependencies, wire the ${capability} service.\n` +
-    `        Ok(())\n    }\n}\n`;
-  const prd =
-    `---\nstatus: draft\nowner: \n---\n\n# PRD — ${capability} gear\n\n` +
-    `## Problem\n\n${problem}\n\n` +
-    `## Goals\n\n- Provide \`${capability}\` as a reusable gear other apps can compose.\n\n` +
-    `## Non-Goals\n\n## Users & Use Cases\n\n## Requirements\n\n## Success Metrics\n`;
-  const design =
-    `---\nstatus: draft\n---\n\n# Design — ${capability} gear\n\n## Overview\n\n` +
-    `## Architecture\n\n\`\`\`mermaid\ngraph LR\n    Client --> G["${capability}"]\n    G --> DB[(storage)]\n\`\`\`\n\n` +
-    `## Data Model\n\n## Interfaces\n\n## Trade-offs\n`;
-  return {
-    capability,
-    slug,
-    files: [
-      { path: `gears/${slug}/gear.toml`, content: gearToml },
-      { path: `gears/${slug}/Cargo.toml`, content: cargoToml },
-      { path: `gears/${slug}/src/lib.rs`, content: lib },
-      { path: `gears/${slug}/docs/PRD.md`, content: prd },
-      { path: `gears/${slug}/docs/DESIGN.md`, content: design },
-    ],
-  };
+ *  Not a constant, because `gears/<slug>/` is where only thirteen of the
+ *  forty-two gears in `gears-rust` live: the rest sit under a family
+ *  (`gears/system/`, `gears/bss/`) or under the gear they extend. A scaffold
+ *  that can only write the top level writes to the wrong place in most of the
+ *  monorepo. */
+export function gearParentDir(value: string): string {
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, "").trim();
+  return trimmed || "gears";
 }
