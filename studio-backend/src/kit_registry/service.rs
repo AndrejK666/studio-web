@@ -457,17 +457,34 @@ impl KitRegistryService {
 }
 
 fn official_catalogue() -> Vec<KitDescriptor> {
-    vec![KitDescriptor {
-        slug: "sdlc".to_owned(),
-        name: "Software Delivery Lifecycle".to_owned(),
-        description: "Product-to-code traceability with PRD, ADR, DESIGN, FEATURE, review and validation workflows.".to_owned(),
-        publisher: "Constructor Fabric".to_owned(),
-        visibility: "public".to_owned(),
-        source: "github".to_owned(),
-        repository_url: "https://github.com/constructorfabric/studio-kit-sdlc".to_owned(),
-        default_version: "5c5b85c870cb4b62ed0506ae1a8ca196156d1c74".to_owned(),
-        manifest_path: ".cf-studio-kit.toml".to_owned(),
-    }]
+    vec![
+        KitDescriptor {
+            slug: "sdlc".to_owned(),
+            name: "Software Delivery Lifecycle".to_owned(),
+            description: "Product-to-code traceability with PRD, ADR, DESIGN, FEATURE, review and validation workflows.".to_owned(),
+            publisher: "Constructor Fabric".to_owned(),
+            visibility: "public".to_owned(),
+            source: "github".to_owned(),
+            repository_url: "https://github.com/constructorfabric/studio-kit-sdlc".to_owned(),
+            default_version: "5c5b85c870cb4b62ed0506ae1a8ca196156d1c74".to_owned(),
+            manifest_path: ".cf-studio-kit.toml".to_owned(),
+        },
+        // `studio-kits-pm` is a MULTI-kit repository: its root manifest holds one
+        // `[[kits]]` entry per kit, and `cfs` reads it to offer a selector. So the
+        // slug here names the kit, not the repository -- the installer resolves the
+        // pair and passes `--kit`, which is the difference from the entry above.
+        KitDescriptor {
+            slug: "compete".to_owned(),
+            name: "Competitive Analysis".to_owned(),
+            description: "Evidence-first competitive research: research requests, candidate registers, company dossiers, feature taxonomies and comparison matrices, every claim carrying an evidence locator.".to_owned(),
+            publisher: "Constructor Fabric".to_owned(),
+            visibility: "public".to_owned(),
+            source: "github".to_owned(),
+            repository_url: "https://github.com/constructorfabric/studio-kits-pm".to_owned(),
+            default_version: "fbd2f5c43fd1f34d2c12767f2d57f6ac107f2b48".to_owned(),
+            manifest_path: ".cf-studio-kit.toml".to_owned(),
+        },
+    ]
 }
 
 fn normalize_slug(value: &str) -> Result<String> {
@@ -635,14 +652,39 @@ mod tests {
     };
 
     #[test]
-    fn official_catalogue_uses_the_canonical_git_kit() {
+    fn official_catalogue_uses_the_canonical_git_kits() {
         let kits = official_catalogue();
-        assert_eq!(kits.len(), 1);
+        assert_eq!(kits.len(), 2);
         assert_eq!(kits[0].slug, "sdlc");
         assert_eq!(
             kits[0].repository_url,
             "https://github.com/constructorfabric/studio-kit-sdlc"
         );
+        assert_eq!(kits[1].slug, "compete");
+        assert_eq!(
+            kits[1].repository_url,
+            "https://github.com/constructorfabric/studio-kits-pm"
+        );
+    }
+
+    #[test]
+    fn every_catalogued_slug_is_installable_and_distinct() {
+        // The slug is what a project stores and what the trusted runner looks up
+        // in its own allow-list, so a slug the normaliser would reject could be
+        // requested and never materialise.
+        let kits = official_catalogue();
+        let mut slugs: Vec<&str> = kits.iter().map(|k| k.slug.as_str()).collect();
+        slugs.sort_unstable();
+        let count = slugs.len();
+        slugs.dedup();
+        assert_eq!(slugs.len(), count, "two kits share a slug");
+        for kit in &kits {
+            assert_eq!(normalize_slug(&kit.slug).unwrap(), kit.slug);
+            assert_eq!(
+                normalize_version(&kit.default_version).unwrap(),
+                kit.default_version
+            );
+        }
     }
 
     #[test]

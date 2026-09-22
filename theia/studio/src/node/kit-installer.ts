@@ -8,8 +8,25 @@ import type { StudioKitInstallRequest, StudioKitInstallResult } from '../common/
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-const OFFICIAL_KITS: Readonly<Record<string, string>> = Object.freeze({
-    sdlc: 'constructorfabric/studio-kit-sdlc'
+/**
+ * The kits this runner will install, and where each lives.
+ *
+ * The slug names a KIT, not a repository: `studio-kits-pm` is a multi-kit
+ * repository whose root manifest carries one `[[kits]]` entry per kit, and
+ * `cfs` needs `--kit` to know which of them to install. A single-kit repository
+ * needs no selector, so `kit` is absent for it rather than guessed.
+ *
+ * It stays an allow-list either way -- the request names a slug, never a
+ * repository or a shell fragment.
+ */
+interface OfficialKit {
+    readonly repo: string;
+    readonly kit?: string;
+}
+
+const OFFICIAL_KITS: Readonly<Record<string, OfficialKit>> = Object.freeze({
+    sdlc: Object.freeze({ repo: 'constructorfabric/studio-kit-sdlc' }),
+    compete: Object.freeze({ repo: 'constructorfabric/studio-kits-pm', kit: 'compete' })
 });
 const SAFE_GIT_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/u;
 
@@ -28,8 +45,8 @@ export class KitInstallerImpl {
         request: StudioKitInstallRequest,
         repositories: RepositoryRegistry
     ): Promise<StudioKitInstallResult> {
-        const source = OFFICIAL_KITS[request.kitSlug];
-        if (!source) {
+        const official = OFFICIAL_KITS[request.kitSlug];
+        if (!official) {
             throw new Error(`Kit is not allow-listed: ${request.kitSlug}`);
         }
         const version = request.version.trim();
@@ -50,7 +67,15 @@ export class KitInstallerImpl {
                 // `cfs init` installs the default SDLC kit. The registry request
                 // is authoritative for its version, so materialization must
                 // replace that default (and supports an explicit reinstall).
-                ['kit', 'install', source, '--version', version, '--force'],
+                [
+                    'kit',
+                    'install',
+                    official.repo,
+                    ...(official.kit ? ['--kit', official.kit] : []),
+                    '--version',
+                    version,
+                    '--force'
+                ],
                 repository.canonicalRoot
             );
             const generated = await this.run(['generate-agents'], repository.canonicalRoot);

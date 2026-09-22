@@ -1,14 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  type CatalogNode,
   type KitInstallation,
   type KitMaterialization,
   type ProjectRepository,
   type StudioKit,
 } from "./api";
+import { composePlan, profilesByName, type PlanRow } from "./compose";
 import { errText } from "./format";
 
-export function ProjectKits({ token, projectId }: { token: string; projectId: string }) {
+export function ProjectKits({
+  token,
+  projectId,
+  workspaceId,
+}: {
+  token: string;
+  projectId: string;
+  /** The parent workspace — documents and the capability vocabulary hang off it. */
+  workspaceId: string;
+}) {
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
@@ -184,6 +195,8 @@ export function ProjectKits({ token, projectId }: { token: string; projectId: st
 
   return (
     <section className="kits-view">
+      <SuggestedComponents token={token} projectId={projectId} workspaceId={workspaceId} />
+
       <div className="card-head">
         <div>
           <h2>Project kits</h2>
@@ -321,6 +334,163 @@ export function ProjectKits({ token, projectId }: { token: string; projectId: st
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+/*
+ * What this project could be built from, read off its own documents.
+ *
+ * The question — "из каких компонентов, которые мы знаем в нашей системе, можно
+ * построить этот продукт" — is the Components tab's question, and until now it
+ * could only be asked from the other end: open one App Spec, press Compose, get
+ * a modal. That reads one document; a project is a stack of them.
+ *
+ * Two things it deliberately does NOT do. It does not load on mount: the
+ * catalogue and its profiles are a few hundred kilobytes, and a tab that opens
+ * to install a kit should not pay for them. And it does not hide a candidate
+ * that was never built -- it labels it and sorts it last (see compose.ts). A
+ * design may legitimately name a component that is still only a design; what
+ * would be wrong is answering "build it from these" with a directory of docs.
+ */
+function SuggestedComponents({
+  token,
+  projectId,
+  workspaceId,
+}: {
+  token: string;
+  projectId: string;
+  workspaceId: string;
+}) {
+  const [plan, setPlan] = useState<PlanRow[] | null>(null);
+  const [docCount, setDocCount] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const suggest = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const [docs, components, profs, vocab] = await Promise.all([
+        api.projectDocuments(token, workspaceId, projectId),
+        api.listComponents(token),
+        api
+          .listComponentProfiles(token)
+          .catch(() => ({ nodes: [] as CatalogNode[] })),
+        api.capabilities(token, workspaceId),
+      ]);
+      // Every capability the project's documents declare, deduplicated and in
+      // the order they were first met. The server indexes these from front
+      // matter on every write, so this is a read, not a parse.
+      const caps: string[] = [];
+      let seen = 0;
+      for (const doc of docs.items) {
+        if (!doc.capabilities?.length) continue;
+        seen += 1;
+        for (const cap of doc.capabilities) if (!caps.includes(cap)) caps.push(cap);
+      }
+      setDocCount(seen);
+      setPlan(composePlan(caps, components.nodes ?? [], profilesByName(profs.nodes ?? []), vocab.items ?? []));
+    } catch (cause) {
+      setError(errText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const built = plan?.flatMap((r) => r.candidates).filter((c) => c.built !== "docs-only").length ?? 0;
+  const gaps = plan?.filter((r) => r.gap).length ?? 0;
+  const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
+
+  return (
+    <section className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <div>
+          <h2>Suggested from your documents</h2>
+          <p className="subtitle">
+            The capabilities this project&apos;s documents declare, matched against the component
+            catalogue. Components that have been built come first.
+          </p>
+        </div>
+        <button className="ghost" onClick={() => void suggest()} disabled={busy}>
+          {busy ? "Matching…" : plan ? "Refresh" : "Suggest"}
+        </button>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      {plan !== null &&
+        (plan.length === 0 ? (
+          <p className="empty" style={{ fontSize: 13 }}>
+            {docCount === 0
+              ? "No document in this project declares a capability yet. Fill a spec's questionnaire and the capabilities land in its front matter — this reads them from there."
+              : "The documents declare no capabilities to match."}
+          </p>
+        ) : (
+          <>
+            <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
+              {plan.length} capabilit{plan.length === 1 ? "y" : "ies"} from {docCount} document
+              {docCount === 1 ? "" : "s"} · {built} built candidate{built === 1 ? "" : "s"} ·{" "}
+              {unbuilt} with nothing built yet · {gaps} with nothing at all.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {plan.map((row) => (
+                <div
+                  key={row.capability}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
+                    {row.gap && (
+                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
+                        NOTHING IN THE CATALOGUE
+                      </span>
+                    )}
+                    {row.unbuilt && (
+                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
+                        NOTHING BUILT YET
+                      </span>
+                    )}
+                  </div>
+                  {row.candidates.length > 0 && (
+                    <div
+                      style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}
+                    >
+                      {row.candidates.map((c) => (
+                        <span
+                          key={c.name}
+                          title={
+                            `matched: ${c.why.join(", ")}` +
+                            (c.built === "docs-only"
+                              ? " · the catalogue found no crate under this component — docs and a manifest only"
+                              : "")
+                          }
+                          style={{
+                            fontSize: 11,
+                            border: "1px solid var(--border)",
+                            borderRadius: 999,
+                            padding: "2px 8px",
+                            opacity: c.built === "docs-only" ? 0.6 : 1,
+                          }}
+                        >
+                          <b>{c.name.replace(/^cf-gears-/, "").replace(/^@[^/]+\//, "")}</b>
+                          <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                          {c.built === "docs-only" && (
+                            <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        ))}
     </section>
   );
 }
