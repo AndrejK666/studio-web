@@ -58,10 +58,27 @@ Three, provisioned into the **Studio** folder from `grafana/dashboards/*.json`:
 | `studio-edge` | Traefik: request rate, status classes, per-service rate and errors, latency percentiles, exporter health. |
 | `studio-postgres` | CNPG: instances up, backends, cache hit ratio, longest transaction, commits/rollbacks, database sizes, replication lag, lock waits. |
 
+All three carry the same **Namespace** dropdown, so one choice of environment
+follows you between them — Grafana keeps a variable's value across dashboards
+when the name matches. On Resources and Postgres it reads the `namespace` label
+directly; on Edge it cannot, because Traefik's metrics come from Traefik's own
+namespace, so the list is lifted out of the service id
+(`studio-dev-studio-studio-web-backend-http@kubernetes`) by a capture group.
+Three panels there stay cluster-wide and say so in their titles: the entrypoint
+connection count and the exporter's own `up` carry no service label to filter
+on.
+
 `make dashboards` rebuilds the `studio-dashboards` ConfigMap from those files;
 the file provider re-reads the directory every 30 s, so no restart is needed.
-Editing a dashboard in the browser is a scratchpad — the provider owns the files
-and a restart discards whatever the UI saved.
+
+**Nothing is lost when Grafana dies.** `persistence` is off, the dashboards are
+files in this repository mounted as a ConfigMap, and the datasource is
+provisioned from `values.yaml` — a deleted pod comes back identical. The
+corollary is the part that surprises people: editing a dashboard in the browser
+is a scratchpad. The provider runs with `allowUiUpdates: false`, so the UI's
+save button changes nothing that survives a restart. To change a board, edit
+the JSON here and run `make dashboards`; to keep an experiment made in the
+browser, export its JSON from the share menu and commit it.
 
 Two things this arrangement buys, both learned the hard way elsewhere:
 
@@ -188,27 +205,44 @@ URIs cover the port-forward, so the whole flow works today without any public
 hostname. The client is **public, with PKCE** — the same shape `studio-portal`
 uses — so there is no client secret anywhere to seal, rotate, or leak.
 
-**The Ingress is not**, and cannot be from this repository. Both routes out are
-blocked by things the cluster owns:
+### The hostname: `monitoring.cfabric.org`
 
-- *A subdomain* needs a Cloudflare record. There is no wildcard DNS — of
-  `grafana.studio-dev.cfabric.org`, `grafana-dev.cfabric.org` and
-  `monitoring.cfabric.org`, none resolve; only `studio-dev.cfabric.org` does,
-  through Cloudflare, where TLS also terminates. The cluster has no cert-manager
-  `Issuer` and the product's own Ingress carries no `tls` block, which is why
-  the ingress values here have neither.
-- *A path on the existing host* looked free, since Keycloak already answers at
-  `/auth` on that very hostname. It is not: Traefik runs with
-  `--providers.kubernetesingress.namespaces=studio-dev,studio-test`. An Ingress
-  in `studio-monitoring` is simply invisible to it, an Ingress cannot point at a
-  Service in another namespace, and `allowExternalNameServices` is off. The
-  symptom is worth remembering — the frontend SPA answers `200` on every path,
-  so `/grafana/api/health` returned HTML and looked like a working route.
+Everything on this side is prepared and committed — `ingress.enabled: true`,
+`ingress.hosts`, `grafana.ini.server.domain`, `root_url`, and the redirect URI
+and web origin on the `grafana` client in `keycloak/realm-studio.json`.
 
-When one of them is unblocked, set `ingress.hosts` **and**
-`grafana.ini.server.domain` to the host, and add the matching redirect URI to
-the `grafana` client. Setting only one of the two sends the OAuth round trip to
-a URL nobody serves.
+**Two things outside this repository have to land before it answers**, and
+they were requested together because either alone is worse than neither:
+
+1. **A DNS record for `monitoring.cfabric.org`.** There is no wildcard, so the
+   name must exist on its own — of `grafana.studio-dev.cfabric.org`,
+   `grafana-dev.cfabric.org` and `monitoring.cfabric.org`, none resolved when
+   this was written. The origin is the Traefik LoadBalancer, `188.42.240.112`,
+   the same entry the product's hostnames use, with Cloudflare in front
+   terminating TLS. The cluster has no cert-manager `Issuer`, which is why the
+   ingress values here carry no `tls` block and no annotations — the
+   certificate was never ours to request.
+
+2. **`studio-monitoring` added to the cluster Traefik's
+   `--providers.kubernetesingress.namespaces`**, which reads
+   `studio-dev,studio-test` today. Until it does, the Ingress object exists and
+   Traefik cannot see it. That is a one-line change to a cluster-wide Traefik
+   release this repository does not own.
+
+The name is deliberately environment-neutral. One Grafana serves studio-dev and
+studio-test, so `grafana.studio-dev…` would misdescribe what it shows, and
+"monitoring" outlives the tool — the `grafana/grafana` chart is flagged
+deprecated upstream and the name should survive replacing it.
+
+A path on the existing host was considered and does not work: an Ingress cannot
+point at a Service in another namespace and `allowExternalNameServices` is off.
+The symptom is worth remembering either way — the frontend SPA answers `200` on
+every path, so `/grafana/api/health` returned HTML and looked like a working
+route.
+
+**The port-forward keeps working** after the hostname lands. Its redirect URIs
+stay on the `grafana` client alongside the new one, so the Keycloak button
+works both ways.
 
 ### Keeping the realm and this repository in step
 

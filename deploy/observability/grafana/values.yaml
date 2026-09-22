@@ -42,13 +42,38 @@ service:
 # NB when it is unblocked: a subdomain serves Grafana at the root, so leave
 # `serve_from_sub_path` alone; only a path-based host needs it.
 ingress:
-  enabled: false
+  # ON, and it does nothing until TWO things outside this repository happen.
+  # Both were requested together, because either alone is worse than neither:
+  #
+  #   1. A DNS record for `monitoring.cfabric.org`. There is no wildcard, so
+  #      this name has to exist on its own; the origin is the Traefik
+  #      LoadBalancer (188.42.240.112), same as the product's hostnames, with
+  #      Cloudflare in front terminating TLS.
+  #
+  #   2. `studio-monitoring` added to the cluster Traefik's
+  #      `--providers.kubernetesingress.namespaces`, which today reads
+  #      `studio-dev,studio-test`. Until it does, this Ingress object exists
+  #      and Traefik cannot see it.
+  #
+  # Without (2) the failure is quiet rather than loud, which is why it is
+  # written here: the product's SPA answers 200 on every path, so a request
+  # that lands on the wrong route comes back looking like a working page.
+  enabled: true
   ingressClassName: traefik
   # Set this AND `grafana.ini.server.domain` to the same name — setting only
   # one sends the OAuth redirect to a host nobody is listening on.
-  hosts: []
+  #
+  # Environment-NEUTRAL on purpose: one Grafana serves studio-dev and
+  # studio-test, and a name like `grafana.studio-dev…` would misdescribe what
+  # it shows. It also outlives the tool — the `grafana/grafana` chart is
+  # flagged deprecated upstream, and "monitoring" survives replacing it.
+  hosts:
+    - monitoring.cfabric.org
   path: /
   pathType: Prefix
+  # No `tls` block and no cert-manager annotations: TLS terminates at
+  # Cloudflare, exactly as it does for the product's own Ingress. The
+  # certificate was never ours to request.
   tls: []
 
 # The chart generates an admin password into the `grafana` Secret on first
@@ -146,10 +171,18 @@ grafana.ini:
     allow_sign_up: false
   server:
     # Must match the address the browser actually uses, or the OAuth round trip
-    # returns to a URL nobody is listening on. `localhost` is correct while the
-    # way in is the port-forward; change it together with `ingress.hosts`.
-    domain: localhost
-    root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+    # returns to a URL nobody is listening on. Changed together with
+    # `ingress.hosts`, which is the only way these two stay consistent.
+    domain: monitoring.cfabric.org
+    # Spelled out rather than built from `%(protocol)s` and `%(http_port)s`:
+    # Grafana itself serves plain HTTP on 3000 behind Cloudflare, so the
+    # computed value would be `http://monitoring.cfabric.org:3000/` — which is
+    # what it sees, not what the browser used, and OAuth would return there.
+    root_url: "https://monitoring.cfabric.org/"
+    # The port-forward stays a supported way in (`kubectl -n studio-monitoring
+    # port-forward svc/grafana 3000:80`). Local sign-in works there regardless;
+    # the Keycloak button needs the localhost redirect URIs, which the realm
+    # keeps alongside the new host — see keycloak/realm-studio.json.
   auth:
     # The local admin login stays available as a break-glass path — SSO that
     # cannot be bypassed is also SSO that locks you out when the IdP is the

@@ -7,7 +7,22 @@
   "schemaVersion": 39,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "vm" },
+        "query": "label_values(traefik_service_requests_total, service)",
+        "regex": "/^(studio-[a-z]+)-/",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "studio-dev", "value": "studio-dev" }
+      }
+    ]
+  },
   "panels": [
     {
       "type": "stat",
@@ -20,7 +35,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum(rate(traefik_entrypoint_requests_total[5m]))"
+          "expr": "sum(rate(traefik_service_requests_total{service=~\"$namespace-.*\"}[5m]))"
         }
       ]
     },
@@ -50,7 +65,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum(rate(traefik_service_requests_total{code=~\"5..\"}[5m])) / clamp_min(sum(rate(traefik_service_requests_total[5m])), 0.001)"
+          "expr": "sum(rate(traefik_service_requests_total{service=~\"$namespace-.*\", code=~\"5..\"}[5m])) / clamp_min(sum(rate(traefik_service_requests_total{service=~\"$namespace-.*\"}[5m])), 0.001)"
         }
       ]
     },
@@ -66,13 +81,13 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket[15m])))"
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{service=~\"$namespace-.*\"}[15m])))"
         }
       ]
     },
     {
       "type": "stat",
-      "title": "Open connections",
+      "title": "Open connections (cluster-wide)",
       "datasource": { "type": "prometheus", "uid": "vm" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
@@ -102,7 +117,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum by (code) (rate(traefik_service_requests_total[5m]))",
+          "expr": "sum by (code) (rate(traefik_service_requests_total{service=~\"$namespace-.*\"}[5m]))",
           "legendFormat": "{{code}}"
         }
       ]
@@ -125,7 +140,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum by (service) (rate(traefik_service_requests_total[5m]))",
+          "expr": "sum by (service) (rate(traefik_service_requests_total{service=~\"$namespace-.*\"}[5m]))",
           "legendFormat": "{{service}}"
         }
       ]
@@ -147,13 +162,13 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "histogram_quantile(0.50, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket[15m])))",
+          "expr": "histogram_quantile(0.50, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket{service=~\"$namespace-.*\"}[15m])))",
           "legendFormat": "p50 {{service}}"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket[15m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(traefik_service_request_duration_seconds_bucket{service=~\"$namespace-.*\"}[15m])))",
           "legendFormat": "p99 {{service}}"
         }
       ]
@@ -176,20 +191,20 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"4..\"}[5m]))",
+          "expr": "sum by (service) (rate(traefik_service_requests_total{service=~\"$namespace-.*\", code=~\"4..\"}[5m]))",
           "legendFormat": "4xx {{service}}"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "vm" },
-          "expr": "sum by (service) (rate(traefik_service_requests_total{code=~\"5..\"}[5m]))",
+          "expr": "sum by (service) (rate(traefik_service_requests_total{service=~\"$namespace-.*\", code=~\"5..\"}[5m]))",
           "legendFormat": "5xx {{service}}"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Traefik exporter up",
+      "title": "Traefik exporter up (cluster-wide)",
       "description": "An instant view per pod: a replaced replica drops off the graph instead of showing as falsely up.",
       "datasource": { "type": "prometheus", "uid": "vm" },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 22 },
