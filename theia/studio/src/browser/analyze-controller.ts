@@ -471,17 +471,43 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         return undefined;
     }
 
+    /**
+     * A widget's text editor, if that is what it has.
+     *
+     * THE FIRST BRANCH USED TO TRUST THE NAME. `if (editorLike.editor) return
+     * editorLike.editor` accepts whatever a widget happens to call `editor`,
+     * and the caller immediately reads `.document.uri` off it — so a widget
+     * whose `editor` is something else throws `Cannot read properties of
+     * undefined (reading 'uri')`. The product has exactly such a widget: the
+     * Markdown editor's `this.editor` is a TipTap `Editor`, which keeps its
+     * document at `state.doc` and has no `document` at all.
+     *
+     * It threw on every activation of a Markdown tab, which is most of what
+     * this product opens — nine times in one session on the dev stand, from
+     * `onActiveChanged`. Nothing downstream noticed, because the throw
+     * happened before there was anything to notice with.
+     *
+     * So both branches now ask the same question, which is the one the second
+     * branch was already asking: does this thing have a `document` and can it
+     * report a change to it? A Markdown widget answers no and is left alone —
+     * it is not a `TextEditor`, and it was never going to be analyzed as one.
+     */
     protected normalizeTextEditor(candidate: unknown): TextEditor | undefined {
         if (!candidate || typeof candidate !== 'object') {
             return undefined;
         }
-        const editorLike = candidate as EditorLike & { readonly editor?: TextEditor };
-        if (editorLike.editor) {
-            return editorLike.editor;
+        const editorLike = candidate as EditorLike & { readonly editor?: unknown };
+        return this.asTextEditor(editorLike.editor) ?? this.asTextEditor(candidate);
+    }
+
+    /** A `TextEditor` by what it carries, never by what it is called. */
+    protected asTextEditor(candidate: unknown): TextEditor | undefined {
+        if (!candidate || typeof candidate !== 'object') {
+            return undefined;
         }
-        if (editorLike.document && typeof editorLike.onDocumentContentChanged === 'function') {
-            return candidate as TextEditor;
-        }
-        return undefined;
+        const editorLike = candidate as EditorLike;
+        return editorLike.document && typeof editorLike.onDocumentContentChanged === 'function'
+            ? (candidate as TextEditor)
+            : undefined;
     }
 }
