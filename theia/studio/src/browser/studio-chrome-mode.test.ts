@@ -36,19 +36,50 @@ describe('the chrome a mode implies', () => {
         expect(document.body.dataset.studioMode).toBe('workbench');
     });
 
-    it('takes the menu bar away while writing, but keeps the row it was in', async () => {
+    it('keeps the menu while writing too, and drops only the second app icon', async () => {
         const { contribution, preferences } = chrome('studio.documents');
         contribution.onDidInitializeLayout();
         await Promise.resolve();
         const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
 
-        // The panel stays in the LAYOUT in both modes now: the collaboration
-        // strip mounts into it, and a panel Theia has hidden paints nothing
-        // however many heartbeats the strip runs.
         expect(preferences.set).toHaveBeenCalledWith('window.menuBarVisibility', 'classic', expect.anything());
         expect(document.body.dataset.studioMode).toBe('documents');
-        expect(css).toContain('body[data-studio-mode="documents"] #theia-top-panel > .lm-MenuBar');
+        // The portal's branding sits directly above this row; Theia's own icon
+        // would be the second one.
+        expect(css).toContain('body[data-studio-mode="documents"] #theia-top-panel > .theia-icon');
+        // And the menu itself is NOT hidden any more — the row is paid for
+        // either way, so taking File and Terminal out of it buys nothing back.
+        expect(css).not.toContain('.lm-MenuBar');
     });
+
+    /* The collaboration strip has no test of its own here because it is not
+       this file's widget — but it is this file's two levers, and it was shipped
+       invisible because nothing asserted them together. It mounts into the top
+       panel (`area: 'top'`), so it needs that panel IN the layout, which only
+       `window.menuBarVisibility` decides, and PAINTED, which only this
+       stylesheet decides against the product's blanket `display: none`. Either
+       one alone leaves a strip that polls a roster every four seconds and shows
+       nobody anything. */
+    it.each(['default', 'studio.documents'])(
+        'keeps the top panel in the layout and painted, for the strip that lives there (%s)',
+        async activeId => {
+            const { contribution, preferences } = chrome(activeId);
+            contribution.onDidInitializeLayout();
+            await Promise.resolve();
+            const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+            const mode = document.body.dataset.studioMode;
+
+            expect(preferences.set).toHaveBeenCalledWith(
+                'window.menuBarVisibility',
+                'classic',
+                expect.anything(),
+            );
+            expect(css).toContain(`body[data-studio-mode="${mode}"] #theia-top-panel`);
+            expect(css).toContain('display: flex !important');
+            // Nothing may hide the panel itself — only what sits inside it.
+            expect(css).not.toMatch(/#theia-top-panel\s*\{\s*display:\s*none/);
+        },
+    );
 
     it('follows a switch', async () => {
         const { contribution, perspectives, preferences, listeners } = chrome('default');
