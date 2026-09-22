@@ -37,11 +37,32 @@ describe("scaffoldGear", () => {
     ]);
   });
 
+  it("writes the manifest shape every gear in gears-rust actually has", () => {
+    // One `[gear]` table and nothing above it. The skeleton used to write bare
+    // top-level keys, a `[plugins]` table and a `capabilities` array, and no
+    // real manifest is shaped that way -- so the one file a scaffolded gear is
+    // judged by was the one file that did not look like its neighbours.
+    const toml = scaffoldGear("Audit Log", "Studio").files.find((f) =>
+      f.path.endsWith("gear.toml"),
+    )!.content;
+    expect(toml.startsWith("[gear]\n")).toBe(true);
+    // A human name, not the crate: it is what a person reads in the catalogue.
+    expect(toml).toContain('name = "Audit Log"');
+    expect(toml).toContain("is_plugin = false");
+    expect(toml).toContain("has_plugins = false");
+    expect(toml).toContain("has_extension_point = false");
+    expect(toml).not.toContain("[plugins]");
+    expect(toml).not.toContain("capabilities =");
+  });
+
   it("names the crate and the gear struct from the slug, not the raw input", () => {
+    // The crate's name lives in Cargo.toml. `gear.toml` carries the human one
+    // — that is the split every gear in gears-rust has, and the catalogue reads
+    // the manifest for what to show a person.
     const s = scaffoldGear("Audit Log", "Studio");
-    const toml = s.files.find((f) => f.path.endsWith("gear.toml"))!.content;
+    const cargo = s.files.find((f) => f.path.endsWith("Cargo.toml"))!.content;
     const lib = s.files.find((f) => f.path.endsWith("lib.rs"))!.content;
-    expect(toml).toContain('name = "cf-gears-audit-log"');
+    expect(cargo).toContain('name = "cf-gears-audit-log"');
     expect(lib).toContain("pub struct AuditLogGear;");
   });
 

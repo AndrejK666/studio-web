@@ -960,17 +960,34 @@ fn parse_gear_toml(body: &str) -> GearToml {
         category: None,
         plugins: None,
     };
-    let mut in_top = true;
+    // `[gear]` counts as the top level.
+    //
+    // This used to stop reading at the first `[` of any kind, and every gear in
+    // `gears-rust` puts its whole manifest under a `[gear]` table -- so the
+    // catalogue read NOTHING out of any of them. Nineteen of the forty-two
+    // gears scanned from that repository had no description at all, and the
+    // twenty-three that did had it from crates.io rather than from the file
+    // that states it: `gears/bss/ledger/gear.toml` says "Append-only
+    // double-entry subledger for financially material movements and balances"
+    // and the catalogue showed an empty cell.
+    //
+    // It matters beyond the cell. Matching a product's capabilities against the
+    // catalogue scores a component on its name, description, keywords and
+    // categories (`compose.ts`), so a gear with none of them could only ever be
+    // found by its own name.
+    let mut readable = true;
     for raw in body.lines() {
         let line = raw.trim();
         if line.starts_with('[') {
             if line.starts_with("[plugins") || line.starts_with("[[plugins") {
                 out.plugins = Some(true);
             }
-            in_top = false;
+            // Any other table is somebody else's keys -- `[dependencies]` has a
+            // `description` about as often as not.
+            readable = line.starts_with("[gear]");
             continue;
         }
-        if !in_top || line.is_empty() || line.starts_with('#') {
+        if !readable || line.is_empty() || line.starts_with('#') {
             continue;
         }
         let Some((k, v)) = line.split_once('=') else {
@@ -1207,6 +1224,77 @@ fn toml_string(body: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `gears/bss/ledger/gear.toml`, verbatim. Every gear in `gears-rust` is
+    /// shaped like this -- a `[gear]` table and nothing above it -- which is
+    /// the case the parser used to read nothing out of.
+    const LEDGER_GEAR_TOML: &str = r#"[gear]
+name = "Billing Ledger"
+description = "Append-only double-entry subledger for financially material movements and balances."
+category = "bss"
+is_plugin = false
+has_plugins = false
+has_extension_point = false
+"#;
+
+    #[test]
+    fn a_manifest_under_a_gear_table_is_read() {
+        let parsed = parse_gear_toml(LEDGER_GEAR_TOML);
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some(
+                "Append-only double-entry subledger for financially material movements and balances."
+            )
+        );
+        assert_eq!(parsed.category.as_deref(), Some("bss"));
+        assert_eq!(parsed.plugins, Some(false));
+    }
+
+    #[test]
+    fn a_manifest_with_bare_top_level_keys_is_still_read() {
+        // The shape the parser was written for, and the one the prototype's own
+        // scaffold writes. Both have to work.
+        let parsed = parse_gear_toml(
+            "description = \"A flat one.\"
+category = \"platform\"
+
+[plugins]
+declared = false
+",
+        );
+        assert_eq!(parsed.description.as_deref(), Some("A flat one."));
+        assert_eq!(parsed.category.as_deref(), Some("platform"));
+        assert_eq!(parsed.plugins, Some(true));
+    }
+
+    #[test]
+    fn another_tables_description_is_not_the_gears() {
+        // `[package]` and `[dependencies]` carry a `description` about as often
+        // as not, and reading one would put a crate's blurb on the gear.
+        let parsed = parse_gear_toml(
+            "[gear]
+description = \"The gear.\"
+
+[package]
+description = \"The crate.\"
+category = \"wrong\"
+",
+        );
+        assert_eq!(parsed.description.as_deref(), Some("The gear."));
+        assert_eq!(parsed.category, None);
+    }
+
+    #[test]
+    fn a_gear_that_declares_plugins_says_so_from_inside_its_table() {
+        let parsed = parse_gear_toml(
+            "[gear]
+name = \"Credentials Store\"
+has_plugins = true
+has_extension_point = true
+",
+        );
+        assert_eq!(parsed.plugins, Some(true));
+    }
 
     /// Every `package.json` in `constructorfabric/gears-frontx` at `develop`,
     /// as the git trees API returns it (verbatim, minus `node_modules`), plus a

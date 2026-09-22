@@ -39,16 +39,27 @@ export function scaffoldGear(
   const slug = gearSlug(capability);
   const crate = `cf-gears-${slug}`;
   const Gear = `${pascal(slug)}Gear`;
+  /** `audit-log` -> `Audit Log`: the manifest's `name` is what a person reads
+   *  in the catalogue, not the crate. */
+  const title = slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const origin = opts?.origin ?? "Scaffolded from an App Spec gap.";
   const problem =
     opts?.problem?.trim() ||
     `${appTitle} needs the \`${capability}\` capability, and no catalogued component provides it.`;
+  // The shape every gear in `gears-rust` actually has: one `[gear]` table, a
+  // HUMAN name rather than the crate's, and the three plugin booleans. The
+  // skeleton used to write bare top-level keys plus a `[plugins]` table and a
+  // `capabilities` array, and no real manifest is shaped that way -- which made
+  // the one file a scaffolded gear is judged by the one file that did not look
+  // like its neighbours.
   const gearToml =
-    `name = "${crate}"\n` +
+    `[gear]\n` +
+    `name = "${title}"\n` +
     `description = "${capability} capability for ${appTitle}. ${origin}"\n` +
     `category = "platform"\n` +
-    `capabilities = ["${capability}"]\n\n` +
-    `[plugins]\ndeclared = false\n`;
+    `is_plugin = false\n` +
+    `has_plugins = false\n` +
+    `has_extension_point = false\n`;
   const cargoToml =
     `[package]\nname = "${crate}"\nversion = "0.1.0"\nedition = "2021"\n\n` +
     `[dependencies]\ntoolkit = { workspace = true }\nasync-trait = { workspace = true }\nanyhow = { workspace = true }\n`;
