@@ -119,3 +119,72 @@ describe("SSO session renewal", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/* ── Where sign-in sends you, and where it brings you back ──────────────────
+ *
+ * Two ends of one bug. `redirect_uri` was
+ * `new URL(import.meta.env.BASE_URL, location.href)`, and `BASE_URL` is `./`,
+ * which resolves against the DIRECTORY of the current address — so signing in
+ * with a project open asked Keycloak to return to `/space/`, a path the portal
+ * has no route for, and the tab sat blank. Signing in from the portal root
+ * worked, which is what made it look like a puzzle rather than one wrong line.
+ */
+describe("where sign-in sends you", () => {
+  let tab: Storage;
+  let location: { href: string; pathname: string; search: string; hash: string };
+
+  function at(href: string) {
+    const url = new URL(href);
+    location = { href, pathname: url.pathname, search: url.search, hash: url.hash };
+    vi.stubGlobal("window", { location, history: { replaceState: vi.fn() } });
+    vi.stubGlobal("location", location);
+  }
+
+  beforeEach(() => {
+    tab = memoryStorage();
+    vi.stubGlobal("sessionStorage", tab);
+    vi.stubGlobal("localStorage", memoryStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The authorization request this tab was sent to. */
+  async function authorize(): Promise<URLSearchParams> {
+    const { startSsoLogin } = await import("./oidc");
+    await startSsoLogin();
+    return new URL(location.href).searchParams;
+  }
+
+  it("returns to the application root, not to the open project", async () => {
+    at("https://studio-dev-poc.cfabric.org/space/01d89b55-aef7-4ca4-921a-7a4d472b3455");
+
+    expect((await authorize()).get("redirect_uri")).toBe("https://studio-dev-poc.cfabric.org/");
+  });
+
+  it("answers the same root with no project open", async () => {
+    at("https://studio-dev-poc.cfabric.org/");
+
+    expect((await authorize()).get("redirect_uri")).toBe("https://studio-dev-poc.cfabric.org/");
+  });
+
+  it("keeps a nested mount, which is why the root is read from the address", async () => {
+    // One image serves the dedicated POC host and the legacy nested mount, so
+    // the root cannot be a constant — only the route may be taken off it.
+    at("https://legacy.example/prototype/space/01d89b55-aef7-4ca4-921a-7a4d472b3455");
+
+    expect((await authorize()).get("redirect_uri")).toBe("https://legacy.example/prototype/");
+  });
+
+  it("carries the way back in `state`, which the redirect_uri can no longer hold", async () => {
+    at("https://studio-dev-poc.cfabric.org/space/01d89b55-aef7-4ca4-921a-7a4d472b3455");
+
+    const state = (await authorize()).get("state");
+    expect(state).toBeTruthy();
+    expect(JSON.parse(tab.getItem("studio.oidc.return") ?? "{}")).toEqual({
+      state,
+      path: "/space/01d89b55-aef7-4ca4-921a-7a4d472b3455",
+    });
+  });
+});
