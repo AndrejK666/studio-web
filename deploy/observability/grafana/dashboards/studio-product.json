@@ -556,7 +556,7 @@
     {
       "type": "timeseries",
       "title": "Slow for them (p95)",
-      "description": "95th percentile per surface. The long-lived streams are excluded along with health, so this is ordinary request latency.",
+      "description": "95th percentile per surface, top 5 — the shape over time. For the ranking with traffic beside it, read the table below. Long-lived streams are excluded along with health, so this is ordinary request latency.",
       "datasource": {
         "type": "prometheus",
         "uid": "vm"
@@ -597,7 +597,7 @@
             "uid": "vm"
           },
           "editorMode": "code",
-          "expr": "topk(8, histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route!~\"/cf/(health|docs.*)\", http_route!~\".*/studio-events/v1/stream|.*/studio-session/v1/ide.*\"}[1h]))))",
+          "expr": "topk(5, histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route!~\"/cf/(health|docs.*)\", http_route!~\".*/studio-events/v1/stream|.*/studio-session/v1/ide.*\"}[1h]))))",
           "legendFormat": "{{http_route}}"
         }
       ]
@@ -699,6 +699,363 @@
           "legendFormat": "{{sharing}}"
         }
       ]
+    },
+    {
+      "type": "table",
+      "title": "Slowest surfaces (24h)",
+      "description": "The same latency as the graph beside it, read the way you actually ask the question: what is slow, and does anybody hit it. A tail on an endpoint nobody calls is a bug to file; the same tail on a hot one is an incident. Sorted by p95 over 24h, so it is stable enough to act on.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 3
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "req/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "p95",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (http_route, le) (rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route!~\"/cf/(health|docs.*)\", http_route!~\".*/studio-events/v1/stream|.*/studio-session/v1/ide.*\"}[24h])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (http_route, le) (rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route!~\"/cf/(health|docs.*)\", http_route!~\".*/studio-events/v1/stream|.*/studio-session/v1/ide.*\"}[24h])))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{env=~\"$env\", http_route!~\"/cf/(health|docs.*)\", http_route!~\".*/studio-events/v1/stream|.*/studio-session/v1/ide.*\"}[24h]))",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "http_route",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true
+            },
+            "renameByName": {
+              "http_route": "surface",
+              "Value #A": "p95",
+              "Value #B": "p99",
+              "Value #C": "req/s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Worst CPU throttling",
+      "description": "The highest share of CPU periods any container in this environment spent throttled. This is the first thing to rule out when something is slow, because a throttled container looks exactly like slow code. Anything under a few per cent is normal scheduling noise, not a limit that is too low. Per-container detail is on Studio / Resources.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 8,
+        "x": 16,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "max(sum by (container) (rate(container_cpu_cfs_throttled_periods_total{job=\"kubelet-cadvisor\", namespace=~\"studio-($env)\", container!=\"\"}[5m])) / clamp_min(sum by (container) (rate(container_cpu_cfs_periods_total{job=\"kubelet-cadvisor\", namespace=~\"studio-($env)\", container!=\"\"}[5m])), 1))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Closest to its memory limit",
+      "description": "The container with the least memory headroom, as a share of its own limit. Past 100% the kubelet kills it, and the symptom reaching a user is a request that never answers rather than an error. Per-pod detail is on Studio / Resources.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.85
+              },
+              {
+                "color": "red",
+                "value": 0.95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "max(sum by (pod, container) (container_memory_working_set_bytes{job=\"kubelet-cadvisor\", namespace=~\"studio-($env)\", container!=\"\"}) / on(pod, container) group_left sum by (pod, container) (kube_pod_container_resource_limits{resource=\"memory\", namespace=~\"studio-($env)\"}))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Restarts (24h)",
+      "description": "Container restarts in this environment over 24 hours. Zero is the expected reading. Anything else means somebody's session, request or sync was cut off, whatever the dashboards above say about averages.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"studio-($env)\"}[24h]))"
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "title": "Studio / Resources",
+      "type": "dashboards",
+      "tags": [
+        "studio"
+      ],
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
     }
   ]
 }
