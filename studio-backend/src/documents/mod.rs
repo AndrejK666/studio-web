@@ -26,6 +26,7 @@ mod repo;
 mod repo_tests;
 mod rest;
 mod service;
+mod spec_rows;
 mod validate;
 
 use std::sync::{Arc, OnceLock};

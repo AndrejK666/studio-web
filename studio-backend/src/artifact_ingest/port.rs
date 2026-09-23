@@ -70,3 +70,45 @@ pub trait ArtifactCounter: Send + Sync + 'static {
         scope: &str,
     ) -> anyhow::Result<u32>;
 }
+
+/// One ingested file, as a screen listing a project's specs needs it.
+///
+/// Four fields out of a node that carries far more: enough to show the row and
+/// to match a later scan back to it, and nothing that would make this a second
+/// spelling of the artifact DTO.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngestedFile {
+    /// Graph instance id — what a binding and a finding are keyed on.
+    pub node_id: String,
+    /// Repo-relative path.
+    pub path: String,
+    /// The repository it came from, for the provenance column. Empty when the
+    /// sync did not record one.
+    pub repo: String,
+}
+
+/// The files a sync ingested, for the gear that decides what they are.
+///
+/// WHY THIS EXISTS, like [`ArtifactCounter`] beside it. The Specs screen built
+/// this list in the browser: `GET /v1/nodes?type=file` in a loop over every
+/// page, for the sole purpose of finding which files nothing has classified
+/// yet and which repository each came from. The projection cannot narrow by a
+/// payload field, so each of those pages is a slice of the tenant's whole
+/// typed node set — the same walk the portfolio was paying for, this time once
+/// per page rather than once per row.
+///
+/// Through here it is one projection read in this process, against the cache
+/// the ingest gear already holds.
+#[async_trait]
+pub trait ArtifactFiles: Send + Sync + 'static {
+    /// Every `file` node whose payload names `scope` as its workspace or its
+    /// project, directories excluded.
+    ///
+    /// `Ok(files)` is the list. An `Err` means it is UNKNOWN — a caller must
+    /// not render that as "this project has no files".
+    async fn list_files(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<IngestedFile>>;
+}
