@@ -285,6 +285,18 @@ pub struct GearboxStatusDto {
     pub problem: Option<String>,
 }
 
+/// Save what a project's product is made of. Every field is optional and
+/// merged: the picks change as a person clicks, the profile separately.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SaveProjectProductRequest {
+    pub product_id: Option<String>,
+    pub name: Option<String>,
+    /// Crate names (`cf-gears-api-gateway`) or engine ids.
+    pub gears: Option<Vec<String>>,
+    pub profile: Option<String>,
+}
+
 /// Compose a product from picked gears and ask the engine about it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -356,7 +368,7 @@ pub struct GearboxGearDto {
 #[toolkit_macros::api_dto(response)]
 pub struct GearboxPluginOptionDto {
     pub host: String,
-    /// Engine ids; send one back in `gears` to pick it.
+    /// Crate names, like every other pick; send one back in `gears`.
     pub available: Vec<String>,
 }
 
@@ -922,6 +934,72 @@ async fn scaffold_gear(
     }))
 }
 
+async fn get_project_product(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
+    let node = catalog
+        .service
+        .get_project_product(&ctx, &project_id.to_string())
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(CatalogNodeListResponse {
+        nodes: to_dtos(node.into_iter().collect()),
+        truncated: false,
+    }))
+}
+
+async fn save_project_product(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(project_id): Path<Uuid>,
+    Json(body): Json<SaveProjectProductRequest>,
+) -> ApiResult<JsonBody<CatalogNodeDto>> {
+    let invalid = |msg: String| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(msg)
+            .create()
+    };
+    let mut patch = serde_json::Map::new();
+    if let Some(id) = body.product_id {
+        if !super::gearbox::is_kebab_id(&id) {
+            return Err(invalid(format!("product id `{id}` is not a kebab-case id")));
+        }
+        patch.insert("product_id".into(), id.into());
+    }
+    if let Some(name) = body.name {
+        patch.insert("name".into(), name.into());
+    }
+    if let Some(gears) = body.gears {
+        let gears: Vec<String> = gears
+            .into_iter()
+            .map(|g| g.trim().to_string())
+            .filter(|g| !g.is_empty())
+            .collect();
+        patch.insert("gears".into(), serde_json::json!(gears));
+    }
+    if let Some(profile) = body.profile {
+        if !PROFILES.contains(&profile.as_str()) {
+            return Err(invalid(format!(
+                "profile `{profile}` is not one of {}",
+                PROFILES.join(", ")
+            )));
+        }
+        patch.insert("profile".into(), profile.into());
+    }
+    let node = catalog
+        .service
+        .update_project_product(&ctx, &project_id.to_string(), patch)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let dto = to_dtos(vec![node])
+        .into_iter()
+        .next()
+        .expect("one node converts to one DTO");
+    Ok(Json(dto))
+}
+
 async fn gearbox_status(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<GearboxStatusDto>> {
@@ -973,6 +1051,7 @@ async fn preview_product(
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| body.product_id.clone());
+    let name_for_record = name.clone();
     let preview = gearbox
         .preview(PreviewInput {
             product_id: body.product_id.clone(),
@@ -1028,6 +1107,48 @@ async fn preview_product(
     };
 
     let r = preview.resolution;
+
+    // The preview is the project's product now: what was asked, what the
+    // engine said, and where it was saved. Recorded on every run, so the
+    // project remembers its product without anybody pressing a second button.
+    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
+    let warnings = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "warning")
+        .count();
+    let mut record = serde_json::Map::new();
+    record.insert("product_id".into(), body.product_id.clone().into());
+    record.insert("name".into(), name_for_record.into());
+    record.insert("gears".into(), serde_json::json!(body.gears));
+    record.insert("profile".into(), profile.clone().into());
+    record.insert(
+        "last_preview".into(),
+        serde_json::json!({
+            "profile": profile,
+            "ok": errors == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
+            "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
+            "corpus_commit": preview.corpus_commit,
+        }),
+    );
+    if let Some(w) = &written {
+        record.insert(
+            "written".into(),
+            serde_json::json!({ "branch": w.branch, "commit_sha": w.commit_sha, "pr_url": w.pr_url }),
+        );
+    }
+    if let Err(e) = catalog
+        .service
+        .update_project_product(&ctx, &project_id.to_string(), record)
+        .await
+    {
+        // The preview itself stands; only its memory is lost.
+        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    }
+
     Ok(Json(ProductPreviewDto {
         ok: !r.diagnostics.iter().any(|d| d.is_error()),
         product_gdl: preview.product_gdl,
@@ -1493,6 +1614,49 @@ pub fn register_routes(
                 StatusCode::OK,
                 "Created repository",
             )
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router =
+        OperationBuilder::get("/studio-components-catalog/v1/projects/{project_id}/product")
+            .operation_id("studio_components_catalog.get_project_product")
+            .summary("The product a project is composing out of gears")
+            .description(
+                "The gears picked for the project's product, its deployment \
+                 profile, and what the Gearbox engine said at the last preview. \
+                 Empty until something is picked.",
+            )
+            .tag("StudioComponentsCatalog")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("project_id", "Project tenant id")
+            .handler(get_project_product)
+            .json_response_with_schema::<CatalogNodeListResponse>(
+                openapi,
+                StatusCode::OK,
+                "Project product",
+            )
+            .error_401(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router =
+        OperationBuilder::put("/studio-components-catalog/v1/projects/{project_id}/product")
+            .operation_id("studio_components_catalog.save_project_product")
+            .summary("Save which gears a project's product is made of")
+            .description(
+                "Merges the given fields into the project's product record; \
+                 fields left out keep their value.",
+            )
+            .tag("StudioComponentsCatalog")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("project_id", "Project tenant id")
+            .handler(save_project_product)
+            .json_request::<SaveProjectProductRequest>(openapi, "Product fields")
+            .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved product")
             .error_400(openapi)
             .error_401(openapi)
             .error_500(openapi)
