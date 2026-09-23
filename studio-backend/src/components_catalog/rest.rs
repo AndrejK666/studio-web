@@ -282,6 +282,12 @@ pub struct ScaffoldRequest {
     pub dry_run: Option<bool>,
     /// Open a pull request back into the base branch (default false).
     pub open_pr: Option<bool>,
+    /// The shape of the gear: `service` (default), `minimal` or `plugin`.
+    /// With the Gearbox engine configured, it writes the gear's `gear.gdl`.
+    pub gear_kind: Option<String>,
+    /// For a `plugin`: the host whose extension point it fills, by crate
+    /// name (`cf-gears-authn-resolver`), from `GET /gearbox/extension-points`.
+    pub plugin_host: Option<String>,
 }
 
 /// Whether product previews can run here, and against which gear corpus.
@@ -1314,12 +1320,18 @@ async fn scaffold_gear(
             })
             .collect(),
         None => {
+            let parent_dir = body.parent_dir.clone().unwrap_or_default();
+            let (gear_gdl, plugin) =
+                describe_new_gear(&ctx, &project_id.to_string(), &catalog, &body, &parent_dir)
+                    .await?;
             super::skeleton::generate(&super::skeleton::SkeletonSpec {
                 capability: body.slug.clone(),
                 app_title: body.app_title.clone().unwrap_or_default(),
                 problem: body.problem.clone().unwrap_or_default(),
                 origin: body.origin.clone().unwrap_or_default(),
-                parent_dir: body.parent_dir.clone().unwrap_or_default(),
+                parent_dir,
+                gear_gdl,
+                plugin,
             })
             .1
         }
@@ -1426,6 +1438,142 @@ async fn save_project_product(
         .next()
         .expect("one node converts to one DTO");
     Ok(Json(dto))
+}
+
+/// The `gear.gdl` for a gear the scaffold is about to write, from the engine's
+/// own scaffold, and whether it is a plugin. `(None, false)` when the engine
+/// is not configured: the skeleton is then what it always was. A kind the
+/// engine does not know, or a plugin host it does not describe, is the
+/// caller's mistake and says so.
+async fn describe_new_gear(
+    ctx: &SecurityContext,
+    project_id: &str,
+    catalog: &Catalog,
+    body: &ScaffoldRequest,
+    parent_dir: &str,
+) -> ApiResult<(Option<String>, bool)> {
+    let invalid = |msg: String| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(msg)
+            .create()
+    };
+    let Some(gearbox) = catalog.gearbox.as_ref() else {
+        return Ok((None, false));
+    };
+    let kind_text = body.gear_kind.clone().unwrap_or_default();
+    let kind = super::gearbox::GearKind::parse(&kind_text).ok_or_else(|| {
+        invalid(format!(
+            "gear kind `{kind_text}` is not one of minimal, service, plugin"
+        ))
+    })?;
+    let plugin = if kind == super::gearbox::GearKind::Plugin {
+        let host = body
+            .plugin_host
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .ok_or_else(|| {
+                invalid(
+                    "a plugin needs `plugin_host`, the gear whose extension point it fills".into(),
+                )
+            })?;
+        // The engine resolves `sdk = cargo(path = ...)` inside one source root,
+        // so a plugin of a corpus host has to be written into the corpus: in
+        // any other repository its description could never validate.
+        let project_repo = catalog
+            .service
+            .get_project_repo(ctx, project_id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+            .and_then(|n| {
+                n.value
+                    .get("repo")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let corpus = gearbox.corpus_repo();
+        if super::gearbox::repo_key(&project_repo) != corpus {
+            return Err(invalid(format!(
+                "a plugin lives in the repository of the SDK it implements; the hosts here are                  in `{corpus}`, and this project's gears go to `{project_repo}`. Use `{corpus}`                  as the project's gear store, or scaffold a service"
+            )));
+        }
+        let points = gearbox
+            .extension_points()
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        let point = points
+            .into_iter()
+            .find(|p| p.host_crate == host || p.host_id == host)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "`{host}` has no extension point the Gearbox engine knows of"
+                ))
+            })?;
+        Some(super::gearbox::SdkLocator {
+            crate_name: point.sdk_crate,
+            lib_ident: point.sdk_lib,
+            path: super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path),
+        })
+    } else {
+        None
+    };
+    let slug = super::skeleton::gear_slug(&body.slug);
+    let spec = super::gearbox::GearScaffold {
+        crate_name: format!("cf-gears-{slug}"),
+        name: super::skeleton::title_case(&slug),
+        kind,
+        plugin,
+    };
+    let is_plugin = spec.plugin.is_some();
+    match gearbox.scaffold_gdl(spec).await {
+        Ok(gdl) => Ok((Some(gdl), is_plugin)),
+        // The skeleton is still worth writing; the description can be added
+        // in the IDE, where the engine's New Gear wizard writes the same file.
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "gearbox: no gear.gdl for the scaffold");
+            Ok((None, is_plugin))
+        }
+    }
+}
+
+/// A host a new plugin can fill.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ExtensionPointDto {
+    pub host: String,
+    pub host_id: String,
+    /// The SDK crate its extension point is declared in.
+    pub sdk: String,
+    /// Whether the host can run in a product from this corpus.
+    pub runs: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ExtensionPointListDto {
+    pub items: Vec<ExtensionPointDto>,
+}
+
+async fn extension_points(
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<ExtensionPointListDto>> {
+    let points = catalog
+        .gearbox()?
+        .extension_points()
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(ExtensionPointListDto {
+        items: points
+            .into_iter()
+            .map(|p| ExtensionPointDto {
+                host: p.host_crate,
+                host_id: p.host_id,
+                sdk: p.sdk_crate,
+                runs: p.runs,
+            })
+            .collect(),
+    }))
 }
 
 async fn complete_product(
@@ -2220,6 +2368,28 @@ pub fn register_routes(
             .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/extension-points")
+        .operation_id("studio_components_catalog.extension_points")
+        .summary("The hosts a new plugin gear can fill, from the Gearbox engine's catalogue")
+        .description(
+            "One entry per host extension point in the gear corpus: the host crate, \
+             the SDK crate the point is declared in, and whether the host can run \
+             in a product. A scaffold with `gear_kind: plugin` names one as \
+             `plugin_host`.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(extension_points)
+        .json_response_with_schema::<ExtensionPointListDto>(
+            openapi,
+            StatusCode::OK,
+            "Extension points",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     let router = OperationBuilder::post("/studio-components-catalog/v1/gearbox/complete")
         .operation_id("studio_components_catalog.resolve_product")

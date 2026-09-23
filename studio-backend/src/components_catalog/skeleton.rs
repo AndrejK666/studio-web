@@ -40,6 +40,12 @@ pub struct SkeletonSpec {
     /// scaffold that can only write the top level writes to the wrong place in
     /// most of the monorepo.
     pub parent_dir: String,
+    /// The Gearbox description, from the engine's own scaffold, when the
+    /// engine is configured. A gear without one is invisible to composition,
+    /// so a gear Studio creates should carry one from its first commit.
+    pub gear_gdl: Option<String>,
+    /// Whether the gear is a plugin of some host's extension point.
+    pub plugin: bool,
 }
 
 /// `My Gear` / `my gear` / `My-Gear` -> `my-gear`.
@@ -66,7 +72,7 @@ pub fn gear_slug(value: &str) -> String {
 
 /// `audit-log` -> `Audit Log`: the manifest's `name` is what a person reads in
 /// the catalogue, not the crate's.
-fn title_case(slug: &str) -> String {
+pub fn title_case(slug: &str) -> String {
     slug.split('-')
         .filter(|w| !w.is_empty())
         .map(|w| {
@@ -135,9 +141,11 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
     // shape every gear in `gears-rust` actually has.
     let gear_toml = format!(
         "[gear]\nname = \"{title}\"\ndescription = \"{} capability for {}. {origin}\"\n\
-         category = \"platform\"\nis_plugin = false\nhas_plugins = false\n\
+         category = \"platform\"\nis_plugin = {plugin}\nhas_plugins = false\n\
          has_extension_point = false\n",
-        spec.capability, spec.app_title
+        spec.capability,
+        spec.app_title,
+        plugin = spec.plugin
     );
     let cargo_toml = format!(
         "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
@@ -169,7 +177,7 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
         cap = spec.capability
     );
 
-    let files = vec![
+    let mut files = vec![
         ScaffoldFile {
             path: format!("{dir}/gear.toml"),
             content: gear_toml,
@@ -191,6 +199,12 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
             content: design,
         },
     ];
+    if let Some(gdl) = &spec.gear_gdl {
+        files.push(ScaffoldFile {
+            path: format!("{dir}/gear.gdl"),
+            content: gdl.clone(),
+        });
+    }
     (slug, files)
 }
 
@@ -205,6 +219,8 @@ mod tests {
             problem: String::new(),
             origin: String::new(),
             parent_dir: String::new(),
+            gear_gdl: None,
+            plugin: false,
         }
     }
 
@@ -233,6 +249,19 @@ mod tests {
                 "gears/audit-log/docs/DESIGN.md",
             ]
         );
+    }
+
+    #[test]
+    fn the_engines_description_rides_along_and_a_plugin_says_so() {
+        let (_, files) = generate(&SkeletonSpec {
+            gear_gdl: Some("gear \"cf-gears-audit-log\" {}\n".to_owned()),
+            plugin: true,
+            ..spec("Audit Log")
+        });
+        assert_eq!(files.len(), 6);
+        assert_eq!(files[5].path, "gears/audit-log/gear.gdl");
+        assert_eq!(files[5].content, "gear \"cf-gears-audit-log\" {}\n");
+        assert!(files[0].content.contains("is_plugin = true"));
     }
 
     #[test]

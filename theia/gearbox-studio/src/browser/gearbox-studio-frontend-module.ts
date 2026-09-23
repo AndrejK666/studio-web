@@ -73,6 +73,7 @@ import { DescriptionWatchService } from "./shell/description-watch-service";
 import { ScreenScopeService } from "./shell/screen-scope-service";
 import { StudioContextService } from "./shell/studio-context-service";
 import { StudioGearboxPerspective } from "./shell/studio-gearbox-perspective";
+import { GearLocator } from "./shell/gear-locator";
 import { PortalLinkContribution } from "./shell/portal-link";
 
 import "../../src/browser/style/index.css";
@@ -152,6 +153,7 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(PortalLinkContribution).toSelf().inSingletonScope();
   bind(CommandContribution).toService(PortalLinkContribution);
 
+  bind(GearLocator).toSelf().inSingletonScope();
   bind(StudioGearboxPerspective).toSelf().inSingletonScope();
   bind(PerspectiveContribution).toService(StudioGearboxPerspective);
   bind(CommandContribution).toService(StudioGearboxPerspective);

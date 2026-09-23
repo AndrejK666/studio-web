@@ -114,13 +114,18 @@ export function stepBlocker(
     repoMode: RepoMode;
     connectionId: string;
     storePicked: boolean;
+    /** Why the plugin gear cannot be scaffolded as asked (see
+     *  `pluginBlocker`), or null/absent when it can or is not a plugin. */
+    pluginProblem?: string | null;
   },
 ): string | null {
   if (step === "project") return form.name.trim() ? null : "Name the project.";
-  if (step === "repository")
-    return form.kind === "product"
-      ? null
-      : gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+  if (step === "repository") {
+    if (form.kind === "product") return null;
+    const repo = gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+    if (repo) return repo;
+    return form.kind === "new_gears" ? (form.pluginProblem ?? null) : null;
+  }
   return null;
 }
 
@@ -140,5 +145,37 @@ export function gearRepoBlocker(
   if (kind !== "new_gears" || repoMode === "new") return null;
   if (!connectionId) return "Pick the connection that holds the gear store.";
   if (!storePicked) return "Pick the gear store repository.";
+  return null;
+}
+
+/** `https://github.com/Owner/Repo.git`, `owner/repo` -> `owner/repo`. The
+ *  backend's `repo_key`, so both sides agree on what "the same repository" is. */
+export function repoKey(value: string): string {
+  let v = value.trim().replace(/\/+$/, "").replace(/\.git$/, "");
+  const scheme = v.indexOf("://");
+  if (scheme >= 0) v = v.slice(scheme + 3);
+  const parts = v.split("/").filter(Boolean);
+  return parts.slice(-2).join("/").toLowerCase();
+}
+
+/** Why a plugin gear cannot be scaffolded as the form stands, or null.
+ *
+ *  The Gearbox engine resolves a plugin's `sdk = cargo(path = ...)` inside the
+ *  source root that declares it, and refuses a path that climbs out. The hosts
+ *  on offer are the corpus's, so a plugin of one has to be written INTO the
+ *  corpus: a new repository, or any other store, could never validate it. */
+export function pluginBlocker(form: {
+  repoMode: RepoMode;
+  /** `owner/repo` of the gear store picked, when the road is `existing`. */
+  storeRepo: string | null;
+  /** The corpus the hosts come from, as the engine status reports it. */
+  corpusUrl: string | null;
+  host: string;
+}): string | null {
+  const corpus = form.corpusUrl ? repoKey(form.corpusUrl) : "";
+  if (!corpus) return "The Gearbox engine is not configured here, so there is no host to fill.";
+  if (form.repoMode !== "existing" || !form.storeRepo || repoKey(form.storeRepo) !== corpus)
+    return `A plugin lives in the repository of the SDK it implements. Use the gear store ${corpus}, or make a service.`;
+  if (!form.host) return "Pick the host whose extension point the plugin fills.";
   return null;
 }

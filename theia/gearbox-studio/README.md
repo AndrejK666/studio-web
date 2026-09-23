@@ -41,6 +41,12 @@ collab strip, Orca and the Explorer stay as they are.
   perspective (`studio.openProduct` → `gearbox.product.openAt`), with the
   catalogue left, the product in the middle, the Inspector right and Conflicts
   below. Nothing of Studio's is hidden; switching back restores each layout.
+- **Gear projects.** A `new_gears` project is born with a `gear.gdl` the engine
+  wrote (the portal's scaffold asks `gearbox/gear/scaffold` for it), and its
+  **Open in IDE** sends `studio.openGear` → `gearbox.gear.openAt`: the project's
+  gear, found in its checkout (the `gears-rust` corpus beside it is skipped),
+  opens in the Gear view of the Gearbox perspective. New Gear defaults its
+  destination to the project's repository, beside the gears already there.
 - **Not ported:** everything under Gearbox Studio's `browser/theia/` except
   the read-only `product.lock` editor, its layout migration, the Anthropic key
   settings and `@theia/ai-anthropic`.
@@ -51,8 +57,9 @@ collab strip, Orca and the Explorer stay as they are.
 |---|---|---|
 | P1 | this package, the engine service, every view reachable from View → Views | done |
 | P2 | native GDL language, markers, completion and the catalogue checks on any `product.gdl`; `theia/gdl-language` leaves the image (kept as the plain VS Code client) | done |
-| P3 | graph, inspector, lock, conflicts, generate verified in a session | |
+| P3 | graph, inspector, lock, conflicts, generate verified in a session | done |
 | P4 | start screen and the create/add wizards verified | |
 | P5 | the `@Gearbox` chat agent and tools, through Studio's model | |
 | P6a | the Gearbox perspective beside Workbench and Documents; `studio.openProduct` lands a portal product in it; the Inspector links a gear to its page in the portal's component catalogue (`studio.openComponent`) | done |
+| P6c | gear projects: `new_gears` scaffolds carry the engine's `gear.gdl`, `studio.openGear` opens the project's gear, New Gear writes into the project's repository | done |
 | P6b | toolbar actions on the Product view, screen scope inside the Gearbox perspective, the optional Fabric themes | |

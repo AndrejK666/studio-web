@@ -18,6 +18,7 @@ import * as path from 'path';
 import { CommandService } from '@theia/core/lib/common';
 import type { NotifyEditorFrontendController } from './notify-editor-controller';
 import {
+    GEARBOX_OPEN_GEAR_COMMAND_ID,
     GEARBOX_OPEN_PRODUCT_COMMAND_ID,
     IDENTITY_VIEWER_COMMAND_ID,
     OPEN_COMPONENT_IN_PORTAL_COMMAND_ID,
@@ -317,6 +318,19 @@ describe('PortalBridgeContribution product hand-off', () => {
             'utf8'
         );
         expect(registrar).toContain(`id: "${GEARBOX_OPEN_PRODUCT_COMMAND_ID}"`);
+    });
+
+    it('names the gear command gearbox-studio actually registers, and the portal sends its message', () => {
+        const registrar = fs.readFileSync(
+            path.resolve(__dirname, '../../../gearbox-studio/src/browser/shell/studio-gearbox-perspective.ts'),
+            'utf8'
+        );
+        expect(registrar).toContain(`id: "${GEARBOX_OPEN_GEAR_COMMAND_ID}"`);
+        const portal = fs.readFileSync(
+            path.resolve(__dirname, '../../../../studio-frontend-prototype/src/App.tsx'),
+            'utf8'
+        );
+        expect(portal).toContain('type: "studio.openGear"');
     });
 });
 

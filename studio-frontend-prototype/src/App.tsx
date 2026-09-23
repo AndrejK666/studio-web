@@ -86,6 +86,7 @@ import {
   clampStep,
   createFormLayout,
   createSteps,
+  pluginBlocker,
   stepBlocker,
   type RepoMode,
 } from "./project-form";
@@ -2401,6 +2402,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             target={studio}
             onClose={() => setStudio(null)}
             onOpen={(s) => openSpace(studio, s)}
+            // No path: the IDE finds the gear.gdl in the project's checkout,
+            // and asks when there is more than one.
+            onGearProject={() => postToSpace(studio.id, { type: "studio.openGear" })}
           />
         )}
         </LazyScreens>
@@ -3302,6 +3306,16 @@ function WorkspaceProjects({
   // are under a family, so a scaffold that can only write the top level
   // writes to the wrong place in most of the monorepo.
   const [gearDir, setGearDir] = useState("");
+  // What shape of gear, as the Gearbox engine scaffolds it: the skeleton's
+  // `gear.gdl` is the engine's own, so the gear is composable from its first
+  // commit. A plugin also names the host whose extension point it fills.
+  const [gearKind, setGearKind] = useState<import("./api").GearKind>("service");
+  const [pluginHost, setPluginHost] = useState("");
+  // null: not loaded, or the engine is not configured on this deployment.
+  const [hostPoints, setHostPoints] = useState<import("./api").GearboxExtensionPoint[] | null>(
+    null,
+  );
+  const [corpusUrl, setCorpusUrl] = useState<string | null>(null);
   const [repoPrivate, setRepoPrivate] = useState(true);
   const [repoSearch, setRepoSearch] = useState("");
   const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[] | null>(null);
@@ -3420,6 +3434,31 @@ function WorkspaceProjects({
       .catch(() => setConnections([]));
   }, [creating, newKind, token, workspace.id]);
 
+  // The hosts a plugin can fill, only once somebody asks for a plugin.
+  useEffect(() => {
+    if (!creating || newKind !== "new_gears" || gearKind !== "plugin") return;
+    let alive = true;
+    api
+      .gearboxExtensionPoints(token)
+      .then((r) => {
+        if (alive) setHostPoints(r.items ?? []);
+      })
+      .catch(() => {
+        if (alive) setHostPoints([]);
+      });
+    api
+      .gearboxStatus(token)
+      .then((st) => {
+        if (alive) setCorpusUrl(st.enabled ? (st.corpus_url ?? null) : null);
+      })
+      .catch(() => {
+        if (alive) setCorpusUrl(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [creating, newKind, gearKind, token]);
+
   // The gear stores to choose from. A connection is required here (unlike
   // creating a repository, where the backend picks the first GitHub one) --
   // there is no listing without one to list through.
@@ -3478,12 +3517,19 @@ function WorkspaceProjects({
   const steps = createSteps(newKind, repoMode);
   const stepIndex = clampStep(step, steps);
   const current = steps[stepIndex];
+  const pluginProblem = pluginBlocker({
+    repoMode,
+    storeRepo: existingRepo?.full_path ?? null,
+    corpusUrl,
+    host: pluginHost,
+  });
   const formState = {
     name: newName,
     kind: newKind,
     repoMode,
     connectionId: connId,
     storePicked: existingRepo !== null,
+    pluginProblem: gearKind === "plugin" ? pluginProblem : null,
   };
   const pageBlocker = stepBlocker(current.key, formState);
   // What blocks creating at all, wherever it sits. The last page cannot assume
@@ -3604,6 +3650,8 @@ function WorkspaceProjects({
             problem: brief.trim(),
             origin: "Scaffolded when the project was created.",
             parent_dir: gearDirValue,
+            gear_kind: gearKind,
+            ...(gearKind === "plugin" ? { plugin_host: pluginHost } : {}),
             open_pr: openPr,
           });
           ctx.scaffolded = true;
@@ -3772,6 +3820,10 @@ function WorkspaceProjects({
     setRepoName("");
     setGearName("");
     setGearDir("");
+    setGearKind("service");
+    setPluginHost("");
+    setHostPoints(null);
+    setCorpusUrl(null);
     setRepoPrivate(true);
     setRepoSearch("");
     setRemoteRepos(null);
@@ -4110,6 +4162,56 @@ function WorkspaceProjects({
                       <code>gears/system</code> or <code>gears/bss</code>.
                     </span>
                   </label>
+
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 11, opacity: 0.8 }}>Kind</span>
+                    <select
+                      value={gearKind}
+                      disabled={prov !== null}
+                      onChange={(e) => setGearKind(e.target.value as import("./api").GearKind)}
+                    >
+                      <option value="service">Service — a gear with a REST surface</option>
+                      <option value="minimal">Minimal — a gear with no capabilities yet</option>
+                      <option value="plugin">Plugin — fills a host's extension point</option>
+                    </select>
+                    <span style={{ fontSize: 11, opacity: 0.7 }}>
+                      The skeleton carries a <code>gear.gdl</code> written by the Gearbox engine,
+                      so the gear can be put in a product and opened in the IDE's Gearbox view.
+                    </span>
+                  </label>
+
+                  {gearKind === "plugin" && (
+                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={{ fontSize: 11, opacity: 0.8 }}>Host</span>
+                      {hostPoints === null ? (
+                        <span style={{ fontSize: 11, opacity: 0.7 }}>Reading the corpus…</span>
+                      ) : hostPoints.length === 0 ? (
+                        <span style={{ fontSize: 11, opacity: 0.7 }}>
+                          The Gearbox engine knows no extension point here, or is not configured.
+                          A plugin cannot be described without one; pick another kind.
+                        </span>
+                      ) : (
+                        <select
+                          value={pluginHost}
+                          disabled={prov !== null}
+                          onChange={(e) => setPluginHost(e.target.value)}
+                        >
+                          <option value="">Pick a host…</option>
+                          {hostPoints.map((p) => (
+                            <option key={`${p.host}:${p.sdk}`} value={p.host}>
+                              {p.host} · {p.sdk}
+                              {p.runs ? "" : " (cannot run yet)"}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {pluginProblem && hostPoints !== null && (
+                        <span style={{ fontSize: 11, opacity: 0.8 }} data-plugin-problem>
+                          {pluginProblem}
+                        </span>
+                      )}
+                    </label>
+                  )}
 
                   <label
                     style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12 }}
@@ -9268,6 +9370,7 @@ async function startStudioSession(
   onResolved?: (sources: {
     repos: RepoEntry[];
     root: { path?: string; repoUrl?: string; branch?: string; tokenRef?: string };
+    kind?: string;
   }) => void,
 ): Promise<StudioSession> {
   let repos = target.repos ?? [];
@@ -9290,8 +9393,10 @@ async function startStudioSession(
   }
   // A product project's product.gdl names its gears from `../gears-rust`, so
   // its session checks the gear corpus out beside the project's own sources —
-  // the same corpus the portal's preview resolved against. Anything that is
-  // not a product project, or a deployment without the engine, is unchanged.
+  // the same corpus the portal's preview resolved against. Not a gear project:
+  // its gears are in its own repository (a plugin's in the corpus itself, see
+  // `pluginBlocker`), and a second copy of the corpus would describe every
+  // gear twice. Anything else, or a deployment without the engine, is unchanged.
   const kind = await api
     .projectConfig(token, target.id)
     .then((c) => c?.kind)
@@ -9299,7 +9404,7 @@ async function startStudioSession(
   if (kind === "product") {
     repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
   }
-  onResolved?.({ repos, root });
+  onResolved?.({ repos, root, kind });
   const usable = repos.filter((r) =>
     r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
   );
@@ -9316,12 +9421,16 @@ function StudioLauncher({
   target,
   onClose,
   onOpen,
+  onGearProject,
 }: {
   token: string;
   target: StudioTarget;
   onClose: () => void;
   /** Opens the session as an embedded space (same window, no new tab). */
   onOpen: (session: { id: string; url: string }) => void;
+  /** A gear project's IDE opens on its gear, in the Gearbox view, the way a
+   *  product project's opens on its product. */
+  onGearProject?: () => void;
 }) {
   const [session, setSession] = useState<import("./api").StudioSession | null>(null);
   const [repos, setRepos] = useState<import("./api").RepoEntry[] | null>(null);
@@ -9381,12 +9490,15 @@ function StudioLauncher({
       // Same path the editing hand-off takes (see `startStudioSession`), so a
       // session opened from a document and one opened from this card are the
       // same session with the same sources.
+      let gearProject = false;
       const ready = await startStudioSession(token, target, (sources) => {
         setRepos(sources.repos);
         setRoot(sources.root);
+        gearProject = sources.kind === "new_gears";
       });
       setSession(ready);
       onOpen({ id: ready.id, url: ready.url });
+      if (gearProject) onGearProject?.();
     } catch (e) {
       setError(errText(e));
     } finally {

@@ -12,6 +12,7 @@ import { ApplicationShell } from "@theia/core/lib/browser";
 import { PerspectiveContribution, PerspectiveService } from "@theia/core/lib/browser/perspective-service";
 import { Command, CommandContribution, CommandRegistry } from "@theia/core/lib/common/command";
 import { MessageService } from "@theia/core/lib/common/message-service";
+import { QuickInputService } from "@theia/core/lib/common/quick-pick-service";
 import { URI } from "@theia/core/lib/common/uri";
 import { inject, injectable } from "@theia/core/shared/inversify";
 import { FileService } from "@theia/filesystem/lib/browser/file-service";
@@ -21,12 +22,20 @@ import { CatalogueWidget } from "../catalogue/catalogue-widget";
 import { ConflictsWidget } from "../conflicts/conflicts-widget";
 import { InspectorWidget } from "../inspector/inspector-widget";
 import { ProductWidget } from "../product/product-widget";
+import { GearAuthorViewContribution } from "../view-contributions";
+import { GearLocator } from "./gear-locator";
+import { GearSessionService } from "./gear-session-service";
 import { ProductSessionService } from "./product-session-service";
 import { PRODUCT_PERSPECTIVE } from "./studio-context-service";
 
 export const OpenProductHere: Command = {
   id: "gearbox.product.openAt",
   label: "Gearbox: Open Product in the Gearbox Perspective",
+};
+
+export const OpenGearHere: Command = {
+  id: "gearbox.gear.openAt",
+  label: "Gearbox: Open Gear in the Gearbox Perspective",
 };
 
 /** The files a portal path can mean, most specific first: absolute; under a
@@ -48,6 +57,10 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   @inject(FileService) protected readonly files!: FileService;
   @inject(MessageService) protected readonly messages!: MessageService;
+  @inject(GearSessionService) protected readonly gearSession!: GearSessionService;
+  @inject(GearLocator) protected readonly locator!: GearLocator;
+  @inject(GearAuthorViewContribution) protected readonly gearView!: GearAuthorViewContribution;
+  @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
 
   registerPerspectives(service: PerspectiveService): void {
     service.registerPerspective({
@@ -67,6 +80,53 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
     commands.registerCommand(OpenProductHere, {
       execute: (path?: string) => this.openHere(path),
     });
+    commands.registerCommand(OpenGearHere, {
+      execute: (path?: string) => this.openGearHere(path),
+    });
+  }
+
+  /**
+   * Switch to the Gearbox perspective and open a gear for authoring.
+   *
+   * `path` is the gear's directory or its `gear.gdl`, resolved the way a
+   * product's is. Without one -- the portal's "Open in IDE" on a gear project,
+   * which knows the repository but not where in it the gear went -- the
+   * project's gears are looked for, the corpus excluded: one is opened, several
+   * are offered, none is said.
+   */
+  async openGearHere(path?: string): Promise<boolean> {
+    if (this.perspectives.getActivePerspectiveId() !== PRODUCT_PERSPECTIVE) {
+      await this.perspectives.switchPerspective(PRODUCT_PERSPECTIVE).catch(() => undefined);
+    }
+    let root: string | undefined;
+    if (path) {
+      const wanted = path.replace(/\\/g, "/").replace(/\/+$/, "");
+      const file = await this.resolve(wanted.endsWith("/gear.gdl") ? wanted : `${wanted}/gear.gdl`);
+      if (file === undefined) {
+        this.messages.warn(`No gear.gdl at ${path} in this workspace.`);
+        return false;
+      }
+      root = file.parent.path.fsPath();
+    } else {
+      const gears = await this.locator.gears();
+      if (gears.length === 0) {
+        this.messages.info("This workspace has no gear with a gear.gdl yet. Use New Gear to describe one.");
+        return false;
+      }
+      root =
+        gears.length === 1
+          ? gears[0]
+          : (
+              await this.quickInput.showQuickPick(
+                gears.map((g) => ({ label: g.split("/").pop() ?? g, description: g, root: g })),
+                { placeholder: "Open Gear" },
+              )
+            )?.root;
+    }
+    if (root === undefined) return false;
+    if (!(await this.gearSession.openGear(root))) return false;
+    await this.gearView.openView({ activate: true, reveal: true });
+    return true;
   }
 
   /** Switch to the Gearbox perspective and open the product at `path`. */

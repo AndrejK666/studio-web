@@ -12,7 +12,8 @@
 // The portal→IDE half also carries the *editing hand-off*: `studio.openInEditor`
 // (a repository file), `studio.openGraph`, `studio.openDocument` (a portal
 // document, opened in the markdown editor via the `studio-doc:` resolver) and
-// `studio.openProduct` (a product.gdl, opened in the Gearbox perspective).
+// `studio.openProduct` (a product.gdl, opened in the Gearbox perspective) and
+// `studio.openGear` (a gear project's gear, in the same perspective).
 // The portal queues these until its handshake is acked, so a message that
 // arrives with — or before — the session's first paint is still delivered:
 // that is what lets "open the IDE" and "edit this thing" be one click.
@@ -78,6 +79,10 @@ export const IDENTITY_VIEWER_COMMAND_ID = 'studio.identity.viewer';
 /** gearbox-studio's command for `studio.openProduct` (`StudioGearboxPerspective`).
  *  By id, so studio does not depend on the package that registers it. */
 export const GEARBOX_OPEN_PRODUCT_COMMAND_ID = 'gearbox.product.openAt';
+
+/** gearbox-studio's command for `studio.openGear`: the gear at a path, or the
+ *  project's own gear when no path is given. */
+export const GEARBOX_OPEN_GEAR_COMMAND_ID = 'gearbox.gear.openAt';
 
 /** Asks the portal to show a component's page in its catalogue, by catalogue
  *  name (`cf-gears-api-gateway`). gearbox-studio links a gear to it by id. */
@@ -266,6 +271,17 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // before this message existed.
                 const productPath = msg.path;
                 this.openWhenLayoutReady(() => void this.openProductInMode(productPath));
+            }
+            if (msg.type === 'studio.openGear') {
+                // A gear project's "Open in IDE": its gear, in the Gearbox
+                // perspective. The portal knows the repository, not where in it
+                // the gear went, so the path is optional and gearbox-studio
+                // finds the gear. Without gearbox-studio there is nothing to
+                // open it with, and the IDE simply stays as it opened.
+                const gearPath = msg.path;
+                this.openWhenLayoutReady(
+                    () => void this.commands.executeCommand(GEARBOX_OPEN_GEAR_COMMAND_ID, gearPath).catch(() => undefined),
+                );
             }
             if (msg.type === 'studio.notify' && msg.message) {
                 // Background work finished, and the person may be looking at
