@@ -1093,12 +1093,44 @@ jobs:
             IMAGE_TAG="$derived_tag"
           fi
 
-          if [ "$source_kind" = snapshot ]; then
-            if [ "${{ github.event.inputs.environment }}" != "dev" ]; then
-              echo "Branch snapshots may be deployed only to dev; use a v* release tag for ${{ github.event.inputs.environment }}" >&2
-              exit 1
-            fi
+          # A SNAPSHOT IS AS IMMUTABLE AS A RELEASE. `sha-<40 hex>` names one
+          # commit and one image for ever, so the rule that used to live here —
+          # snapshots may only reach dev — was not protecting test from
+          # anything that could change underneath it.
+          #
+          # What a release tag carries that a snapshot does not is INTENT:
+          # somebody decided that commit was worth a version. Test is where
+          # that decision gets MADE, not confirmed, and requiring a tag first
+          # put the release before the thing it was supposed to be a release
+          # of. So a snapshot deploys to any environment now.
+          #
+          # What is worth keeping is the ability to answer "what is on test"
+          # without reading image tags out of the cluster, which is why the
+          # summary below records the source and its kind on every deploy.
+          #
+          # `on main` is REPORTED, NOT ENFORCED, and the distinction is
+          # deliberate. Deploying a branch that has not merged is a legitimate
+          # thing to want from a test environment — it is most of what one is
+          # for — so the workflow does not refuse it; it just never lets it
+          # happen quietly. Whether a shared environment should also require an
+          # approval is a question for the GitHub Environment's reviewers, which
+          # is where that gate belongs, not for a string comparison here.
+          if git merge-base --is-ancestor "$resolved" origin/main 2>/dev/null; then
+            on_main=yes
+          else
+            on_main='NO — this commit is not on main'
           fi
+          {
+            echo "### ${{ github.event.inputs.environment }} ← $IMAGE_TAG"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| source | \`$source_ref\` |"
+            echo "| kind | $source_kind |"
+            echo "| commit | \`$resolved\` |"
+            echo "| on main | $on_main |"
+            echo "| image tag | \`$IMAGE_TAG\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
 

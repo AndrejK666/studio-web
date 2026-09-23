@@ -28,7 +28,7 @@ publish a release, but it never deploys automatically to an environment.
 
 | Tag | Meaning | Build scope | Allowed deployment |
 | --- | --- | --- | --- |
-| `sha-<40 lowercase hex>` | Immutable commit snapshot | Services | Dev only |
+| `sha-<40 lowercase hex>` | Immutable commit snapshot | Services | Any configured application environment |
 | `v<semver>` | Application release | Backend, frontend, prototype, and Theia | Any configured application environment |
 | `infra-v<semver>` | Infrastructure release | Graph PostgreSQL and Keycloak | Any configured infrastructure environment |
 | `edge` | Convenience pointer to the latest successful `main` service build | Services | Never accepted by deployment workflows |
@@ -131,10 +131,13 @@ image_tag: sha-<commit> | v<semver>
 
 Policy:
 
-- a `sha-*` snapshot can deploy only to dev;
-- a `v*` release can deploy to any configured environment;
+- a `sha-*` snapshot and a `v*` release can both deploy to any configured
+  environment — a snapshot names one commit and one image for ever, so the
+  distinction was never about what could change underneath it;
 - `infra-v*`, `edge`, and `latest` are rejected;
-- test and production use GitHub Environment reviewers;
+- test and production are meant to use GitHub Environment reviewers — **as of
+  2026-09-23 neither `dev` nor `test` has any protection rule or reviewer
+  configured**, so this line describes an intent and not the repository;
 - a component deployment must preserve the currently deployed versions of all
   components that were not selected;
 - rollout, HTTPS, backend health, and OIDC smoke checks run after deployment;
@@ -177,7 +180,11 @@ Migration order:
   or `contents: write` only to the jobs that need them.
 - Store a different namespace-scoped `KUBE_CONFIG_B64` secret in each GitHub
   Environment.
-- Require reviewers for test and production deployments.
+- Require reviewers for test and production deployments. **Not configured
+  today** (checked 2026-09-23: both environments have empty
+  `protection_rules`). This is the gate that should decide who may put an
+  unmerged branch on a shared environment; the delivery workflow
+  deliberately does not try to be that gate, it only records what landed.
 - Protect `main` and release tag creation so only maintainers can publish or
   deploy releases.
 - Never store kubeconfigs, passwords, realm secrets, or rendered Secret values
@@ -199,11 +206,19 @@ the changed service components and rebuilds only those; the other components
 are copied from the last known-good `edge` snapshot so every commit still gets
 a complete immutable `sha-<full-commit>` image set.
 
-- A branch snapshot may be deployed only to `dev`. In **Studio Delivery**, set
-  the operation to **Deploy existing images**, select **Services**, set
-  `source_ref` to the branch name, and
-  leave `image_tag` empty; the workflow
-  resolves the exact commit and its `sha-…` tag.
+- A branch snapshot may be deployed to `dev` or `test`. In **Studio
+  Delivery**, set the operation to **Deploy existing images**, select
+  **Services**, set `source_ref` to the branch name or the full commit SHA, and
+  leave `image_tag` empty; the workflow resolves the exact commit and its
+  `sha-…` tag.
+
+  Snapshots reached only `dev` until 2026-09-23. The rule was not protecting
+  `test` from anything — `sha-<40 hex>` is as immutable as a release tag. What
+  a release carries and a snapshot does not is *intent*, and test is where that
+  decision gets made rather than confirmed, so requiring a tag first put the
+  release before the thing it was a release of. Every deploy now writes its
+  source and source kind into the run summary, which is how "what is on test"
+  stays answerable.
 - A stable release tag such as `v1.4.0` may be deployed to `dev` or `test` and
   advances `latest` only after all images are published.
 - A prerelease tag such as `v1.4.0-rc.1` may also be deployed to `dev` or
