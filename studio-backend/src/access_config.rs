@@ -497,4 +497,52 @@ mod tests {
         );
         assert!(!viewer.is_empty());
     }
+    /// Both guards below were a TypeScript test that PARSED THIS FILE with a
+    /// regular expression, because the portal kept a second copy of the
+    /// catalogue. The copy is gone — the portal reads
+    /// `GET /studio-organizations/v1/access-catalogue` — so the rules come
+    /// home to the side that owns them.
+    #[test]
+    fn no_role_in_the_ladder_names_a_privilege_that_does_not_exist() {
+        // A role naming an unknown privilege is not a compile error and not a
+        // runtime one: the PDP simply never matches it, and the role silently
+        // carries less than it says.
+        for role in default_roles().as_array().expect("the ladder is an array") {
+            let key = role["key"].as_str().expect("a role has a key");
+            for privilege in role["privileges"].as_array().expect("an array") {
+                let id = privilege.as_str().expect("a privilege is a string");
+                assert!(
+                    PRIVILEGES.contains(&id),
+                    "role {key} names unknown privilege {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_catalogue_names_nothing_the_product_retired() {
+        // Projects are account-management tenants (ADR-0010), so reaching one
+        // is membership; `studio-project` — the gear "Works" belonged to — is
+        // gone. A privilege for either would have to be granted to everybody
+        // in order not to break them, which is worse than no privilege.
+        for id in PRIVILEGES {
+            assert!(
+                !id.starts_with("project.") && !id.starts_with("work."),
+                "{id} names a retired resource"
+            );
+        }
+    }
+
+    #[test]
+    fn every_privilege_is_a_resource_and_an_action() {
+        // The shape the PDP splits on. An id with no dot, or with two, is not
+        // a question anybody can be asked.
+        for id in PRIVILEGES {
+            assert_eq!(
+                id.split('.').count(),
+                2,
+                "{id} is not `<resource>.<action>`"
+            );
+        }
+    }
 }

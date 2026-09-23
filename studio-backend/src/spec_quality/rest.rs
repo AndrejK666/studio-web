@@ -219,6 +219,49 @@ impl ProxyState {
                 CanonicalError::internal(format!("proxy response build failed: {e}")).create()
             })
     }
+
+    /// The same request as [`Self::forward`], read rather than streamed.
+    ///
+    /// Everything else in this gear hands the upstream's bytes through
+    /// untouched, and that is the right default: the wrapper's job is the key,
+    /// not the schema. This exists for the one route that has to UNDERSTAND the
+    /// answer — a verdict is a judgement about the result, and a judgement
+    /// cannot be made on a stream nobody parsed.
+    async fn fetch_json(&self, path: &str) -> ApiResult<serde_json::Value> {
+        if self.base_url.is_empty() {
+            return Err(CanonicalError::internal(
+                "spec-quality upstream not configured (set STUDIO_SPEC_QUALITY_BASE_URL / STUDIO_SPEC_QUALITY_API_KEY and restart)",
+            )
+            .create());
+        }
+        let Some(key) = self.api_key.as_deref() else {
+            return Err(CanonicalError::internal(
+                "spec-quality upstream key is not configured (set STUDIO_SPEC_QUALITY_API_KEY and restart)",
+            )
+            .create());
+        };
+        let upstream = self
+            .client
+            .get(upstream_url(&self.base_url, path, None))
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"))
+            .send()
+            .await
+            .map_err(|e| {
+                CanonicalError::internal(format!("spec-quality upstream request failed: {e}"))
+                    .create()
+            })?;
+        if !upstream.status().is_success() {
+            return Err(CanonicalError::internal(format!(
+                "spec-quality upstream answered {} for {path}",
+                upstream.status()
+            ))
+            .create());
+        }
+        upstream.json::<serde_json::Value>().await.map_err(|e| {
+            CanonicalError::internal(format!("spec-quality upstream sent unreadable JSON: {e}"))
+                .create()
+        })
+    }
 }
 
 /* ── Handlers ── */
@@ -443,6 +486,130 @@ async fn analyze_traceability(
 }
 
 /// GET /spec-quality/v1/tasks/{task_id} — poll a submitted task.
+/// One analysis, read rather than relayed.
+///
+/// Every field is optional because a verdict's shape follows its detector, and
+/// one response type keeps the portal from learning four. What is NOT optional
+/// is the reading: the fields below are the judgements in
+/// [`super::verdict`], made here so that two portals cannot make them
+/// differently.
+#[derive(Debug, Default)]
+#[toolkit_macros::api_dto(response)]
+pub struct VerdictDto {
+    /// The detector this verdict came from.
+    pub detector: String,
+    /// The upstream task it was read from.
+    pub task_id: String,
+    /// `purpose`: the document type the detector named, if it named one.
+    pub doc_type: Option<String>,
+    /// `purpose`: how much of the document read as specification content,
+    /// 0.0–1.0. The evidence for `doc_type`, and the reason it is reported
+    /// beside it rather than alone.
+    pub spec_share: Option<f64>,
+    /// `purpose`: whether the gate passed. Null when the service answered
+    /// without one — which keeps a gate shut rather than guessing.
+    pub gate_passed: Option<bool>,
+    /// `leak`: whether the foreign share stayed under the threshold.
+    pub passed: Option<bool>,
+    /// `leak`: how much of the document read as belonging to another kind.
+    pub leak_share: Option<f64>,
+    /// `leak`: the kinds it read as.
+    pub foreign_roles: Option<Vec<String>>,
+    /// `bloat` and `traceability`: each document asked about, mapped to the
+    /// documents it shares text with, or references.
+    pub by_path: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// The same relation as pairs, for a graph.
+    pub pairs: Option<Vec<Vec<String>>>,
+    /// `traceability`: false when the result carried no edge key this reader
+    /// knows. An empty answer then means unreadable, not "nothing found".
+    pub recognised: Option<bool>,
+}
+
+/// Which detector's answer is being read.
+///
+/// An enum rather than a string so an unknown name is refused where the
+/// request is parsed, with the four that exist named in the message — rather
+/// than reaching a match arm that has to invent an error for it.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Detector {
+    Purpose,
+    Leak,
+    Bloat,
+    Traceability,
+}
+
+impl Detector {
+    fn as_str(self) -> &'static str {
+        match self {
+            Detector::Purpose => "purpose",
+            Detector::Leak => "leak",
+            Detector::Bloat => "bloat",
+            Detector::Traceability => "traceability",
+        }
+    }
+}
+
+/// `?task_id=` names the analysis; `?path=` repeats for the set detectors.
+#[derive(Debug, serde::Deserialize)]
+pub struct VerdictQuery {
+    pub task_id: String,
+    pub detector: Detector,
+    /// The documents the run was given. Required by `bloat` and
+    /// `traceability`, which answer about a set: a document absent from this
+    /// list is absent from the answer, and absent reads as "not analysed"
+    /// where an empty list reads as "analysed, nothing found".
+    #[serde(default)]
+    pub path: Vec<String>,
+}
+
+fn pairs_of(pairs: Vec<(String, String)>) -> Vec<Vec<String>> {
+    pairs.into_iter().map(|(a, b)| vec![a, b]).collect()
+}
+
+/// GET /spec-quality/v1/verdicts — one analysis, interpreted.
+async fn get_verdict(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(state): Extension<Arc<ProxyState>>,
+    axum::extract::Query(query): axum::extract::Query<VerdictQuery>,
+) -> ApiResult<JsonBody<VerdictDto>> {
+    let view = state
+        .fetch_json(&format!("/v1/tasks/{}", query.task_id))
+        .await?;
+    let result = view.get("result");
+    let mut dto = VerdictDto {
+        detector: query.detector.as_str().to_owned(),
+        task_id: query.task_id.clone(),
+        ..VerdictDto::default()
+    };
+    match query.detector {
+        Detector::Purpose => {
+            let v = super::verdict::doc_type(result);
+            dto.doc_type = v.doc_type;
+            dto.spec_share = Some(v.spec_share);
+            dto.gate_passed = v.gate_passed;
+        }
+        Detector::Leak => {
+            let v = super::verdict::leak(result);
+            dto.passed = v.passed;
+            dto.leak_share = v.leak_share;
+            dto.foreign_roles = Some(v.foreign_roles);
+        }
+        Detector::Bloat => {
+            let v = super::verdict::bloat(result, &query.path);
+            dto.by_path = Some(v.by_path);
+            dto.pairs = Some(pairs_of(v.pairs));
+        }
+        Detector::Traceability => {
+            let v = super::verdict::trace(result, &query.path);
+            dto.by_path = Some(v.by_path);
+            dto.pairs = Some(pairs_of(v.pairs));
+            dto.recognised = Some(v.recognised);
+        }
+    }
+    Ok(Json(dto))
+}
+
 async fn get_task(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
@@ -742,6 +909,31 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(analyze_traceability)
         .json_response(StatusCode::ACCEPTED, "The run watching this analysis")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-spec-quality/v1/verdicts")
+        .operation_id("studio_spec_quality.get_verdict")
+        // `studio-spec-quality`, not `spec-quality` like its ten siblings.
+        // The prefix is what rule A1 asks for and what those ten are in the
+        // baseline FOR; a new operation is bound by the rules (ADR-0020), and
+        // this one costs nothing to get right because nothing calls it yet.
+        // The siblings move when something is willing to pay for their move.
+        .summary("One analysis, read rather than relayed")
+        .description(
+            "The same upstream task as `/tasks/{task_id}`, turned into a verdict. Every other              route here hands the upstream's bytes through untouched, which is right: the              wrapper's job is the key, not the schema. This one is different because reading a              detector's answer is a JUDGEMENT, and it was being made in the browser.
+
+             The service does not document these shapes — its OpenAPI declares the four              request bodies and nothing else — so every key is read defensively and the              judgements are the product: a doc type is reported with the share of the document              that was recognised as specification at all, an absent boolean stays null rather              than becoming false, only duplication ACROSS documents counts as bloat, and              `recognised` separates a shape this reader did not understand from a document set              that genuinely references nothing.
+
+             `?path=` repeats for the set detectors (`bloat`, `traceability`): a document              absent from it is absent from the answer, and absent reads as not analysed where              an empty list reads as analysed and nothing found.",
+        )
+        .tag("SpecQuality")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(get_verdict)
+        .json_response_with_schema::<VerdictDto>(openapi, StatusCode::OK, "The verdict")
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

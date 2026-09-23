@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
-  type CatalogNode,
   type GearboxStatus,
   type KitInstallation,
+  type PlanRow,
   type KitMaterialization,
   type ProductChange,
   type ProductPreview,
@@ -11,7 +11,6 @@ import {
   type ProjectRepository,
   type StudioKit,
 } from "./api";
-import { composePlan, profilesByName, type PlanRow } from "./compose";
 import { errText } from "./format";
 import {
   PRODUCT_PROFILES,
@@ -401,12 +400,11 @@ function SuggestedComponents({
     setBusy(true);
     setError(null);
     try {
-      const [docs, components, profs, vocab] = await Promise.all([
+      // The catalogue and the profiles are read by the server now, which is
+      // also where the matching rules live. What still travels from here is the
+      // workspace's own capability vocabulary.
+      const [docs, vocab] = await Promise.all([
         api.projectDocuments(token, workspaceId, projectId),
-        api.listComponents(token),
-        api
-          .listComponentProfiles(token)
-          .catch(() => ({ nodes: [] as CatalogNode[] })),
         api.capabilities(token, workspaceId),
       ]);
       // Every capability the project's documents declare, deduplicated and in
@@ -420,7 +418,7 @@ function SuggestedComponents({
         for (const cap of doc.capabilities) if (!caps.includes(cap)) caps.push(cap);
       }
       setDocCount(seen);
-      const next = composePlan(caps, components.nodes ?? [], profilesByName(profs.nodes ?? []), vocab.items ?? []);
+      const next = (await api.composePlan(token, caps, vocab.items ?? [])).items;
       setPlan(next);
       // A product nobody has picked for yet starts from the best built gear
       // per capability. One that has picks keeps them: suggestions are a
@@ -535,7 +533,7 @@ function SuggestedComponents({
                               </span>
                             )}
                             {c.composable === "blocked" && (
-                              <span title={`Described, but cannot run from this corpus: ${c.composableWhy ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
+                              <span title={`Described, but cannot run from this corpus: ${c.composable_why ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
                                 BLOCKED
                               </span>
                             )}

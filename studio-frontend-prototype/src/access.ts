@@ -45,42 +45,54 @@ export interface Privilege {
   label: string;
 }
 
-/** The Studio privilege catalogue (ADR-0019 §2). Ordered by resource family,
- *  then action.
+/** What this portal CALLS each privilege.
  *
- *  This list must match `PRIVILEGES` in `studio-backend/src/access_config.rs`,
- *  which is the side that seeds the ladder into the stored document and the
- *  side the PDP evaluates. This screen WRITES the document (`putAccessConfig`),
- *  so a privilege named here and not there is written into a role and then
- *  carries nothing.
+ *  The ids are the server's (`GET /studio-organizations/v1/access-catalogue`),
+ *  and they are the half that must not drift: a privilege named on the writing
+ *  side and not on the evaluating side is written into a role and then carries
+ *  nothing. That list used to be copied here, with a test that parsed
+ *  `access_config.rs` to prove the copy still matched.
  *
- *  `project.*` and `work.*` used to head this list and are gone: projects are
- *  account-management tenants (ADR-0010), so reaching one is membership rather
- *  than a privilege, and `studio-project` — the gear "Works" belonged to — no
- *  longer exists. */
-export const PRIVILEGES: Privilege[] = [
-  { id: "people.view", group: "People & Team", label: "View people" },
-  { id: "people.invite", group: "People & Team", label: "Invite to the organization" },
-  { id: "people.manage", group: "People & Team", label: "Manage memberships and roles" },
+ *  The names are not served and should not be. A backend shipping English here
+ *  would be handing a portal with i18n a second set of strings to ignore. So
+ *  this map is presentation, keyed by id, and an id it does not know still
+ *  renders — under its own name, in a group of its own.
+ *
+ *  The order of the groups is the order they are declared in. */
+const PRIVILEGE_LABELS: Record<string, { group: string; label: string }> = {
+  "people.view": { group: "People & Team", label: "View people" },
+  "people.invite": { group: "People & Team", label: "Invite to the organization" },
+  "people.manage": { group: "People & Team", label: "Manage memberships and roles" },
 
-  { id: "access.manage", group: "Administration", label: "Manage roles and grants" },
+  "access.manage": { group: "Administration", label: "Manage roles and grants" },
 
-  { id: "connector.view", group: "Connections", label: "View connections" },
-  { id: "connector.manage", group: "Connections", label: "Manage connections" },
+  "connector.view": { group: "Connections", label: "View connections" },
+  "connector.manage": { group: "Connections", label: "Manage connections" },
 
-  { id: "secret.view", group: "Secrets", label: "View secrets" },
-  { id: "secret.manage", group: "Secrets", label: "Manage secrets" },
+  "secret.view": { group: "Secrets", label: "View secrets" },
+  "secret.manage": { group: "Secrets", label: "Manage secrets" },
 
-  { id: "document.view", group: "Documents", label: "View documents" },
-  { id: "document.edit", group: "Documents", label: "Edit documents" },
+  "document.view": { group: "Documents", label: "View documents" },
+  "document.edit": { group: "Documents", label: "Edit documents" },
 
-  { id: "session.open", group: "Sessions", label: "Open a workspace in the IDE" },
-];
+  "session.open": { group: "Sessions", label: "Open a workspace in the IDE" },
+};
 
-/** Catalogue grouped for the editor, preserving the order above. */
-export function privilegesByGroup(): { group: string; items: Privilege[] }[] {
+/** Name one privilege id for the screen.
+ *
+ *  An id this portal has no string for is shown rather than hidden: the server
+ *  is the authority on what exists, and a privilege the PDP understands but
+ *  this build has never heard of is exactly what somebody needs to see. */
+export function describePrivilege(id: string): Privilege {
+  const known = PRIVILEGE_LABELS[id];
+  return { id, group: known?.group ?? "Other", label: known?.label ?? id };
+}
+
+/** The catalogue grouped for the editor, in the server's order. */
+export function privilegesByGroup(ids: readonly string[]): { group: string; items: Privilege[] }[] {
   const out: { group: string; items: Privilege[] }[] = [];
-  for (const p of PRIVILEGES) {
+  for (const id of ids) {
+    const p = describePrivilege(id);
     let bucket = out.find((b) => b.group === p.group);
     if (!bucket) {
       bucket = { group: p.group, items: [] };
@@ -91,59 +103,12 @@ export function privilegesByGroup(): { group: string; items: Privilege[] }[] {
   return out;
 }
 
-const ALL = PRIVILEGES.map((p) => p.id);
-
 /** A role is a named set of privileges. `system` roles are seeded, non-deletable. */
 export interface RoleDef {
   key: string;
   name: string;
   privileges: string[];
   system?: boolean;
-}
-
-/** The seeded roles for a fresh org (a sensible owner → viewer ladder).
- *
- *  Must match `default_roles()` in `studio-backend/src/access_config.rs`. The
- *  backend seeds this into the document when an organization's first grant is
- *  written; this screen overwrites the document wholesale when it saves, so a
- *  ladder that disagrees here silently replaces the one the PDP was built
- *  against.
- *
- *  `owner` is listed for editing, not for deciding: the PDP treats an
- *  org-scoped `owner` grant as carrying every privilege whatever this array
- *  says (ADR-0019 §7), so an owner cannot be locked out by a bad edit. */
-export function defaultRoles(): RoleDef[] {
-  return [
-    { key: "owner", name: "Owner", system: true, privileges: [...ALL] },
-    {
-      key: "admin",
-      name: "Admin",
-      system: true,
-      // Everything except redefining the roles themselves: running the
-      // organization is an administrator's job, deciding who may run it is
-      // the owner's (ADR-0019 §2).
-      privileges: ALL.filter((id) => id !== "access.manage"),
-    },
-    {
-      key: "editor",
-      name: "Editor",
-      system: true,
-      privileges: [
-        "people.view",
-        "document.view",
-        "document.edit",
-        "connector.view",
-        "secret.view",
-        "session.open",
-      ],
-    },
-    {
-      key: "viewer",
-      name: "Viewer",
-      system: true,
-      privileges: PRIVILEGES.filter((p) => p.id.endsWith(".view")).map((p) => p.id),
-    },
-  ];
 }
 
 /** A grant binds a subject (member or team) to a role within a scope
@@ -167,14 +132,18 @@ export interface AccessConfig {
   grants: GrantDef[];
 }
 
-export function defaultAccessConfig(): AccessConfig {
-  return { model: "tenant", roles: defaultRoles(), grants: [] };
-}
-
-/** Fill in any missing pieces so an older/partial stored config still renders. */
-export function normalizeAccessConfig(v: Partial<AccessConfig> | null | undefined): AccessConfig {
+/** Fill in any missing pieces so an older/partial stored config still renders.
+ *
+ *  `seeded` is the ladder the server seeds a fresh organization with, read from
+ *  the access catalogue. It used to be built here, which meant a screen that
+ *  saves could overwrite the stored ladder with the browser's idea of it —
+ *  and a grant naming a role the document does not contain carries nothing. */
+export function normalizeAccessConfig(
+  v: Partial<AccessConfig> | null | undefined,
+  seeded: readonly RoleDef[],
+): AccessConfig {
   const model: AccessModel = v?.model === "roles" ? "roles" : "tenant";
-  const roles = v?.roles && v.roles.length ? v.roles : defaultRoles();
+  const roles = v?.roles && v.roles.length ? v.roles : [...seeded];
   const grants = Array.isArray(v?.grants) ? (v!.grants as GrantDef[]) : [];
   return { model, roles, grants };
 }

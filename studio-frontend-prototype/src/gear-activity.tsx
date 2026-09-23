@@ -1,58 +1,34 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api";
-import type {
-  CatalogNode,
-  ComponentMetrics,
-  ComponentPullRequests,
-  ComponentSpecInput,
-} from "./api";
+import type { GearActivity, GearPullRequests } from "./api";
 import { errText } from "./format";
+
+export type { GearActivity, GearPullRequests } from "./api";
 
 /* ============================================================================
  * Delivery activity per Gear, from Constructor Insight.
  *
- * Insight keys its git metrics by *repository*; a gear is a directory inside
- * one (`gears/system/api-gateway/…` in `constructorfabric/gears-rust`). The
- * studio-insight gear closes that gap: we send the component names we know and
- * it matches them as whole path segments, so nobody has to maintain a map from
- * crate to directory. One request per repository answers the whole list.
+ * The rules that make this possible are NOT here any more. Insight keys its git
+ * metrics by *repository*; a gear is a directory inside one
+ * (`gears/system/api-gateway/…` in `constructorfabric/gears-rust`), so
+ * somebody has to group the catalogue by repository, name the directory each
+ * crate publishes from, resolve the collisions and join the two answers back
+ * together per gear. That used to happen here, which also meant the whole
+ * component catalogue and every delivery profile were fetched into the page in
+ * order to be grouped. It lives in `components_catalog::activity` now, behind
+ * `GET /studio-components-catalog/v1/activity`, so a second portal does not
+ * grow its own copy of it.
  *
- * Two requests per repository: commit activity, and pull requests counted by
- * the state they are in now. A PR belongs to a repository, so the second one is
- * an *attribution* through the files its commits touched — dependable for what
- * merged (~97% reach their files), only indicative for what was abandoned
- * (~29% of closed, ~46% of open), and a PR touching three gears counts in all
- * three. The panel says so rather than leaving the reader to assume the rows
- * partition the repository.
+ * What is still here is the drawing: the charts, the tiles and the wording.
  *
- * CI is not here and cannot be: a pipeline run names a commit, not a file, so
- * there is nothing to attribute it with.
+ * Two caveats the panel has to keep repeating, because they are about the
+ * numbers rather than the pictures. A pull request belongs to a repository, so
+ * it is *attributed* through the files its commits touched — dependable for
+ * what merged (~97% reach their files), only indicative for what was abandoned
+ * (~29% of closed, ~46% of open) — and one touching three gears counts in all
+ * three, so the rows do not partition the repository. CI is not here and
+ * cannot be: a pipeline run names a commit, not a file.
  * ==========================================================================*/
-
-/** Pull requests touching one gear, by the state they are in now. */
-export interface GearPullRequests {
-  open: number;
-  merged: number;
-  closed: number;
-  total: number;
-  /** Null when nothing merged in the window — not the same as zero hours. */
-  mergedCycleHours: number | null;
-  authors: number;
-}
-
-/** One gear's numbers over the selected window. */
-export interface GearActivity {
-  commits: number;
-  filesChanged: number;
-  linesAdded: number;
-  linesRemoved: number;
-  authors: number;
-  /** Absent when the repository has no pull requests in the window at all. */
-  pullRequests?: GearPullRequests;
-  /** Ascending by date, gaps filled with zeros so a quiet week reads as quiet
-   *  rather than as missing. */
-  points: { date: string; added: number; removed: number; commits: number }[];
-}
 
 export interface ActivityIndex {
   status: "off" | "loading" | "ready" | "error";
@@ -79,204 +55,33 @@ export const ACTIVITY_WINDOWS = [
   { days: 365, label: "12 months" },
 ] as const;
 
-/** At most this many repositories are queried per render — each is one round
- *  trip to Insight, and a catalogue spanning a dozen repos should not open a
- *  dozen connections on page load. */
-const REPO_LIMIT = 3;
-/** The backend refuses more than 200 declared components in one request. */
-const MAX_COMPONENTS = 200;
-
-/** `https://github.com/constructorfabric/gears-rust` → `constructorfabric/gears-rust`. */
-export function normalizeRepo(url: unknown): string | null {
-  if (typeof url !== "string" || !url.trim()) return null;
-  const path = url
-    .trim()
-    .replace(/^[a-z]+:\/\//i, "")
-    .replace(/^www\./i, "")
-    .replace(/\.git$/i, "")
-    .replace(/\/+$/, "");
-  const parts = path.split("/");
-  if (parts.length < 3) return null;
-  const [, owner, name] = parts;
-  if (!owner || !name) return null;
-  if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(name)) return null;
-  return `${owner}/${name}`;
-}
-
-/** The directory a gear's crate most likely lives in: `cf-gears-api-gateway`
- *  publishes from `gears/system/api-gateway/`. Collisions are resolved by the
- *  caller, which falls back to the full crate name. */
-export function gearSegment(crate: string): string {
-  return crate.replace(/^cf-gears-/, "").replace(/^cf-/, "");
-}
-
-/** YYYY-MM-DD, `days` before today, in the browser's timezone. */
-function daysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - (days - 1));
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/** Group the catalogue by repository, and name each gear's directory. */
-function planRequests(gears: CatalogNode[]): { repository: string; components: ComponentSpecInput[] }[] {
-  const byRepo = new Map<string, ComponentSpecInput[]>();
-  const seen = new Map<string, Set<string>>();
-  for (const g of gears) {
-    const name = String(g.value.name ?? "").trim();
-    const repo = normalizeRepo(g.value.repository);
-    if (!name || !repo) continue;
-    const taken = seen.get(repo) ?? new Set<string>();
-    // Two crates that strip to the same directory name would both match the
-    // same files and the second would silently read zero — fall back to the
-    // full crate name, which is unique, rather than report a wrong number.
-    const stripped = gearSegment(name);
-    const segment = taken.has(stripped) ? name : stripped;
-    taken.add(segment);
-    seen.set(repo, taken);
-    const list = byRepo.get(repo) ?? [];
-    if (list.length < MAX_COMPONENTS) list.push({ key: name, path_segment: segment });
-    byRepo.set(repo, list);
-  }
-  return [...byRepo.entries()]
-    .sort((a, b) => b[1].length - a[1].length)
-    .slice(0, REPO_LIMIT)
-    .map(([repository, components]) => ({ repository, components }));
-}
-
-/** Every bucket start between two dates, so the chart can draw a quiet week as
- *  a gap in the bars instead of skipping it and compressing time. */
-function weekStarts(from: string, to: string): string[] {
-  const start = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
-  // Snap to Monday, the boundary the backend buckets on.
-  const day = start.getUTCDay();
-  start.setUTCDate(start.getUTCDate() - ((day + 6) % 7));
-  const out: string[] = [];
-  for (let d = start; d <= end && out.length < 80; d.setUTCDate(d.getUTCDate() + 7)) {
-    out.push(d.toISOString().slice(0, 10));
-  }
-  return out;
-}
-
-function indexOf(pages: ComponentMetrics[], prPages: ComponentPullRequests[]): ActivityIndex {
-  const byGear = new Map<string, GearActivity>();
-  let truncated = false;
-  const from = pages[0]?.from;
-  const to = pages[0]?.to;
-  for (const page of pages) {
-    truncated = truncated || page.truncated;
-    const buckets = weekStarts(page.from, page.to);
-    const series = new Map<string, Map<string, { added: number; removed: number; commits: number }>>();
-    for (const p of page.series) {
-      const perGear = series.get(p.component) ?? new Map();
-      perGear.set(p.date, {
-        added: p.lines_added,
-        removed: p.lines_removed,
-        commits: p.commits,
-      });
-      series.set(p.component, perGear);
-    }
-    for (const row of page.components) {
-      const points = buckets.map((date) => {
-        const hit = series.get(row.component)?.get(date);
-        return {
-          date,
-          added: hit?.added ?? 0,
-          removed: hit?.removed ?? 0,
-          commits: hit?.commits ?? 0,
-        };
-      });
-      byGear.set(row.component, {
-        commits: row.commits,
-        filesChanged: row.files_changed,
-        linesAdded: row.lines_added,
-        linesRemoved: row.lines_removed,
-        authors: row.authors,
-        points,
-      });
-    }
-  }
-
-  // Pull requests arrive from their own call, keyed by the same component name.
-  // A gear with commits but no pull requests in the window simply has none of
-  // this, and the panel omits the block rather than drawing zeros. The reverse
-  // — a PR opened in the window whose commits are older than it, so the gear has
-  // no commit activity to attach to — is dropped here, because the panel only
-  // exists for a gear that moved.
-  for (const page of prPages) {
-    truncated = truncated || page.truncated;
-    for (const row of page.components) {
-      const gear = byGear.get(row.component);
-      if (!gear) continue;
-      gear.pullRequests = {
-        open: row.open,
-        merged: row.merged,
-        closed: row.closed,
-        total: row.total,
-        mergedCycleHours: row.merged_cycle_hours ?? null,
-        authors: row.authors,
-      };
-    }
-  }
-  return { status: "ready", from, to, byGear, truncated };
-}
-
 /**
- * Load per-gear activity for every repository the catalogue spans.
+ * Load per-gear activity over the selected window.
  *
- * Keyed on the gear names and the window, so re-rendering the list (a filter, a
- * profile edit) does not re-query Insight.
+ * Keyed on the window alone: the server reads the catalogue, so re-rendering
+ * the list (a filter, a profile edit) does not re-query anything.
  */
-export function useGearActivity(token: string, gears: CatalogNode[] | null, days: number): ActivityIndex {
-  const plan = useMemo(() => planRequests(gears ?? []), [gears]);
-  const planKey = useMemo(
-    () => plan.map((p) => `${p.repository}:${p.components.map((c) => c.key).join(",")}`).join("|"),
-    [plan],
-  );
+export function useGearActivity(token: string, days: number): ActivityIndex {
   const [state, setState] = useState<ActivityIndex>(EMPTY);
 
   useEffect(() => {
-    if (!token || plan.length === 0) {
+    if (!token) {
       setState(EMPTY);
       return;
     }
     let live = true;
     setState((cur) => ({ ...cur, status: "loading" }));
-    const from = daysAgo(days);
-    const limit = (p: (typeof plan)[number]) => Math.min(p.components.length, 500);
-    Promise.all([
-      Promise.all(
-        plan.map((p) =>
-          api.insightComponentMetrics(token, {
-            repository: p.repository,
-            from,
-            components: p.components,
-            include_other: false,
-            bucket: "week",
-            limit: limit(p),
-          }),
-        ),
-      ),
-      // Pull requests are a second question with its own coverage, so they get
-      // their own call — and their own failure. A warehouse without them is not
-      // a reason to lose the commit activity as well.
-      Promise.all(
-        plan.map((p) =>
-          api
-            .insightComponentPullRequests(token, {
-              repository: p.repository,
-              from,
-              components: p.components,
-              include_other: false,
-              limit: limit(p),
-            })
-            .catch(() => null),
-        ),
-      ),
-    ])
-      .then(([pages, prPages]) => {
-        if (live) setState(indexOf(pages, prPages.filter((p) => p !== null)));
+    api
+      .gearActivity(token, days)
+      .then((page) => {
+        if (!live) return;
+        setState({
+          status: "ready",
+          from: page.sources.from ?? undefined,
+          to: page.sources.to ?? undefined,
+          byGear: new Map(page.items.map((row) => [row.gear, row])),
+          truncated: page.sources.truncated,
+        });
       })
       .catch((e) => {
         if (live) setState({ ...EMPTY, status: "error", error: errText(e) });
@@ -284,9 +89,7 @@ export function useGearActivity(token: string, gears: CatalogNode[] | null, days
     return () => {
       live = false;
     };
-    // planKey stands in for plan: the array identity changes on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, planKey, days]);
+  }, [token, days]);
 
   return state;
 }
@@ -319,9 +122,9 @@ function dayLabel(iso: string): string {
  */
 export function ChurnChart({ points, label }: { points: GearActivity["points"]; label: string }) {
   const [hover, setHover] = useState<number | null>(null);
-  const scale = Math.max(1, ...points.map((p) => Math.max(p.added, p.removed)));
+  const scale = Math.max(1, ...points.map((p) => Math.max(p.lines_added, p.lines_removed)));
   const busiest = points.reduce(
-    (best, p, i) => (p.added + p.removed > points[best]?.added + points[best]?.removed ? i : best),
+    (best, p, i) => (p.lines_added + p.lines_removed > points[best]?.lines_added + points[best]?.lines_removed ? i : best),
     0,
   );
   const active = hover ?? busiest;
@@ -360,13 +163,13 @@ export function ChurnChart({ points, label }: { points: GearActivity["points"]; 
               tabIndex={0}
               onFocus={() => setHover(i)}
               role="img"
-              aria-label={`Week of ${dayLabel(p.date)}: ${p.commits} commits, ${p.added} lines added, ${p.removed} removed`}
+              aria-label={`Week of ${dayLabel(p.date)}: ${p.commits} commits, ${p.lines_added} lines added, ${p.lines_removed} removed`}
             >
               <span className="half up">
-                <span className="bar added" style={{ height: `${(p.added / scale) * 100}%` }} />
+                <span className="bar added" style={{ height: `${(p.lines_added / scale) * 100}%` }} />
               </span>
               <span className="half down">
-                <span className="bar removed" style={{ height: `${(p.removed / scale) * 100}%` }} />
+                <span className="bar removed" style={{ height: `${(p.lines_removed / scale) * 100}%` }} />
               </span>
             </div>
           ))}
@@ -377,8 +180,8 @@ export function ChurnChart({ points, label }: { points: GearActivity["points"]; 
         <span>{dayLabel(points[0].date)}</span>
         <span className="act-readout">
           <b>{dayLabel(shown.date)}</b> · {compact(shown.commits)} commits ·{" "}
-          <span className="ink-added">+{compact(shown.added)}</span>{" "}
-          <span className="ink-removed">−{compact(shown.removed)}</span>
+          <span className="ink-added">+{compact(shown.lines_added)}</span>{" "}
+          <span className="ink-removed">−{compact(shown.lines_removed)}</span>
         </span>
         <span>{dayLabel(points[points.length - 1].date)}</span>
       </div>
@@ -400,8 +203,8 @@ export function ChurnChart({ points, label }: { points: GearActivity["points"]; 
                 <tr key={p.date}>
                   <td>{dayLabel(p.date)}</td>
                   <td>{p.commits.toLocaleString("en-US")}</td>
-                  <td>{p.added.toLocaleString("en-US")}</td>
-                  <td>{p.removed.toLocaleString("en-US")}</td>
+                  <td>{p.lines_added.toLocaleString("en-US")}</td>
+                  <td>{p.lines_removed.toLocaleString("en-US")}</td>
                 </tr>
               ))}
             </tbody>
@@ -417,7 +220,7 @@ export function ChurnChart({ points, label }: { points: GearActivity["points"]; 
  *  it is a shape, and the numbers beside it carry the values. */
 export function MiniChurn({ points }: { points: GearActivity["points"] }) {
   const tail = points.slice(-12);
-  const scale = Math.max(1, ...tail.map((p) => p.added + p.removed));
+  const scale = Math.max(1, ...tail.map((p) => p.lines_added + p.lines_removed));
   if (tail.length === 0) return null;
   return (
     <span className="act-mini" aria-hidden="true">
@@ -425,7 +228,7 @@ export function MiniChurn({ points }: { points: GearActivity["points"] }) {
         <span
           key={p.date}
           className={`act-tick${i === tail.length - 1 ? " now" : ""}`}
-          style={{ height: `${Math.max(6, ((p.added + p.removed) / scale) * 100)}%` }}
+          style={{ height: `${Math.max(6, ((p.lines_added + p.lines_removed) / scale) * 100)}%` }}
         />
       ))}
     </span>
@@ -439,7 +242,7 @@ export function MiniChurn({ points }: { points: GearActivity["points"] }) {
  * would collide with the blue/red the churn chart above uses for a different
  * meaning. The number is the chart. */
 export function PullRequestTiles({ prs }: { prs: GearPullRequests }) {
-  const hours = prs.mergedCycleHours;
+  const hours = prs.merged_cycle_hours;
   const cycle =
     hours === null ? "—" : hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours.toFixed(1)}h`;
   const tiles = [
@@ -465,9 +268,9 @@ export function PullRequestTiles({ prs }: { prs: GearPullRequests }) {
 export function ActivityTiles({ activity }: { activity: GearActivity }) {
   const tiles: { label: string; value: string; tone?: "added" | "removed" }[] = [
     { label: "Commits", value: compact(activity.commits) },
-    { label: "Lines added", value: `+${compact(activity.linesAdded)}`, tone: "added" },
-    { label: "Lines removed", value: `−${compact(activity.linesRemoved)}`, tone: "removed" },
-    { label: "Files touched", value: compact(activity.filesChanged) },
+    { label: "Lines added", value: `+${compact(activity.lines_added)}`, tone: "added" },
+    { label: "Lines removed", value: `−${compact(activity.lines_removed)}`, tone: "removed" },
+    { label: "Files touched", value: compact(activity.files_changed) },
     { label: "Authors", value: compact(activity.authors) },
   ];
   return (

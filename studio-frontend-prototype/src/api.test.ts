@@ -6,6 +6,7 @@ import {
   apiUrl,
   sessionOrigin,
   sameOriginFileStorageUrl,
+  type Capability,
   type StudioSession,
   waitForStudioSessionReady,
   uploadProjectArtifact,
@@ -257,6 +258,67 @@ describe("kit registry client", () => {
         headers: expect.objectContaining({ Authorization: "Bearer token" }),
       }),
     );
+  });
+});
+
+describe("compose client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function jsonMock(body: unknown) {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const cap = (key: string, terms: string[]): Capability => ({
+    key,
+    label: key,
+    terms,
+    owner: "workspace",
+  });
+
+  it("sends the capabilities and the terms the workspace defined", async () => {
+    const fetchMock = jsonMock({ items: [], total: 0 });
+    await api.composePlan("token", ["chat"], [cap("chat", ["chat", "messaging"])]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/cf/studio-components-catalog/v1/compose",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ capabilities: ["chat"], terms: { chat: ["chat", "messaging"] } }),
+      }),
+    );
+  });
+
+  it("leaves a capability with no terms out of the map", async () => {
+    // Absent means "match the key itself", which is what it meant before
+    // vocabularies existed. An empty list would say something different.
+    const fetchMock = jsonMock({ items: [], total: 0 });
+    await api.composePlan("token", ["billing"], [cap("billing", [])]);
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ capabilities: ["billing"], terms: {} });
+  });
+
+  it("returns the rows the server planned, unedited", async () => {
+    jsonMock({
+      items: [
+        {
+          capability: "chat",
+          candidates: [{ name: "real-chat", kind: "gear", score: 2, why: ["chat"], built: "built" }],
+          gap: false,
+          unbuilt: false,
+        },
+      ],
+      total: 1,
+    });
+    const plan = await api.composePlan("token", ["chat"], []);
+    expect(plan.items[0].candidates[0].built).toBe("built");
   });
 });
 

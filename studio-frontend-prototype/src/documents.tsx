@@ -27,6 +27,7 @@ import {
   DocSection,
   DocType,
   DocValidation,
+  PlanRow,
   RemoteRepo,
   ScaffoldFile,
   SpecFinding,
@@ -35,10 +36,6 @@ import {
 } from "./api";
 import {
   collectBatch,
-  interpretBloat,
-  interpretDocType,
-  interpretLeak,
-  interpretTrace,
   isDetectorCancel,
   MIN_SPEC_SHARE,
   useSpecQualityCapabilities,
@@ -46,7 +43,6 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
-import { composePlan, profilesByName, type PlanRow } from "./compose";
 import { gearSlug } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
@@ -431,14 +427,13 @@ function DocumentsView({
     setComposeBusy(true);
     setErr(null);
     try {
-      const [components, profs, vocab] = await Promise.all([
-        api.listComponents(token),
-        api.listComponentProfiles(token).catch(() => ({ nodes: [] as import("./api").CatalogNode[] })),
-        api.capabilities(token, workspaceId),
-      ]);
-      const profiles = profilesByName(profs.nodes ?? []);
+      // The catalogue and the profiles are no longer fetched here: the server
+      // reads them itself and answers with the plan. The vocabulary still
+      // travels with the question, because it belongs to the workspace.
+      const vocab = await api.capabilities(token, workspaceId);
       const caps = selected.capabilities ?? [];
-      setPlan(composePlan(caps, components.nodes ?? [], profiles, vocab.items ?? []));
+      const plan = await api.composePlan(token, caps, vocab.items ?? []);
+      setPlan(plan.items);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -1143,10 +1138,11 @@ function IngestedDocumentsView({
           declined += 1;
           continue;
         }
-        const { docType, specShare, gatePassed, taskId } = interpretDocType(
-          got.result,
-          got.taskId,
-        );
+        const verdict = await api.specQualityVerdict(token, got.taskId, "purpose");
+        const docType = verdict.doc_type ?? null;
+        const specShare = verdict.spec_share ?? 0;
+        const gatePassed = verdict.gate_passed ?? null;
+        const taskId = got.taskId;
         // Two things have to hold before a verdict is worth recording: the
         // detector recognised enough of the document for the type it named to
         // mean anything, and that name is one this workspace has a template
@@ -1294,7 +1290,11 @@ function IngestedDocumentsView({
       for (const b of targets) {
         const got = collected.get(b.path);
         if (!got || "error" in got) continue;
-        const { passed, leakShare, foreignRoles, taskId } = interpretLeak(got.result, got.taskId);
+        const verdict = await api.specQualityVerdict(token, got.taskId, "leak");
+        const passed = verdict.passed ?? null;
+        const leakShare = verdict.leak_share ?? null;
+        const foreignRoles = verdict.foreign_roles ?? [];
+        const taskId = got.taskId;
         if (passed === true) clean += 1;
         else if (passed === false) leaky += 1;
 
@@ -1403,11 +1403,15 @@ function IngestedDocumentsView({
         setErr(whole && "error" in whole ? whole.error : "the traceability run reported nothing");
         return;
       }
-      const { byPath, recognised, taskId } = interpretTrace(
-        whole.result,
+      const verdict = await api.specQualityVerdict(
+        token,
         whole.taskId,
+        "traceability",
         targets.map((b) => b.path),
       );
+      const byPath = verdict.by_path ?? {};
+      const recognised = verdict.recognised ?? false;
+      const taskId = whole.taskId;
 
       // The service does not document this response, so an unreadable shape
       // must not be reported as "nothing references anything" — that reads as
@@ -1518,11 +1522,17 @@ function IngestedDocumentsView({
         setErr(whole && "error" in whole ? whole.error : "the duplication run reported nothing");
         return;
       }
-      const { byPath, pairs, taskId } = interpretBloat(
-        whole.result,
+      const verdict = await api.specQualityVerdict(
+        token,
         whole.taskId,
+        "bloat",
         targets.map((b) => b.path),
       );
+      const byPath = verdict.by_path ?? {};
+      const pairs: [string, string][] = (verdict.pairs ?? []).map(
+        (p) => [p[0], p[1]] as [string, string],
+      );
+      const taskId = whole.taskId;
 
       let repeating = 0;
       for (const b of targets) {

@@ -232,28 +232,6 @@ async function runDetector(
  *
  *  This is interpretation, not policy: what the numbers MEAN for a document's
  *  type is still the caller's (see MIN_SPEC_SHARE and its callers). */
-export function interpretDocType(result: unknown, taskId: string): DocTypeVerdict {
-  const r = (result ?? {}) as {
-    doc_type?: unknown;
-    mixture?: Record<string, unknown>;
-    gate?: Record<string, unknown>;
-  };
-  const docType = typeof r.doc_type === "string" && r.doc_type.trim() ? r.doc_type.trim() : null;
-  const passed = r.gate?.passed ?? r.gate?.ok;
-
-  // `mixture` is how much of the document each section role accounts for.
-  // `other` is the share that is not specification content at all, so what is
-  // left is how much of the file the detector actually recognised as a spec —
-  // and that, not `gate`, is what says whether `doc_type` means anything.
-  const other = Number(r.mixture?.other ?? 0);
-  const specShare = Number.isFinite(other) ? Math.max(0, Math.min(1, 1 - other)) : 0;
-  return {
-    docType,
-    specShare,
-    gatePassed: typeof passed === "boolean" ? passed : null,
-    taskId,
-  };
-}
 
 /** One document's place in a sweep's outcome. */
 interface BatchOutcome {
@@ -273,14 +251,20 @@ interface BatchOutcome {
  *  a run's result is broadcast to everyone in the tenant.
  *
  *  Returns one entry per item the run reported, keyed by the id the caller gave
- *  it. An item the run could not finish carries its reason instead of a result,
- *  because losing the others to it would be worse than saying so. */
+ *  it. An item the run could not finish carries its reason instead of a task
+ *  id, because losing the others to it would be worse than saying so.
+ *
+ *  IT NO LONGER FETCHES THE RESULT. It used to read each task and hand back the
+ *  raw JSON for this file to interpret; reading a detector's answer is a
+ *  judgement, and that judgement is the backend's now
+ *  (`GET /studio-spec-quality/v1/verdicts`). A task id is all a caller needs to
+ *  ask for the verdict, and the undocumented shapes stop crossing the wire. */
 export async function collectBatch(
   token: string,
   runId: string,
   { onProgress, signal }: { onProgress?: (phase: string) => void; signal?: AbortSignal } = {},
-): Promise<Map<string, { taskId: string; result: unknown } | { error: string }>> {
-  const out = new Map<string, { taskId: string; result: unknown } | { error: string }>();
+): Promise<Map<string, { taskId: string } | { error: string }>> {
+  const out = new Map<string, { taskId: string } | { error: string }>();
   const end = await followRun(
     token,
     runId,
@@ -301,12 +285,7 @@ export async function collectBatch(
       out.set(outcome.id, { error: outcome.error || outcome.status });
       continue;
     }
-    try {
-      const view = await sqFetch<TaskView>(`/v1/tasks/${outcome.task_id}`, token, { signal });
-      out.set(outcome.id, { taskId: outcome.task_id, result: view.result });
-    } catch (e) {
-      out.set(outcome.id, { error: e instanceof Error ? e.message : String(e) });
-    }
+    out.set(outcome.id, { taskId: outcome.task_id });
   }
   return out;
 }
@@ -406,25 +385,6 @@ export const MIN_SPEC_SHARE = 0.5;
  *  not evidence that documents are clean, and a gate wired to one would open
  *  for everything while looking like it had checked.
  */
-/** Read one leak verdict.
- *
- *  Split from the submitting half, which moved to the server: a detector run
- *  is started by `POST /studio-documents/.../quality/leak`, which reads the
- *  documents off the checkout rather than being handed them. Interpreting what
- *  came back is unchanged and stays here, next to the types it produces. */
-export function interpretLeak(result: unknown, taskId: string): LeakVerdict {
-  const r = (result ?? {}) as {
-    passed?: unknown;
-    leak_share?: unknown;
-    foreign_roles?: unknown;
-  };
-  return {
-    passed: typeof r.passed === "boolean" ? r.passed : null,
-    leakShare: typeof r.leak_share === "number" ? r.leak_share : null,
-    foreignRoles: Array.isArray(r.foreign_roles) ? r.foreign_roles.map(String) : [],
-    taskId: taskId,
-  };
-}
 
 /** What the `leak` detector concluded about one document. */
 export interface LeakVerdict {
@@ -452,58 +412,6 @@ export interface LeakVerdict {
  *  bury the one bloat exists for: two documents saying the same thing, so that
  *  changing one silently leaves the other lying.
  */
-/** Read one bloat verdict.
- *
- *  Split from the submitting half, which moved to the server: a detector run
- *  is started by `POST /studio-documents/.../quality/bloat`, which reads the
- *  documents off the checkout rather than being handed them. Interpreting what
- *  came back is unchanged and stays here, next to the types it produces. */
-export function interpretBloat(
-  result: unknown,
-  taskId: string,
-  paths: string[],
-): BloatVerdicts {
-  const r = (result ?? {}) as { clusters?: unknown };
-  const clusters = Array.isArray(r.clusters) ? r.clusters : [];
-
-  /** path → the other paths it shares text with. */
-  const shares = new Map<string, Set<string>>();
-  for (const raw of clusters) {
-    const cluster = raw as { occurrences?: { file?: unknown }[] };
-    const files = [
-      ...new Set(
-        (cluster.occurrences ?? [])
-          .map((o) => (typeof o.file === "string" ? o.file : ""))
-          .filter(Boolean),
-      ),
-    ];
-    // One file, however many times: that is a document repeating itself.
-    if (files.length < 2) continue;
-    for (const file of files) {
-      const others = shares.get(file) ?? new Set<string>();
-      for (const other of files) if (other !== file) others.add(other);
-      shares.set(file, others);
-    }
-  }
-
-  const verdicts: BloatVerdicts = { byPath: {}, taskId: taskId, pairs: [] };
-  for (const path of paths) {
-    verdicts.byPath[path] = [...(shares.get(path) ?? [])].sort();
-  }
-  // The same fact as a relation, for the graph: an unordered pair, once.
-  const seen = new Set<string>();
-  for (const [path, others] of shares) {
-    for (const other of others) {
-      const [a, b] = path < other ? [path, other] : [other, path];
-      const key = `${a}|${b}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        verdicts.pairs.push([a, b]);
-      }
-    }
-  }
-  return verdicts;
-}
 
 /** Which documents of a set repeat which others. */
 export interface BloatVerdicts {
@@ -530,46 +438,6 @@ export interface BloatVerdicts {
  *  render as "no references", and the first is a bug in this reader while the
  *  second is a fact about the documents.
  */
-/** Read one traceability verdict.
- *
- *  Split from the submitting half, which moved to the server: a detector run
- *  is started by `POST /studio-documents/.../quality/traceability`, which reads the
- *  documents off the checkout rather than being handed them. Interpreting what
- *  came back is unchanged and stays here, next to the types it produces. */
-export function interpretTrace(
-  result: unknown,
-  taskId: string,
-  paths: string[],
-): TraceVerdicts {
-  const r = (result ?? {}) as Record<string, unknown>;
-  const rawEdges = r.edges ?? r.links ?? r.references ?? r.pairs;
-  const recognised = Array.isArray(rawEdges);
-
-  const byPath: Record<string, string[]> = {};
-  for (const path of paths) byPath[path] = [];
-  const pairs: [string, string][] = [];
-
-  if (Array.isArray(rawEdges)) {
-    for (const raw of rawEdges) {
-      // Tuples and objects both appear in the wild; take whichever this is.
-      let from: unknown;
-      let to: unknown;
-      if (Array.isArray(raw)) {
-        [from, to] = raw;
-      } else if (raw && typeof raw === "object") {
-        const e = raw as Record<string, unknown>;
-        from = e.from ?? e.source ?? e.src;
-        to = e.to ?? e.target ?? e.dst;
-      }
-      if (typeof from !== "string" || typeof to !== "string" || from === to) continue;
-      pairs.push([from, to]);
-      if (byPath[from] && !byPath[from].includes(to)) byPath[from].push(to);
-    }
-  }
-  for (const list of Object.values(byPath)) list.sort();
-
-  return { byPath, pairs, recognised, taskId: taskId };
-}
 
 /** How a set of documents references itself. */
 export interface TraceVerdicts {

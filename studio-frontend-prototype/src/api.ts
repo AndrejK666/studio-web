@@ -165,6 +165,81 @@ export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
  *  Was `CAP_KEYWORDS` in documents.tsx — a table in a UI file that decided
  *  which components a workspace could be offered. It is catalogue data now,
  *  overlaid the same three ways as everything else. */
+/** What the catalogue can say about whether a component was ever built.
+ *
+ *  `"unknown"` is not a maybe — it means the question does not apply or was
+ *  never asked. A FrontX package carries no crate count at all, and a component
+ *  with no profile has not been scanned. Neither is evidence of absence. */
+export type BuildState = "built" | "docs-only" | "unknown";
+
+/** What the Gearbox engine said about a component, as the catalogue sync
+ *  recorded it: it can go into a product (`runs`), it is described but cannot
+ *  run from this corpus (`blocked`), or nothing describes it for composition
+ *  (`undescribed`). A different question from `built`. */
+export type Composability = "runs" | "blocked" | "undescribed";
+
+/** One component offered for one capability. */
+export interface Candidate {
+  name: string;
+  kind: string;
+  /** How many of the capability's terms this component mentions. */
+  score: number;
+  /** Which terms they were, so a suggestion can be argued with. */
+  why: string[];
+  built: BuildState;
+  composable: Composability;
+  /** The engine's reason, when `blocked`. */
+  composable_why?: string | null;
+}
+
+/** One capability, and what could fill it. */
+export interface PlanRow {
+  capability: string;
+  candidates: Candidate[];
+  /** No candidate at all — the capability has nothing to build from. */
+  gap: boolean;
+  /** Candidates exist, but none of them has been built. */
+  unbuilt: boolean;
+}
+
+/** One weekly bar of a gear's churn. */
+export interface ActivityPoint {
+  /** The bucket's first day (a Monday), `YYYY-MM-DD`. */
+  date: string;
+  commits: number;
+  lines_added: number;
+  lines_removed: number;
+}
+
+/** Pull requests touching one gear, by the state they are in now.
+ *
+ *  Attributed through the files their commits changed, so one touching three
+ *  gears counts in all three: these rows do NOT partition the repository, and
+ *  a screen showing them has to say so. */
+export interface GearPullRequests {
+  open: number;
+  merged: number;
+  closed: number;
+  total: number;
+  /** Null when nothing merged in the window — not the same as zero hours. */
+  merged_cycle_hours: number | null;
+  authors: number;
+}
+
+/** What one gear did over the window. */
+export interface GearActivity {
+  gear: string;
+  commits: number;
+  files_changed: number;
+  lines_added: number;
+  lines_removed: number;
+  authors: number;
+  /** Null when no pull request in the window touched this gear — not zeros. */
+  pull_requests?: GearPullRequests | null;
+  /** Ascending by date, gaps filled with zeros. */
+  points: ActivityPoint[];
+}
+
 export interface Capability {
   key: string;
   label: string;
@@ -1497,9 +1572,45 @@ export interface RollupRow {
   repos?: number | null;
 }
 
+/** A verdict as the server read it. Fields follow the detector, so most are
+ *  absent for any one answer; the nulls are load-bearing where present. */
+export interface SpecQualityVerdict {
+  detector: string;
+  task_id: string;
+  doc_type?: string | null;
+  spec_share?: number | null;
+  gate_passed?: boolean | null;
+  passed?: boolean | null;
+  leak_share?: number | null;
+  foreign_roles?: string[] | null;
+  by_path?: Record<string, string[]> | null;
+  pairs?: string[][] | null;
+  recognised?: boolean | null;
+}
+
 export const api = {
   /** Login = validate the token by asking the backend who we are. */
   me: (token: string) => request<Me>("/account-management/v1/me", token),
+
+  /** One analysis, as the server read it.
+   *
+   *  The four detectors answer in shapes their service does not document, and
+   *  turning those into a verdict is a judgement rather than a parse. That
+   *  judgement moved to the backend so two portals cannot make it differently;
+   *  this asks for the answer. `paths` is required by the set detectors
+   *  (`bloat`, `traceability`): a document absent from it is absent from the
+   *  reply, and absent reads as "not analysed" where an empty list reads as
+   *  "analysed, nothing found". */
+  specQualityVerdict: (
+    token: string,
+    taskId: string,
+    detector: "purpose" | "leak" | "bloat" | "traceability",
+    paths: string[] = [],
+  ) => {
+    const q = new URLSearchParams({ task_id: taskId, detector });
+    for (const p of paths) q.append("path", p);
+    return request<SpecQualityVerdict>(`/studio-spec-quality/v1/verdicts?${q.toString()}`, token);
+  },
 
   /** What every workspace and project contains, in one request.
    *
@@ -2157,6 +2268,22 @@ export const api = {
 
   /* ── Organization access config (AM tenant metadata) ── */
 
+  /** The privilege catalogue and the seeded role ladder, from the side that
+   *  evaluates them.
+   *
+   *  Both used to be a second copy in `access.ts` under a comment saying they
+   *  "must match" `access_config.rs`, guarded by a test that parsed the Rust
+   *  source. They match because the server is now asked.
+   *
+   *  Ids and the ladder only — what a privilege is CALLED is not served, and
+   *  deliberately so (see `AccessCatalogueDto`): the strings belong to whoever
+   *  draws the screen. `PRIVILEGE_LABELS` in `access.ts` is this portal's set. */
+  accessCatalogue: (token: string) =>
+    request<{ privileges: string[]; default_roles: import("./access").RoleDef[] }>(
+      "/studio-organizations/v1/access-catalogue",
+      token,
+    ),
+
   /** The org's access model + role definitions. `null` = never set (defaults). */
   accessConfig: async (token: string, tenantId: string): Promise<import("./access").AccessConfig | null> => {
     try {
@@ -2613,6 +2740,47 @@ export const api = {
       versions: number;
       stored: number;
     }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
+  /** Match what a product needs against the components this system knows.
+   *
+   *  The rules — head-anchored term matching, built-first ordering, one
+   *  component per candidate, the cut to a shortlist after the sort — live in
+   *  `components_catalog/compose.rs`. They used to live in this portal, and a
+   *  second portal would have grown its own copy and disagreed quietly.
+   *
+   *  A POST because the vocabulary travels with the question: a workspace's
+   *  terms are a map, and a map does not belong in a query string. */
+  composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+    // A capability with no terms is matched against its own name, which is what
+    // it meant before vocabularies existed — so it is left out of the map
+    // rather than sent as an empty list.
+    const terms: Record<string, string[]> = {};
+    for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
+    return request<{ items: PlanRow[]; total: number }>(
+      "/studio-components-catalog/v1/compose",
+      token,
+      { method: "POST", body: JSON.stringify({ capabilities, terms }) },
+    );
+  },
+  /** What moved in each catalogued gear, over a window of days.
+   *
+   *  The catalogue is read by the server, and so are the rules that turn it
+   *  into a question Insight can answer — grouping by repository, naming each
+   *  crate's directory, resolving the collisions, joining the two answers back
+   *  together. All of that used to live in `gear-activity.tsx`, which is why
+   *  this screen used to pull the whole catalogue into the browser first. */
+  gearActivity: (token: string, days: number) =>
+    request<{
+      items: GearActivity[];
+      total: number;
+      /** Where the numbers came from, and what was left out getting them. */
+      sources: {
+        from: string | null;
+        to: string | null;
+        truncated: boolean;
+        repositories: string[];
+      };
+    }>(`/studio-components-catalog/v1/activity?days=${days}`, token),
+
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
     request<{ nodes: CatalogNode[]; truncated?: boolean }>(

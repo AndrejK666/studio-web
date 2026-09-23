@@ -7,7 +7,7 @@
 // for picking and how the picks and the session are spelled.
 
 import type { GearboxDiagnostic, GearboxStatus, RepoEntry } from "./api";
-import type { Candidate, PlanRow } from "./compose";
+import type { Candidate, PlanRow } from "./api";
 
 /** The deployment profiles a generated product.gdl declares, in the order they
  *  are offered, with what each one means to somebody choosing. */

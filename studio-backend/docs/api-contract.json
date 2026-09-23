@@ -399,6 +399,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/activity",
+      "operation_id": "studio_components_catalog.list_gear_activity",
+      "tag": "StudioComponentsCatalog",
+      "summary": "What moved in each catalogued gear, over a window",
+      "authenticated": true,
+      "responses": [
+        "GearActivityListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/components",
       "operation_id": "studio_components_catalog.list_gears",
       "tag": "StudioComponentsCatalog",
@@ -1217,6 +1233,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-quality/v1/verdicts",
+      "operation_id": "studio_spec_quality.get_verdict",
+      "tag": "SpecQuality",
+      "summary": "One analysis, read rather than relayed",
+      "authenticated": true,
+      "responses": [
+        "VerdictDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-tasks/v1/runs",
       "operation_id": "studio_tasks.list_runs",
       "tag": "StudioTasks",
@@ -1653,6 +1685,23 @@
       "request": "SaveGearProfileRequest",
       "responses": [
         "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/compose",
+      "operation_id": "studio_components_catalog.create_compose_plan",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Match what a product needs against the components that exist",
+      "authenticated": true,
+      "request": "ComposeRequest",
+      "responses": [
+        "ComposePlanDto"
       ],
       "errors": [
         "400",
