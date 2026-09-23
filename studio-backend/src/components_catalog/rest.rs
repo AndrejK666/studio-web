@@ -1321,7 +1321,9 @@ async fn scaffold_gear(
             .collect(),
         None => {
             let parent_dir = body.parent_dir.clone().unwrap_or_default();
-            let (gear_gdl, plugin) = describe_new_gear(&catalog, &body, &parent_dir).await?;
+            let (gear_gdl, plugin) =
+                describe_new_gear(&ctx, &project_id.to_string(), &catalog, &body, &parent_dir)
+                    .await?;
             super::skeleton::generate(&super::skeleton::SkeletonSpec {
                 capability: body.slug.clone(),
                 app_title: body.app_title.clone().unwrap_or_default(),
@@ -1444,6 +1446,8 @@ async fn save_project_product(
 /// engine does not know, or a plugin host it does not describe, is the
 /// caller's mistake and says so.
 async fn describe_new_gear(
+    ctx: &SecurityContext,
+    project_id: &str,
     catalog: &Catalog,
     body: &ScaffoldRequest,
     parent_dir: &str,
@@ -1473,6 +1477,27 @@ async fn describe_new_gear(
                     "a plugin needs `plugin_host`, the gear whose extension point it fills".into(),
                 )
             })?;
+        // The engine resolves `sdk = cargo(path = ...)` inside one source root,
+        // so a plugin of a corpus host has to be written into the corpus: in
+        // any other repository its description could never validate.
+        let project_repo = catalog
+            .service
+            .get_project_repo(ctx, project_id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+            .and_then(|n| {
+                n.value
+                    .get("repo")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let corpus = gearbox.corpus_repo();
+        if super::gearbox::repo_key(&project_repo) != corpus {
+            return Err(invalid(format!(
+                "a plugin lives in the repository of the SDK it implements; the hosts here are                  in `{corpus}`, and this project's gears go to `{project_repo}`. Use `{corpus}`                  as the project's gear store, or scaffold a service"
+            )));
+        }
         let points = gearbox
             .extension_points()
             .await
@@ -1488,7 +1513,7 @@ async fn describe_new_gear(
         Some(super::gearbox::SdkLocator {
             crate_name: point.sdk_crate,
             lib_ident: point.sdk_lib,
-            path: super::gearbox::sdk_path_from_gear(parent_dir, &point.sdk_path),
+            path: super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path),
         })
     } else {
         None

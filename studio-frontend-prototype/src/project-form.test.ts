@@ -5,7 +5,15 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { clampStep, createFormLayout, createSteps, gearRepoBlocker, stepBlocker } from "./project-form";
+import {
+  clampStep,
+  createFormLayout,
+  createSteps,
+  gearRepoBlocker,
+  pluginBlocker,
+  repoKey,
+  stepBlocker,
+} from "./project-form";
 
 describe("createFormLayout", () => {
   it("asks a gear project where the gear goes, and asks nobody else", () => {
@@ -196,5 +204,35 @@ describe("stepBlocker", () => {
   it("blocks nothing on the optional pages", () => {
     expect(stepBlocker("brief", form)).toBeNull();
     expect(stepBlocker("components", form)).toBeNull();
+  });
+});
+
+// The engine resolves a plugin's SDK path inside one source root, so a plugin
+// of a corpus host can only be written into the corpus.
+describe("pluginBlocker", () => {
+  const corpusUrl = "https://github.com/MikeFalcon77/gears-rust.git";
+
+  it("writes a plugin only into the corpus's own store", () => {
+    expect(pluginBlocker({ repoMode: "new", storeRepo: null, corpusUrl, host: "cf-gears-authn-resolver" })).toMatch(
+      /repository of the SDK/,
+    );
+    expect(
+      pluginBlocker({ repoMode: "existing", storeRepo: "acme/gears", corpusUrl, host: "cf-gears-authn-resolver" }),
+    ).toMatch(/mikefalcon77\/gears-rust/);
+    expect(
+      pluginBlocker({ repoMode: "existing", storeRepo: "MikeFalcon77/gears-rust", corpusUrl, host: "cf-gears-authn-resolver" }),
+    ).toBeNull();
+  });
+
+  it("still asks for the host, and says so when there is no engine", () => {
+    expect(pluginBlocker({ repoMode: "existing", storeRepo: "MikeFalcon77/gears-rust", corpusUrl, host: "" })).toMatch(
+      /Pick the host/,
+    );
+    expect(pluginBlocker({ repoMode: "existing", storeRepo: "x/y", corpusUrl: null, host: "h" })).toMatch(/not configured/);
+  });
+
+  it("agrees with the backend on what one repository is", () => {
+    expect(repoKey(corpusUrl)).toBe("mikefalcon77/gears-rust");
+    expect(repoKey("MikeFalcon77/gears-rust/")).toBe("mikefalcon77/gears-rust");
   });
 });

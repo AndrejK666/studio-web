@@ -86,6 +86,7 @@ import {
   clampStep,
   createFormLayout,
   createSteps,
+  pluginBlocker,
   stepBlocker,
   type RepoMode,
 } from "./project-form";
@@ -3314,6 +3315,7 @@ function WorkspaceProjects({
   const [hostPoints, setHostPoints] = useState<import("./api").GearboxExtensionPoint[] | null>(
     null,
   );
+  const [corpusUrl, setCorpusUrl] = useState<string | null>(null);
   const [repoPrivate, setRepoPrivate] = useState(true);
   const [repoSearch, setRepoSearch] = useState("");
   const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[] | null>(null);
@@ -3444,6 +3446,14 @@ function WorkspaceProjects({
       .catch(() => {
         if (alive) setHostPoints([]);
       });
+    api
+      .gearboxStatus(token)
+      .then((st) => {
+        if (alive) setCorpusUrl(st.enabled ? (st.corpus_url ?? null) : null);
+      })
+      .catch(() => {
+        if (alive) setCorpusUrl(null);
+      });
     return () => {
       alive = false;
     };
@@ -3507,13 +3517,19 @@ function WorkspaceProjects({
   const steps = createSteps(newKind, repoMode);
   const stepIndex = clampStep(step, steps);
   const current = steps[stepIndex];
+  const pluginProblem = pluginBlocker({
+    repoMode,
+    storeRepo: existingRepo?.full_path ?? null,
+    corpusUrl,
+    host: pluginHost,
+  });
   const formState = {
     name: newName,
     kind: newKind,
     repoMode,
     connectionId: connId,
     storePicked: existingRepo !== null,
-    pluginHostMissing: gearKind === "plugin" && !pluginHost,
+    pluginProblem: gearKind === "plugin" ? pluginProblem : null,
   };
   const pageBlocker = stepBlocker(current.key, formState);
   // What blocks creating at all, wherever it sits. The last page cannot assume
@@ -3807,6 +3823,7 @@ function WorkspaceProjects({
     setGearKind("service");
     setPluginHost("");
     setHostPoints(null);
+    setCorpusUrl(null);
     setRepoPrivate(true);
     setRepoSearch("");
     setRemoteRepos(null);
@@ -4187,6 +4204,11 @@ function WorkspaceProjects({
                             </option>
                           ))}
                         </select>
+                      )}
+                      {pluginProblem && hostPoints !== null && (
+                        <span style={{ fontSize: 11, opacity: 0.8 }} data-plugin-problem>
+                          {pluginProblem}
+                        </span>
                       )}
                     </label>
                   )}
@@ -9371,14 +9393,15 @@ async function startStudioSession(
   }
   // A product project's product.gdl names its gears from `../gears-rust`, so
   // its session checks the gear corpus out beside the project's own sources —
-  // the same corpus the portal's preview resolved against. A gear project's
-  // gear.gdl does too when the gear is a plugin: its SDK is in the corpus.
-  // Anything else, or a deployment without the engine, is unchanged.
+  // the same corpus the portal's preview resolved against. Not a gear project:
+  // its gears are in its own repository (a plugin's in the corpus itself, see
+  // `pluginBlocker`), and a second copy of the corpus would describe every
+  // gear twice. Anything else, or a deployment without the engine, is unchanged.
   const kind = await api
     .projectConfig(token, target.id)
     .then((c) => c?.kind)
     .catch(() => undefined);
-  if (kind === "product" || kind === "new_gears") {
+  if (kind === "product") {
     repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
   }
   onResolved?.({ repos, root, kind });

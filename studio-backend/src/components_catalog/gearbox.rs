@@ -718,21 +718,39 @@ pub fn host_points(catalogue: &EngineCatalogue) -> Vec<HostPoint> {
     out
 }
 
-/// The SDK path as a new gear's `gear.gdl` must write it, in a Studio
-/// workspace: the gear sits at `<checkout>/<parent_dir>/<slug>`, and the corpus
-/// is the `gears-rust` checkout beside the project's.
-pub fn sdk_path_from_gear(parent_dir: &str, sdk_path: &str) -> String {
+/// The SDK path as a new gear's `gear.gdl` must write it: from the gear's own
+/// directory, `<parent_dir>/<slug>`, to the SDK, both in one repository.
+///
+/// One repository, because the engine resolves a `cargo(path = ...)` inside
+/// the source root that declares it and refuses a `..` that climbs out
+/// (`RelPath::resolve`, reported as GBX0102). A plugin written into its own
+/// repository cannot name a corpus SDK by path at all, so it is never asked to.
+pub fn sdk_path_in_repo(parent_dir: &str, sdk_path: &str) -> String {
     let depth = parent_dir
         .trim_matches('/')
         .split('/')
         .filter(|s| !s.is_empty())
         .count()
-        + 2;
+        + 1;
     format!(
-        "{}{CORPUS_SOURCE_ID}/{}",
+        "{}{}",
         "../".repeat(depth),
         sdk_path.trim_start_matches('/')
     )
+}
+
+/// `https://github.com/Owner/Repo.git`, `owner/repo` -> `owner/repo`: the form
+/// two spellings of one repository compare equal in.
+pub fn repo_key(value: &str) -> String {
+    let v = value.trim().trim_end_matches('/').trim_end_matches(".git");
+    let v = v.split_once("://").map_or(v, |(_, rest)| rest);
+    let parts: Vec<&str> = v.split('/').filter(|s| !s.is_empty()).collect();
+    let tail = if parts.len() > 2 {
+        &parts[parts.len() - 2..]
+    } else {
+        &parts[..]
+    };
+    tail.join("/").to_ascii_lowercase()
 }
 
 fn answer_gdl(result: &Value) -> anyhow::Result<String> {
@@ -1257,6 +1275,11 @@ impl Gearbox {
             Ok(s) => s.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
+    }
+
+    /// The corpus repository as `owner/repo`, for comparing with a project's.
+    pub fn corpus_repo(&self) -> String {
+        repo_key(&self.current_source().url)
     }
 
     /// The corpus the catalogue, previews and facts are read from, as a label.
@@ -2088,18 +2111,34 @@ mod tests {
     }
 
     #[test]
-    fn the_sdk_path_climbs_out_of_the_new_gear_into_the_corpus_checkout() {
-        // <checkout>/gears/<slug>/ → up three to the workspace, then gears-rust.
+    fn the_sdk_path_climbs_to_the_repository_root_and_no_further() {
+        // gears/<slug>/ -> up two to the root, then down to the SDK. Never
+        // above the root: the engine refuses that (GBX0102).
         assert_eq!(
-            sdk_path_from_gear("gears", "gears/system/x-sdk"),
-            "../../../gears-rust/gears/system/x-sdk"
+            sdk_path_in_repo("gears", "gears/system/x-sdk"),
+            "../../gears/system/x-sdk"
         );
         assert_eq!(
-            sdk_path_from_gear("/gears/bss/", "/gears/x-sdk"),
-            "../../../../gears-rust/gears/x-sdk"
+            sdk_path_in_repo("/gears/bss/", "/gears/x-sdk"),
+            "../../../gears/x-sdk"
         );
-        // An empty parent is the checkout root: <checkout>/<slug>/.
-        assert_eq!(sdk_path_from_gear("", "x-sdk"), "../../gears-rust/x-sdk");
+        assert_eq!(sdk_path_in_repo("", "x-sdk"), "../x-sdk");
+    }
+
+    #[test]
+    fn two_spellings_of_one_repository_compare_equal() {
+        assert_eq!(
+            repo_key("https://github.com/MikeFalcon77/gears-rust.git"),
+            "mikefalcon77/gears-rust"
+        );
+        assert_eq!(
+            repo_key("MikeFalcon77/gears-rust"),
+            "mikefalcon77/gears-rust"
+        );
+        assert_ne!(
+            repo_key("acme/gears-rust"),
+            repo_key("MikeFalcon77/gears-rust")
+        );
     }
 
     #[test]
