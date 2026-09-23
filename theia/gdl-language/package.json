@@ -1,0 +1,74 @@
+{
+  "name": "gearbox-gdl",
+  "displayName": "GDL (Gears Description Language)",
+  "description": "gear.gdl and product.gdl: highlighting, and diagnostics, completion and hover from the Gearbox engine's language server.",
+  "version": "0.1.0",
+  "publisher": "constructorfabric",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:gdl",
+    "workspaceContains:**/gear.gdl",
+    "workspaceContains:**/product.gdl"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "gdl",
+        "aliases": [
+          "GDL",
+          "Gears Description Language"
+        ],
+        "extensions": [
+          ".gdl"
+        ],
+        "filenames": [
+          "gear.gdl",
+          "product.gdl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gdl",
+        "scopeName": "source.gdl",
+        "path": "./syntaxes/gdl.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "GDL",
+      "properties": {
+        "gearbox.gdl.enginePath": {
+          "type": "string",
+          "default": "gearbox",
+          "description": "The Gearbox engine binary. Its `rpc --stdio` is the language server."
+        },
+        "gearbox.gdl.roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Source roots the engine scans for gear.gdl. Empty means the repository around each gear.gdl in the workspace."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --minify --outfile=dist/extension.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.9",
+    "@types/vscode": "1.82.0",
+    "esbuild": "0.25.8"
+  }
+}

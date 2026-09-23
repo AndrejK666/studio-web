@@ -1,0 +1,629 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GDL",
+  "scopeName": "source.gdl",
+  "fileTypes": [
+    "gdl"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#load"
+    },
+    {
+      "include": "#illegal-keywords"
+    },
+    {
+      "include": "#language-constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#value-namespaces"
+    },
+    {
+      "include": "#function-namespaces"
+    },
+    {
+      "include": "#gdl-functions"
+    },
+    {
+      "include": "#starlark-builtins"
+    },
+    {
+      "include": "#top-level-binding"
+    },
+    {
+      "include": "#named-arguments"
+    },
+    {
+      "include": "#attribute-access"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.number-sign.gdl",
+      "match": "(#).*$",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.comment.gdl"
+        }
+      }
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.double.gdl",
+          "begin": "(br|rb|r)(\"\"\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(\"\"\")",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\\\."
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.single.gdl",
+          "begin": "(br|rb|r)(''')",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(''')",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\\\."
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.double.gdl",
+          "begin": "(b)?(\"\"\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(\"\"\")",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.gdl",
+              "match": "\\\\(?:[abfnrtv'\"\\\\]|[0-7]{1,3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|\\r?\\n)"
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.single.gdl",
+          "begin": "(b)?(''')",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(''')",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.gdl",
+              "match": "\\\\(?:[abfnrtv'\"\\\\]|[0-7]{1,3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|\\r?\\n)"
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.gdl",
+          "begin": "(br|rb|r)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(\")|(?<!\\\\)$",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\\\."
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.gdl",
+          "begin": "(br|rb|r)(')",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(')|(?<!\\\\)$",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "match": "\\\\."
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.gdl",
+          "begin": "(b)?(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(\")|(?<!\\\\)$",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.gdl",
+              "match": "\\\\(?:[abfnrtv'\"\\\\]|[0-7]{1,3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|\\r?\\n)"
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.gdl",
+          "begin": "(b)?(')",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.string.gdl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.gdl"
+            }
+          },
+          "end": "(')|(?<!\\\\)$",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.gdl"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.gdl",
+              "match": "\\\\(?:[abfnrtv'\"\\\\]|[0-7]{1,3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|\\r?\\n)"
+            },
+            {
+              "match": "(\\$\\{)([A-Za-z_][A-Za-z0-9_]*)(\\})",
+              "captures": {
+                "1": {
+                  "name": "punctuation.definition.variable.gdl"
+                },
+                "2": {
+                  "name": "variable.other.env.gdl"
+                },
+                "3": {
+                  "name": "punctuation.definition.variable.gdl"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "load": {
+      "name": "keyword.control.import.gdl",
+      "match": "\\b(load)\\b(?=\\s*\\()"
+    },
+    "illegal-keywords": {
+      "patterns": [
+        {
+          "name": "invalid.illegal.forbidden-construct.gdl",
+          "match": "\\b(and|break|continue|def|elif|else|for|if|in|lambda|not|or|pass|return)\\b"
+        },
+        {
+          "name": "invalid.illegal.reserved.gdl",
+          "match": "\\b(as|assert|async|await|class|del|except|finally|from|global|import|is|nonlocal|raise|try|while|with|yield)\\b"
+        }
+      ]
+    },
+    "language-constants": {
+      "name": "constant.language.gdl",
+      "match": "\\b(True|False|None)\\b"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.gdl",
+          "match": "\\b0[xX][0-9A-Fa-f]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.gdl",
+          "match": "\\b0[oO][0-7]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.gdl",
+          "match": "\\b0[bB][01]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.gdl",
+          "match": "(\\b[0-9]+\\.[0-9]*([eE][-+]?[0-9]+)?|\\.[0-9]+([eE][-+]?[0-9]+)?|\\b[0-9]+[eE][-+]?[0-9]+)"
+        },
+        {
+          "name": "constant.numeric.integer.gdl",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "value-namespaces": {
+      "patterns": [
+        {
+          "match": "\\b(binding_mode)(\\s*\\.\\s*)(auto|local|remote)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.constant.gdl variable.other.enummember"
+            }
+          }
+        },
+        {
+          "match": "\\b(cap)(\\s*\\.\\s*)(db|grpc|grpc_hub|rest|rest_host|stateful|system)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.constant.gdl variable.other.enummember"
+            }
+          }
+        },
+        {
+          "match": "\\b(cluster_cap)(\\s*\\.\\s*)(linearizable|prefix_watch|watch)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.constant.gdl variable.other.enummember"
+            }
+          }
+        },
+        {
+          "match": "\\b(contract_kind)(\\s*\\.\\s*)(api|backend|embedded|extension)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.constant.gdl variable.other.enummember"
+            }
+          }
+        },
+        {
+          "match": "\\b(transport)(\\s*\\.\\s*)(grpc|local|rest)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.constant.gdl variable.other.enummember"
+            }
+          }
+        },
+        {
+          "match": "\\b(binding_mode|cap|cluster_cap|contract_kind|transport)(\\s*\\.\\s*)([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "invalid.illegal.unknown-member.gdl"
+            }
+          }
+        }
+      ]
+    },
+    "function-namespaces": {
+      "patterns": [
+        {
+          "match": "\\b(cluster)(\\s*\\.\\s*)(cache|leader_election|lock)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.function.gdl"
+            }
+          }
+        },
+        {
+          "match": "\\b(prefer)(\\s*\\.\\s*)(existing_infrastructure|fewer_applications|isolate)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "support.function.gdl"
+            }
+          }
+        },
+        {
+          "match": "\\b(cluster|prefer)(\\s*\\.\\s*)([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "support.class.gdl"
+            },
+            "2": {
+              "name": "punctuation.accessor.gdl"
+            },
+            "3": {
+              "name": "invalid.illegal.unknown-member.gdl"
+            }
+          }
+        }
+      ]
+    },
+    "gdl-functions": {
+      "name": "support.function.gdl",
+      "match": "\\b(application|bind|cargo|cluster_plugin|cluster_profile|config|consume|docs|embedded|endpoint|fail|feature|gear|git|grpc|kubernetes|lifecycle|path|plugin|product|provide|provider|registry|rest|role|self_hosted|source|use_gear)\\b(?=\\s*\\()"
+    },
+    "starlark-builtins": {
+      "name": "support.function.builtin.gdl",
+      "match": "\\b(abs|all|any|bool|bytes|chr|dict|dir|enumerate|fail|float|getattr|hasattr|hash|int|len|list|max|min|ord|range|repr|reversed|sorted|str|tuple|type|zip)\\b(?=\\s*\\()"
+    },
+    "top-level-binding": {
+      "match": "^([A-Za-z_][A-Za-z0-9_]*)\\s*(=)(?!=)",
+      "captures": {
+        "1": {
+          "name": "variable.other.constant.gdl"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.gdl"
+        }
+      }
+    },
+    "named-arguments": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(=)(?!=)",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.gdl"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.gdl"
+        }
+      }
+    },
+    "attribute-access": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(\\s*\\.\\s*)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "2": {
+          "name": "punctuation.accessor.gdl"
+        },
+        "3": {
+          "name": "variable.other.property.gdl"
+        }
+      }
+    },
+    "operators": {
+      "name": "keyword.operator.gdl",
+      "match": "//|==|!=|<=|>=|[-+*/%<>]"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.begin.gdl",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.gdl",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.brackets.begin.gdl",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.gdl",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.section.braces.begin.gdl",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.braces.end.gdl",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.separator.comma.gdl",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.colon.gdl",
+          "match": ":"
+        }
+      ]
+    }
+  }
+}
