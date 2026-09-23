@@ -642,7 +642,7 @@ function DocumentsView({
                   >
                     Save &amp; validate
                   </button>
-                  {selected.type_key === "app_spec" && (
+                  {selected.type_key === "prd" && (
                     <button onClick={runCompose} disabled={composeBusy} title="Match this spec's capabilities against the component catalog">
                       {composeBusy ? "Composing…" : "Compose →"}
                     </button>
@@ -681,7 +681,7 @@ function DocumentsView({
       {plan && (
         <ComposePlanModal
           plan={plan}
-          title={selected?.title ?? "App Spec"}
+          title={selected?.title ?? "PRD"}
           onScaffold={(cap) => setScaffold(cap)}
           onClose={() => setPlan(null)}
         />
@@ -1105,6 +1105,12 @@ function IngestedDocumentsView({
     setNote("");
     let named = 0;
     let declined = 0;
+    /** Why the run would not analyse a document, when it said. Distinct from
+     *  `declined`, which is a verdict that placed nothing: a document the
+     *  service will not look at — a type it does not have, most often — is not
+     *  a document it found unconvincing, and saying so lets the person fix the
+     *  right thing. */
+    const refused: string[] = [];
     try {
       // One run for the whole set: the backend reads each document off the
       // checkout, submits it and waits for its verdict, and this follows that
@@ -1133,6 +1139,7 @@ function IngestedDocumentsView({
         if ("error" in got) {
           // One document the sweep could not analyse is not a failed run: the
           // others have verdicts, and this one is simply still unplaced.
+          if (!refused.includes(got.error)) refused.push(got.error);
           declined += 1;
           continue;
         }
@@ -1220,7 +1227,11 @@ function IngestedDocumentsView({
               }`
             : "") +
           (alreadyDone ? `; ${alreadyDone} had been analysed before` : "") +
-          ".",
+          "." +
+          // The reason, once, whatever number of documents shared it: twenty
+          // copies of "Spec Quality does not analyse `runbook` documents" is
+          // the same sentence twenty times.
+          (refused.length ? ` ${refused[0]}` : ""),
       );
     } catch (e) {
       if (isDetectorCancel(e)) setNote(`Stopped after ${named} document${named === 1 ? "" : "s"}.`);
@@ -3105,7 +3116,7 @@ const qLabel: CSSProperties = { display: "block", fontSize: 12, fontWeight: 600,
 const qTag: CSSProperties = { marginLeft: 8, fontSize: 10, opacity: 0.6, fontWeight: 400 };
 
 
-// ── Compose (v1): match the App Spec's capabilities to catalog components ─────
+// ── Compose (v1): match the PRD's capabilities to catalog components ─────────
 //
 // The matcher lives in compose.ts: the project's Components tab asks the same
 // question from the other end, and two answers to it would be one too many.

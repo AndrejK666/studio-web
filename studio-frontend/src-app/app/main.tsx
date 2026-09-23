@@ -3,8 +3,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, type JSONSchema } from '@gears-frontx/react';
 import { Toaster } from '@/app/components/ui/sonner';
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, STUDIO_MFE_ENTRY_IFRAME } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, OrganizationsApiService, StudioEventsApiService } from '@/app/api';
+import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
@@ -22,6 +23,8 @@ import sharedPropertyContextWorkspaceSchemaJson from '@/app/mfe/schemas/shared_p
 import sharedPropertyContextSectionSchemaJson from '@/app/mfe/schemas/shared_property_context_section.v1.json';
 import actionContextWorkspacesPublishSchemaJson from '@/app/mfe/schemas/action_context_workspaces_publish.v1.json';
 import sharedPropertySessionProfileSchemaJson from '@/app/mfe/schemas/shared_property_session_user_profile.v1.json';
+import sharedPropertySpaceFrameUrlSchemaJson from '@/app/mfe/schemas/shared_property_space_frame_url.v1.json';
+import entryIframeSchemaJson from '@/app/mfe/schemas/entry_iframe.v1.json';
 import App from './App';
 
 // Import all themes
@@ -72,6 +75,15 @@ gtsPlugin.registerSchema(sharedPropertyContextWorkspaceSchemaJson as JSONSchema)
 // crossing between them.
 gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
 gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
+// The address a frame-entry MFE loads. Registered for the same reason as the
+// context properties above: `sharedProperties` carries an `x-gts-ref` that
+// checks the type is in the registry, so an unregistered id fails registration
+// and takes bootstrapMFE with it.
+gtsPlugin.registerSchema(sharedPropertySpaceFrameUrlSchemaJson as JSONSchema);
+// A frame is an entry the host loads into an iframe. Registered before any
+// package declaring one: GTS refuses to register an instance whose type has
+// no schema, and the refusal takes bootstrapMFE down with it.
+gtsPlugin.registerSchema(entryIframeSchemaJson as JSONSchema);
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);
@@ -88,7 +100,10 @@ apiRegistry.initialize({});
 const app = createFrontXApp({
   microfrontends: {
     typeSystem: gtsPlugin,
-    mfeHandlers: [new MfeHandlerMF(FRONTX_MFE_ENTRY_MF)],
+    mfeHandlers: [
+      new MfeHandlerIframe(STUDIO_MFE_ENTRY_IFRAME),
+      new MfeHandlerMF(FRONTX_MFE_ENTRY_MF),
+    ],
   },
   // Default frontxApiTransport(): Bearer on every REST call of the host and
   // all MFEs, one deduplicated refresh-and-retry after a 401.

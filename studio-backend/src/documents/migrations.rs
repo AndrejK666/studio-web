@@ -27,6 +27,8 @@ impl MigratorTrait for Migrator {
             Box::new(m0006::Migration),
             Box::new(m0007::Migration),
             Box::new(m0008::Migration),
+            Box::new(m0009::Migration),
+            Box::new(m0010::Migration),
         ]
     }
 }
@@ -544,6 +546,157 @@ mod m0008 {
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// The catalogue narrowed to the five document types Spec Quality analyses, so
+/// the two that are gone have to take their rows with them.
+///
+/// `app_spec` became `prd`: same questionnaire, same sections, the name the
+/// rest of the industry uses — and, not incidentally, a name the detectors
+/// know, which the intake document never had. `upstream_reqs` had no
+/// questionnaire and no detector; what it recorded belongs in the PRD's
+/// Overview, so its documents land there too rather than being deleted for
+/// tidiness.
+///
+/// A workspace's OWN row for one of those keys is its customisation of a
+/// built-in that no longer exists. It is re-keyed when the workspace has no
+/// `prd` row of its own — losing somebody's edited template to a rename would
+/// be the worse outcome — and dropped when it does, because then the
+/// customisation it overrides is already there under the right name.
+///
+/// That first half was wrong: such a row SHADOWS the built-in rather than
+/// sitting beside it, so the rename handed the workspace a `prd` that is not
+/// one. `m0010` deletes what this re-keyed. This migration is left as it ran.
+///
+/// `down` cannot restore what a key meant, only what it was called, so it does
+/// not try: the split of `prd` back into two types is not a migration, it is a
+/// product decision that was made and then unmade.
+mod m0009 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0009_five_document_types"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                // The intake type first: where a workspace customised both, its
+                // App Spec row is the one worth keeping under the new name.
+                r"UPDATE studio_document_types t
+    SET key = 'prd', updated_at = CURRENT_TIMESTAMP
+  WHERE t.key = 'app_spec'
+    AND NOT EXISTS (
+        SELECT 1 FROM studio_document_types o
+         WHERE o.tenant_id = t.tenant_id AND o.key = 'prd'
+    );",
+                r"UPDATE studio_document_types t
+    SET key = 'prd', updated_at = CURRENT_TIMESTAMP
+  WHERE t.key = 'upstream_reqs'
+    AND NOT EXISTS (
+        SELECT 1 FROM studio_document_types o
+         WHERE o.tenant_id = t.tenant_id AND o.key = 'prd'
+    );",
+                "DELETE FROM studio_document_types WHERE key IN ('app_spec', 'upstream_reqs');",
+                r"UPDATE studio_documents
+    SET type_key = 'prd', updated_at = CURRENT_TIMESTAMP
+  WHERE type_key IN ('app_spec', 'upstream_reqs');",
+                // A binding's conformance was computed against the template it
+                // named. That template is gone, so the verdict is about nothing
+                // and is cleared rather than left to describe the wrong type;
+                // the next decision or sync recomputes it.
+                r"UPDATE studio_document_bindings
+    SET type_key = 'prd', conforms = NULL, validation = '{}',
+        updated_at = CURRENT_TIMESTAMP
+  WHERE type_key IN ('app_spec', 'upstream_reqs');",
+                // A stage gate that waits for a type nobody can produce any
+                // more is a stage that never opens.
+                r"UPDATE studio_process_stages
+    SET requires = (
+        SELECT COALESCE(
+                   jsonb_agg(DISTINCT CASE
+                       WHEN v IN ('app_spec', 'upstream_reqs') THEN 'prd' ELSE v
+                   END),
+                   '[]'::jsonb
+               )::text
+          FROM jsonb_array_elements_text(requires::jsonb) AS t(v)
+    ),
+        updated_at = CURRENT_TIMESTAMP
+  WHERE requires::jsonb ?| array['app_spec', 'upstream_reqs'];",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Ok(())
+        }
+    }
+}
+
+/// `m0009` re-keyed a workspace's own row for a removed type instead of
+/// dropping it, and that was the wrong call.
+///
+/// The reasoning there was that losing somebody's edited template to a rename
+/// is worse than keeping it. It is not, because a row in this table does not
+/// sit beside the built-in — it SHADOWS it. A workspace that had customised
+/// `upstream_reqs` came out of that migration with a `prd` whose template is
+/// Upstream Requirements: no questionnaire, no required PRD sections, and so
+/// no capabilities for the Composer and nothing for `classify` to recognise a
+/// real PRD by. Found by reading the live catalogue back off a stand after the
+/// migration ran, where `prd` answered to the name "Upstream Requirements".
+///
+/// So those rows go. What is lost is a workspace's wording of a template for a
+/// type that no longer exists; what is regained is the PRD every other part of
+/// the product assumes. The name is what identifies them — no one names their
+/// PRD "Upstream Requirements" — and both migrations are kept rather than
+/// `m0009` being edited, because `m0009` has already run where this matters.
+mod m0010 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0010_a_renamed_row_must_not_shadow_the_prd"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"DELETE FROM studio_document_types
+  WHERE key = 'prd' AND name IN ('Upstream Requirements', 'App Spec');",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
             Ok(())
         }
     }

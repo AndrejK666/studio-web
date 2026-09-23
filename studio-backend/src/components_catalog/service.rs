@@ -1429,6 +1429,54 @@ impl CatalogService {
         Ok(node)
     }
 
+    /// The product a project is composing, or `None` before anything was picked.
+    pub async fn get_project_product(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<GtsNode>> {
+        let want = gts::project_product_instance_id(project_id);
+        let nodes = self.sink.list(ctx, Some("project_product")).await?;
+        Ok(nodes.into_iter().find(|n| n.instance_id == want))
+    }
+
+    /// Merge `patch` into the project's product record and persist it. A merge,
+    /// not a replace: the picks are saved as they change, the last preview when
+    /// it runs, and neither write may erase the other's half.
+    pub async fn update_project_product(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        patch: serde_json::Map<String, Value>,
+    ) -> anyhow::Result<GtsNode> {
+        let mut value = self
+            .get_project_product(ctx, project_id)
+            .await?
+            .and_then(|n| n.value.as_object().cloned())
+            .unwrap_or_default();
+        for (k, v) in patch {
+            value.insert(k, v);
+        }
+        value.insert(
+            "project_id".to_owned(),
+            Value::String(project_id.to_owned()),
+        );
+        value.insert(
+            "updated_at".to_owned(),
+            Value::String(
+                time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
+            ),
+        );
+        let node = gts::project_product_node(project_id, Value::Object(value));
+        self.sink.register_types(ctx).await?;
+        self.sink
+            .upsert(ctx, std::slice::from_ref(&node), &[])
+            .await?;
+        Ok(node)
+    }
+
     /// Write a scaffolded gear into the project's connected gear repository: a
     /// branch off the connected base branch carrying the skeleton files, and an
     /// optional pull request. The connection token is resolved via the
@@ -1440,6 +1488,31 @@ impl CatalogService {
         slug: &str,
         files: Vec<super::scaffold::ScaffoldFile>,
         open_pr: bool,
+    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
+        self.write_to_project_repo(
+            ctx,
+            project_id,
+            Some(&format!("scaffold/{slug}")),
+            &files,
+            &format!("scaffold: {slug} gear skeleton"),
+            pr_title.as_deref(),
+        )
+        .await
+    }
+
+    /// Commit files into the project's connected gear repository: on a new
+    /// `branch` off its base branch (which must not exist yet), with a pull
+    /// request when `pr_title` is given, or with `branch: None` straight onto
+    /// the base branch. Returns the branch the commit landed on.
+    pub async fn write_to_project_repo(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        branch: Option<&str>,
+        files: &[super::scaffold::ScaffoldFile],
+        message: &str,
+        pr_title: Option<&str>,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
         let node = self
             .get_project_repo(ctx, project_id)
@@ -1486,19 +1559,16 @@ impl CatalogService {
         };
         let (_driver, auth, _conn) = connectors.driver_and_auth(ctx, tenant, id).await?;
 
-        let branch = format!("scaffold/{slug}");
-        let message = format!("scaffold: {slug} gear skeleton");
-        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
         let http = reqwest::Client::new();
         super::scaffold::write_scaffold(
             &http,
             &auth,
             &repo,
             &base_branch,
-            &branch,
-            &files,
-            &message,
-            pr_title.as_deref(),
+            branch.unwrap_or(&base_branch),
+            files,
+            message,
+            pr_title,
         )
         .await
     }

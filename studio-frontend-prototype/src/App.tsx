@@ -81,6 +81,8 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
+import { withCorpusSource } from "./product";
+import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pins";
 import {
   clampStep,
@@ -724,6 +726,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // made in between.
   const restoredPlace = useRef<Partial<Place>>(readPlace()).current;
   const [view, setView] = useState<View>(restoredPlace.view ?? "projects");
+  /** A component page the platform catalogue should open on, asked for from
+   *  elsewhere (a project's product). Stamped, so asking twice reopens it. */
+  const [componentFocus, setComponentFocus] = useState<{ name: string; at: number } | null>(null);
+  const portalNav = useMemo<PortalNav>(
+    () => ({
+      openComponent: (name: string) => {
+        setComponentFocus({ name, at: Date.now() });
+        setView("gears");
+      },
+    }),
+    [],
+  );
   /** Position in the project → nested project drill-down. Two levels, one noun. */
   const [crumb, setCrumb] = useState<Crumb>(restoredPlace.crumb ?? {});
   /** Name of the opened nested project, kept for the crumb: the record is not
@@ -1502,6 +1516,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   return (
     <StudioBridgeProvider value={studioBridge}>
+    <PortalNavProvider value={portalNav}>
     <div className="shell">
       <PresenceNotes messages={presence.messages} onDismiss={presence.dismiss} />
       {/* The only chrome in the flow: one 56px row carrying the control that
@@ -2361,6 +2376,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             hideSdk={filters.gearHideSdk}
             categoryFilter={filters.gearCategory}
             onCategories={setComponentCategories}
+            focus={componentFocus}
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
@@ -2459,6 +2475,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         </div>
       )}
     </div>
+    </PortalNavProvider>
     </StudioBridgeProvider>
   );
 }
@@ -3635,21 +3652,26 @@ function WorkspaceProjects({
       if (brief.trim()) {
         steps.push({
           key: "spec",
-          label: "App Spec",
+          label: "PRD",
           check: async (ctx) => {
             const docs = await api
               .projectDocuments(token, workspace.id, ctx.tenantId)
               .then((r) => r.items)
               .catch(() => []);
-            return docs.some((d) => d.type_key === "app_spec");
+            return docs.some((d) => d.type_key === "prd");
           },
           run: async (ctx) => {
             // One answer, not a whole questionnaire: the rest is asked in
             // Specs, where there is room for it. This one seeds the `domain`
             // capability, so the project opens with something for the
             // component matching to work from rather than an empty spec.
+            //
+            // The document is a PRD, and it will not conform yet: a problem
+            // statement, goals and success metrics are nobody's answer here.
+            // That is the point of writing it now rather than later -- the
+            // Specs tab opens with exactly what is missing.
             await api.createProjectDocument(token, workspace.id, ctx.tenantId, {
-              type_key: "app_spec",
+              type_key: "prd",
               title: name,
               answers: [{ question_id: "product", text: brief.trim() }],
             });
@@ -4835,7 +4857,12 @@ function ProjectScreen({
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} />
         )}
         {tab === "components" && (
-          <ProjectKits token={token} projectId={proj.id} workspaceId={workspace.id} />
+          <ProjectKits
+            token={token}
+            projectId={proj.id}
+            projectName={proj.name}
+            workspaceId={workspace.id}
+          />
         )}
         {tab === "sources" && (
           <>
@@ -9286,6 +9313,17 @@ async function startStudioSession(
     } catch {
       // Settings unreachable — fall back to whatever the target carries.
     }
+  }
+  // A product project's product.gdl names its gears from `../gears-rust`, so
+  // its session checks the gear corpus out beside the project's own sources —
+  // the same corpus the portal's preview resolved against. Anything that is
+  // not a product project, or a deployment without the engine, is unchanged.
+  const kind = await api
+    .projectConfig(token, target.id)
+    .then((c) => c?.kind)
+    .catch(() => undefined);
+  if (kind === "product") {
+    repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
   }
   onResolved?.({ repos, root });
   const usable = repos.filter((r) =>

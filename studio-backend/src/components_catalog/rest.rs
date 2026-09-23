@@ -20,6 +20,7 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
+use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
 use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -36,11 +37,32 @@ pub struct Catalog {
     /// enqueue and the poll endpoint read through here — lazily, so this gear
     /// does not care whether `studio-tasks` initialized first.
     hub: Arc<ClientHub>,
+    /// Product previews; `None` when no corpus workdir is configured.
+    gearbox: Option<Arc<Gearbox>>,
 }
 
 impl Catalog {
-    pub fn new(service: Arc<CatalogService>, hub: Arc<ClientHub>) -> Self {
-        Self { service, hub }
+    pub fn new(
+        service: Arc<CatalogService>,
+        hub: Arc<ClientHub>,
+        gearbox: Option<Arc<Gearbox>>,
+    ) -> Self {
+        Self {
+            service,
+            hub,
+            gearbox,
+        }
+    }
+
+    fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
+        self.gearbox.as_ref().ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "product previews are not available in this deployment \
+                     (STUDIO_GEARBOX_WORKDIR is not set)",
+                )
+                .create()
+        })
     }
 
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
@@ -242,6 +264,177 @@ pub struct ScaffoldRequest {
     pub dry_run: Option<bool>,
     /// Open a pull request back into the base branch (default false).
     pub open_pr: Option<bool>,
+}
+
+/// Whether product previews can run here, and against which gear corpus.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxStatusDto {
+    /// False when `STUDIO_GEARBOX_WORKDIR` is unset; nothing else is filled.
+    pub enabled: bool,
+    pub engine_version: Option<String>,
+    /// The gear corpus a session should check out beside the project, under
+    /// `source_id`, for the generated `product.gdl` to resolve there too.
+    pub corpus_url: Option<String>,
+    pub corpus_ref: Option<String>,
+    pub corpus_commit: Option<String>,
+    pub source_id: String,
+    /// The deployment profiles a generated description declares.
+    pub profiles: Vec<String>,
+    /// Why previews will fail, when they will.
+    pub problem: Option<String>,
+}
+
+/// Save what a project's product is made of. Every field is optional and
+/// merged: the picks change as a person clicks, the profile separately.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SaveProjectProductRequest {
+    pub product_id: Option<String>,
+    pub name: Option<String>,
+    /// Crate names (`cf-gears-api-gateway`) or engine ids.
+    pub gears: Option<Vec<String>>,
+    pub profile: Option<String>,
+}
+
+/// Picks to complete into a set the engine can resolve.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct CompleteProductRequest {
+    pub gears: Vec<String>,
+}
+
+/// One change completion made, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductChangeDto {
+    /// Crate name.
+    pub gear: String,
+    /// True when added, false when taken out.
+    pub added: bool,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CompleteProductDto {
+    /// The completed picks, by crate name.
+    pub gears: Vec<String>,
+    pub changes: Vec<ProductChangeDto>,
+}
+
+/// Compose a product from picked gears and ask the engine about it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ProductPreviewRequest {
+    /// The product's kebab-case id; also the self-hosted host application.
+    pub product_id: String,
+    /// Display name. Omitted means the id.
+    pub name: Option<String>,
+    /// Gears by crate name (`cf-gears-api-gateway`) or engine id (`api-gateway`).
+    pub gears: Vec<String>,
+    /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
+    pub profile: Option<String>,
+    /// Also commit `product.gdl` to the project's gear repo, on a new branch.
+    pub write: Option<bool>,
+    /// With `write`, open a pull request too.
+    pub open_pr: Option<bool>,
+    /// With `write` and no `open_pr`, commit straight onto the repo's base
+    /// branch instead of a `product/…` branch. For a repository the product
+    /// owns outright; default false, because a connected repo can be shared.
+    pub onto_base: Option<bool>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxDiagnosticDto {
+    pub code: String,
+    /// `error`, `warning` or `info`.
+    pub severity: String,
+    pub message: String,
+    pub help: Option<String>,
+    /// `product.gdl`, or the corpus path of the `gear.gdl` it is about.
+    pub file: Option<String>,
+    /// One-based.
+    pub line: Option<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxListenDto {
+    pub name: String,
+    pub gear: String,
+    pub address: String,
+}
+
+/// One generated binary and the gears co-located in it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxApplicationDto {
+    pub name: String,
+    pub kind: String,
+    pub anchor: Option<String>,
+    pub gears: Vec<String>,
+    pub replicas: u32,
+    pub listens: Vec<GearboxListenDto>,
+}
+
+/// A gear the resolved product contains, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxGearDto {
+    pub id: String,
+    pub crate_name: String,
+    /// `selected`, `colocated with <gear>`, `plugin of <host>`.
+    pub reasons: Vec<String>,
+}
+
+/// A picked host that needs a plugin, and the gears that could be it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxPluginOptionDto {
+    pub host: String,
+    /// Crate names, like every other pick; send one back in `gears`.
+    pub available: Vec<String>,
+}
+
+/// A gear the description gained that nobody picked.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxAddedDto {
+    pub id: String,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductWriteDto {
+    pub branch: String,
+    pub commit_sha: String,
+    pub pr_url: Option<String>,
+}
+
+/// What the engine made of the picked gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductPreviewDto {
+    /// The description, exactly as it would be committed.
+    pub product_gdl: String,
+    pub profile: String,
+    /// No error diagnostics: the product resolves for this profile.
+    pub ok: bool,
+    pub diagnostics: Vec<GearboxDiagnosticDto>,
+    /// Empty when validation failed before resolving.
+    pub applications: Vec<GearboxApplicationDto>,
+    pub gears: Vec<GearboxGearDto>,
+    pub added: Vec<GearboxAddedDto>,
+    /// Picked names no `gear.gdl` declares; left out of the description.
+    pub not_described: Vec<String>,
+    /// Hosts picked without the plugin their extension point needs.
+    pub plugin_options: Vec<GearboxPluginOptionDto>,
+    pub corpus_commit: Option<String>,
+    /// Set when `write` was asked for.
+    pub written: Option<ProductWriteDto>,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -767,6 +960,314 @@ async fn scaffold_gear(
     }))
 }
 
+async fn get_project_product(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
+    let node = catalog
+        .service
+        .get_project_product(&ctx, &project_id.to_string())
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(CatalogNodeListResponse {
+        nodes: to_dtos(node.into_iter().collect()),
+        truncated: false,
+    }))
+}
+
+async fn save_project_product(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(project_id): Path<Uuid>,
+    Json(body): Json<SaveProjectProductRequest>,
+) -> ApiResult<JsonBody<CatalogNodeDto>> {
+    let invalid = |msg: String| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(msg)
+            .create()
+    };
+    let mut patch = serde_json::Map::new();
+    if let Some(id) = body.product_id {
+        if !super::gearbox::is_kebab_id(&id) {
+            return Err(invalid(format!("product id `{id}` is not a kebab-case id")));
+        }
+        patch.insert("product_id".into(), id.into());
+    }
+    if let Some(name) = body.name {
+        patch.insert("name".into(), name.into());
+    }
+    if let Some(gears) = body.gears {
+        let gears: Vec<String> = gears
+            .into_iter()
+            .map(|g| g.trim().to_string())
+            .filter(|g| !g.is_empty())
+            .collect();
+        patch.insert("gears".into(), serde_json::json!(gears));
+    }
+    if let Some(profile) = body.profile {
+        if !PROFILES.contains(&profile.as_str()) {
+            return Err(invalid(format!(
+                "profile `{profile}` is not one of {}",
+                PROFILES.join(", ")
+            )));
+        }
+        patch.insert("profile".into(), profile.into());
+    }
+    let node = catalog
+        .service
+        .update_project_product(&ctx, &project_id.to_string(), patch)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let dto = to_dtos(vec![node])
+        .into_iter()
+        .next()
+        .expect("one node converts to one DTO");
+    Ok(Json(dto))
+}
+
+async fn complete_product(
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<CompleteProductRequest>,
+) -> ApiResult<JsonBody<CompleteProductDto>> {
+    let completion = catalog
+        .gearbox()?
+        .complete(&body.gears)
+        .await
+        .map_err(|e| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(CompleteProductDto {
+        gears: completion.gears,
+        changes: completion
+            .changes
+            .into_iter()
+            .map(|c| ProductChangeDto {
+                gear: c.gear,
+                added: c.added,
+                reason: c.reason,
+            })
+            .collect(),
+    }))
+}
+
+async fn gearbox_status(
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<GearboxStatusDto>> {
+    let profiles = PROFILES.iter().map(|p| (*p).to_string()).collect();
+    let Some(gearbox) = catalog.gearbox.as_ref() else {
+        return Ok(Json(GearboxStatusDto {
+            enabled: false,
+            engine_version: None,
+            corpus_url: None,
+            corpus_ref: None,
+            corpus_commit: None,
+            source_id: CORPUS_SOURCE_ID.to_string(),
+            profiles,
+            problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
+        }));
+    };
+    let status = gearbox.status().await;
+    Ok(Json(GearboxStatusDto {
+        enabled: true,
+        engine_version: status.engine_version,
+        corpus_url: Some(status.corpus_url),
+        corpus_ref: Some(status.corpus_ref),
+        corpus_commit: status.corpus_commit,
+        source_id: CORPUS_SOURCE_ID.to_string(),
+        profiles,
+        problem: status.problem,
+    }))
+}
+
+async fn preview_product(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Path(project_id): Path<Uuid>,
+    Json(body): Json<ProductPreviewRequest>,
+) -> ApiResult<JsonBody<ProductPreviewDto>> {
+    let gearbox = catalog.gearbox()?;
+    let invalid = |e: anyhow::Error| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    };
+    if body.gears.is_empty() {
+        return Err(invalid(anyhow::anyhow!("pick at least one gear")));
+    }
+    let profile = body.profile.clone().unwrap_or_else(|| "dev".to_string());
+    let name = body
+        .name
+        .clone()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| body.product_id.clone());
+    let name_for_record = name.clone();
+    let preview = gearbox
+        .preview(PreviewInput {
+            product_id: body.product_id.clone(),
+            name,
+            gears: body.gears.clone(),
+            profile: profile.clone(),
+        })
+        .await
+        .map_err(invalid)?;
+
+    let written = if body.write.unwrap_or(false) {
+        // A `product/…` branch named after the content by default, so the
+        // same description asked for twice says it already exists, and a
+        // connected repository that is shared never has its base branch moved
+        // by a preview. `onto_base` is for a repository the product owns
+        // outright: a session opens the base branch, so there the description
+        // is in the IDE the moment "Open in IDE" lands.
+        let open_pr = body.open_pr.unwrap_or(false);
+        let onto_base = body.onto_base.unwrap_or(false) && !open_pr;
+        let branch = (!onto_base).then(|| {
+            use sha2::Digest as _;
+            let hash = sha2::Sha256::digest(preview.product_gdl.as_bytes());
+            let digest: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+            format!("product/{}-{digest}", body.product_id)
+        });
+        let pr_title = open_pr.then(|| format!("Describe the {} product", body.product_id));
+        let w = catalog
+            .service
+            .write_to_project_repo(
+                &ctx,
+                &project_id.to_string(),
+                branch.as_deref(),
+                &[super::scaffold::ScaffoldFile {
+                    path: "product.gdl".to_string(),
+                    content: preview.product_gdl.clone(),
+                }],
+                &format!("product: describe {} for Gearbox", body.product_id),
+                pr_title.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                StudioComponentsCatalogError::invalid_argument()
+                    .with_constraint(format!("writing product.gdl failed: {e:#}"))
+                    .create()
+            })?;
+        Some(ProductWriteDto {
+            branch: w.branch,
+            commit_sha: w.commit_sha,
+            pr_url: w.pr_url,
+        })
+    } else {
+        None
+    };
+
+    let r = preview.resolution;
+
+    // The preview is the project's product now: what was asked, what the
+    // engine said, and where it was saved. Recorded on every run, so the
+    // project remembers its product without anybody pressing a second button.
+    let errors = r.diagnostics.iter().filter(|d| d.is_error()).count();
+    let warnings = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == "warning")
+        .count();
+    let mut record = serde_json::Map::new();
+    record.insert("product_id".into(), body.product_id.clone().into());
+    record.insert("name".into(), name_for_record.into());
+    record.insert("gears".into(), serde_json::json!(body.gears));
+    record.insert("profile".into(), profile.clone().into());
+    record.insert(
+        "last_preview".into(),
+        serde_json::json!({
+            "profile": profile,
+            "ok": errors == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "applications": r.applications.iter().map(|a| &a.name).collect::<Vec<_>>(),
+            "gears": r.gears.iter().map(|g| &g.crate_name).collect::<Vec<_>>(),
+            "corpus_commit": preview.corpus_commit,
+        }),
+    );
+    if let Some(w) = &written {
+        record.insert(
+            "written".into(),
+            serde_json::json!({ "branch": w.branch, "commit_sha": w.commit_sha, "pr_url": w.pr_url }),
+        );
+    }
+    if let Err(e) = catalog
+        .service
+        .update_project_product(&ctx, &project_id.to_string(), record)
+        .await
+    {
+        // The preview itself stands; only its memory is lost.
+        tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
+    }
+
+    Ok(Json(ProductPreviewDto {
+        ok: !r.diagnostics.iter().any(|d| d.is_error()),
+        product_gdl: preview.product_gdl,
+        profile,
+        diagnostics: r
+            .diagnostics
+            .into_iter()
+            .map(|d| GearboxDiagnosticDto {
+                code: d.code,
+                severity: d.severity,
+                message: d.message,
+                help: d.help,
+                file: d.file,
+                line: d.line,
+            })
+            .collect(),
+        applications: r
+            .applications
+            .into_iter()
+            .map(|a| GearboxApplicationDto {
+                name: a.name,
+                kind: a.kind,
+                anchor: a.anchor,
+                gears: a.gears,
+                replicas: a.replicas,
+                listens: a
+                    .listens
+                    .into_iter()
+                    .map(|l| GearboxListenDto {
+                        name: l.name,
+                        gear: l.gear,
+                        address: l.address,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        gears: r
+            .gears
+            .into_iter()
+            .map(|g| GearboxGearDto {
+                id: g.id,
+                crate_name: g.crate_name,
+                reasons: g.reasons,
+            })
+            .collect(),
+        added: preview
+            .composition
+            .added_hosts
+            .into_iter()
+            .map(|(host, plugin)| GearboxAddedDto {
+                reason: format!("host of {plugin}"),
+                id: host,
+            })
+            .collect(),
+        plugin_options: preview
+            .composition
+            .plugin_options
+            .into_iter()
+            .map(|(host, available)| GearboxPluginOptionDto { host, available })
+            .collect(),
+        not_described: preview.composition.not_described,
+        corpus_commit: preview.corpus_commit,
+        written,
+    }))
+}
+
 async fn create_repo(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -827,6 +1328,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Arc<CatalogService>,
     hub: Arc<ClientHub>,
+    gearbox: Option<Arc<Gearbox>>,
 ) -> Router {
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
@@ -1170,5 +1672,111 @@ pub fn register_routes(
             .error_500(openapi)
             .register(router, openapi);
 
-    router.layer(Extension(Catalog::new(service, hub)))
+    let router =
+        OperationBuilder::get("/studio-components-catalog/v1/projects/{project_id}/product")
+            .operation_id("studio_components_catalog.get_project_product")
+            .summary("The product a project is composing out of gears")
+            .description(
+                "The gears picked for the project's product, its deployment \
+                 profile, and what the Gearbox engine said at the last preview. \
+                 Empty until something is picked.",
+            )
+            .tag("StudioComponentsCatalog")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("project_id", "Project tenant id")
+            .handler(get_project_product)
+            .json_response_with_schema::<CatalogNodeListResponse>(
+                openapi,
+                StatusCode::OK,
+                "Project product",
+            )
+            .error_401(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router =
+        OperationBuilder::put("/studio-components-catalog/v1/projects/{project_id}/product")
+            .operation_id("studio_components_catalog.save_project_product")
+            .summary("Save which gears a project's product is made of")
+            .description(
+                "Merges the given fields into the project's product record; \
+                 fields left out keep their value.",
+            )
+            .tag("StudioComponentsCatalog")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("project_id", "Project tenant id")
+            .handler(save_project_product)
+            .json_request::<SaveProjectProductRequest>(openapi, "Product fields")
+            .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved product")
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/gearbox/complete")
+        .operation_id("studio_components_catalog.complete_product")
+        .summary("Complete picked gears into a set the Gearbox engine can resolve")
+        .description(
+            "Drops what the gear catalogue proves cannot run (a gear with required \
+             configuration nobody set, a host no plugin fills, a plugin with no \
+             host, a gear that must run with one of those), adds a plugin for a \
+             host that has none and a REST host for REST gears, and says why for \
+             each. Writes nothing.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(complete_product)
+        .json_request::<CompleteProductRequest>(openapi, "Picked gears")
+        .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox")
+        .operation_id("studio_components_catalog.gearbox_status")
+        .summary("Whether product previews can run, and against which gear corpus")
+        .description(
+            "Reports the Gearbox engine version and the gear corpus checkout \
+             previews resolve against. A session opened for a product project \
+             checks out the same corpus beside the project, under `source_id`.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(gearbox_status)
+        .json_response_with_schema::<GearboxStatusDto>(openapi, StatusCode::OK, "Engine status")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post(
+        "/studio-components-catalog/v1/projects/{project_id}/product/preview",
+    )
+    .operation_id("studio_components_catalog.preview_product")
+    .summary("Compose a product.gdl from picked gears and resolve it")
+    .description(
+        "Writes a product.gdl naming the picked gears (a plugin under the host \
+         whose extension point it fills), then asks the Gearbox engine to \
+         validate and resolve it for one deployment profile. Returns the \
+         description, the engine's diagnostics, and the applications and gears \
+         the resolution arrived at. With `write`, also commits product.gdl to \
+         the project's gear repo on a new branch.",
+    )
+    .tag("StudioComponentsCatalog")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("project_id", "Project tenant id")
+    .handler(preview_product)
+    .json_request::<ProductPreviewRequest>(openapi, "Picked gears")
+    .json_response_with_schema::<ProductPreviewDto>(openapi, StatusCode::OK, "Preview")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router.layer(Extension(Catalog::new(service, hub, gearbox)))
 }

@@ -232,6 +232,13 @@ services:
       # clones repos into {root}/{workspace_id}/{repo_dir}, and the ingest gear
       # reads those same checkouts to build the artifact graph — one clone.
       STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
+      # Product previews through the Gearbox engine (components_catalog/
+      # gearbox.rs): the gear-corpus checkout lives here, refreshed at most
+      # every STUDIO_GEARBOX_REFRESH_SECS. The corpus is the branch that carries
+      # gear.gdl descriptors until constructorfabric/gears-rust#4793 merges.
+      STUDIO_GEARBOX_WORKDIR: /var/lib/studio/gearbox
+      STUDIO_GEARBOX_CORPUS_URL: ${STUDIO_GEARBOX_CORPUS_URL:-https://github.com/MikeFalcon77/gears-rust.git}
+      STUDIO_GEARBOX_CORPUS_REF: ${STUDIO_GEARBOX_CORPUS_REF:-feature/gearbox}
     volumes:
       # studio-session gear: launches sibling Theia containers via the host
       # Docker daemon. The workspaces path must be IDENTICAL on host and in
@@ -247,6 +254,7 @@ services:
       # the `embedding-model` service; the ONNX Runtime library itself is in
       # the image (ORT_DYLIB_PATH), because its version is bound to the code.
       - studio_models:/app/models:ro
+      - studio_gearbox:/var/lib/studio/gearbox
     ports:
       - "127.0.0.1:8090:8090"   # direct API + /cf/docs
     depends_on:
@@ -402,6 +410,9 @@ volumes:
   # Embedding model artifacts (graph-storage `onnx` provider), ~90 MB, filled
   # by the `embedding-model` service. Drop it to force a re-fetch.
   studio_models:
+  # The gear corpus product previews resolve against. Disposable: dropping it
+  # costs one shallow clone on the next preview.
+  studio_gearbox:
 
 # Passed to `build` only (see session-image): BuildKit mounts it for one RUN,
 # so it never lands in image history. Unset is allowed — the build then talks

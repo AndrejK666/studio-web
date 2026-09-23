@@ -1,6 +1,6 @@
 //! Match what a product needs against the components this system knows.
 //!
-//! Shared by the App Spec's Compose button and the project's Components tab,
+//! Shared by the PRD's Compose button and the project's Components tab,
 //! which ask the same question from two directions and must not answer it two
 //! ways.
 //!

@@ -1857,6 +1857,10 @@ pub fn register_routes(
     .error_400(openapi)
     .error_401(openapi)
     .error_403(openapi)
+    // The path names a workspace, a project and a detector, and any of the
+    // three can fail to resolve — so 404 is a real outcome and the conventions
+    // ask for it to be declared (B8).
+    .error_404(openapi)
     .error_500(openapi)
     .register(router, openapi);
 

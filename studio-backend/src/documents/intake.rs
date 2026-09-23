@@ -171,11 +171,14 @@ mod tests {
     use crate::documents::model::builtin_types;
     use crate::documents::validate::validate;
 
-    fn app_spec() -> DocumentType {
+    /// The one built-in with a questionnaire, which is what this module is
+    /// about. It was `app_spec` until the catalogue narrowed to the five types
+    /// Spec Quality analyses; the questions are the same ones.
+    fn prd() -> DocumentType {
         builtin_types()
             .into_iter()
-            .find(|t| t.key == "app_spec")
-            .expect("app_spec is a built-in")
+            .find(|t| t.key == "prd")
+            .expect("prd is a built-in")
     }
 
     fn text(id: &str, value: &str) -> Answer {
@@ -221,22 +224,63 @@ mod tests {
         ]
     }
 
+    /// What the questionnaire produces, and what it deliberately does not.
+    ///
+    /// This used to assert that a composed document conforms outright, and it
+    /// did, because the type behind the questionnaire was an intake FORM whose
+    /// required sections were exactly the ones the answers filled. The intake
+    /// is the PRD now, and eleven answers do not make a PRD: the problem, the
+    /// goals, the non-goals, the requirements and the success metrics are a
+    /// person's to write, and a document that claimed otherwise would be
+    /// lying in the one place the product is supposed to be honest.
+    ///
+    /// So the invariant is narrower and still worth holding: every section the
+    /// questionnaire answers is filled and passes, and the only complaints are
+    /// about the sections nobody has written yet.
     #[test]
-    fn a_generated_document_conforms_to_its_own_type() {
-        // The point of generating server-side: what comes out passes the check
-        // the same type declares. If these two ever disagree, every document the
-        // questionnaire produces is born non-conforming.
-        let ty = app_spec();
+    fn a_generated_document_fills_what_it_asked_and_says_what_is_left() {
+        let ty = prd();
         let body = generate(&ty, "Constructor Studio", &full_answers());
 
         let report = validate(&body, &ty.template);
-        assert!(report.conforms, "issues: {:?}", report.issues);
+        let answered = [
+            "Overview",
+            "Users & Use Cases",
+            "Authentication",
+            "Data & Storage",
+            "Deployment",
+        ];
+        for section in answered {
+            assert!(
+                !report.issues.iter().any(|i| i.contains(section)),
+                "the questionnaire fills {section}: {:?}",
+                report.issues
+            );
+        }
+        let unwritten = [
+            "Problem",
+            "Goals",
+            "Non-Goals",
+            "Requirements",
+            "Success Metrics",
+        ];
+        for section in unwritten {
+            assert!(
+                report.issues.iter().any(|i| i.contains(section)),
+                "{section} is nobody's answer and must be reported: {:?}",
+                report.issues
+            );
+        }
+        assert!(
+            !report.conforms,
+            "a PRD without its problem does not conform"
+        );
     }
 
     #[test]
     fn every_declared_section_is_emitted_even_with_no_answers() {
         // A section left out would conform by having nothing to fail.
-        let ty = app_spec();
+        let ty = prd();
         let body = generate(&ty, "Empty", &[]);
         for section in &ty.template.sections {
             assert!(
@@ -249,7 +293,7 @@ mod tests {
 
     #[test]
     fn an_unanswered_question_leaves_no_trace() {
-        let ty = app_spec();
+        let ty = prd();
         let body = generate(&ty, "Empty", &[]);
         assert!(!body.contains("**Who are the primary users?**"));
     }
@@ -262,7 +306,7 @@ mod tests {
         // then opens with one capability for the component matcher to work
         // from instead of an empty spec, so a single-answer intake is a
         // supported shape rather than an accident.
-        let ty = app_spec();
+        let ty = prd();
         let answers = vec![text("product", "A billing portal for resellers.")];
         assert_eq!(seeded_capabilities(&ty, &answers), vec!["domain"]);
 
@@ -278,7 +322,7 @@ mod tests {
     fn a_no_answer_does_not_seed_its_capability() {
         // "Do you need billing? No" must not put `billing` in front of the
         // composer -- but it is still an answer, so it is not simply skipped.
-        let ty = app_spec();
+        let ty = prd();
         let seeded = seeded_capabilities(&ty, &[flag("billing", false)]);
         assert!(seeded.is_empty());
 
@@ -290,7 +334,7 @@ mod tests {
     fn capabilities_survive_the_round_trip_through_the_document() {
         // `generate` writes them into front matter and the column is indexed
         // back out of it. If these two disagree the index is silently wrong.
-        let ty = app_spec();
+        let ty = prd();
         let answers = full_answers();
         let expected = seeded_capabilities(&ty, &answers);
         assert!(!expected.is_empty(), "the fixture should seed something");
@@ -301,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_document_with_no_capabilities_has_no_capabilities_line() {
-        let ty = app_spec();
+        let ty = prd();
         let body = generate(&ty, "Empty", &[]);
         assert!(!body.contains("capabilities:"));
         assert!(declared_capabilities(&body).is_empty());
@@ -333,7 +377,7 @@ status: draft
         // `facade` and `connectors` are distinct keys but `compliance` is seeded
         // by one question only; construct the duplicate explicitly instead of
         // relying on the built-in questionnaire having one.
-        let mut ty = app_spec();
+        let mut ty = prd();
         let first = ty.template.questionnaire[0].clone();
         let mut second = first.clone();
         second.id = format!("{}_again", first.id);

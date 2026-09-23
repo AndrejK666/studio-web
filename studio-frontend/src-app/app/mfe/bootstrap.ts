@@ -51,12 +51,13 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+  STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
 import {
   createContextPublishHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
-import { publishStudioContext } from '@/app/mfe/sharedContext';
+import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
 
@@ -70,14 +71,27 @@ const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
  * because most MFEs target host-owned domains; an MFE declares `domains`
  * only when it owns an ExtensionDomain instance (e.g., demo-mfe owns the
  * widgets domain — registered here so extensions targeting that domain
- * resolve content-addressed at the runtime store).
+ * resolve content-addressed at the runtime store). `manifest` is optional
+ * because a frame package (ADR-0021) has no remote to describe one for — it
+ * carries a `publicPath` on each entry instead.
  */
 interface MfeManifestConfig {
-  manifest: MfManifest;
+  manifest?: MfManifest;
   domains?: ExtensionDomain[];
-  entries: MfeEntryMF[];
+  entries: Array<MfeEntryMF | MfeEntryFrameConfig>;
   extensions?: Extension[];
   schemas?: JSONSchema[];
+}
+
+/** A frame entry as the generator emits it: an address, and no module. */
+interface MfeEntryFrameConfig {
+  id: string;
+  requiredProperties: string[];
+  actions: string[];
+  domainActions: string[];
+  urlProperty: string;
+  publicPath: string;
+  optionalProperties?: string[];
 }
 
 /** Resolve deploy-time same-origin MFE paths without baking an environment hostname into the image. */
@@ -86,30 +100,61 @@ export function resolveRuntimePublicPaths(
   origin: string,
 ): MfeManifestConfig[] {
   return manifests.map((config) => {
-    const configuredPath = config.manifest.metaData?.publicPath;
-    if (!configuredPath?.startsWith('/')) return config;
+    // Narrowed to a local so TS carries "defined" through the rest of this
+    // closure — `config.manifest` on its own stays optional even after the
+    // guard below, because the guard tests `configuredPath`, not `manifest`.
+    const sourceManifest = config.manifest;
+    const configuredPath = sourceManifest?.metaData?.publicPath;
+    if (sourceManifest === undefined || !configuredPath?.startsWith('/')) return config;
 
     const manifest: MfManifest = {
-      ...config.manifest,
+      ...sourceManifest,
       metaData: {
-        ...config.manifest.metaData,
+        ...sourceManifest.metaData,
         publicPath: new URL(configuredPath, origin).href,
       },
     };
     return {
       ...config,
       manifest,
-      entries: config.entries.map((entry) => ({ ...entry, manifest })),
+      // Only an MF entry carries its own `manifest` field to refresh; a frame
+      // entry (ADR-0021) has none and passes through unchanged — though a
+      // manifest-bearing config's entries are always MF entries in practice.
+      entries: config.entries.map((entry) =>
+        'manifest' in entry ? { ...entry, manifest } : entry
+      ),
     };
   });
 }
 
-function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
+/**
+ * The address of the first frame entry in the catalogue. Read from the
+ * generated manifests rather than hard-coded so it is right in development
+ * (the package's own preview origin) and in a production image (/mfes/...)
+ * without a second source of truth.
+ *
+ * Exported for a test: `publish()` in sharedContext.ts swallows a throw into
+ * a `console.warn`, so a wrong answer here has no other failure mode than a
+ * frame silently stuck on "Waiting for the address…" forever.
+ */
+export function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
+  for (const config of manifests) {
+    for (const entry of config.entries) {
+      const framed = entry as { urlProperty?: string; publicPath?: string };
+      if (framed.urlProperty && framed.publicPath) return framed.publicPath;
+    }
+  }
+  return null;
+}
+
+export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
   const hrefs: string[] = [];
   for (const config of manifests) {
-    const baseUrl = config.manifest.metaData?.publicPath;
+    const baseUrl = config.manifest?.metaData?.publicPath;
     if (!baseUrl) continue;
     for (const entry of config.entries) {
+      // A frame entry (ADR-0021) exposes no chunks — nothing to add.
+      if (!('exposeAssets' in entry)) continue;
       const css = entry.exposeAssets?.css;
       for (const path of [...(css?.sync ?? []), ...(css?.async ?? [])]) {
         hrefs.push(new URL(path, baseUrl).href);
@@ -238,7 +283,7 @@ class OptionalDomainFactory extends ExtensionDomainImplementationFactory {
  * and Extension type schemas owned by parent MFEs) are registered separately
  * via `registerNonActionSchemas` because they have no action ID counterpart.
  */
-function collectDeclaredActionIds(entries: MfeEntryMF[]): Set<string> {
+function collectDeclaredActionIds(entries: Array<MfeEntryMF | MfeEntryFrameConfig>): Set<string> {
   const declaredActionIds = new Set<string>();
   for (const entry of entries) {
     for (const actionId of entry.actions) declaredActionIds.add(actionId);
@@ -341,8 +386,11 @@ async function registerMfePackage(
   // failure — invalid manifests/entries fail startup loudly rather than
   // persisting broken state into the registry. The aggregator script inlines
   // the resolved MfManifest object into each entry's `manifest` field so the
-  // host registers entries opaquely — no spread/override needed here.
-  registry.typeSystem.register(config.manifest);
+  // host registers entries opaquely — no spread/override needed here. A
+  // frame package (ADR-0021) carries no manifest at all: nothing to enrich.
+  if (config.manifest !== undefined) {
+    registry.typeSystem.register(config.manifest);
+  }
   // Registration order: schemas → manifest → domains → entries → extensions.
   // Domains MUST be registered before any extension references them so the
   // content-addressed dispatcher can resolve target-domain ownership at the
@@ -373,6 +421,32 @@ async function registerMfePackage(
 }
 
 /**
+ * The screen domain this host registers: the framework's `screenDomain` plus
+ * the studio context properties a screen-mounted MFE may ask for, and the
+ * frame address a frame-entry MFE's `urlProperty` names (ADR-0021). Exported
+ * so a test can read what the shell declares without standing up a registry.
+ */
+export function buildStudioScreenDomain(): ExtensionDomain {
+  return {
+    ...screenDomain,
+    actions: [
+      ...screenDomain.actions,
+      STUDIO_ACTION_CONTEXT_PUBLISH,
+      STUDIO_ACTION_WORKSPACES_PUBLISH,
+    ],
+    sharedProperties: [
+      ...screenDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+      STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+    ],
+  };
+}
+
+/**
  * Bootstrap MFE system for the host application.
  *
  * Synchronously registers the four well-known domains (screen, sidebar,
@@ -392,22 +466,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     throw new Error('[MFE Bootstrap] mfeRegistry is not available on app instance');
   }
 
-  const studioScreenDomain: ExtensionDomain = {
-    ...screenDomain,
-    actions: [
-      ...screenDomain.actions,
-      STUDIO_ACTION_CONTEXT_PUBLISH,
-      STUDIO_ACTION_WORKSPACES_PUBLISH,
-    ],
-    sharedProperties: [
-      ...screenDomain.sharedProperties,
-      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
-      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
-      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
-      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
-      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
-    ],
-  };
+  const studioScreenDomain: ExtensionDomain = buildStudioScreenDomain();
   /*
    * The overlay domain carries the studio context too, and it has to be stated
    * here: the framework's `overlayDomain` declares theme and language only, and
@@ -455,6 +514,10 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     (await response.json()) as MfeManifestConfig[],
     window.location.origin,
   );
+  // Seeded unconditionally, like publishStudioContext above: an MFE requiring
+  // this property should read `null`, never `undefined`, even when the
+  // catalogue turns out to have no frame entry (or no manifests at all).
+  publishFrameUrl(app, firstFrameUrl(manifests));
 
   if (manifests.length === 0) {
     console.warn(

@@ -34,6 +34,13 @@ feature it falls back to an in-memory store, so the catalogue still works.
 | `GET`/`POST /projects/{id}/gear-repo` | which repository a project's gears live in |
 | `POST /projects/{id}/create-repo` | create that repository through the connector |
 | `POST /projects/{id}/scaffold` | write a gear skeleton, optionally as a PR |
+| `GET /gearbox` | whether product previews run, and against which gear corpus |
+| `POST /projects/{id}/product/preview` | compose a `product.gdl` from picked gears, resolve it with the Gearbox engine, optionally commit it |
+
+The preview is [`gearbox.rs`](gearbox.rs): the engine's CLI over a shallow
+checkout of the gear corpus, off unless `STUDIO_GEARBOX_WORKDIR` is set. The
+session image carries the same engine as the `.gdl` language server
+(`theia/gdl-language`), at the same commit, so the portal and the IDE agree.
 
 ## In the assembly
 
