@@ -776,6 +776,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/specs-per-source",
+      "operation_id": "studio_documents.list_specs_per_source",
+      "tag": "StudioDocuments",
+      "summary": "How many specs came out of each repository",
+      "authenticated": true,
+      "responses": [
+        "SpecsPerSourceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/workspaces/{workspace_id}/capabilities",
       "operation_id": "studio_documents.list_capabilities",
       "tag": "StudioDocuments",
