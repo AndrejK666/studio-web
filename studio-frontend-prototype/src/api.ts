@@ -294,6 +294,32 @@ export interface SpecRow {
 }
 
 export type SpecFilter = "not-scanned" | "needs-review" | "bound" | "not-documents" | "all";
+/** One repository's movement over a window, from the graph a sync filled. */
+export interface RepoActivity {
+  /** Instance id of the repo node these numbers are about. */
+  repo: string;
+  /** Open right now, however old — deliberately not windowed. */
+  open: number;
+  /** Merged inside the window; a rate, so it is. */
+  merged: number;
+  commits: number;
+  /** One bucket per day, oldest first, always the window's length. */
+  days: number[];
+}
+
+export type ActivityEventKind = "check" | "comment";
+
+/** One thing that happened to a project. */
+export interface ActivityEvent {
+  id: string;
+  kind: ActivityEventKind;
+  event: string;
+  subject: string;
+  by: string;
+  /** RFC 3339, or null. An undated row sorts last, not first. */
+  recorded?: string | null;
+  severity?: string | null;
+}
 
 export interface Capability {
   key: string;
@@ -1758,6 +1784,30 @@ export const api = {
   specPipeline: (token: string, projectId: string) =>
     request<{ items: PipelineRow[]; total: number }>(
       `/studio-documents/v1/spec-pipeline?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+
+  /** A week of movement per repository, folded by studio-artifact-ingest.
+   *
+   *  This used to be `source-activity.ts` plus a paged walk of `pull_request`
+   *  and `commit` nodes in the browser — commits outnumber everything else in
+   *  a repository, and the projection cannot narrow by a payload field, so
+   *  every page was a slice of the tenant's whole typed node set. */
+  sourceActivity: (token: string, scope: string, days?: number) =>
+    request<{ items: RepoActivity[]; total: number; days: number }>(
+      `/studio-artifact-ingest/v1/source-activity?scope=${encodeURIComponent(scope)}` +
+        (days ? `&days=${days}` : ""),
+      token,
+    ),
+
+  /** What was checked and what was said, in one feed.
+   *
+   *  The ordering, the naming fallback and the two kinds live in
+   *  `artifact_ingest/activity.rs`. The page used to walk `spec_finding` and
+   *  `comment` to a cap and read every binding to name them. */
+  activityFeed: (token: string, projectId: string) =>
+    request<{ items: ActivityEvent[]; total: number }>(
+      `/studio-artifact-ingest/v1/activity?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
 

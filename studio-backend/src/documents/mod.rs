@@ -108,6 +108,10 @@ impl toolkit::Gear for StudioDocumentsGear {
         // The portfolio's document count, for whoever composes the rollup.
         ctx.client_hub()
             .register::<dyn port::DocumentCounter>(service.clone());
+        // What each ingested file is called, for whoever lists what happened
+        // to it. Registered beside the count and absent the same way.
+        ctx.client_hub()
+            .register::<dyn port::BindingNames>(service.clone());
 
         self.service
             .set(service)

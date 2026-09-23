@@ -60,6 +60,26 @@ impl Ingest {
         })
     }
 
+    /// What each ingested file was decided to be called, for the feed.
+    ///
+    /// Best-effort by design and by signature: it answers a map, empty when
+    /// the documents gear is not here or the project's parent cannot be
+    /// resolved. A feed reading by path is worse than one reading by name and
+    /// very much better than no feed.
+    async fn binding_names(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> std::collections::HashMap<String, String> {
+        let Ok(id) = uuid::Uuid::parse_str(project_id.trim()) else {
+            return std::collections::HashMap::new();
+        };
+        let Ok(names) = self.hub.get::<dyn crate::documents::port::BindingNames>() else {
+            return std::collections::HashMap::new();
+        };
+        names.names_for(ctx, id).await.unwrap_or_default()
+    }
+
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
         self.hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
@@ -892,6 +912,214 @@ async fn add_file(
     Ok(Json(ManualFileResponse { instance_id }))
 }
 
+// ── what has been happening, folded here rather than in a page ───────────────
+
+/// How many days of movement the Sources table asks for when it says nothing.
+const ACTIVITY_DAYS_DEFAULT: u32 = 7;
+/// The longest window offered. Beyond this the daily buckets stop being a
+/// shape anybody can read, and the answer is a different question.
+const ACTIVITY_DAYS_MAX: u32 = 90;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SourceActivityQuery {
+    /// Workspace or project tenant whose repositories these are.
+    pub scope: String,
+    /// Days of movement to count, ending today. Defaults to 7.
+    pub days: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct FeedQuery {
+    /// The project whose feed this is.
+    pub project_id: String,
+}
+
+/// One repository's movement over the window.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RepoActivityDto {
+    /// Instance id of the repo node these numbers are about.
+    pub repo: String,
+    /// Pull requests open RIGHT NOW, however old. Deliberately not windowed:
+    /// one opened three weeks ago and still open is the one most worth seeing.
+    pub open: u32,
+    /// Pull requests merged inside the window — a rate, so it is windowed.
+    pub merged: u32,
+    /// Commits inside the window, for the same reason.
+    pub commits: u32,
+    /// One bucket per day, oldest first, always `days` long, so a sparkline
+    /// never has to guess its own axis and a quiet repository draws a flat
+    /// line rather than nothing.
+    pub days: Vec<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SourceActivityListDto {
+    pub items: Vec<RepoActivityDto>,
+    pub total: u32,
+    /// The window these numbers cover, in days.
+    pub days: u32,
+}
+
+/// One thing that happened.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ActivityEventDto {
+    pub id: String,
+    /// `check` or `comment`.
+    pub kind: String,
+    /// What happened, in the product's words.
+    pub event: String,
+    /// What it happened to — a document, or the issue a comment is on.
+    pub subject: String,
+    /// Who or what did it. A detector is a "who" here.
+    pub by: String,
+    /// RFC 3339, or null when the node carries no time. An undated row sorts
+    /// LAST rather than first.
+    pub recorded: Option<String>,
+    /// The detector's own word for how it went, when there is one.
+    pub severity: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ActivityFeedListDto {
+    pub items: Vec<ActivityEventDto>,
+    pub total: u32,
+}
+
+/// GET /studio-artifact-ingest/v1/source-activity — a week per repository.
+async fn source_activity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Query(query): Query<SourceActivityQuery>,
+) -> ApiResult<JsonBody<SourceActivityListDto>> {
+    let days = query.days.unwrap_or(ACTIVITY_DAYS_DEFAULT);
+    if !(1..=ACTIVITY_DAYS_MAX).contains(&days) {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation(
+                "days",
+                format!("must be between 1 and {ACTIVITY_DAYS_MAX}, got {days}"),
+                "INVALID",
+            )
+            .create());
+    }
+    let scope = query.scope.trim();
+    if scope.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation("scope", "must name a tenant".to_owned(), "INVALID")
+            .create());
+    }
+    let service = ingest.get()?;
+
+    let pulls = scoped_values(service, &ctx, "pull_request", scope).await?;
+    let commits = scoped_values(service, &ctx, "commit", scope).await?;
+    // One instant for every row: a render spanning midnight would otherwise
+    // put two repositories on different axes.
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+    )
+    .unwrap_or(0);
+
+    let items: Vec<RepoActivityDto> =
+        super::activity::repo_activity(&pulls, &commits, now, days as usize)
+            .into_iter()
+            .map(|(repo, a)| RepoActivityDto {
+                repo,
+                open: a.open,
+                merged: a.merged,
+                commits: a.commits,
+                days: a.days,
+            })
+            .collect();
+    Ok(Json(SourceActivityListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        days,
+    }))
+}
+
+/// GET /studio-artifact-ingest/v1/activity — what was checked and what was said.
+async fn activity_feed(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Query(query): Query<FeedQuery>,
+) -> ApiResult<JsonBody<ActivityFeedListDto>> {
+    let project_id = query.project_id.trim();
+    if project_id.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation("project_id", "must name a project".to_owned(), "INVALID")
+            .create());
+    }
+    let service = ingest.get()?;
+
+    let findings = scoped_entries(service, &ctx, "spec_finding", project_id).await?;
+    let comments = scoped_entries(service, &ctx, "comment", project_id).await?;
+
+    // The names the bindings gave these files. Best-effort on purpose: losing
+    // them leaves rows reading by path, which is worse than a name and very
+    // much better than no feed.
+    let names = ingest.binding_names(&ctx, project_id).await;
+    let name_of = |id: &str| names.get(id).cloned();
+
+    let items: Vec<ActivityEventDto> =
+        super::activity::activity_feed(&findings, &comments, &name_of)
+            .into_iter()
+            .map(|e| ActivityEventDto {
+                id: e.id,
+                kind: e.kind.as_str().to_owned(),
+                event: e.event,
+                subject: e.subject,
+                by: e.by,
+                recorded: e.recorded,
+                severity: e.severity,
+            })
+            .collect();
+    Ok(Json(ActivityFeedListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// The payloads of one type that name `scope`, through the same predicate the
+/// listing route applies — not a second spelling of it.
+async fn scoped_values(
+    service: &Arc<IngestService>,
+    ctx: &SecurityContext,
+    type_leaf: &str,
+    scope: &str,
+) -> ApiResult<Vec<serde_json::Value>> {
+    Ok(service
+        .list_nodes(ctx, Some(type_leaf))
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .iter()
+        .filter(|node| node_in_scope(&node.value, Some(scope)))
+        .map(|node| node.value.clone())
+        .collect())
+}
+
+/// The same, keeping each node's instance id — what a feed row is keyed on.
+async fn scoped_entries(
+    service: &Arc<IngestService>,
+    ctx: &SecurityContext,
+    type_leaf: &str,
+    scope: &str,
+) -> ApiResult<Vec<(String, serde_json::Value)>> {
+    Ok(service
+        .list_nodes(ctx, Some(type_leaf))
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .iter()
+        .filter(|node| node_in_scope(&node.value, Some(scope)))
+        .map(|node| (node.instance_id.clone(), node.value.clone()))
+        .collect())
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -935,6 +1163,73 @@ pub fn register_routes(
         .json_response_with_schema::<TaskStatusResponse>(openapi, StatusCode::OK, "Task status")
         .error_401(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/source-activity")
+        .operation_id("studio_artifact_ingest.list_source_activity")
+        .summary("A week of movement per repository, from the graph a sync filled")
+        .description(
+            "Pull requests and commits per repository over a window of days, folded from the \
+             `pull_request` and `commit` nodes an ingest run wrote. A repository nobody has \
+             synced reports nothing rather than reporting a plausible seven.\n\n\
+             THE WINDOW IS CLOSED AT ONE END ONLY, on purpose. `open` counts pull requests open \
+             right now however old they are — one opened three weeks ago and still open is the \
+             one most worth seeing, and windowing it would hide exactly that. `merged` and \
+             `commits` are windowed, because those are rates: what is interesting about a merge \
+             is that it happened recently.\n\n\
+             `days` is one bucket per day, oldest first, and always as long as the window — so a \
+             sparkline never has to guess its own axis and a quiet repository draws a flat line \
+             rather than nothing. Every row is measured against ONE instant, so a render \
+             spanning midnight cannot put two repositories on different axes.\n\n\
+             This used to be folded in the portal, which paged `pull_request` and `commit` \
+             newest-first until it fell out of the window — commits outnumber everything else in \
+             a repository, and the projection cannot narrow by a payload field, so each of those \
+             pages was a slice of the tenant's whole typed node set.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("scope", true, "Workspace or project tenant to count within")
+        .query_param("days", false, "Days of movement, ending today (default 7)")
+        .handler(source_activity)
+        .json_response_with_schema::<SourceActivityListDto>(
+            openapi,
+            StatusCode::OK,
+            "Movement per repository",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/activity")
+        .operation_id("studio_artifact_ingest.list_activity")
+        .summary("What was checked and what was said, in one feed")
+        .description(
+            "Spec-quality checks and repository comments for one project, in one list, newest \
+             first. An undated row sorts LAST rather than first: a missing timestamp at the top \
+             would put the least informative rows where the most recent ones belong, and \
+             findings written before `recorded_at` existed are exactly that case.\n\n\
+             WHAT THE HISTORY CAN SAY, and what it cannot. A `spec_finding`'s instance id is \
+             keyed on (detector, subject), so re-running a detector UPSERTS: there is one \
+             finding per detector per document, carrying when it was last produced. That is a \
+             current state with a timestamp on it, not a log, so the feed shows the latest check \
+             per document and nothing before it. Comments are the other half and are a genuine \
+             history — every comment a sync pulled is its own node with its own `created_at`.\n\n\
+             A check is named by the document it is about: the binding's name first, then the \
+             node's own path, then its id. A row naming an opaque id is still a row somebody can \
+             chase, and dropping it would hide a check that really happened. When the documents \
+             gear is not here the names are simply absent and rows read by path.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose feed to read")
+        .handler(activity_feed)
+        .json_response_with_schema::<ActivityFeedListDto>(openapi, StatusCode::OK, "The feed")
+        .error_400(openapi)
+        .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

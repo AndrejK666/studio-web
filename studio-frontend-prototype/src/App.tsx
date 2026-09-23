@@ -47,6 +47,7 @@ import {
 } from "./access";
 import {
   api,
+  type RepoActivity,
   ApiError,
   PLATFORM_ROOT_TENANT_ID,
   UNAUTHENTICATED_EVENT,
@@ -73,7 +74,6 @@ import {
   ViewToggle,
   useViewMode,
 } from "./view-mode";
-import { olderThanWindow, repoActivity, type RepoActivity } from "./source-activity";
 import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
@@ -6798,14 +6798,12 @@ function ProjectFiles({
   );
 }
 
-/** One page of the activity walk, and the most it will ever read.
+/** Page size for the one graph walk this screen still makes.
  *
- *  The cap is a bound on cost, not a claim about the repository: a project
- *  with more than two thousand pull requests gets a count over the two
- *  thousand most recently touched, which is every one that has moved this year
- *  in any repository anybody is looking at. */
-const ACTIVITY_PAGE = 200;
-const ACTIVITY_MAX = 2000;
+ *  The movement columns beside it are a single request now; this one pairs
+ *  file nodes with the bindings the documents gear holds, which is a seam
+ *  rather than a rule and is left for its own change. */
+const FILE_PAGE = 200;
 
 /** The product's source glyph: a branch forking off a trunk. Inline rather
  *  than in the shared icon set, because nothing else asks for it. */
@@ -6914,40 +6912,15 @@ function ProjectSources({
       setRepoNodes([]);
     }
 
-    // A week of movement, read newest-first and stopped at the window's edge.
-    // Commits outnumber everything else in a repository, and paging all of
-    // them to count seven days is a lot of requests for a number that stops
-    // changing after the first page or two.
+    // A week of movement per repository, folded by the gear that owns the
+    // nodes. This used to be two paged walks from here — commits outnumber
+    // everything else in a repository, and each page was a slice of the
+    // tenant's whole typed node set.
     try {
-      const now = Date.now();
-      const walk = async (type: "pull_request" | "commit") => {
-        const out: import("./api").ArtifactNode[] = [];
-        for (let offset = 0; offset < ACTIVITY_MAX; offset += ACTIVITY_PAGE) {
-          const page = await api.listArtifactNodes(token, type, ws.id, undefined, ACTIVITY_PAGE, {
-            sort: "updated",
-            offset,
-          });
-          const nodes = page.nodes ?? [];
-          out.push(...nodes);
-          // The page is newest-first, so the LAST node decides: once it is
-          // outside the window every remaining page is too.
-          if (nodes.length < ACTIVITY_PAGE) break;
-          if (olderThanWindow(nodes[nodes.length - 1], now)) break;
-        }
-        return out;
-      };
-      // An open pull request may be arbitrarily old, so the pull-request walk
-      // cannot stop at the window \u2014 `open` is the number people come to this
-      // table for. Capped instead, which is a bound on cost and not a claim.
-      const [pulls, commits] = await Promise.all([
-        api
-          .listArtifactNodes(token, "pull_request", ws.id, undefined, ACTIVITY_MAX, {
-            sort: "updated",
-          })
-          .then((r) => r.nodes ?? []),
-        walk("commit"),
-      ]);
-      setActivity(repoActivity(pulls, commits, now));
+      const page = await api.sourceActivity(token, ws.id);
+      const byRepo: Record<string, RepoActivity> = {};
+      for (const row of page.items) byRepo[row.repo] = row;
+      setActivity(byRepo);
     } catch {
       // The columns read as "—" rather than as zero: nothing was counted, and
       // nothing counted is not the same as nothing happened.
@@ -6957,11 +6930,16 @@ function ProjectSources({
     // Specs per source. Two listings rather than one join, because the graph
     // does not hold the binding: the documents gear does, and the only thing
     // tying them together is the file node's id.
+    //
+    // STILL A WALK, and the last one on this screen: the movement columns
+    // beside it are one request now. Folding this one needs the binding and
+    // the file node in the same place, which is a seam rather than a rule —
+    // left for its own change.
     try {
       const repoOfNode: Record<string, string> = {};
       let cursor: string | undefined;
       do {
-        const page = await api.listArtifactNodes(token, "file", ws.id, cursor, ACTIVITY_PAGE);
+        const page = await api.listArtifactNodes(token, "file", ws.id, cursor, FILE_PAGE);
         for (const n of page.nodes ?? []) {
           if (typeof n.value.repo === "string") repoOfNode[n.instance_id] = n.value.repo;
         }
