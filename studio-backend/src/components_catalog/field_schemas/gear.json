@@ -462,6 +462,26 @@
      },
      "kind": "status",
      "lamp": true
+    },
+    {
+     "key": "extpoint",
+     "label": "Extension point (declared)",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml has_extension_point"
+     },
+     "kind": "bool",
+     "lamp": false
+    },
+    {
+     "key": "is_plugin",
+     "label": "Is a plugin (declared)",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml is_plugin"
+     },
+     "kind": "bool",
+     "lamp": false
     }
    ]
   },

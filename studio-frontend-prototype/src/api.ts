@@ -537,6 +537,10 @@ export interface CatalogNode {
     // Gear nodes:
     name?: string;
     kind?: string;
+    /** `draft` (a directory of documents, no crate under it) or `published`.
+     *  Absent means the scan did not assess this component — a FrontX package
+     *  has no crate count, and neither has anything nobody walked. */
+    status?: string | null;
     description?: string | null;
     max_version?: string | null;
     newest_version?: string | null;

@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CatalogNode, Capability } from "./api";
-import { buildState, composePlan, profilesByName } from "./compose";
+import { buildState, buildStateOf, composePlan, profilesByName } from "./compose";
 
 const node = (name: string, description: string, kind = "gear"): CatalogNode => ({
   type_id: "gear",
@@ -45,6 +45,41 @@ describe("buildState", () => {
     expect(buildState({})).toBeNull();
     expect(buildState({ auto: {} })).toBeNull();
     expect(buildState({ auto: { crates: {} } })).toBeNull();
+  });
+});
+
+describe("buildStateOf", () => {
+  const withStatus = (status?: string): CatalogNode => ({
+    type_id: "gear",
+    instance_id: "x",
+    value: status === undefined ? { name: "x" } : { name: "x", status },
+  });
+
+  it("takes the catalogue's own word when it has one", () => {
+    // The server computes this during the scan now, so every consumer gets one
+    // answer instead of each deriving its own.
+    expect(buildStateOf(withStatus("draft"))).toBe("docs-only");
+    expect(buildStateOf(withStatus("published"))).toBe("built");
+  });
+
+  it("outranks the profile, which is the older way of asking", () => {
+    const built = profilesByName([profile("x", 3)])["x"];
+    expect(buildStateOf(withStatus("draft"), built)).toBe("docs-only");
+  });
+
+  it("falls back to the crate count for a graph synced before the status", () => {
+    expect(buildStateOf(withStatus(), profilesByName([profile("x", 2)])["x"])).toBe("built");
+    expect(buildStateOf(withStatus(), profilesByName([profile("x", 0)])["x"])).toBe("docs-only");
+  });
+
+  it("says nothing when neither the node nor a profile knows", () => {
+    expect(buildStateOf(withStatus())).toBeNull();
+  });
+
+  it("ignores a status word this build does not know", () => {
+    // `certified` is a rung the backend cannot compute yet; a build that meets
+    // one must not read it as an assessment it did not make.
+    expect(buildStateOf(withStatus("certified"))).toBeNull();
   });
 });
 
