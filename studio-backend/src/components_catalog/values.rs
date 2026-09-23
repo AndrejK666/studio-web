@@ -337,6 +337,40 @@ pub fn category_of(node: &Value, profile: Option<&Value>) -> String {
         .unwrap_or_default()
 }
 
+// ── which version is newer ───────────────────────────────────────────────────
+
+/// Order two crate versions, newest first.
+///
+/// Not semver: the catalogue holds whatever crates.io published, which is
+/// mostly semver and occasionally not. The comparison splits on `.`, `-` and
+/// `+` and compares the runs of digits, which is what the portal did and what
+/// every version in the catalogue today sorts correctly under.
+///
+/// A segment that is not a number counts as ZERO rather than making the whole
+/// version unorderable: `1.2.0-rc1` and `1.2.0` then compare on the parts that
+/// mean something, and a version nobody can parse sorts last instead of
+/// scrambling the list around it.
+#[must_use]
+pub fn newer_first(a: &str, b: &str) -> std::cmp::Ordering {
+    let parts = |s: &str| -> Vec<u64> {
+        s.split(['.', '-', '+'])
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (pa, pb) = (parts(a), parts(b));
+    for i in 0..pa.len().max(pb.len()) {
+        let (x, y) = (
+            pa.get(i).copied().unwrap_or(0),
+            pb.get(i).copied().unwrap_or(0),
+        );
+        if x != y {
+            // Newest FIRST, so the comparison is reversed.
+            return y.cmp(&x);
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,6 +565,49 @@ mod tests {
         let odd = json!({ "shape": "unknown" });
         let out = to_field_val(&odd).expect("shown");
         assert!(out["v"].as_str().unwrap().contains("unknown"));
+    }
+
+    // ---- which version is newer -------------------------------------------
+
+    fn ordered(mut versions: Vec<&str>) -> Vec<&str> {
+        versions.sort_by(|a, b| newer_first(a, b));
+        versions
+    }
+
+    #[test]
+    fn the_newest_version_comes_first() {
+        assert_eq!(
+            ordered(vec!["0.9.0", "1.2.0", "1.10.0", "1.2.1"]),
+            vec!["1.10.0", "1.2.1", "1.2.0", "0.9.0"],
+            "ten is after two, not before it"
+        );
+    }
+
+    #[test]
+    fn a_prerelease_sorts_below_the_release_it_precedes() {
+        // `1.2.0-rc1` splits to [1,2,0,0] against [1,2,0]: equal on what both
+        // carry, and the release wins nothing — which is the portal's
+        // behaviour and is why they read as adjacent rather than reordered.
+        assert_eq!(
+            ordered(vec!["1.2.0-rc1", "1.3.0"]),
+            vec!["1.3.0", "1.2.0-rc1"]
+        );
+    }
+
+    #[test]
+    fn a_version_nobody_can_parse_does_not_scramble_the_list_around_it() {
+        // Unparseable segments count as zero, so it sorts low rather than
+        // throwing the versions that ARE readable out of order.
+        let out = ordered(vec!["2.0.0", "nightly", "1.0.0"]);
+        assert_eq!(out[0], "2.0.0");
+        assert_eq!(out[1], "1.0.0");
+        assert_eq!(out[2], "nightly");
+    }
+
+    #[test]
+    fn a_shorter_version_is_not_newer_for_being_shorter() {
+        assert_eq!(ordered(vec!["1.2", "1.2.1"]), vec!["1.2.1", "1.2"]);
+        assert_eq!(newer_first("1.2.0", "1.2"), std::cmp::Ordering::Equal);
     }
 
     // ---- the category ------------------------------------------------------

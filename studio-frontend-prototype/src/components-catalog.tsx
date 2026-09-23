@@ -1471,7 +1471,9 @@ function GearDetail({
     api
       .listComponentVersions(token, name)
       .then(({ nodes }) => {
-        if (live) setVersions(sortVersions(nodes ?? []));
+        // Newest first, ordered by the catalogue: which version is newer is
+        // a judgement, and it was being made a second time here.
+        if (live) setVersions(nodes ?? []);
       })
       .catch(() => {
         if (live) setVersions([]);
@@ -2381,19 +2383,6 @@ function publishedBy(pb: unknown): string {
     return String(o.name ?? o.login ?? "—");
   }
   return typeof pb === "string" ? pb : "—";
-}
-
-function sortVersions(rows: CatalogNode[]): CatalogNode[] {
-  const parts = (s: string) => s.split(/[.+-]/).map((p) => parseInt(p, 10) || 0);
-  return [...rows].sort((a, b) => {
-    const pa = parts(String(a.value.num ?? ""));
-    const pb = parts(String(b.value.num ?? ""));
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const d = (pb[i] ?? 0) - (pa[i] ?? 0);
-      if (d !== 0) return d;
-    }
-    return 0;
-  });
 }
 
 // ── profile editor ───────────────────────────────────────────────────────────

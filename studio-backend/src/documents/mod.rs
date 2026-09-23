@@ -19,6 +19,7 @@ pub(crate) mod gts;
 pub(crate) mod intake;
 mod migrations;
 mod model;
+mod paths;
 pub(crate) mod port;
 mod quality;
 mod repo;
