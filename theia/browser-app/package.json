@@ -51,7 +51,24 @@
         },
         "preferences": {
           "security.workspace.trust.enabled": false,
-          "security.workspace.trust.startupPrompt": "never"
+          "security.workspace.trust.startupPrompt": "never",
+          "//files.watcherExclude": "From Gearbox Studio's app. A session opens the gear corpus beside the project, and `target/` in a Rust checkout is gigabytes Theia would walk. `.gearbox/` is Generate's output, rewritten wholesale; gearbox-studio's views read it on demand and rely on it not being watched.",
+          "files.watcherExclude": {
+            "**/.git/objects/**": true,
+            "**/.git/subtree-cache/**": true,
+            "**/node_modules/**": true,
+            "**/target/**": true,
+            "**/.gearbox/**": true
+          },
+          "//files.exclude": "Theia's own defaults, plus `.gearbox`: generated and disposable, and reached through the Generate and Lock views rather than the Explorer.",
+          "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true,
+            "**/.gearbox": true
+          }
         }
       }
     }
