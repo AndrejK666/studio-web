@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CatalogNode, Capability } from "./api";
-import { buildState, buildStateOf, composePlan, profilesByName } from "./compose";
+import { buildState, buildStateOf, composabilityOf, composePlan, profilesByName } from "./compose";
 
 const node = (name: string, description: string, kind = "gear"): CatalogNode => ({
   type_id: "gear",
@@ -225,5 +225,46 @@ describe("profilesByName", () => {
       { type_id: "x", instance_id: "y", value: {} } as CatalogNode,
     ]);
     expect(Object.keys(map)).toEqual(["cf-gears-ledger"]);
+  });
+});
+
+/* What the Gearbox engine said, as the catalogue sync writes it into the
+ * profile: `auto.gdl_runs`. A suggestion should lead with what can go into a
+ * product and leave what the engine proved cannot run for last. */
+describe("composability", () => {
+  const withRuns = (gear_name: string, s: "good" | "bad", v = s === "good" ? "yes" : "no — must run with cf-gears-authz-resolver") =>
+    ({
+      type_id: "profile",
+      instance_id: gear_name,
+      value: { gear_name, auto: { crates: { n: 1 }, gdl_runs: { v, b: v, s } } },
+    }) as unknown as CatalogNode;
+
+  it("reads the engine's verdict and its reason", () => {
+    expect(composabilityOf(undefined).state).toBeNull();
+    expect(composabilityOf({ auto: { gdl_runs: { v: "yes", s: "good" } } }).state).toBe("runs");
+    expect(composabilityOf({ auto: { gdl_runs: { v: "no — needs mode", s: "bad" } } })).toEqual({
+      state: "blocked",
+      why: "needs mode",
+    });
+  });
+
+  it("puts a gear that can run ahead of one that cannot, at the same build state", () => {
+    const gears = [
+      node("cf-gears-resource-group", "billing resource groups"),
+      node("cf-gears-plain", "billing"),
+      node("cf-gears-tenant-resolver", "billing tenants"),
+    ];
+    const profiles = profilesByName([
+      withRuns("cf-gears-resource-group", "bad"),
+      profile("cf-gears-plain", 1),
+      withRuns("cf-gears-tenant-resolver", "good"),
+    ]);
+    const [row] = composePlan(["billing"], gears, profiles, vocab);
+    expect(row!.candidates.map((c) => c.name)).toEqual([
+      "cf-gears-tenant-resolver",
+      "cf-gears-plain",
+      "cf-gears-resource-group",
+    ]);
+    expect(row!.candidates[2]!.composableWhy).toBe("must run with cf-gears-authz-resolver");
   });
 });

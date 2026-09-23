@@ -134,3 +134,14 @@ describe("sortDiagnostics", () => {
     ).toEqual(["E1", "E2", "W1", "I1"]);
   });
 });
+
+describe("defaultPicks and the engine's verdict", () => {
+  it("prefers a gear that can run, and never starts from one that cannot", () => {
+    const runs = { ...cand("cf-gears-tenant-resolver"), composable: "runs" as const };
+    const blocked = { ...cand("cf-gears-resource-group"), composable: "blocked" as const };
+    const plain = cand("cf-gears-account-management");
+    expect(defaultPicks([row("tenancy", blocked, plain, runs)])).toEqual(["cf-gears-tenant-resolver"]);
+    expect(defaultPicks([row("tenancy", blocked, plain)])).toEqual(["cf-gears-account-management"]);
+    expect(defaultPicks([row("tenancy", blocked)])).toEqual([]);
+  });
+});
