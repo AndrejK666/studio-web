@@ -1383,6 +1383,57 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
+/** Whether product previews run here (`components_catalog/gearbox.rs`), and
+ *  the gear corpus they resolve against — which a product project's IDE
+ *  session checks out beside the project under `source_id`. */
+export interface GearboxStatus {
+  enabled: boolean;
+  engine_version?: string | null;
+  corpus_url?: string | null;
+  corpus_ref?: string | null;
+  corpus_commit?: string | null;
+  source_id: string;
+  profiles: string[];
+  problem?: string | null;
+}
+
+export interface GearboxDiagnostic {
+  code: string;
+  severity: "error" | "warning" | "info" | string;
+  message: string;
+  help?: string | null;
+  /** `product.gdl`, or the corpus path of the gear.gdl it is about. */
+  file?: string | null;
+  /** One-based. */
+  line?: number | null;
+}
+
+export interface GearboxApplication {
+  name: string;
+  kind: string;
+  anchor?: string | null;
+  gears: string[];
+  replicas: number;
+  listens: { name: string; gear: string; address: string }[];
+}
+
+/** What the Gearbox engine made of a set of picked gears. */
+export interface ProductPreview {
+  product_gdl: string;
+  profile: string;
+  ok: boolean;
+  diagnostics: GearboxDiagnostic[];
+  applications: GearboxApplication[];
+  gears: { id: string; crate_name: string; reasons: string[] }[];
+  added: { id: string; reason: string }[];
+  not_described: string[];
+  /** Picked hosts without the plugin their extension point needs, and the
+   *  engine ids that could fill it. */
+  plugin_options: { host: string; available: string[] }[];
+  corpus_commit?: string | null;
+  written?: { branch: string; commit_sha: string; pr_url?: string | null } | null;
+}
+
 /** What `importDomainModel` loaded. */
 export interface DomainModelImport {
   entities: number;
@@ -2587,6 +2638,31 @@ export const api = {
       files: ScaffoldFile[];
     }>(
       `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Whether product previews can run, and against which gear corpus. */
+  gearboxStatus: (token: string) =>
+    request<GearboxStatus>(`/studio-components-catalog/v1/gearbox`, token),
+  /** Compose a product.gdl from picked gears and resolve it with the Gearbox
+   *  engine. `write` also commits it to the project's gear repo — onto the
+   *  base branch, or onto a new branch with a pull request when `open_pr`. */
+  previewProduct: (
+    token: string,
+    projectId: string,
+    body: {
+      product_id: string;
+      name?: string;
+      gears: string[];
+      profile?: string;
+      write?: boolean;
+      open_pr?: boolean;
+      /** Commit onto the base branch; only for a repository the product owns. */
+      onto_base?: boolean;
+    },
+  ) =>
+    request<ProductPreview>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product/preview`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),

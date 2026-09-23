@@ -185,7 +185,7 @@ WORKDIR /gdl
 COPY gdl-language/package.json gdl-language/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY gdl-language/ ./
-RUN npm test && npm run build \
+RUN npm run typecheck && npm test && npm run build \
     && mkdir -p /out/extension \
     && cp -r package.json language-configuration.json syntaxes dist /out/extension/
 
