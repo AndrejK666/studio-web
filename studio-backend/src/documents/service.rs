@@ -1061,49 +1061,104 @@ impl DocumentsService {
             .repo
             .list_bindings(workspace_id, binding_scope(project_id), 0, None)
             .await?;
-        let wanted: Vec<(String, Option<String>)> = rows
+        let rows: Vec<_> = rows
             .into_iter()
             .filter(|row| binding_ids.contains(&row.id))
-            .map(|row| (row.path, row.type_key))
             .collect();
-        if wanted.is_empty() {
+        if rows.is_empty() {
             return Ok(Vec::new());
         }
+        let tenants = checkout_tenants(rows.iter().map(|r| r.project_id), project_id, workspace_id);
+        let wanted: Vec<(String, Option<String>)> = rows
+            .into_iter()
+            .map(|row| (row.path, row.type_key))
+            .collect();
 
-        // The repositories are the workspace's, wherever the bindings live: a
-        // project's specs are files of its workspace's checkouts.
-        let settings = match self
-            .account_management
-            .get_metadata(ctx, workspace_id, GtsTypeId::new(WS_SETTINGS_TYPE))
-            .await
-        {
-            Ok(entry) => entry.value,
-            // A workspace that has recorded no sources has no checkout to read,
-            // which is an answer rather than a failure.
-            Err(_) => return Ok(Vec::new()),
-        };
-        let dirs = quality::checkout_dirs(&settings);
-
-        let mut by_path: std::collections::BTreeMap<String, String> =
-            std::collections::BTreeMap::new();
-        for dir in dirs {
-            // One repository that was never cloned must not cost the others.
-            match reader
-                .read_repo_files(&workspace_id.to_string(), &dir)
-                .await
-            {
-                Ok(files) => {
-                    for (path, text) in files {
-                        by_path.entry(path).or_insert(text);
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
-                }
-            }
-        }
+        let by_path = self.checkout_files(ctx, &tenants, reader).await;
         Ok(quality::docs_for(&wanted, &by_path))
     }
+
+    /// The current text of one binding's file, or `None` when no checkout has
+    /// it. For re-checking conformance when a decision names a type and the
+    /// caller sent no text -- which is now every caller.
+    pub async fn binding_text(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Option<String>> {
+        let Some(row) = self.repo.get_binding(workspace_id, id).await? else {
+            return Ok(None);
+        };
+        let tenants = checkout_tenants(std::iter::once(row.project_id), None, workspace_id);
+        let mut by_path = self.checkout_files(ctx, &tenants, reader).await;
+        Ok(by_path.remove(&row.path))
+    }
+
+    /// Every file the named tenants' checkouts hold, keyed by repo-relative
+    /// path.
+    ///
+    /// Several tenants, tried in order, because the sources are recorded
+    /// against whichever tenant the portal called a workspace when they were
+    /// connected -- and for a project created under one, that is the project's
+    /// own tenant, not its parent's. Guessing wrong reads an empty checkout and
+    /// reports that nothing can be analysed, which is how this was found: on a
+    /// stand whose settings sat on the project. The first tenant that has
+    /// sources wins; the rest are not read.
+    async fn checkout_files(
+        &self,
+        ctx: &SecurityContext,
+        tenants: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut by_path: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for tenant in tenants {
+            // A tenant that has recorded no sources has no checkout to read,
+            // which is an answer rather than a failure.
+            let Ok(entry) = self
+                .account_management
+                .get_metadata(ctx, *tenant, GtsTypeId::new(WS_SETTINGS_TYPE))
+                .await
+            else {
+                continue;
+            };
+            for dir in quality::checkout_dirs(&entry.value) {
+                // One repository that was never cloned must not cost the others.
+                match reader.read_repo_files(&tenant.to_string(), &dir).await {
+                    Ok(files) => {
+                        for (path, text) in files {
+                            by_path.entry(path).or_insert(text);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
+                    }
+                }
+            }
+            if !by_path.is_empty() {
+                break;
+            }
+        }
+        by_path
+    }
+}
+
+/// Which tenants may hold the checkout, most specific first: the projects the
+/// bindings belong to, then the project asked about, then the workspace.
+fn checkout_tenants(
+    rows: impl Iterator<Item = Option<Uuid>>,
+    project_id: Option<Uuid>,
+    workspace_id: Uuid,
+) -> Vec<Uuid> {
+    let mut out: Vec<Uuid> = Vec::new();
+    for tenant in rows.flatten().chain(project_id).chain([workspace_id]) {
+        if !out.contains(&tenant) {
+            out.push(tenant);
+        }
+    }
+    out
 }
 
 /// Whether a re-classification must leave this binding's verdict alone, and
@@ -1486,6 +1541,45 @@ mod tests {
     use super::*;
     use crate::documents::model::{Rules, TemplateSpec};
     use crate::documents::repo::stage_row_id;
+
+    /// Where the checkout is looked for, and in what order.
+    ///
+    /// The project first: `repos` is recorded against whichever tenant the
+    /// portal was calling a workspace when the source was connected, and for a
+    /// project created under a workspace that is the project's own tenant.
+    /// Reading the parent instead finds no sources and reports, wrongly, that
+    /// nothing can be analysed.
+    #[test]
+    fn the_checkout_is_looked_for_in_the_project_before_the_workspace() {
+        let ws = Uuid::from_u128(0x9999_0000_0000_4000_8000_0000_0000_0001);
+        let proj = Uuid::from_u128(0x9999_0000_0000_4000_8000_0000_0000_0002);
+        assert_eq!(
+            checkout_tenants([Some(proj), None].into_iter(), Some(proj), ws),
+            vec![proj, ws],
+        );
+    }
+
+    #[test]
+    fn a_workspace_level_binding_still_reaches_the_workspace() {
+        let ws = Uuid::from_u128(0x9999_0000_0000_4000_8000_0000_0000_0001);
+        assert_eq!(checkout_tenants([None].into_iter(), None, ws), vec![ws]);
+    }
+
+    /// Every tenant once, in the order it was first named: the same clone read
+    /// twice is a repository read twice.
+    #[test]
+    fn a_tenant_named_twice_is_read_once() {
+        let ws = Uuid::from_u128(0x9999_0000_0000_4000_8000_0000_0000_0001);
+        let proj = Uuid::from_u128(0x9999_0000_0000_4000_8000_0000_0000_0002);
+        assert_eq!(
+            checkout_tenants(
+                [Some(proj), Some(proj), Some(ws)].into_iter(),
+                Some(proj),
+                ws
+            ),
+            vec![proj, ws],
+        );
+    }
 
     const ORG: Uuid = Uuid::from_u128(0x1111_1111_1111_4111_8111_1111_1111_1111);
     const WS: Uuid = Uuid::from_u128(0x2222_2222_2222_4222_8222_2222_2222_2222);
