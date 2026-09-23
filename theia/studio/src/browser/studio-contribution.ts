@@ -1,8 +1,7 @@
-import { injectable, inject, optional } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import type { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import type { FrontendApplication } from '@theia/core/lib/browser/frontend-application';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
-import { OrcaService } from '../common/orca-protocol';
 import { OperationsWidget } from './operations-widget';
 import { AnalyzeWidget } from './analyze-widget';
 import { OrcaWidget } from './orca-widget';
@@ -33,6 +32,15 @@ export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' |
 ] as const;
 
 /**
+ * How much of the window the right flank takes when a session first opens.
+ *
+ * Theia's own `initialSizeRatio` for that panel, used here because the framework
+ * cannot apply it this early (see `initializeLayout`) — the number is the
+ * default's, not a preference of this product's.
+ */
+const RIGHT_FLANK_RATIO = 0.191;
+
+/**
  * Composes the layout a fresh session opens on.
  *
  * Not a view contribution any more: it used to be the sample widget's, and the
@@ -42,22 +50,12 @@ export const DEFAULT_LAYOUT: ReadonlyArray<{ id: string; area: 'left' | 'main' |
  */
 @injectable()
 export class StudioContribution implements FrontendApplicationContribution {
-    /** Asked one question, once: is there a runtime for the Agents panel to be
-     *  a panel of. Optional because this contribution composes a layout with or
-     *  without an answer — see [`Self::agentsAreUsable`]. */
-    @inject(OrcaService) @optional()
-    protected readonly orca: OrcaService | undefined;
-
     constructor(
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager
     ) {}
 
     async initializeLayout(app: FrontendApplication): Promise<void> {
-        const agents = await this.agentsAreUsable();
         for (const placement of DEFAULT_LAYOUT) {
-            if (placement.id === OrcaWidget.ID && !agents) {
-                continue;
-            }
             const widget = await this.widgetManager.getOrCreateWidget(placement.id);
             if (widget.isAttached) {
                 continue;
@@ -68,45 +66,72 @@ export class StudioContribution implements FrontendApplicationContribution {
         // the panel stays collapsed until something activates it, which is how
         // the Agents panel came out invisible on a fresh session. Activating it
         // is what expands the right panel.
-        if (agents) {
-            await app.shell.activateWidget(OrcaWidget.ID);
-        }
+        //
+        // The width has to be said out loud, BEFORE the activation that expands
+        // the panel. Theia sizes a flank it is expanding for the first time from
+        // `SidePanel.Options.initialSizeRatio`, but only through
+        // `getDefaultPanelSize()`, which answers nothing unless the panel's
+        // parent `isVisible` — and at this point in startup it is not, because
+        // `revealShell` runs after every contribution's `initializeLayout`. So
+        // the default never applied and Lumino's own stretch decided: measured
+        // in a real session, 149px in a 1584px window, against the 302 the ratio
+        // asks for. Five panels live in that flank — Agents, Claude Code, Codex,
+        // AI Chat, Outline — and at 149px the one on top is a column of single
+        // words, which is what "the IDE opens on a grey strip" turned out to be.
+        //
+        await app.shell.activateWidget(OrcaWidget.ID);
+        this.sizeRightFlank(app);
     }
 
     /**
-     * Whether a fresh session should open on the Agents panel.
+     * Give the right flank a width, once there is a layout to give it in.
      *
-     * The release image is built without the Orca runtime — it arrives through
-     * `--build-arg STUDIO_ORCA_DEB_URL=…`, and the deployed one does not carry
-     * it — while the deployment still sets `STUDIO_ORCA_ENABLED=1`. Asked of a
-     * live session on the dev stand rather than assumed: no `orca` on PATH, no
-     * `orca serve` running, and the right flank expanded on a panel whose only
-     * content is an explanation of why it has none.
+     * TWO EARLIER ATTEMPTS AT THIS DID NOTHING, and both looked right. Neither
+     * the number nor the API was wrong — `rightPanelHandler.resize(303)` moves
+     * the flank and the size sticks, confirmed against a running IDE. What was
+     * wrong was the moment. `resize` writes `lastPanelSize` when the dock panel
+     * is hidden and calls `setPanelSize` when it is not, and `setPanelSize`
+     * "assumes that the parent of the panel container is a SplitPanel" — during
+     * `initializeLayout` the shell is attached but not laid out, so neither
+     * branch has anything to act on and the call is swallowed. Theia's own
+     * default is lost to the same moment: `getDefaultPanelSize()` answers
+     * nothing unless the panel's parent `isVisible`, and `revealShell` runs
+     * after every contribution's `initializeLayout`.
      *
-     * That is the same case the header above already keeps out of a fresh
-     * session for the Workspace Graph and Object Details: a panel that can say
-     * nothing is not worth the flank it opens. The difference is that this one
-     * can say nothing only in SOME sessions, so it is decided per session
-     * instead of in the list.
+     * So this waits for the one condition that says the layout happened — the
+     * shell has a width — and then says the size once. Bounded, because a
+     * frame loop with no end is a leak: two seconds at 60fps is far more than
+     * a reveal takes, and a session that somehow never lays out keeps the
+     * flank Lumino gave it rather than spinning.
      *
-     * The panel is not removed — it is one command away, like every other view
-     * here, and the moment an image carries a runtime it opens by default
-     * again.
-     *
-     * `cliMissing` and nothing weaker: a runtime that is merely not running is
-     * one `orca serve` away, and the panel's own hint says so, which is worth
-     * a flank. And a question that cannot be asked — no client bound, or a
-     * transport that failed — is not evidence of absence, so the layout is
-     * composed the way it was before this existed.
+     * It is only ever reached on a FRESH session. Theia calls
+     * `initializeLayout` only when it has no saved layout to restore, so a
+     * flank somebody dragged is never overruled.
      */
-    protected async agentsAreUsable(): Promise<boolean> {
-        if (!this.orca) {
-            return true;
-        }
-        try {
-            return !(await this.orca.status()).cliMissing;
-        } catch {
-            return true;
-        }
+    protected sizeRightFlank(app: FrontendApplication): void {
+        // Said on the frame the layout appears AND on a few frames after it.
+        //
+        // Not belt and braces: a swallowed `resize` reports nothing, and
+        // `getPanelSize` is protected, so there is no way to ask whether it
+        // landed. The shell having a width is the first moment it CAN land, and
+        // the flank's own container can become ready a frame or two later than
+        // the shell — so repeating briefly costs a handful of idempotent calls
+        // and removes the guess. Nobody drags a panel in the first tenth of a
+        // second of a session, which is the only thing this could overrule.
+        let framesLeft = 120;
+        let repeatsLeft = 6;
+        const attempt = (): void => {
+            const width = app.shell.node.clientWidth;
+            if (width > 0) {
+                app.shell.rightPanelHandler.resize(Math.round(width * RIGHT_FLANK_RATIO));
+                if (--repeatsLeft <= 0) {
+                    return;
+                }
+            } else if (--framesLeft <= 0) {
+                return;
+            }
+            window.requestAnimationFrame(attempt);
+        };
+        window.requestAnimationFrame(attempt);
     }
 }

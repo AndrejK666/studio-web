@@ -329,6 +329,31 @@ ENV STUDIO_GIT_MODE=disabled \
     THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs \
     ORCA_CLI=/usr/bin/orca-ide
 
+# Webviews on the application's own origin, instead of Theia's default
+# `{{uuid}}.webview.{{hostname}}`.
+#
+# That default gives every webview an origin of its own, which is the stronger
+# arrangement and the reason it IS the default. It also needs a hostname that
+# can have subdomains, and neither place this image runs has one. On a loopback
+# session the host is an IP, and `<uuid>.webview.127.0.0.1` is not a name at
+# all; on the stand `<uuid>.webview.studio-dev-poc.cfabric.org` needs a wildcard
+# DNS record and a wildcard certificate, and there are none. So the Claude Code
+# and Codex side panels were loading a frame from a host that does not resolve,
+# and every session opened on a grey band where a panel should be — measured in
+# the browser, in both places, before this line existed.
+#
+# WHAT IT COSTS, plainly: a webview's script now runs on the application's own
+# origin, so it is no longer walled off from the IDE's cookies and storage. The
+# webviews here are panels of plugins this image installs itself, the container
+# is per-session and ephemeral, and the session gate already serves the webview
+# shell on those subdomains (`webviewShellOk` in entrypoint.sh) for the same
+# reason. Theia announces the change in the UI; that notification is correct and
+# stays.
+#
+# One ENV, so a deployment that grows wildcard DNS and TLS sets it back to
+# `{{uuid}}.webview.{{hostname}}` and loses nothing else.
+ENV THEIA_WEBVIEW_EXTERNAL_ENDPOINT="{{hostname}}"
+
 VOLUME ["/workspace"]
 EXPOSE 3003
 
