@@ -168,9 +168,8 @@ Routine delivery flow:
    deploy**, select **Services** and the target environment. It tests first,
    publishes the changed components, then deploys those components while
    retaining the running tags for components that did not change. Alternatively,
-   choose **Deploy existing images** and select **Services**. Select `dev` and
-   a `sha-<commit>` tag for a branch snapshot, or select `dev`/`test` and a
-   published `v*` tag for a release.
+   choose **Deploy existing images** and select **Services**, with `dev` or
+   `test` and either a `sha-<commit>` snapshot or a published `v*` release.
 3. For PostgreSQL, Keycloak, or other infrastructure changes, publish an
    `infra-v*` tag, then choose **Deploy existing images** and
    **Infrastructure** in **Studio Delivery**.
@@ -188,9 +187,9 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
   **Build, publish and deploy** (tests, changed-image publishing and a
   deployment in one run), and **Deploy existing images**. Deployment
   operations select **Services** or **Infrastructure**. Services can deploy
-  `backend`, `frontend`, `prototype`, or `all`. SHA
-  snapshots are dev-only; release tags may be promoted to configured shared
-  environments. Infrastructure accepts only published `infra-v*` tags.
+  `backend`, `frontend`, `prototype`, or `all`. Both SHA snapshots and release
+  tags deploy to any configured environment; the run summary records which kind
+  landed where. Infrastructure accepts only published `infra-v*` tags.
 
 The backend's gates can be run before a pull request, in the image CI uses:
 
