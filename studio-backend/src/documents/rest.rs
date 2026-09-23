@@ -412,8 +412,11 @@ pub struct DocumentBindingListDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ClassifyResultDto {
     pub items: Vec<DocumentBindingDto>,
-    /// Files that were not prose at all and so got no binding.
-    pub skipped: i64,
+    /// Files recorded as not documents, by their path.
+    pub not_documents: i64,
+    /// Files left as they were, because a person had ruled on them or Spec
+    /// Quality had paid for the answer.
+    pub kept: i64,
 }
 
 #[derive(Debug)]
@@ -1533,7 +1536,8 @@ async fn classify_workspace_files(
             .into_iter()
             .map(|b| binding_dto(b, false))
             .collect(),
-        skipped: outcome.skipped as i64,
+        not_documents: outcome.not_documents as i64,
+        kept: outcome.kept as i64,
     }))
 }
 
@@ -1561,7 +1565,8 @@ async fn classify_project_files(
             .into_iter()
             .map(|b| binding_dto(b, false))
             .collect(),
-        skipped: outcome.skipped as i64,
+        not_documents: outcome.not_documents as i64,
+        kept: outcome.kept as i64,
     }))
 }
 
@@ -2288,9 +2293,12 @@ pub fn register_routes(
     const CLASSIFY_DESC: &str = "Classify ingested files against the workspace's effective \
          document types and record the result as bindings. A binding a person has \
          already ruled on keeps its type; only its conformance is refreshed. Files \
-         whose path is not prose (source, images, lockfiles) get no binding and are \
-         counted as skipped. Send a few dozen files per call — the whole repository \
-         in one body exceeds the gateway's request-size limit.";
+         whose path is not prose (source, images, lockfiles) are recorded as not \
+         documents rather than left without a binding — a file with none reads as \
+         'not scanned yet', which is a queue that never empties. Send them with an \
+         empty body: the verdict for one is its path. Send a few dozen files per \
+         call — the whole repository in one body exceeds the gateway's \
+         request-size limit.";
 
     router = OperationBuilder::post(
         "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify",
@@ -2307,7 +2315,7 @@ pub fn register_routes(
     .json_response_with_schema::<ClassifyResultDto>(
         openapi,
         StatusCode::OK,
-        "Bindings written, and how many files were skipped",
+        "Bindings written, and what the pass decided",
     )
     .error_400(openapi)
     .error_401(openapi)
@@ -2331,7 +2339,7 @@ pub fn register_routes(
     .json_response_with_schema::<ClassifyResultDto>(
         openapi,
         StatusCode::OK,
-        "Bindings written, and how many files were skipped",
+        "Bindings written, and what the pass decided",
     )
     .error_400(openapi)
     .error_401(openapi)

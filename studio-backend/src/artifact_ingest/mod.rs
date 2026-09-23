@@ -199,7 +199,7 @@ impl RestApiCapability for StudioArtifactIngestGear {
             {
                 Ok(c) => {
                     info!(
-                        "studio-artifact-ingest: studio-documents wired — a sync classifies the prose it reads"
+                        "studio-artifact-ingest: studio-documents wired — a sync decides what every file it reads is"
                     );
                     Some(c)
                 }

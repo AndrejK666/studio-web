@@ -23,16 +23,23 @@ pub struct IngestedDocument {
     /// Repo-relative path, e.g. `docs/adr/0007-shell-tokens.md`.
     pub path: String,
     /// The file's text. Read to classify and validate; never stored here.
+    ///
+    /// Empty for a file whose path is not prose. The verdict for one is the
+    /// path alone, so the walker does not copy a repository's source bytes to
+    /// be told what its own extensions already say.
     pub content: String,
 }
 
 /// What a classification pass did.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClassifiedCounts {
-    /// Files that got a binding — proposed, or left undetermined for a person.
+    /// Files given a type, or left undetermined for a person to settle.
     pub classified: usize,
-    /// Files whose path is not prose at all, and so got none.
-    pub skipped: usize,
+    /// Files recorded as not documents, by their path.
+    pub not_documents: usize,
+    /// Files left exactly as they were, because a person had already ruled on
+    /// them or Spec Quality had paid for the answer.
+    pub kept: usize,
 }
 
 #[async_trait]
