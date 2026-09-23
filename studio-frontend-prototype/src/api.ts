@@ -1417,6 +1417,14 @@ export interface GearboxApplication {
   listens: { name: string; gear: string; address: string }[];
 }
 
+/** One thing completion did to the picks, and why. */
+export interface ProductChange {
+  /** Crate name. */
+  gear: string;
+  added: boolean;
+  reason: string;
+}
+
 /** The product a project is composing, as the server remembers it. */
 export interface ProjectProduct {
   project_id?: string;
@@ -2683,6 +2691,14 @@ export const api = {
       token,
       { method: "PUT", body: JSON.stringify(body) },
     ),
+  /** Complete picks into a set the engine can resolve: what the catalogue
+   *  proves cannot run is taken out, a missing plugin or REST host is put in,
+   *  each with its reason. Writes nothing. */
+  completeProduct: (token: string, gears: string[]) =>
+    request<{ gears: string[]; changes: ProductChange[] }>(`/studio-components-catalog/v1/gearbox/complete`, token, {
+      method: "POST",
+      body: JSON.stringify({ gears }),
+    }),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>
     request<GearboxStatus>(`/studio-components-catalog/v1/gearbox`, token),
