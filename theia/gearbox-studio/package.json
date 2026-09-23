@@ -1,0 +1,42 @@
+{
+  "name": "gearbox-studio",
+  "keywords": [
+    "theia-extension"
+  ],
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gearbox inside Constructor Studio: the gear catalogue, products, their resolution and generation, ported from Gearbox Studio.",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "dependencies": {
+    "@theia/ai-chat": "1.75.0",
+    "@theia/ai-chat-ui": "1.75.0",
+    "@theia/ai-core": "1.75.0",
+    "@theia/core": "1.75.0",
+    "@theia/editor": "1.75.0",
+    "@theia/filesystem": "1.75.0",
+    "@theia/markers": "1.75.0",
+    "@theia/monaco": "1.75.0",
+    "@theia/monaco-editor-core": "1.108.201",
+    "@theia/workspace": "1.75.0",
+    "vscode-jsonrpc": "8.2.0"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "typescript": "~5.4.5"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/gearbox-studio-frontend-module",
+      "backend": "lib/node/gearbox-studio-backend-module"
+    }
+  ],
+  "scripts": {
+    "prepare": "npm run clean && npm run build",
+    "clean": "rimraf lib",
+    "build": "tsc -p .",
+    "watch": "tsc -w -p ."
+  }
+}

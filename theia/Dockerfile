@@ -33,6 +33,7 @@ COPY package.json package-lock.json lerna.json .nvmrc ./
 COPY studio/ studio/
 COPY drawio-editor/ drawio-editor/
 COPY product-ext/ product-ext/
+COPY gearbox-studio/ gearbox-studio/
 COPY browser-app/ browser-app/
 COPY electron-app/package.json electron-app/package.json
 # mermaid-entry.mjs and katex-entry.mjs are the two separate bundles

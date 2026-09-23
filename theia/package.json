@@ -29,6 +29,7 @@
   },
   "workspaces": [
     "studio",
+    "gearbox-studio",
     "drawio-editor",
     "product-ext",
     "browser-app",
