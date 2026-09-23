@@ -341,6 +341,32 @@ export interface DocDuplication {
   partners: string[];
 }
 
+/** One field's answer, as the catalogue stores it.
+ *
+ *  Every part optional: a source that knows the value but not its grade says
+ *  so rather than inventing one. `n` is the number itself — thousands
+ *  separators are a locale decision the server does not hold, so a portal
+ *  formats `n` when it is there. */
+export interface FieldVal {
+  v?: string;
+  b?: string;
+  n?: number;
+  s?: "good" | "watch" | "bad" | "none";
+  l?: string;
+  u?: string;
+}
+
+/** One component with its three sources reconciled: crates.io < scan < profile.
+ *
+ *  A field a person CLEARED is present and null; absent means nothing
+ *  answered. The precedence lives in `components_catalog/values.rs`. */
+export interface ComponentValues {
+  name: string;
+  values: Record<string, FieldVal | null>;
+  /** Empty when nothing files it anywhere — a fact, not a missing label. */
+  category: string;
+}
+
 export interface Capability {
   key: string;
   label: string;
@@ -2936,6 +2962,18 @@ export const api = {
         repositories: string[];
       };
     }>(`/studio-components-catalog/v1/activity?days=${days}`, token),
+
+  /** What each component's fields say, with its three sources reconciled.
+   *
+   *  The precedence — crates.io < repository scan < what a person set, with
+   *  the old flat keys filling only what is still unanswered — lives in
+   *  `components_catalog/values.rs`. It used to run in this portal, per row,
+   *  on every render. */
+  componentValues: (token: string) =>
+    request<{ items: ComponentValues[]; total: number; truncated: boolean }>(
+      "/studio-components-catalog/v1/component-values",
+      token,
+    ),
 
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
