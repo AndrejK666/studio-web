@@ -11,11 +11,12 @@
     "runtime"
   ],
   "dependencies": {
-    "@theia/core": "1.74.0",
+    "@theia/core": "1.75.0",
     "saxes": "6.0.0",
     "yauzl": "2.10.0"
   },
   "devDependencies": {
+    "@types/yauzl": "^2.10.3",
     "rimraf": "^5.0.0",
     "typescript": "~5.4.5"
   },
