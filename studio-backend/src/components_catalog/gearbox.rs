@@ -563,6 +563,100 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String]) -> Completion {
     }
 }
 
+// ── Facts: what the engine knows, as component-profile fields ─────────────
+
+fn fact(v: &str) -> Value {
+    serde_json::json!({ "v": v, "b": v })
+}
+
+fn lamp(v: &str, s: &str) -> Value {
+    serde_json::json!({ "v": v, "b": v, "s": s })
+}
+
+/// Profile fields for every gear the corpus describes, keyed by crate name.
+/// The keys are the `gearbox` group of `field_schemas/gear.json`; a gear with
+/// no `gear.gdl` gets none, and its page says so through the group's empty
+/// cells rather than a false "no".
+pub fn gear_facts(catalogue: &EngineCatalogue, corpus: &str) -> BTreeMap<String, Value> {
+    let dead = catalogue.dead();
+    let crate_of = |id: &str| {
+        catalogue
+            .gears
+            .get(id)
+            .map_or(id.to_string(), |g| g.package.crate_name.clone())
+    };
+    let list = |items: Vec<String>| {
+        if items.is_empty() {
+            "—".to_string()
+        } else {
+            items.join(", ")
+        }
+    };
+    catalogue
+        .gears
+        .values()
+        .map(|g| {
+            let role = if !g.extension_points.is_empty() {
+                let plugins = catalogue.implementers_of(g);
+                if plugins.is_empty() {
+                    "host; no plugin in the corpus fills it".to_string()
+                } else {
+                    format!("host; plugins: {}", plugins.join(", "))
+                }
+            } else if g.fills.is_some() {
+                match catalogue.host_of(g) {
+                    Some(h) => format!("plugin of {}", h.package.crate_name),
+                    None => "plugin; no gear in the corpus hosts it".to_string(),
+                }
+            } else {
+                "—".to_string()
+            };
+            let runs = match dead.get(&g.id) {
+                None => lamp("yes", "good"),
+                Some(why) => lamp(&format!("no — {}", dead_reason(catalogue, why)), "bad"),
+            };
+            let fields = serde_json::json!({
+                "gdl": lamp("yes", "good"),
+                "gdl_id": fact(&g.id),
+                "gdl_caps": fact(&list(g.runtime_caps.clone())),
+                "gdl_deps": fact(&list(g.colocated_deps.iter().map(|d| crate_of(d)).collect())),
+                "gdl_role": fact(&role),
+                "gdl_config": fact(&list(catalogue.unset_config(g))),
+                "gdl_runs": runs,
+                "gdl_corpus": fact(corpus),
+            });
+            (g.package.crate_name.clone(), fields)
+        })
+        .collect()
+}
+
+/// Whether `dir` holds a `gear.gdl` anywhere below it, within a depth that
+/// covers `gears/system/<host>/plugins/<plugin>/gear.gdl`.
+fn holds_description(dir: &Path, depth: usize) -> bool {
+    const SKIP: [&str; 5] = ["target", "node_modules", ".git", ".gearbox", "dist"];
+    if depth > 7 {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_file() && name == "gear.gdl" {
+            return true;
+        }
+        if kind.is_dir() && !name.starts_with('.') && !SKIP.contains(&name.as_ref()) {
+            subdirs.push(entry.path());
+        }
+    }
+    subdirs.iter().any(|d| holds_description(d, depth + 1))
+}
+
 /// A product id is a kebab-case id in GDL: lowercase letters, digits, single
 /// interior hyphens, starting with a letter.
 pub fn is_kebab_id(s: &str) -> bool {
@@ -880,17 +974,111 @@ struct Corpus {
     catalogue: Option<Arc<EngineCatalogue>>,
 }
 
+/// Where the corpus is checked out from. The configured one to begin with;
+/// the component catalogue's own gears repository once a sync finds
+/// `gear.gdl` descriptors in it ([`Gearbox::adopt_if_described`]), so the
+/// portal's catalogue, its previews and the IDE read one checkout.
+#[derive(Clone)]
+pub struct CorpusSource {
+    /// `owner/repo@ref`, as a person reads it.
+    pub label: String,
+    /// Namespaces the checkout directory, so two sources never share one.
+    pub key: String,
+    pub repo: String,
+    pub url: String,
+    pub username: String,
+    /// Held in memory only, for the refresh fetch; never logged or returned.
+    pub token: String,
+    pub git_ref: String,
+}
+
 pub struct Gearbox {
     cfg: GearboxConfig,
     corpus: Mutex<Option<Corpus>>,
+    source: std::sync::Mutex<CorpusSource>,
 }
 
 impl Gearbox {
     pub fn new(cfg: GearboxConfig) -> Self {
+        let source = CorpusSource {
+            label: format!(
+                "{}@{}",
+                cfg.corpus_url
+                    .trim_end_matches(".git")
+                    .trim_start_matches("https://github.com/"),
+                cfg.corpus_ref
+            ),
+            key: "gearbox".to_string(),
+            repo: CORPUS_SOURCE_ID.to_string(),
+            url: cfg.corpus_url.clone(),
+            username: "x-access-token".to_string(),
+            token: String::new(),
+            git_ref: cfg.corpus_ref.clone(),
+        };
         Self {
             cfg,
             corpus: Mutex::new(None),
+            source: std::sync::Mutex::new(source),
         }
+    }
+
+    fn current_source(&self) -> CorpusSource {
+        match self.source.lock() {
+            Ok(s) => s.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// The corpus the catalogue, previews and facts are read from, as a label.
+    pub fn corpus_label(&self) -> String {
+        self.current_source().label
+    }
+
+    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
+    /// Returns whether it did. A source with no descriptors — a gears
+    /// repository before it adopted Gearbox — leaves the current corpus alone:
+    /// switching to it would empty every preview.
+    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
+        let workdir = self.cfg.workdir.clone();
+        let s = source.clone();
+        let dir = tokio::task::spawn_blocking(move || {
+            crate::artifact_ingest::clone::clone_or_update(
+                &workdir,
+                &s.key,
+                &s.repo,
+                &s.url,
+                &s.username,
+                &s.token,
+                Some(&s.git_ref),
+            )
+            .map(|c| c.dir)
+        })
+        .await
+        .context("catalogue source checkout task")??;
+        let described = tokio::task::spawn_blocking(move || holds_description(&dir, 0))
+            .await
+            .unwrap_or(false);
+        if described {
+            match self.source.lock() {
+                Ok(mut current) => *current = source,
+                Err(poisoned) => *poisoned.into_inner() = source,
+            }
+            // The next question re-reads the new checkout and its catalogue.
+            *self.corpus.lock().await = None;
+        }
+        Ok(described)
+    }
+
+    /// What the engine knows about every gear the corpus describes, keyed by
+    /// crate name and shaped as component-profile fields (`{v, b, s}`), with
+    /// the corpus they were read from.
+    pub async fn facts(&self) -> anyhow::Result<(String, BTreeMap<String, Value>)> {
+        let (_, commit, catalogue) = self.ensure_corpus().await?;
+        let mut label = self.corpus_label();
+        if let Some(c) = commit {
+            label = format!("{label} ({})", &c[..c.len().min(7)]);
+        }
+        Ok((label.clone(), gear_facts(&catalogue, &label)))
     }
 
     pub async fn status(&self) -> GearboxStatus {
@@ -932,16 +1120,17 @@ impl Gearbox {
             .as_ref()
             .is_none_or(|c| c.refreshed.elapsed() >= self.cfg.refresh);
         if stale {
-            let cfg = self.cfg.clone();
+            let workdir = self.cfg.workdir.clone();
+            let s = self.current_source();
             let cloned = tokio::task::spawn_blocking(move || {
                 crate::artifact_ingest::clone::clone_or_update(
-                    &cfg.workdir,
-                    "gearbox",
-                    CORPUS_SOURCE_ID,
-                    &cfg.corpus_url,
-                    "x-access-token",
-                    "",
-                    Some(&cfg.corpus_ref),
+                    &workdir,
+                    &s.key,
+                    &s.repo,
+                    &s.url,
+                    &s.username,
+                    &s.token,
+                    Some(&s.git_ref),
                 )
             })
             .await
@@ -1406,6 +1595,57 @@ mod tests {
         );
         assert!(why["cf-gears-static-tr-plugin"].0);
         assert!(why["cf-gears-api-gateway"].1.contains("REST host"));
+    }
+
+    #[test]
+    fn facts_say_what_a_gear_is_in_a_composition_and_whether_it_can_run() {
+        let f = gear_facts(&corpus(), "acme/gears@main (abc1234)");
+        let get = |crate_name: &str, key: &str| {
+            f[crate_name][key]["v"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert_eq!(get("cf-gears-api-gateway", "gdl"), "yes");
+        assert_eq!(get("cf-gears-api-gateway", "gdl_id"), "api-gateway");
+        assert_eq!(get("cf-gears-api-gateway", "gdl_caps"), "rest, rest_host");
+        assert_eq!(
+            get("cf-gears-api-gateway", "gdl_deps"),
+            "cf-gears-authn-resolver"
+        );
+        // Written by generation, so not asked of a person.
+        assert_eq!(get("cf-gears-api-gateway", "gdl_config"), "—");
+        assert_eq!(get("cf-gears-api-gateway", "gdl_runs"), "yes");
+        assert_eq!(
+            get("cf-gears-api-gateway", "gdl_corpus"),
+            "acme/gears@main (abc1234)"
+        );
+        assert!(get("cf-gears-tenant-resolver", "gdl_role").starts_with("host; plugins: "));
+        assert_eq!(
+            get("cf-gears-static-tr-plugin", "gdl_role"),
+            "plugin of cf-gears-tenant-resolver"
+        );
+        assert!(get("cf-gears-authz-resolver", "gdl_role").contains("no plugin"));
+        assert_eq!(get("cf-gears-event-broker", "gdl_config"), "mode");
+        assert!(get("cf-gears-resource-group", "gdl_runs").contains("cf-gears-authz-resolver"));
+        assert_eq!(f["cf-gears-resource-group"]["gdl_runs"]["s"], "bad");
+        assert!(
+            !f.contains_key("cf-gears-ledger"),
+            "no descriptor, no facts"
+        );
+    }
+
+    #[test]
+    fn a_checkout_is_described_when_it_holds_a_gear_gdl_somewhere() {
+        let root = std::env::temp_dir().join(format!("gbx-described-{}", uuid::Uuid::new_v4()));
+        let deep = root.join("gears/system/authn-resolver/plugins/static");
+        std::fs::create_dir_all(&deep).expect("mkdir");
+        std::fs::create_dir_all(root.join("target/debug")).expect("mkdir");
+        std::fs::write(root.join("target/debug/gear.gdl"), "").expect("write");
+        assert!(!holds_description(&root, 0), "target/ does not count");
+        std::fs::write(deep.join("gear.gdl"), "gear()").expect("write");
+        assert!(holds_description(&root, 0));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

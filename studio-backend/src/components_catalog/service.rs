@@ -682,6 +682,10 @@ pub struct CatalogService {
     sink: Arc<dyn CatalogSink>,
     keyword: String,
     connectors: Option<Arc<ConnectorService>>,
+    /// The Gearbox engine, when previews are configured: a sync writes what it
+    /// knows about each gear into the gear's profile. Set once, after
+    /// construction, because the engine is configured separately.
+    gearbox: std::sync::OnceLock<Arc<super::gearbox::Gearbox>>,
 }
 
 impl CatalogService {
@@ -695,12 +699,106 @@ impl CatalogService {
             sink,
             keyword,
             connectors,
+            gearbox: std::sync::OnceLock::new(),
         }
+    }
+
+    pub fn set_gearbox(&self, gearbox: Arc<super::gearbox::Gearbox>) {
+        let _ = self.gearbox.set(gearbox);
     }
 
     /// The default crates.io keyword, used when a sync request omits one.
     pub fn default_keyword(&self) -> &str {
         &self.keyword
+    }
+
+    /// The catalogue's gears repository as a place the engine can check out:
+    /// the same connection the repository scan reads through, its clone URL
+    /// and credentials. `None` without a connection or a clonable host.
+    async fn corpus_source(
+        &self,
+        ctx: &SecurityContext,
+        source: &RepoSource,
+    ) -> Option<super::gearbox::CorpusSource> {
+        let connectors = self.connectors.as_ref()?;
+        let id = match source.connection_id {
+            Some(id) => id,
+            None => {
+                connectors
+                    .list(ctx, source.tenant)
+                    .await
+                    .ok()?
+                    .into_iter()
+                    .find(|c| c.provider == "github")?
+                    .id
+            }
+        };
+        let (driver, auth, _conn) = connectors
+            .driver_and_auth(ctx, source.tenant, id)
+            .await
+            .ok()?;
+        let url = driver.clone_url(&auth.base_url, &source.repo).ok()?;
+        let (username, token) = driver.clone_credentials(&auth.token);
+        let git_ref = match source.git_ref.trim() {
+            "" => "main".to_string(),
+            r => r.to_string(),
+        };
+        Some(super::gearbox::CorpusSource {
+            label: format!("{}@{git_ref}", source.repo),
+            key: format!("catalogue-{id}"),
+            repo: source.repo.clone(),
+            url,
+            username: username.to_string(),
+            token: token.to_string(),
+            git_ref,
+        })
+    }
+
+    /// What the Gearbox engine knows about each gear, keyed by crate name, as
+    /// profile fields — after following the catalogue's own gears repository
+    /// if it describes its gears, so the catalogue and the previews read one
+    /// corpus. `None` when previews are not configured or the engine failed;
+    /// a sync never fails because of it.
+    async fn gearbox_facts(
+        &self,
+        ctx: &SecurityContext,
+        sources: &SyncSources,
+        progress: &SyncReporter,
+    ) -> Option<BTreeMap<String, Value>> {
+        let gearbox = self.gearbox.get()?;
+        for source in sources
+            .repos
+            .iter()
+            .filter(|s| RepoMode::parse(&s.mode) == RepoMode::Gears)
+        {
+            let Some(corpus) = self.corpus_source(ctx, source).await else {
+                continue;
+            };
+            progress.set(format!("checking {} for gear.gdl", source.repo));
+            let label = corpus.label.clone();
+            match gearbox.adopt_if_described(corpus).await {
+                Ok(true) => {
+                    tracing::info!(corpus = %label, "components-catalog: the gears repository describes its gears; previews follow it")
+                }
+                Ok(false) => {
+                    tracing::info!(repo = %label, kept = %gearbox.corpus_label(), "components-catalog: the gears repository has no gear.gdl yet; keeping the configured corpus")
+                }
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), repo = %label, "components-catalog: could not check the gears repository out for the engine")
+                }
+            }
+        }
+        progress.set("asking the Gearbox engine about the gears…");
+        match gearbox.facts().await {
+            Ok((corpus, facts)) => {
+                tracing::info!(corpus = %corpus, gears = facts.len(), "components-catalog: Gearbox facts");
+                Some(facts)
+            }
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: Gearbox facts unavailable");
+                None
+            }
+        }
     }
 
     /// Discover gears from a repository source (best-effort at the call site).
@@ -903,6 +1001,32 @@ impl CatalogService {
                 && let Some(e) = last_err
             {
                 return Err(e);
+            }
+        }
+
+        // ── what the Gearbox engine knows ────────────────────────────────────
+        // Only when this run rebuilt the profiles from a repository: a
+        // crates.io-only run leaves every profile as it was, facts included.
+        if !profile_nodes.is_empty()
+            && let Some(facts) = self.gearbox_facts(ctx, &sources, progress).await
+        {
+            for node in &mut profile_nodes {
+                let Some(prof) = node.value.as_object_mut() else {
+                    continue;
+                };
+                let Some(name) = prof
+                    .get("gear_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let Some(Value::Object(add)) = facts.get(&name).cloned() else {
+                    continue;
+                };
+                if let Some(Value::Object(auto)) = prof.get_mut("auto") {
+                    auto.extend(add);
+                }
             }
         }
 
@@ -2180,7 +2304,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 64);
+        assert_eq!(gear.fields().count(), 72);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

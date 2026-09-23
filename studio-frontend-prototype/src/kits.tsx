@@ -529,6 +529,16 @@ function SuggestedComponents({
                             )}
                             <ComponentLink nav={nav} name={c.name} />
                             <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                            {c.composable === "runs" && (
+                              <span title="Described for composition: the Gearbox engine can put it into a product" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
+                                GDL
+                              </span>
+                            )}
+                            {c.composable === "blocked" && (
+                              <span title={`Described, but cannot run from this corpus: ${c.composableWhy ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
+                                BLOCKED
+                              </span>
+                            )}
                             {c.built === "docs-only" && (
                               <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
                             )}

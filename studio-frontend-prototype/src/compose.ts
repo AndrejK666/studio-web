@@ -35,13 +35,31 @@ import type { CatalogNode, Capability } from "./api";
  *  reported as one. */
 export type BuildState = "built" | "docs-only" | null;
 
+/** What the Gearbox engine said about a component, as the catalogue sync
+ *  recorded it in the profile (`auto.gdl_runs`): it can go into a product
+ *  (`runs`), it is described but cannot run from this corpus (`blocked`), or
+ *  nothing describes it for composition (`null`). */
+export type Composability = "runs" | "blocked" | null;
+
 export type Candidate = {
   name: string;
   kind: string;
   score: number;
   why: string[];
   built: BuildState;
+  composable?: Composability;
+  /** The engine's reason, when `blocked`. */
+  composableWhy?: string;
 };
+
+export function composabilityOf(profile?: Record<string, unknown>): { state: Composability; why?: string } {
+  const auto = profile?.auto as Record<string, unknown> | undefined;
+  const runs = auto?.gdl_runs as Record<string, unknown> | undefined;
+  if (!runs || typeof runs !== "object") return { state: null };
+  if (runs.s === "good") return { state: "runs" };
+  const v = typeof runs.v === "string" ? runs.v.replace(/^no — /, "") : undefined;
+  return { state: "blocked", why: v };
+}
 
 export type PlanRow = {
   capability: string;
@@ -159,6 +177,9 @@ export function composePlan(
   const terms = new Map(vocabulary.map((c) => [c.key, c.terms]));
   const geared = gears.filter((g) => typeof g.value.name === "string");
   const rank = (c: Candidate) => (c.built === "built" ? 0 : c.built === null ? 1 : 2);
+  // Within a build state, what the engine can put into a product first and
+  // what it proved cannot run last; undescribed components sit between.
+  const fit = (c: Candidate) => (c.composable === "runs" ? 0 : c.composable === "blocked" ? 2 : 1);
   return caps.map((cap) => {
     const kws = terms.get(cap)?.length ? terms.get(cap)! : [cap];
     const candidates = geared
@@ -174,10 +195,12 @@ export function composePlan(
           score: why.size,
           why: Array.from(why),
           built: buildStateOf(g, profile),
+          composable: composabilityOf(profile).state,
+          composableWhy: composabilityOf(profile).why,
         };
       })
       .filter((c) => c.score > 0)
-      .sort((a, b) => rank(a) - rank(b) || b.score - a.score)
+      .sort((a, b) => rank(a) - rank(b) || fit(a) - fit(b) || b.score - a.score)
       // One component, one candidate. Sixteen of the 118 names on this stand are
       // stored twice -- the same FrontX package under both
       // `catalog.frontx.v1` and `catalog.gear.v1` -- and a list of five that

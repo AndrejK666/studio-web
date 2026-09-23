@@ -151,6 +151,9 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             );
             Arc::new(gearbox::Gearbox::new(cfg))
         });
+        if let Some(g) = &gearbox {
+            service.set_gearbox(Arc::clone(g));
+        }
 
         let _ = self.service.set(service.clone());
         Ok(rest::register_routes(

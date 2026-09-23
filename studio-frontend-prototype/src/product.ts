@@ -30,7 +30,10 @@ export function isPickable(c: Pick<Candidate, "name" | "kind">): boolean {
 export function defaultPicks(plan: readonly PlanRow[]): string[] {
   const picks: string[] = [];
   for (const row of plan) {
-    const first = row.candidates.find((c) => c.built === "built" && isPickable(c));
+    // Built and not proved unable to run; the ones the engine says can go
+    // into a product first.
+    const usable = row.candidates.filter((c) => c.built === "built" && isPickable(c) && c.composable !== "blocked");
+    const first = usable.find((c) => c.composable === "runs") ?? usable[0];
     if (first && !picks.includes(first.name)) picks.push(first.name);
   }
   return picks;

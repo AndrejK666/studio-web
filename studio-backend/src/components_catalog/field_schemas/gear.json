@@ -19,6 +19,10 @@
   "none": {
    "label": "No source",
    "hint": "Nothing in the repository defines it today."
+  },
+  "engine": {
+   "label": "Gearbox engine",
+   "hint": "Projected by the Gearbox engine from the gear.gdl and the #[toolkit::gear] attribute, at the corpus named on the page."
   }
  },
  "groups": [
@@ -481,6 +485,93 @@
       "ref": "gear.toml is_plugin"
      },
      "kind": "bool",
+     "lamp": false
+    }
+   ]
+  },
+  {
+   "id": "gearbox",
+   "title": "Composition (Gearbox)",
+   "icon": "G",
+   "fields": [
+    {
+     "key": "gdl",
+     "label": "Described for composition",
+     "source": {
+      "class": "engine",
+      "ref": "gear.gdl"
+     },
+     "kind": "status",
+     "lamp": true
+    },
+    {
+     "key": "gdl_runs",
+     "label": "Can run in a product",
+     "source": {
+      "class": "engine",
+      "ref": "catalogue: config, plugins, deps"
+     },
+     "kind": "status",
+     "lamp": true
+    },
+    {
+     "key": "gdl_id",
+     "label": "Engine id",
+     "source": {
+      "class": "engine",
+      "ref": "#[toolkit::gear(name)]"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "gdl_role",
+     "label": "Role",
+     "source": {
+      "class": "engine",
+      "ref": "extension points and fills"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "gdl_caps",
+     "label": "Runtime capabilities",
+     "source": {
+      "class": "engine",
+      "ref": "#[toolkit::gear(capabilities)]"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "gdl_deps",
+     "label": "Must run with",
+     "source": {
+      "class": "engine",
+      "ref": "#[toolkit::gear(deps)]"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "gdl_config",
+     "label": "Configuration to set",
+     "source": {
+      "class": "engine",
+      "ref": "config struct, required fields without a default"
+     },
+     "kind": "text",
+     "lamp": false
+    },
+    {
+     "key": "gdl_corpus",
+     "label": "Read from",
+     "source": {
+      "class": "engine",
+      "ref": "the corpus checkout"
+     },
+     "kind": "text",
      "lamp": false
     }
    ]
