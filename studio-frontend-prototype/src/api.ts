@@ -1497,9 +1497,45 @@ export interface RollupRow {
   repos?: number | null;
 }
 
+/** A verdict as the server read it. Fields follow the detector, so most are
+ *  absent for any one answer; the nulls are load-bearing where present. */
+export interface SpecQualityVerdict {
+  detector: string;
+  task_id: string;
+  doc_type?: string | null;
+  spec_share?: number | null;
+  gate_passed?: boolean | null;
+  passed?: boolean | null;
+  leak_share?: number | null;
+  foreign_roles?: string[] | null;
+  by_path?: Record<string, string[]> | null;
+  pairs?: string[][] | null;
+  recognised?: boolean | null;
+}
+
 export const api = {
   /** Login = validate the token by asking the backend who we are. */
   me: (token: string) => request<Me>("/account-management/v1/me", token),
+
+  /** One analysis, as the server read it.
+   *
+   *  The four detectors answer in shapes their service does not document, and
+   *  turning those into a verdict is a judgement rather than a parse. That
+   *  judgement moved to the backend so two portals cannot make it differently;
+   *  this asks for the answer. `paths` is required by the set detectors
+   *  (`bloat`, `traceability`): a document absent from it is absent from the
+   *  reply, and absent reads as "not analysed" where an empty list reads as
+   *  "analysed, nothing found". */
+  specQualityVerdict: (
+    token: string,
+    taskId: string,
+    detector: "purpose" | "leak" | "bloat" | "traceability",
+    paths: string[] = [],
+  ) => {
+    const q = new URLSearchParams({ task_id: taskId, detector });
+    for (const p of paths) q.append("path", p);
+    return request<SpecQualityVerdict>(`/studio-spec-quality/v1/verdicts?${q.toString()}`, token);
+  },
 
   /** What every workspace and project contains, in one request.
    *
