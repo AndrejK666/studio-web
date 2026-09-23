@@ -1285,6 +1285,35 @@ impl IngestService {
     }
 }
 
+/// What the portfolio counts, answered without a page to count.
+///
+/// The listing endpoint gives the same number as `total`, and costs a walk of
+/// the tenant's whole typed node set to do it — once per row of a table. Here
+/// it is one projection read, shared with every other caller through the
+/// per-tenant cache.
+#[async_trait::async_trait]
+impl super::port::ArtifactCounter for IngestService {
+    async fn count_nodes(
+        &self,
+        ctx: &SecurityContext,
+        type_leaf: &str,
+        scope: &str,
+    ) -> anyhow::Result<u32> {
+        // The same narrowing the listing endpoint applies, and for the same
+        // reason: `scope` is a payload field, so it cannot be pushed into the
+        // projection and has to be matched here.
+        let nodes = self.list_nodes(ctx, Some(type_leaf)).await?;
+        // The listing route's own predicate, not a second copy of it: two
+        // spellings of "in this scope" is how a count and a list start
+        // disagreeing about the same project.
+        let n = nodes
+            .iter()
+            .filter(|node| super::rest::node_in_scope(&node.value, Some(scope)))
+            .count();
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+}
+
 /// The checkout, offered to whoever owns the documents in it.
 ///
 /// A thin forward to the inherent method the REST route already uses: the

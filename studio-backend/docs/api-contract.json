@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 235,
+  "open_violations": 246,
   "operations": [
     {
       "method": "DELETE",
@@ -429,6 +429,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/gearbox",
+      "operation_id": "studio_components_catalog.gearbox_status",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Whether product previews can run, and against which gear corpus",
+      "authenticated": true,
+      "responses": [
+        "GearboxStatusDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/profiles",
       "operation_id": "studio_components_catalog.list_profiles",
       "tag": "StudioComponentsCatalog",
@@ -448,6 +463,21 @@
       "operation_id": "studio_components_catalog.get_project_repo",
       "tag": "StudioComponentsCatalog",
       "summary": "The gear repository connected to a project (0 or 1 node)",
+      "authenticated": true,
+      "responses": [
+        "CatalogNodeListResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/product",
+      "operation_id": "studio_components_catalog.get_project_product",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The product a project is composing out of gears",
       "authenticated": true,
       "responses": [
         "CatalogNodeListResponse"
@@ -1064,6 +1094,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/access-catalogue",
+      "operation_id": "studio_organizations.get_access_catalogue",
+      "tag": "StudioOrganizations",
+      "summary": "The privileges a role may carry, and the seeded ladder",
+      "authenticated": true,
+      "responses": [
+        "AccessCatalogueDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/capabilities",
       "operation_id": "studio_organizations.capabilities",
       "tag": "StudioOrganizations",
@@ -1074,6 +1119,22 @@
       ],
       "errors": [
         "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-organizations/v1/rollups",
+      "operation_id": "studio_organizations.list_rollups",
+      "tag": "StudioOrganizations",
+      "summary": "What each workspace and project contains",
+      "authenticated": true,
+      "responses": [
+        "RollupListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
       ]
     },
     {
@@ -1600,6 +1661,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/gearbox/complete",
+      "operation_id": "studio_components_catalog.complete_product",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Complete picked gears into a set the Gearbox engine can resolve",
+      "authenticated": true,
+      "request": "CompleteProductRequest",
+      "responses": [
+        "CompleteProductDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/projects/{project_id}/create-repo",
       "operation_id": "studio_components_catalog.create_repo",
       "tag": "StudioComponentsCatalog",
@@ -1625,6 +1703,23 @@
       "request": "SetProjectRepoRequest",
       "responses": [
         "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/product/preview",
+      "operation_id": "studio_components_catalog.preview_product",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Compose a product.gdl from picked gears and resolve it",
+      "authenticated": true,
+      "request": "ProductPreviewRequest",
+      "responses": [
+        "ProductPreviewDto"
       ],
       "errors": [
         "400",
@@ -2642,6 +2737,23 @@
       "summary": "Replace the field schema this tenant renders one component type against",
       "authenticated": true,
       "request": "SaveFieldSchemaRequest",
+      "responses": [
+        "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/projects/{project_id}/product",
+      "operation_id": "studio_components_catalog.save_project_product",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Save which gears a project's product is made of",
+      "authenticated": true,
+      "request": "SaveProjectProductRequest",
       "responses": [
         "CatalogNodeDto"
       ],

@@ -1,29 +1,33 @@
 /* ── Rollups: what a workspace or a project CONTAINS ─────────────────────────
  *
  * The portfolio and the projects table named their rows and then said almost
- * nothing about them — a workspace was a name and some avatars, a project was a
- * name and a truncated id. Neither answered the question people actually open
- * those screens with: which of these has anything in it, and which needs
- * attention. These counts answer that in the row itself, so choosing where to
- * go does not require opening three of them to find out.
+ * nothing about them. These counts answer, in the row itself, which of them has
+ * anything in it — so choosing where to go does not require opening three of
+ * them to find out.
  *
- * Three rules hold everywhere in this file.
+ * ── This file used to compute them, and no longer does ───────────────────────
  *
- * **A count that is not known yet is `null`, never 0.** The tables render `—`
- * for null. A zero that is really "the gear did not answer" or "still loading"
- * is the most expensive kind of wrong here: it says *this project is empty* to
- * someone deciding whether to look inside it.
+ * It composed every row here: `tenantChildren` for a workspace, then
+ * `docBindings` + `listArtifactNodes` + `workspaceSettings` for each project.
+ * Three requests per row, from the browser. One of the three was the artifact
+ * listing, which cannot narrow by payload and so walks the tenant's whole typed
+ * node set on every call — 28,717 nodes and a p95 of 8.06 s on studio-dev. A
+ * ten-project table asked for that ten times, and `limit=1` saved none of it.
  *
- * **One failure costs one number.** Every read is settled independently, so a
- * self-managed tenant answering 404 from outside its subtree — which is tenant
- * isolation working correctly — leaves the other columns alone.
+ * The composition moved to `GET /studio-organizations/v1/rollups`, which walks
+ * the same sources once, on the server, beside them. What is left here is the
+ * shape this portal wants and the two lines that render a count.
  *
- * **Counts come from `total`, not from `length`.** Every listing here is asked
- * for a single row; the server reports how many there are. Fetching the whole
- * set to call `.length` on it would make a portfolio of ten workspaces pull
- * every finding in the organization to print ten numbers.
+ * The rules did not move because they were UI rules — they moved because they
+ * are rules about the data, and the next portal inherits them now instead of
+ * rewriting them:
+ *
+ *   * a count that is not known is `null`, never 0 — a zero that really means
+ *     "the gear did not answer" tells somebody a project is empty;
+ *   * one failure costs one number, not the row;
+ *   * counts come from the store's `total`, never from `length`.
  */
-import { api, TENANT_TYPES } from "./api";
+import { api } from "./api";
 
 /** What one workspace contains. */
 export interface WorkspaceRollup {
@@ -41,64 +45,46 @@ export interface ProjectRollup {
   repos: number | null;
 }
 
-/** `total` from a one-row page — the cheapest way to count a node type.
+/** Every workspace and project the caller can see, counted, in ONE request.
  *
- *  `total` is nullable in the contract (graph-storage has no count, so the
- *  server pages a projection and stops at a cap), and a missing total is
- *  unknown rather than zero. */
-async function countNodes(token: string, type: string, scope: string): Promise<number | null> {
-  const page = await api.listArtifactNodes(token, type, scope, undefined, 1);
-  return page.total ?? null;
-}
-
-/** Settle a promise into a value or null, never a rejection. */
-async function orNull<T>(p: Promise<T>): Promise<T | null> {
-  try {
-    return await p;
-  } catch {
-    return null;
+ *  Returns the rows as the server groups them: workspaces carry `projects`,
+ *  projects carry the rest and name their parent. A caller that wants a tree
+ *  builds it from `parentId` rather than asking again for parentage this call
+ *  already walked. */
+export async function portfolioRollups(token: string): Promise<{
+  workspaces: Map<string, WorkspaceRollup & { name: string }>;
+  projects: Map<string, ProjectRollup & { name: string; parentId: string | null }>;
+}> {
+  const workspaces = new Map<string, WorkspaceRollup & { name: string }>();
+  const projects = new Map<string, ProjectRollup & { name: string; parentId: string | null }>();
+  const page = await api.rollups(token);
+  for (const row of page.items ?? []) {
+    if (row.kind === "workspace") {
+      workspaces.set(row.id, { name: row.name, projects: row.projects ?? null });
+    } else {
+      projects.set(row.id, {
+        name: row.name,
+        parentId: row.parent_id ?? null,
+        documents: row.documents ?? null,
+        findings: row.findings ?? null,
+        repos: row.repos ?? null,
+      });
+    }
   }
+  return { workspaces, projects };
 }
 
-/** How many projects a workspace holds.
- *
- *  Returns the children too, because the portfolio's expandable tree needs
- *  exactly this list: counting by fetching and then fetching again to expand
- *  would ask the same question twice. */
-export async function workspaceRollup(
-  token: string,
-  workspaceId: string,
-): Promise<{ rollup: WorkspaceRollup; children: { id: string; name: string }[] | null }> {
-  const page = await orNull(api.tenantChildren(token, workspaceId));
-  if (!page) return { rollup: { projects: null }, children: null };
-  const kids = (page.items ?? [])
-    .filter((t) => t.tenant_type === TENANT_TYPES.project)
-    .map((t) => ({ id: t.id, name: t.name }));
-  return { rollup: { projects: kids.length }, children: kids };
-}
-
-/** What one project contains: documents, findings, repositories.
- *
- *  `workspaceId` is the PARENT workspace — document bindings are stored against
- *  it and scoped to the project, which is the pairing the Documents section
- *  uses. Findings are scoped to the project tenant alone, because that is the
- *  scope the detectors write them into. */
-export async function projectRollup(
-  token: string,
-  workspaceId: string,
-  projectId: string,
-): Promise<ProjectRollup> {
-  const [bindings, findings, settings] = await Promise.all([
-    orNull(api.docBindings(token, workspaceId, projectId, { limit: 1 })),
-    orNull(countNodes(token, "spec_finding", projectId)),
-    orNull(api.workspaceSettings(token, projectId)),
-  ]);
+/** One project's counts, for a screen that shows a project rather than a list. */
+export async function projectRollup(token: string, projectId: string): Promise<ProjectRollup> {
+  const page = await api.rollups(token, projectId).catch(() => null);
+  const row = page?.items?.[0];
+  // No row is not an empty project: it is a project whose counts could not be
+  // read, and every column says so.
+  if (!row) return { documents: null, findings: null, repos: null };
   return {
-    documents: bindings?.total ?? null,
-    findings,
-    // A project with settings and no repos really has none; a project whose
-    // settings could not be read has an unknown number of them.
-    repos: settings ? (settings.repos?.length ?? 0) : null,
+    documents: row.documents ?? null,
+    findings: row.findings ?? null,
+    repos: row.repos ?? null,
   };
 }
 

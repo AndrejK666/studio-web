@@ -67,7 +67,7 @@ pub const PRIVILEGES: [&str; 11] = [
 ///
 /// `owner` is seeded for editing, not for deciding: an owner's authority does
 /// not depend on this array (ADR-0019 §7).
-fn default_roles() -> serde_json::Value {
+pub(crate) fn default_roles() -> serde_json::Value {
     let except = |missing: &[&str]| -> Vec<&str> {
         PRIVILEGES
             .iter()

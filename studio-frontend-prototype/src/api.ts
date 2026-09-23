@@ -1481,9 +1481,38 @@ export interface DomainModelSync {
   skipped_endpoints: number;
 }
 
+/** One row of the portfolio, as the server counts it.
+ *
+ *  Every count is nullable and the null is load-bearing: it means that source
+ *  could not be asked, which is not the same fact as a count of zero. */
+export interface RollupRow {
+  id: string;
+  name: string;
+  kind: "workspace" | "project";
+  /** The workspace a project belongs to; null on a workspace row. */
+  parent_id?: string | null;
+  projects?: number | null;
+  documents?: number | null;
+  findings?: number | null;
+  repos?: number | null;
+}
+
 export const api = {
   /** Login = validate the token by asking the backend who we are. */
   me: (token: string) => request<Me>("/account-management/v1/me", token),
+
+  /** What every workspace and project contains, in one request.
+   *
+   *  The portal used to compose this itself — three requests per row, one of
+   *  them a listing that walks the whole artifact graph. The composition is on
+   *  the server now; this asks for it. `projectId` narrows it to one project. */
+  rollups: (token: string, projectId?: string) => {
+    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    return request<{ items: RollupRow[]; total: number }>(
+      `/studio-organizations/v1/rollups${q}`,
+      token,
+    );
+  },
 
   /* ── studio-documents gear (types + templates + validation) ── */
 

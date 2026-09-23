@@ -241,6 +241,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
         if let Some(service) = &service {
             ctx.client_hub()
                 .register::<dyn port::RepoFileReader>(service.clone());
+            // The portfolio's finding count, for whoever composes the rollup.
+            ctx.client_hub()
+                .register::<dyn port::ArtifactCounter>(service.clone());
         }
 
         // Retain for the process lifetime; the router also owns a clone.

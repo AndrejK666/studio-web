@@ -104,6 +104,9 @@ impl toolkit::Gear for StudioDocumentsGear {
         // the consumer treats an absent client as "do not classify".
         ctx.client_hub()
             .register::<dyn port::DocumentClassifier>(service.clone());
+        // The portfolio's document count, for whoever composes the rollup.
+        ctx.client_hub()
+            .register::<dyn port::DocumentCounter>(service.clone());
 
         self.service
             .set(service)

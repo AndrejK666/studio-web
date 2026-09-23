@@ -38,3 +38,35 @@ pub trait RepoFileReader: Send + Sync + 'static {
         repo_dir: &str,
     ) -> anyhow::Result<Vec<(String, String)>>;
 }
+
+/// How much of the artifact graph belongs to one scope.
+///
+/// A second seam, added for the portfolio's per-project counts.
+///
+/// WHY NOT THE LISTING ENDPOINT. `GET /v1/nodes` answers the same question, and
+/// the portfolio used to ask it that way — once per row, with `limit=1`,
+/// reading `total`. That limit saves nothing: the projection cannot narrow by
+/// payload, so the endpoint walks the tenant's whole typed node set and slices
+/// it in this process. Measured on studio-dev: 28,717 nodes, 31 MB and 144
+/// sequential round trips per call, a p95 of 8.06 s. A table of ten projects
+/// asked for that ten times, from a browser.
+///
+/// Through here it is asked once per rollup, against the projection this
+/// process already holds, and the caller is handed a number rather than a page
+/// it has to count.
+#[async_trait]
+pub trait ArtifactCounter: Send + Sync + 'static {
+    /// Nodes of `type_leaf` (`spec_finding`, `issue`, `file`, …) whose payload
+    /// names `scope` as its workspace or its project.
+    ///
+    /// `Ok(n)` means n. An `Err` means the count is UNKNOWN, which a caller
+    /// must not render as zero: "this project has no findings" and "nobody
+    /// could tell me" are different sentences on a screen people use to decide
+    /// where to look next.
+    async fn count_nodes(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        type_leaf: &str,
+        scope: &str,
+    ) -> anyhow::Result<u32>;
+}

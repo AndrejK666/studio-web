@@ -204,7 +204,7 @@ pub struct EdgesQuery {
 /// True when a node's `value` is inside `scope` — i.e. its `workspace_id` or
 /// its `project_id` equals `scope`. Used to keep a project's (or workspace's)
 /// graph to its own artifacts. A `None` scope admits everything.
-fn node_in_scope(value: &Value, scope: Option<&str>) -> bool {
+pub(super) fn node_in_scope(value: &Value, scope: Option<&str>) -> bool {
     let Some(scope) = scope else {
         return true;
     };

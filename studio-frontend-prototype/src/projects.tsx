@@ -15,7 +15,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { api, TENANT_TYPES, type User } from "./api";
 import { errText, matches } from "./format";
-import { rollupText, workspaceRollup, type WorkspaceRollup } from "./rollups";
+import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
@@ -179,20 +179,25 @@ export function ProjectsPortfolio({
       }),
     );
     setPeople(Object.fromEntries(entries));
-    // The project count, and the children it counted. Kept as a second pass
-    // rather than folded into the one above so the table paints with names and
-    // people first — a count arriving a moment later is a cell changing from
-    // "—" to a number, which is much better than a blank page while every
-    // workspace is asked how many projects it has.
-    const counted = await Promise.all(
-      list.map(async (id) => [id, await workspaceRollup(token, id)] as const),
+    // The project counts, and the children they counted — ONE request for the
+    // whole table now, not one per workspace. Kept as a second pass rather than
+    // folded into the one above so the table paints with names and people
+    // first: a count arriving a moment later is a cell changing from "—" to a
+    // number, which is much better than a blank page while it is fetched.
+    const { workspaces, projects } = await portfolioRollups(token);
+    setRollups(
+      Object.fromEntries(list.map((id) => [id, { projects: workspaces.get(id)?.projects ?? null }])),
     );
-    setRollups(Object.fromEntries(counted.map(([id, r]) => [id, r.rollup])));
-    // Counting already fetched the children, so the tree can expand without
+    // The same answer carries the parentage, so the tree expands without
     // asking again.
     setChildren((c) => {
       const next = { ...c };
-      for (const [id, r] of counted) if (r.children) next[id] = r.children;
+      for (const id of list) {
+        const kids = [...projects.entries()]
+          .filter(([, p]) => p.parentId === id)
+          .map(([pid, p]) => ({ id: pid, name: p.name }));
+        if (kids.length) next[id] = kids;
+      }
       return next;
     });
   }, [token, ids]);
