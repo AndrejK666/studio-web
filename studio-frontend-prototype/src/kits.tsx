@@ -1026,8 +1026,8 @@ function ProductCard({
             <button
               className="ghost"
               disabled={studio.opening !== null}
-              title="Opens this project's IDE session with the gear corpus beside it; the GDL language server checks the file as you edit"
-              onClick={() => void studio.openFile({ id: projectId, name: projectName }, "product.gdl")}
+              title="Opens this project's IDE in the Gearbox perspective with the product open: resolution, graph, lock and conflicts, and the GDL language checking the file as you edit"
+              onClick={() => void studio.openProduct({ id: projectId, name: projectName }, "product.gdl")}
             >
               Open in IDE
             </button>

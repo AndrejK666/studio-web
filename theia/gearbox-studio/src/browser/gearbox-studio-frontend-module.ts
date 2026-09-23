@@ -15,6 +15,7 @@
 
 import { FrontendApplicationContribution, bindViewContribution } from "@theia/core/lib/browser";
 import { WebSocketConnectionProvider } from "@theia/core/lib/browser/messaging";
+import { PerspectiveContribution } from "@theia/core/lib/browser/perspective-service";
 import { CommandContribution } from "@theia/core/lib/common/command";
 import { MenuContribution } from "@theia/core/lib/common/menu";
 import { ContainerModule, injectable } from "@theia/core/shared/inversify";
@@ -71,6 +72,8 @@ import { FocusModeService } from "./shell/focus-mode-service";
 import { DescriptionWatchService } from "./shell/description-watch-service";
 import { ScreenScopeService } from "./shell/screen-scope-service";
 import { StudioContextService } from "./shell/studio-context-service";
+import { StudioGearboxPerspective } from "./shell/studio-gearbox-perspective";
+import { PortalLinkContribution } from "./shell/portal-link";
 
 import "../../src/browser/style/index.css";
 
@@ -142,6 +145,16 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // Studio's layout on its own.
   bind(FocusModeService).toSelf().inSingletonScope();
   bind(ScreenScopeService).toSelf().inSingletonScope();
+
+  // The Gearbox perspective beside Workbench and Documents, and the command
+  // the portal's `studio.openProduct` runs to land in it with a product open.
+  // From a gear here to its page in the portal's component catalogue.
+  bind(PortalLinkContribution).toSelf().inSingletonScope();
+  bind(CommandContribution).toService(PortalLinkContribution);
+
+  bind(StudioGearboxPerspective).toSelf().inSingletonScope();
+  bind(PerspectiveContribution).toService(StudioGearboxPerspective);
+  bind(CommandContribution).toService(StudioGearboxPerspective);
 
   bind(GearboxService)
     .toDynamicValue(({ container }) => {

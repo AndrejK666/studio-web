@@ -41,6 +41,7 @@ import { RevealLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { ADD_GEAR, SHOW_PRODUCT } from "../shell/session-command-ids";
 import { gearIdOf, Selection, SelectionService } from "../shell/selection-service";
+import { inPortal, OPEN_COMPONENT_IN_PORTAL } from "../shell/portal-link";
 
 /** One rendered step: an edge, with both of its nodes resolved. */
 interface Step {
@@ -281,6 +282,27 @@ export class InspectorWidget extends ReactWidget {
             and in the settings pane. The rows below them are catalogue facts and
             stay. */}
         <GearHeading id={gear.id} descriptor={gear} />
+        {/* Constructor Studio: the gear's page in the portal's component
+            catalogue -- owners, activity, documents, versions -- which this
+            panel does not repeat. Only inside the portal, which is where the
+            page is. */}
+        {inPortal() && (
+          <div className="gbx-kv">
+            <span>catalogue</span>
+            <span>
+              <a
+                href="#"
+                title={`Open ${gear.package.crate_name} in Constructor Studio's component catalogue`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void this.commands.executeCommand(OPEN_COMPONENT_IN_PORTAL, gear.package.crate_name);
+                }}
+              >
+                {gear.package.crate_name} ↗
+              </a>
+            </span>
+          </div>
+        )}
         <GearBlurb descriptor={gear} />
         <div className="gbx-kv">
           <span>capabilities</span>

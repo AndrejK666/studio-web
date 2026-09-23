@@ -17,7 +17,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CommandService } from '@theia/core/lib/common';
 import type { NotifyEditorFrontendController } from './notify-editor-controller';
-import { IDENTITY_VIEWER_COMMAND_ID, PortalBridgeContribution, PortalViewer } from './portal-bridge-contribution';
+import {
+    GEARBOX_OPEN_PRODUCT_COMMAND_ID,
+    IDENTITY_VIEWER_COMMAND_ID,
+    OPEN_COMPONENT_IN_PORTAL_COMMAND_ID,
+    PortalBridgeContribution,
+    PortalViewer
+} from './portal-bridge-contribution';
 
 /**
  * The hand-off and the shell layout race, and the layout wins.
@@ -47,6 +53,14 @@ class TestBridge extends PortalBridgeContribution {
 
     openFile(relativePath: string): Promise<void> {
         return this.openFileInMode(relativePath);
+    }
+
+    openProduct(relativePath: string): Promise<void> {
+        return this.openProductInMode(relativePath);
+    }
+
+    openComponent(name: string | undefined): boolean {
+        return this.openComponentInPortal(name);
     }
 }
 
@@ -254,5 +268,100 @@ describe('PortalBridgeContribution file hand-off', () => {
 
         expect(onOpenInEditor).toHaveBeenCalled();
         warn.mockRestore();
+    });
+});
+
+/**
+ * A product from the portal's Components tab lands in the Gearbox perspective,
+ * opened through Gearbox — or, in a build without gearbox-studio, as the file
+ * it is, which is what the portal asked for before the message existed.
+ */
+describe('PortalBridgeContribution product hand-off', () => {
+    it('asks gearbox-studio to open the product in its perspective', async () => {
+        const bridge = new TestBridge();
+        const calls: [string, unknown[]][] = [];
+        bridge.useCommands({
+            executeCommand: (id: string, ...args: unknown[]) => {
+                calls.push([id, args]);
+                return Promise.resolve(true);
+            }
+        } as unknown as CommandService);
+        const onOpenInEditor = jest.fn(async () => undefined);
+        Object.assign(bridge, { opener: { onOpenInEditor } });
+
+        await bridge.openProduct('product.gdl');
+
+        expect(calls).toEqual([[GEARBOX_OPEN_PRODUCT_COMMAND_ID, ['product.gdl']]]);
+        expect(onOpenInEditor).not.toHaveBeenCalled();
+    });
+
+    it('opens the description as a file when gearbox-studio is not in the build', async () => {
+        const bridge = new TestBridge();
+        bridge.useCommands({
+            executeCommand: () => Promise.reject(new Error('unknown command'))
+        } as unknown as CommandService);
+        const onOpenInEditor = jest.fn(async () => undefined);
+        Object.assign(bridge, {
+            perspectives: { getActivePerspectiveId: () => 'studio.workbench', switchPerspective: jest.fn() },
+            opener: { onOpenInEditor }
+        });
+
+        await bridge.openProduct('product.gdl');
+
+        expect(onOpenInEditor).toHaveBeenCalledWith(expect.objectContaining({ relativePath: 'product.gdl' }));
+    });
+
+    it('names the command gearbox-studio actually registers', () => {
+        const registrar = fs.readFileSync(
+            path.resolve(__dirname, '../../../gearbox-studio/src/browser/shell/studio-gearbox-perspective.ts'),
+            'utf8'
+        );
+        expect(registrar).toContain(`id: "${GEARBOX_OPEN_PRODUCT_COMMAND_ID}"`);
+    });
+});
+
+/**
+ * From a gear in the IDE to its page in the portal's component catalogue. The
+ * message goes to the origin the handshake established and nowhere else.
+ */
+describe('PortalBridgeContribution component link', () => {
+    const embedded = (post: jest.Mock) => {
+        const parent = { postMessage: post };
+        Object.defineProperty(window, 'parent', { value: parent, configurable: true });
+    };
+    afterEach(() => {
+        Object.defineProperty(window, 'parent', { value: window, configurable: true });
+    });
+
+    it('asks the portal for the component, at the portal origin', () => {
+        const post = jest.fn();
+        embedded(post);
+        const bridge = new TestBridge();
+        Object.assign(bridge, { portalOrigin: 'https://studio.example' });
+
+        expect(bridge.openComponent('cf-gears-api-gateway')).toBe(true);
+        expect(post).toHaveBeenCalledWith(
+            { type: 'studio.openComponent', name: 'cf-gears-api-gateway' },
+            'https://studio.example'
+        );
+    });
+
+    it('says nothing before the handshake, or without a name', () => {
+        const post = jest.fn();
+        embedded(post);
+        const bridge = new TestBridge();
+
+        expect(bridge.openComponent('cf-gears-api-gateway')).toBe(false);
+        Object.assign(bridge, { portalOrigin: 'https://studio.example' });
+        expect(bridge.openComponent(undefined)).toBe(false);
+        expect(post).not.toHaveBeenCalled();
+    });
+
+    it('names the command gearbox-studio actually calls', () => {
+        const caller = fs.readFileSync(
+            path.resolve(__dirname, '../../../gearbox-studio/src/browser/shell/portal-link.ts'),
+            'utf8'
+        );
+        expect(caller).toContain(`"${OPEN_COMPONENT_IN_PORTAL_COMMAND_ID}"`);
     });
 });

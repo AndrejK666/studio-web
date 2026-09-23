@@ -10,8 +10,9 @@
 //    has just written back through the documents gear.
 //
 // The portal→IDE half also carries the *editing hand-off*: `studio.openInEditor`
-// (a repository file), `studio.openGraph` and `studio.openDocument` (a portal
-// document, opened in the markdown editor via the `studio-doc:` resolver).
+// (a repository file), `studio.openGraph`, `studio.openDocument` (a portal
+// document, opened in the markdown editor via the `studio-doc:` resolver) and
+// `studio.openProduct` (a product.gdl, opened in the Gearbox perspective).
 // The portal queues these until its handshake is acked, so a message that
 // arrives with — or before — the session's first paint is still delivered:
 // that is what lets "open the IDE" and "edit this thing" be one click.
@@ -27,7 +28,7 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser/fronten
 import { ThemeService } from '@theia/core/lib/browser/theming';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { Saveable } from '@theia/core/lib/browser/saveable';
-import { CommandService, Disposable, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
+import { CommandContribution, CommandRegistry, CommandService, Disposable, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { ArtifactGraphCommand } from './artifact-graph-contribution';
 import { NotifyEditorFrontendController } from './notify-editor-controller';
@@ -73,6 +74,14 @@ export interface PortalViewer {
  * pinned together by `portal-bridge-contribution.test.ts`.
  */
 export const IDENTITY_VIEWER_COMMAND_ID = 'studio.identity.viewer';
+
+/** gearbox-studio's command for `studio.openProduct` (`StudioGearboxPerspective`).
+ *  By id, so studio does not depend on the package that registers it. */
+export const GEARBOX_OPEN_PRODUCT_COMMAND_ID = 'gearbox.product.openAt';
+
+/** Asks the portal to show a component's page in its catalogue, by catalogue
+ *  name (`cf-gears-api-gateway`). gearbox-studio links a gear to it by id. */
+export const OPEN_COMPONENT_IN_PORTAL_COMMAND_ID = 'studio.portal.openComponent';
 
 interface PortalMessage {
     type?: string;
@@ -120,7 +129,7 @@ function isMarkdownPath(relativePath: string): boolean {
 }
 
 @injectable()
-export class PortalBridgeContribution implements FrontendApplicationContribution {
+export class PortalBridgeContribution implements FrontendApplicationContribution, CommandContribution {
 
     @inject(ThemeService)
     protected readonly themeService: ThemeService;
@@ -161,6 +170,26 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     protected portalOrigin: string | undefined;
     protected lastDirty = -1;
     protected lastAiToken = '';
+
+    registerCommands(commands: CommandRegistry): void {
+        commands.registerCommand({ id: OPEN_COMPONENT_IN_PORTAL_COMMAND_ID }, {
+            isEnabled: () => window.parent !== window,
+            execute: (name?: string) => this.openComponentInPortal(name),
+        });
+    }
+
+    /**
+     * The component's page in the portal's catalogue. Posted only to the
+     * portal origin the handshake established, like every other message this
+     * bridge sends; before the handshake there is nowhere to say it.
+     */
+    protected openComponentInPortal(name: string | undefined): boolean {
+        if (!name || window.parent === window || !this.portalOrigin) {
+            return false;
+        }
+        window.parent.postMessage({ type: 'studio.openComponent', name }, this.portalOrigin);
+        return true;
+    }
 
     onStart(): void {
         if (window.parent === window) {
@@ -227,6 +256,16 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // against the first workspace root by the controller.
                 const relativePath = msg.path;
                 this.openWhenLayoutReady(() => void this.openFileInMode(relativePath));
+            }
+            if (msg.type === 'studio.openProduct' && msg.path) {
+                // The portal's Components tab asks for a product: the Gearbox
+                // perspective, with the product open through Gearbox (resolved,
+                // with its graph, lock and conflicts), not a bare file. The
+                // command belongs to gearbox-studio; an image without it opens
+                // the description as a file, which is what the portal asked
+                // before this message existed.
+                const productPath = msg.path;
+                this.openWhenLayoutReady(() => void this.openProductInMode(productPath));
             }
             if (msg.type === 'studio.notify' && msg.message) {
                 // Background work finished, and the person may be looking at
@@ -336,6 +375,20 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
      * and nothing arbitrates on perspective for those anyway — Monaco wins
      * because Monaco is what wins for them.
      */
+    /**
+     * A product the portal asked for, in the Gearbox perspective and opened
+     * through Gearbox. Falls back to opening the description as a file when
+     * gearbox-studio is not in this build, which is what `studio.openInEditor`
+     * did for it before.
+     */
+    protected async openProductInMode(relativePath: string): Promise<void> {
+        try {
+            await this.commands.executeCommand(GEARBOX_OPEN_PRODUCT_COMMAND_ID, relativePath);
+        } catch {
+            await this.openFileInMode(relativePath);
+        }
+    }
+
     protected async openFileInMode(relativePath: string): Promise<void> {
         if (isMarkdownPath(relativePath)) {
             try {
