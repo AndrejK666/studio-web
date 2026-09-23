@@ -7,6 +7,7 @@
 //! published versions. Prefers the real graph-storage gear; falls back to an
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
+mod compose;
 mod cratesio;
 pub(crate) mod field_schema;
 mod gearbox;

@@ -680,6 +680,110 @@ async fn list_gears(
     }))
 }
 
+/// One capability, and what could fill it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlanRowDto {
+    pub capability: String,
+    pub candidates: Vec<CandidateDto>,
+    /// No candidate at all — nothing here to build this from.
+    pub gap: bool,
+    /// Candidates exist and none of them is built. Not a gap, and not an
+    /// answer either.
+    pub unbuilt: bool,
+}
+
+/// One component offered for one capability.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CandidateDto {
+    pub name: String,
+    pub kind: String,
+    /// How many of the capability's terms it mentions.
+    pub score: u32,
+    /// Which terms they were, so a suggestion can be argued with rather than
+    /// only accepted.
+    pub why: Vec<String>,
+    /// `built`, `docs-only`, or `unknown` — and `unknown` is not a maybe: it
+    /// means the question does not apply or was never asked.
+    pub built: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComposePlanDto {
+    pub items: Vec<PlanRowDto>,
+    pub total: u32,
+}
+
+/// What a product needs, and the vocabulary to look for it with.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ComposeRequest {
+    /// The capabilities to fill, in the order they should be answered.
+    pub capabilities: Vec<String>,
+    /// The workspace's effective capability vocabulary: capability key to the
+    /// terms to search for. A capability absent from it is matched against its
+    /// own name, which is what it meant before vocabularies existed
+    /// (ADR-0014 §5).
+    #[serde(default)]
+    pub terms: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// POST /studio-components-catalog/v1/compose — match needs to components.
+///
+/// A POST because the vocabulary travels with the question: a workspace's terms
+/// are a map, and a map does not belong in a query string.
+async fn compose_plan(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Json(req): Json<ComposeRequest>,
+) -> ApiResult<JsonBody<ComposePlanDto>> {
+    let (nodes, _truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let components: Vec<serde_json::Value> = nodes.into_iter().map(|n| n.value).collect();
+
+    let profile_nodes = catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let mut profiles = serde_json::Map::new();
+    for node in profile_nodes {
+        if let Some(name) = node.value.get("name").and_then(serde_json::Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+
+    let rows = super::compose::plan(&req.capabilities, &components, &profiles, &req.terms);
+    let items: Vec<PlanRowDto> = rows
+        .into_iter()
+        .map(|row| PlanRowDto {
+            capability: row.capability,
+            gap: row.gap,
+            unbuilt: row.unbuilt,
+            candidates: row
+                .candidates
+                .into_iter()
+                .map(|c| CandidateDto {
+                    name: c.name,
+                    kind: c.kind,
+                    score: u32::try_from(c.score).unwrap_or(u32::MAX),
+                    why: c.why,
+                    built: c.built.as_str().to_owned(),
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Json(ComposePlanDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
 async fn list_profiles(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -1370,6 +1474,27 @@ pub fn register_routes(
         )
         .error_401(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/compose")
+        .operation_id("studio_components_catalog.create_compose_plan")
+        .summary("Match what a product needs against the components that exist")
+        .description(
+            "Answers `what can we build this from?` for a list of capabilities, and answers it              the same way wherever it is asked. The App Spec's Compose button and a project's              Components tab ask it from two directions and must not get two answers.
+
+             CANDIDATES COME BACK BUILT FIRST, and the shortlist is cut after that sort rather              than before it — a well-written stub is mostly prose, prose is what keywords              match, and a stub that outranked a shipped component would answer the question              with something nobody can build from. Components that were never built are              LABELLED rather than dropped, because a design may legitimately name a component              that is still only a design.
+
+             `unbuilt` says candidates exist and none is built: not a gap, and not an answer              either. `why` names the terms that matched, so a suggestion can be argued with.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ComposeRequest>(openapi, "The capabilities to fill")
+        .handler(compose_plan)
+        .json_response_with_schema::<ComposePlanDto>(openapi, StatusCode::OK, "The plan")
+        .error_400(openapi)
+        .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
