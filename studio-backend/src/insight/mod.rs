@@ -21,6 +21,8 @@
 mod client;
 mod components;
 mod config;
+mod delivery;
+pub mod port;
 mod rest;
 
 use std::sync::{Arc, OnceLock};
@@ -90,8 +92,16 @@ impl Gear for StudioInsightGear {
         let published: Arc<dyn InsightClient> = client.clone();
         ctx.client_hub().register_scoped::<dyn InsightClient>(
             ClientScope::gts_id(INSIGHT_INSTANCE_ID),
-            published,
+            published.clone(),
         );
+
+        // The typed seam over the same client: "delivery for these components
+        // of this repository", with no SQL on the calling side. Registered
+        // here for the same reason, and unscoped because there is one Insight.
+        let delivery: Arc<dyn port::ComponentDelivery> =
+            Arc::new(delivery::InsightDelivery::new(published));
+        ctx.client_hub()
+            .register::<dyn port::ComponentDelivery>(delivery);
 
         self.client
             .set(client)

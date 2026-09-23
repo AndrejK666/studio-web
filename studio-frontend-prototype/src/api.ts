@@ -172,6 +172,12 @@ export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
  *  with no profile has not been scanned. Neither is evidence of absence. */
 export type BuildState = "built" | "docs-only" | "unknown";
 
+/** What the Gearbox engine said about a component, as the catalogue sync
+ *  recorded it: it can go into a product (`runs`), it is described but cannot
+ *  run from this corpus (`blocked`), or nothing describes it for composition
+ *  (`undescribed`). A different question from `built`. */
+export type Composability = "runs" | "blocked" | "undescribed";
+
 /** One component offered for one capability. */
 export interface Candidate {
   name: string;
@@ -181,6 +187,9 @@ export interface Candidate {
   /** Which terms they were, so a suggestion can be argued with. */
   why: string[];
   built: BuildState;
+  composable: Composability;
+  /** The engine's reason, when `blocked`. */
+  composable_why?: string | null;
 }
 
 /** One capability, and what could fill it. */
@@ -191,6 +200,44 @@ export interface PlanRow {
   gap: boolean;
   /** Candidates exist, but none of them has been built. */
   unbuilt: boolean;
+}
+
+/** One weekly bar of a gear's churn. */
+export interface ActivityPoint {
+  /** The bucket's first day (a Monday), `YYYY-MM-DD`. */
+  date: string;
+  commits: number;
+  lines_added: number;
+  lines_removed: number;
+}
+
+/** Pull requests touching one gear, by the state they are in now.
+ *
+ *  Attributed through the files their commits changed, so one touching three
+ *  gears counts in all three: these rows do NOT partition the repository, and
+ *  a screen showing them has to say so. */
+export interface GearPullRequests {
+  open: number;
+  merged: number;
+  closed: number;
+  total: number;
+  /** Null when nothing merged in the window — not the same as zero hours. */
+  merged_cycle_hours: number | null;
+  authors: number;
+}
+
+/** What one gear did over the window. */
+export interface GearActivity {
+  gear: string;
+  commits: number;
+  files_changed: number;
+  lines_added: number;
+  lines_removed: number;
+  authors: number;
+  /** Null when no pull request in the window touched this gear — not zeros. */
+  pull_requests?: GearPullRequests | null;
+  /** Ascending by date, gaps filled with zeros. */
+  points: ActivityPoint[];
 }
 
 export interface Capability {
@@ -2714,6 +2761,26 @@ export const api = {
       { method: "POST", body: JSON.stringify({ capabilities, terms }) },
     );
   },
+  /** What moved in each catalogued gear, over a window of days.
+   *
+   *  The catalogue is read by the server, and so are the rules that turn it
+   *  into a question Insight can answer — grouping by repository, naming each
+   *  crate's directory, resolving the collisions, joining the two answers back
+   *  together. All of that used to live in `gear-activity.tsx`, which is why
+   *  this screen used to pull the whole catalogue into the browser first. */
+  gearActivity: (token: string, days: number) =>
+    request<{
+      items: GearActivity[];
+      total: number;
+      /** Where the numbers came from, and what was left out getting them. */
+      sources: {
+        from: string | null;
+        to: string | null;
+        truncated: boolean;
+        repositories: string[];
+      };
+    }>(`/studio-components-catalog/v1/activity?days=${days}`, token),
+
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
     request<{ nodes: CatalogNode[]; truncated?: boolean }>(

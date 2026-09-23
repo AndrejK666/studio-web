@@ -64,6 +64,40 @@ impl BuildState {
     }
 }
 
+/// What the Gearbox engine said about a component, as the catalogue sync
+/// recorded it in the profile (`auto.gdl_runs`).
+///
+/// A different question from [`BuildState`], and the two are read together:
+/// built says somebody wrote code, this says the engine can put it into a
+/// product. `Undescribed` is the absence of a `gear.gdl`, not a failure —
+/// most of the catalogue is undescribed, and ranking it below something the
+/// engine PROVED cannot run would be asserting more than the engine said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Composability {
+    Runs,
+    Blocked,
+    Undescribed,
+}
+
+impl Composability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Composability::Runs => "runs",
+            Composability::Blocked => "blocked",
+            Composability::Undescribed => "undescribed",
+        }
+    }
+
+    /// Can run first, undescribed next, proved-cannot last.
+    fn rank(self) -> u8 {
+        match self {
+            Composability::Runs => 0,
+            Composability::Undescribed => 1,
+            Composability::Blocked => 2,
+        }
+    }
+}
+
 /// One component offered for one capability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
@@ -74,6 +108,9 @@ pub struct Candidate {
     /// Which terms they were — the reason, so a suggestion can be argued with.
     pub why: Vec<String>,
     pub built: BuildState,
+    pub composable: Composability,
+    /// The engine's reason, when `Blocked`. Absent otherwise.
+    pub composable_why: Option<String>,
 }
 
 /// One capability, and what could fill it.
@@ -225,15 +262,22 @@ pub fn plan(
                         score: why.len(),
                         why,
                         built: build_state(component, profiles.get(name)),
+                        composable: composability(profiles.get(name)),
+                        composable_why: blocked_reason(profiles.get(name)),
                     })
                 })
                 .collect();
             // Built first, then by score. The cut comes AFTER, so a shipped
             // component is never displaced by a stub that said the word more.
+            // Build state first, then what the engine can actually assemble,
+            // then the score. The engine's verdict sits BETWEEN them on
+            // purpose: a built component the engine cannot run is still built,
+            // and a described component nobody has written is still unwritten.
             candidates.sort_by(|a, b| {
                 a.built
                     .rank()
                     .cmp(&b.built.rank())
+                    .then(a.composable.rank().cmp(&b.composable.rank()))
                     .then(b.score.cmp(&a.score))
                     .then(a.name.cmp(&b.name))
             });
@@ -260,6 +304,53 @@ pub fn plan(
             }
         })
         .collect()
+}
+
+/// What the engine said, as the sync wrote it into the profile.
+///
+/// `auto.gdl_runs` is a graded fact: `s` is the grade and `v` the sentence.
+/// Anything other than `good` with a `gdl_runs` present means the engine was
+/// asked and said no; no `gdl_runs` at all means nothing describes the
+/// component for composition.
+fn composability(profile: Option<&Value>) -> Composability {
+    let Some(runs) = profile
+        .and_then(|p| p.get("auto"))
+        .and_then(|a| a.get("gdl_runs"))
+    else {
+        return Composability::Undescribed;
+    };
+    if !runs.is_object() {
+        return Composability::Undescribed;
+    }
+    match runs.get("s").and_then(Value::as_str) {
+        Some("good") => Composability::Runs,
+        _ => Composability::Blocked,
+    }
+}
+
+/// The engine's sentence, with the grade's own prefix removed.
+///
+/// The sync writes `no — <reason>`; the reason is what a person reads, and
+/// repeating "no" beside a label that already says BLOCKED says nothing.
+fn blocked_reason(profile: Option<&Value>) -> Option<String> {
+    if composability(profile) != Composability::Blocked {
+        return None;
+    }
+    let value = profile?
+        .get("auto")?
+        .get("gdl_runs")?
+        .get("v")?
+        .as_str()?
+        .trim();
+    // Trimmed FIRST, so the prefix has to be matched in both its forms: a
+    // sentence that is only the prefix arrives as `no —` with nothing after
+    // it, and stripping `no — ` would then leave the dash on screen.
+    let reason = value
+        .strip_prefix("no — ")
+        .or_else(|| value.strip_prefix("no —"))
+        .unwrap_or(value)
+        .trim();
+    (!reason.is_empty()).then(|| reason.to_owned())
 }
 
 /// What the catalogue says about a component, when it says anything.
@@ -578,5 +669,113 @@ mod tests {
         );
         assert_eq!(rows[0].candidates.len(), 2);
         assert!(!rows[0].unbuilt, "one of them might well be built");
+    }
+    // ---- what the engine said --------------------------------------------
+
+    fn described(state: &str, reason: &str) -> Value {
+        json!({ "auto": { "gdl_runs": { "s": state, "v": reason } } })
+    }
+
+    #[test]
+    fn a_gear_the_engine_can_run_outranks_one_it_proved_cannot() {
+        // Within the same build state. Both are built; the engine decides.
+        let profiles: serde_json::Map<String, Value> = [
+            ("runs".to_owned(), {
+                let mut p = described("good", "yes");
+                p["auto"]["crates"] = json!({ "n": 1 });
+                p
+            }),
+            ("blocked".to_owned(), {
+                let mut p = described("bad", "no — needs a host nothing provides");
+                p["auto"]["crates"] = json!({ "n": 1 });
+                p
+            }),
+        ]
+        .into_iter()
+        .collect();
+        let rows = plan(
+            &["chat".to_owned()],
+            &[
+                component("blocked", "chat chat chat"),
+                component("runs", "chat"),
+            ],
+            &profiles,
+            &vocabulary(&[("chat", &["chat"])]),
+        );
+        // `blocked` says the word more often and still comes last.
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["runs", "blocked"]);
+        assert_eq!(rows[0].candidates[0].composable, Composability::Runs);
+        assert_eq!(rows[0].candidates[1].composable, Composability::Blocked);
+    }
+
+    #[test]
+    fn an_undescribed_gear_sits_between_the_two() {
+        // Most of the catalogue has no gear.gdl. Ranking it below something
+        // the engine PROVED cannot run would assert more than the engine said.
+        assert!(Composability::Runs.rank() < Composability::Undescribed.rank());
+        assert!(Composability::Undescribed.rank() < Composability::Blocked.rank());
+        assert_eq!(composability(None), Composability::Undescribed);
+        assert_eq!(composability(Some(&json!({}))), Composability::Undescribed);
+        assert_eq!(
+            composability(Some(&json!({ "auto": { "gdl_runs": "yes" } }))),
+            Composability::Undescribed,
+            "a fact that is not the graded object is no answer"
+        );
+    }
+
+    #[test]
+    fn any_grade_but_good_means_the_engine_said_no() {
+        assert_eq!(
+            composability(Some(&described("good", "yes"))),
+            Composability::Runs
+        );
+        for grade in ["bad", "warn", "", "unknown"] {
+            assert_eq!(
+                composability(Some(&described(grade, "no — whatever"))),
+                Composability::Blocked,
+                "{grade}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_reason_drops_the_grades_own_prefix() {
+        // The label already says BLOCKED; repeating "no" says nothing.
+        let profile = described("bad", "no — needs a host nothing provides");
+        assert_eq!(
+            blocked_reason(Some(&profile)).as_deref(),
+            Some("needs a host nothing provides")
+        );
+        // Nothing to explain when it runs, and no empty string when the
+        // sentence was only the prefix.
+        assert_eq!(blocked_reason(Some(&described("good", "yes"))), None);
+        assert_eq!(blocked_reason(Some(&described("bad", "no — "))), None);
+        assert_eq!(blocked_reason(None), None);
+    }
+
+    #[test]
+    fn the_engines_verdict_does_not_outrank_being_built() {
+        // A described gear nobody has written is still unwritten.
+        let profiles: serde_json::Map<String, Value> = [
+            (
+                "shipped".to_owned(),
+                json!({ "auto": { "crates": { "n": 4 } } }),
+            ),
+            ("stub".to_owned(), {
+                let mut p = described("good", "yes");
+                p["auto"]["crates"] = json!({ "n": 0 });
+                p
+            }),
+        ]
+        .into_iter()
+        .collect();
+        let rows = plan(
+            &["chat".to_owned()],
+            &[component("stub", "chat"), component("shipped", "chat")],
+            &profiles,
+            &vocabulary(&[]),
+        );
+        assert_eq!(rows[0].candidates[0].name, "shipped");
     }
 }

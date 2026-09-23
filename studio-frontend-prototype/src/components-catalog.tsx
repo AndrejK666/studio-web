@@ -819,7 +819,7 @@ export function ComponentsCatalog({
   // per repository, keyed on the gear names, so opening a component page or
   // typing in the filter costs nothing more.
   const [activityDays, setActivityDays] = useState<number>(90);
-  const activity = useGearActivity(token, gears, activityDays);
+  const activity = useGearActivity(token, activityDays);
 
   const syncing = sync.endsWith("…");
   const sourceSummary = [
@@ -1273,7 +1273,7 @@ function GearListRow({
   const bad = lamps.filter((l) => l === "bad").length;
   const watch = lamps.filter((l) => l === "watch").length;
   const repository = typeof gear.value.repository === "string" ? gear.value.repository : null;
-  const moved = activity && (activity.commits > 0 || activity.linesAdded + activity.linesRemoved > 0);
+  const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
 
   return (
     <tr className="gcat-row" onClick={onOpen} title={`Open ${name}`}>
@@ -1305,8 +1305,8 @@ function GearListRow({
             <MiniChurn points={activity!.points} />
             <span>
               <b>{compact(activity!.commits)}</b> commits ·{" "}
-              <b className="ink-added">+{compact(activity!.linesAdded)}</b>{" "}
-              <b className="ink-removed">−{compact(activity!.linesRemoved)}</b> ·{" "}
+              <b className="ink-added">+{compact(activity!.lines_added)}</b>{" "}
+              <b className="ink-removed">−{compact(activity!.lines_removed)}</b> ·{" "}
               <b>{compact(activity!.authors)}</b> authors
             </span>
           </div>
@@ -1410,13 +1410,13 @@ function GearListCard({
           <b>{numText(gear.value.downloads)}</b> downloads
         </span>
       </div>
-      {activity && (activity.commits > 0 || activity.linesAdded + activity.linesRemoved > 0) && (
+      {activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0) && (
         <div className="act-card">
           <MiniChurn points={activity.points} />
           <span>
             <b>{compact(activity.commits)}</b> commits ·{" "}
-            <b className="ink-added">+{compact(activity.linesAdded)}</b>{" "}
-            <b className="ink-removed">−{compact(activity.linesRemoved)}</b> ·{" "}
+            <b className="ink-added">+{compact(activity.lines_added)}</b>{" "}
+            <b className="ink-removed">−{compact(activity.lines_removed)}</b> ·{" "}
             <b>{compact(activity.authors)}</b> authors
           </span>
         </div>
@@ -1502,7 +1502,7 @@ function ActivityPanel({
           </p>
           <ActivityTiles activity={activity} />
           <ChurnChart points={activity.points} label={`Weekly change in ${name}`} />
-          {activity.pullRequests && (
+          {activity.pull_requests && (
             <>
               <p className="act-note act-prs-note">
                 <b>Pull requests</b> opened in the window that touched <code>{name}</code>, by the
@@ -1511,7 +1511,7 @@ function ActivityPanel({
                 PR abandoned without merging often has no file record at all — dependable for what
                 shipped, indicative for what did not.
               </p>
-              <PullRequestTiles prs={activity.pullRequests} />
+              <PullRequestTiles prs={activity.pull_requests} />
             </>
           )}
         </>

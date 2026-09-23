@@ -65,6 +65,24 @@ impl Catalog {
         })
     }
 
+    /// The delivery seam into studio-insight, resolved per request.
+    ///
+    /// Lazily like the queue, and for the same reason: this gear must not care
+    /// which gear initialized first. Absent when studio-insight is not part of
+    /// the assembly, which is a 503 rather than an empty chart — a screen that
+    /// cannot ask must not draw zeros.
+    fn delivery(&self) -> ApiResult<Arc<dyn crate::insight::port::ComponentDelivery>> {
+        self.hub
+            .get::<dyn crate::insight::port::ComponentDelivery>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "delivery activity is not available in this deployment                          (studio-insight is not configured)",
+                    )
+                    .create()
+            })
+    }
+
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
         self.hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
@@ -707,6 +725,12 @@ pub struct CandidateDto {
     /// `built`, `docs-only`, or `unknown` — and `unknown` is not a maybe: it
     /// means the question does not apply or was never asked.
     pub built: String,
+    /// What the Gearbox engine said: `runs`, `blocked`, or `undescribed`.
+    /// A different question from `built` — that one says somebody wrote code,
+    /// this one says the engine can put it into a product.
+    pub composable: String,
+    /// The engine's reason, when `blocked`. Null otherwise.
+    pub composable_why: Option<String>,
 }
 
 #[derive(Debug)]
@@ -774,6 +798,8 @@ async fn compose_plan(
                     score: u32::try_from(c.score).unwrap_or(u32::MAX),
                     why: c.why,
                     built: c.built.as_str().to_owned(),
+                    composable: c.composable.as_str().to_owned(),
+                    composable_why: c.composable_why,
                 })
                 .collect(),
         })
@@ -781,6 +807,200 @@ async fn compose_plan(
     Ok(Json(ComposePlanDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
+    }))
+}
+
+/// The window a caller gets when it does not ask for one.
+const DEFAULT_ACTIVITY_DAYS: u32 = 30;
+/// The longest window offered. Two years of weekly buckets is already more
+/// bars than a chart can draw, and a bigger window is a bigger upstream query
+/// for a picture nobody can read.
+const MAX_ACTIVITY_DAYS: u32 = 730;
+
+/// One weekly bar of a gear's churn.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ActivityPointDto {
+    /// The bucket's first day (a Monday), `YYYY-MM-DD`.
+    pub date: String,
+    pub commits: u64,
+    pub lines_added: i64,
+    pub lines_removed: i64,
+}
+
+/// Pull requests touching one gear, by the state they are in now.
+///
+/// Attributed through the files their commits changed, so one touching three
+/// gears is counted in all three: these rows do NOT partition the repository,
+/// and a screen showing them has to say so. Dependable for what merged (~97%
+/// of merged pull requests reach their files), only indicative for what was
+/// abandoned (~29% of closed, ~46% of open).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearPullRequestsDto {
+    pub open: u64,
+    pub merged: u64,
+    pub closed: u64,
+    pub total: u64,
+    /// Mean hours from opened to merged. Null when nothing merged in the
+    /// window — which is not the same fact as zero hours.
+    pub merged_cycle_hours: Option<f64>,
+    pub authors: u64,
+}
+
+/// What one gear did over the window.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearActivityDto {
+    /// The component's catalogue name, so a caller can join it to its row.
+    pub gear: String,
+    pub commits: u64,
+    pub files_changed: u64,
+    pub lines_added: i64,
+    pub lines_removed: i64,
+    pub authors: u64,
+    /// Null when no pull request in the window touched this gear. Not zeros:
+    /// nobody opened one is a different fact from the question not being asked.
+    pub pull_requests: Option<GearPullRequestsDto>,
+    /// Ascending by date, gaps filled with zeros so a quiet week reads as
+    /// quiet rather than as missing.
+    pub points: Vec<ActivityPointDto>,
+}
+
+/// Where the numbers came from, and what was left out getting them.
+///
+/// Separate from the envelope because it is not a second collection anybody
+/// pages through — it is what a reader needs in order to know whether the list
+/// beside it is the whole answer. Rule B1: the envelope carries one collection,
+/// and here that is the gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ActivitySourcesDto {
+    /// The window the warehouse actually used, which is not always the one
+    /// asked for. Null when it answered nothing at all.
+    pub from: Option<String>,
+    pub to: Option<String>,
+    /// A query was capped: the ranking is a prefix, not the whole of it.
+    pub truncated: bool,
+    /// The repositories asked about, most components first. Fewer than the
+    /// catalogue spans when it spans more than the per-answer limit — so a
+    /// partial answer is not read as a complete one.
+    pub repositories: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearActivityListDto {
+    pub items: Vec<GearActivityDto>,
+    pub total: u32,
+    pub sources: ActivitySourcesDto,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ActivityQuery {
+    /// How many days back to look, ending today. Defaults to 30.
+    pub days: Option<u32>,
+}
+
+/// GET /studio-components-catalog/v1/activity — what moved, per gear.
+///
+/// The catalogue is read here rather than sent: the rules that turn it into a
+/// question — grouping by repository, naming each crate's directory, resolving
+/// the collisions — are what this endpoint exists to own, and a caller passing
+/// its own grouping would be keeping a copy of them.
+async fn gear_activity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<ActivityQuery>,
+) -> ApiResult<JsonBody<GearActivityListDto>> {
+    let days = query.days.unwrap_or(DEFAULT_ACTIVITY_DAYS);
+    if !(1..=MAX_ACTIVITY_DAYS).contains(&days) {
+        // Named field, named reason: `invalid_argument` refuses to be built
+        // without one, which is the discipline a query parameter wants.
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "days",
+                format!("must be between 1 and {MAX_ACTIVITY_DAYS}, got {days}"),
+                "INVALID",
+            )
+            .create());
+    }
+    let delivery = catalog.delivery()?;
+
+    let (nodes, _truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
+    let plan = super::activity::plan_requests(&components);
+
+    let from = super::activity::days_ago(days);
+    let mut pages = Vec::with_capacity(plan.len());
+    let mut pr_pages = Vec::with_capacity(plan.len());
+    let mut repositories = Vec::with_capacity(plan.len());
+    for repo in &plan {
+        let query = crate::insight::port::DeliveryQuery {
+            repository: repo.repository.clone(),
+            from: Some(from.clone()),
+            to: None,
+            components: repo.components.clone(),
+            limit: u32::try_from(repo.components.len()).ok(),
+        };
+        repositories.push(repo.repository.clone());
+        pages.push(
+            delivery
+                .metrics(&query)
+                .await
+                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?,
+        );
+        // Pull requests are a second question with its own coverage, so they
+        // get their own failure: a warehouse without them is not a reason to
+        // lose the commit activity as well.
+        if let Ok(page) = delivery.pull_requests(&query).await {
+            pr_pages.push(page);
+        }
+    }
+
+    let (rows, truncated, window) = super::activity::index_of(&pages, &pr_pages);
+    let items: Vec<GearActivityDto> = rows
+        .into_iter()
+        .map(|row| GearActivityDto {
+            gear: row.gear,
+            commits: row.commits,
+            files_changed: row.files_changed,
+            lines_added: row.lines_added,
+            lines_removed: row.lines_removed,
+            authors: row.authors,
+            pull_requests: row.pull_requests.map(|pr| GearPullRequestsDto {
+                open: pr.open,
+                merged: pr.merged,
+                closed: pr.closed,
+                total: pr.total,
+                merged_cycle_hours: pr.merged_cycle_hours,
+                authors: pr.authors,
+            }),
+            points: row
+                .points
+                .into_iter()
+                .map(|p| ActivityPointDto {
+                    date: p.date,
+                    commits: p.commits,
+                    lines_added: p.lines_added,
+                    lines_removed: p.lines_removed,
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Json(GearActivityListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        sources: ActivitySourcesDto {
+            from: window.as_ref().map(|(f, _)| f.clone()),
+            to: window.map(|(_, t)| t),
+            truncated,
+            repositories,
+        },
     }))
 }
 
@@ -1493,6 +1713,49 @@ pub fn register_routes(
         .json_request::<ComposeRequest>(openapi, "The capabilities to fill")
         .handler(compose_plan)
         .json_response_with_schema::<ComposePlanDto>(openapi, StatusCode::OK, "The plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/activity")
+        .operation_id("studio_components_catalog.list_gear_activity")
+        .summary("What moved in each catalogued gear, over a window")
+        .description(
+            "Commits, churn, authors and pull requests per GEAR, from the \
+             delivery warehouse. The warehouse keys its git metrics by \
+             repository and a gear is a directory inside one — `gears-rust` \
+             alone holds around ninety — so this operation groups the \
+             catalogue by repository, names the directory each crate publishes \
+             from, and joins the answers back together. A caller that did that \
+             itself would be keeping a second copy of the rules, which is where \
+             this came from.\n\n\
+             The busiest repositories are asked, up to a small limit, because \
+             each is one round trip upstream; `repositories` names the ones \
+             that were. `points` is weekly with the gaps filled, so a quiet \
+             week draws as a quiet week rather than being skipped.\n\n\
+             PULL REQUESTS ARE ATTRIBUTED THROUGH THE FILES their commits \
+             touched, so one touching three gears is counted in all three and \
+             these rows do not partition the repository. Dependable for what \
+             merged (~97% reach their files), indicative for what was \
+             abandoned (~29% of closed, ~46% of open). A gear no pull request \
+             touched carries null rather than zeros. CI is absent and cannot \
+             be added: a pipeline run names a commit, not a file.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "days",
+            false,
+            "How many days back to look, ending today (default 30)",
+        )
+        .handler(gear_activity)
+        .json_response_with_schema::<GearActivityListDto>(
+            openapi,
+            StatusCode::OK,
+            "Per-gear delivery activity",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

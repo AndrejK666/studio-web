@@ -17,12 +17,18 @@ import {
   withCorpusSource,
 } from "./product";
 
-const cand = (name: string, kind = "gear", built: Candidate["built"] = "built"): Candidate => ({
+const cand = (
+  name: string,
+  kind = "gear",
+  built: Candidate["built"] = "built",
+  composable: Candidate["composable"] = "undescribed",
+): Candidate => ({
   name,
   kind,
   built,
   score: 1,
   why: [],
+  composable,
 });
 
 const row = (capability: string, ...candidates: Candidate[]): PlanRow => ({

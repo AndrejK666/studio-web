@@ -533,7 +533,7 @@ function SuggestedComponents({
                               </span>
                             )}
                             {c.composable === "blocked" && (
-                              <span title={`Described, but cannot run from this corpus: ${c.composableWhy ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
+                              <span title={`Described, but cannot run from this corpus: ${c.composable_why ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
                                 BLOCKED
                               </span>
                             )}
