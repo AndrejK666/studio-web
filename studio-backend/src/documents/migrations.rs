@@ -28,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0007::Migration),
             Box::new(m0008::Migration),
             Box::new(m0009::Migration),
+            Box::new(m0010::Migration),
         ]
     }
 }
@@ -566,6 +567,10 @@ mod m0008 {
 /// be the worse outcome — and dropped when it does, because then the
 /// customisation it overrides is already there under the right name.
 ///
+/// That first half was wrong: such a row SHADOWS the built-in rather than
+/// sitting beside it, so the rename handed the workspace a `prd` that is not
+/// one. `m0010` deletes what this re-keyed. This migration is left as it ran.
+///
 /// `down` cannot restore what a key meant, only what it was called, so it does
 /// not try: the split of `prd` back into two types is not a migration, it is a
 /// product decision that was made and then unmade.
@@ -635,6 +640,59 @@ mod m0009 {
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Ok(())
+        }
+    }
+}
+
+/// `m0009` re-keyed a workspace's own row for a removed type instead of
+/// dropping it, and that was the wrong call.
+///
+/// The reasoning there was that losing somebody's edited template to a rename
+/// is worse than keeping it. It is not, because a row in this table does not
+/// sit beside the built-in — it SHADOWS it. A workspace that had customised
+/// `upstream_reqs` came out of that migration with a `prd` whose template is
+/// Upstream Requirements: no questionnaire, no required PRD sections, and so
+/// no capabilities for the Composer and nothing for `classify` to recognise a
+/// real PRD by. Found by reading the live catalogue back off a stand after the
+/// migration ran, where `prd` answered to the name "Upstream Requirements".
+///
+/// So those rows go. What is lost is a workspace's wording of a template for a
+/// type that no longer exists; what is regained is the PRD every other part of
+/// the product assumes. The name is what identifies them — no one names their
+/// PRD "Upstream Requirements" — and both migrations are kept rather than
+/// `m0009` being edited, because `m0009` has already run where this matters.
+mod m0010 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0010_a_renamed_row_must_not_shadow_the_prd"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"DELETE FROM studio_document_types
+  WHERE key = 'prd' AND name IN ('Upstream Requirements', 'App Spec');",
+                )
+                .await?;
             Ok(())
         }
 
