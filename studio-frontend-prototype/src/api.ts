@@ -295,6 +295,26 @@ export interface SpecRow {
 
 export type SpecFilter = "not-scanned" | "needs-review" | "bound" | "not-documents" | "all";
 
+/** One document's share of the duplication a `bloat` run found.
+ *
+ *  Folded by `spec_quality/analysis.rs` when the analysis runs, and stored in
+ *  the result as `by_document`. A run made before that existed does not carry
+ *  it, and a reader is told so rather than shown an empty table. */
+export interface DocDuplication {
+  path: string;
+  /** Clusters this document takes part in — a per-cluster fact, so a file
+   *  appearing three times in one cluster still takes part in one. */
+  clusters: number;
+  /** Times its text turns up in one, which is the count that can exceed
+   *  `clusters`. */
+  occurrences: number;
+  /** Words in those occurrences, in the detector's own unit. */
+  words: number;
+  /** The other documents it shares text with. Empty means it only repeats
+   *  itself — a different and lesser complaint. */
+  partners: string[];
+}
+
 export interface Capability {
   key: string;
   label: string;

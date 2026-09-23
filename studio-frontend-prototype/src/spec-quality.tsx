@@ -17,7 +17,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiUrl } from "./api";
-import { duplicationByDocument, weightedMixture } from "./analysis";
+import { weightedMixture } from "./analysis";
+import type { DocDuplication } from "./api";
 import type { ArtifactNode } from "./api";
 import { currentCursor, followRun } from "./studio-events";
 
@@ -1431,7 +1432,12 @@ function BloatView({ view }: { view: TaskView }) {
   const m = r.metrics ?? {};
   const clusters: any[] = Array.isArray(r.clusters) ? r.clusters : [];
   const [onlyCross, setOnlyCross] = useState(false);
-  const byDoc = useMemo(() => duplicationByDocument(clusters), [clusters]);
+  // Read rather than worked out: `spec_quality/analysis.rs` folds the clusters
+  // into one row per document when the analysis runs. A run made before that
+  // existed carries no `by_document`, and the table says so rather than
+  // drawing itself empty.
+  const byDoc: DocDuplication[] = Array.isArray(r.by_document) ? r.by_document : [];
+  const foldedHere = Array.isArray(r.by_document);
   const worst = byDoc[0]?.words ?? 0;
   const scanned = Array.isArray(r.paths) ? r.paths.length : null;
   const shown = useMemo(() => {
@@ -1455,6 +1461,12 @@ function BloatView({ view }: { view: TaskView }) {
       {/* Which document, before which passage. The clusters below say what
           repeats; this says where the work is, and it is the only view here
           that a reader can act on without reading every cluster first. */}
+      {!foldedHere && clusters.length > 0 && (
+        <p className="sq-muted">
+          This run predates the per-document reading — the clusters below are all it recorded.
+          Run the analysis again to see which documents to fix.
+        </p>
+      )}
       {byDoc.length > 0 && (
         <>
           <div className="sq-section-title">

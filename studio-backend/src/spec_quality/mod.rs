@@ -24,6 +24,7 @@
 //! (`GET /spec-quality/v1/tasks/{id}`), which is what the run's handler and
 //! anyone debugging the upstream use.
 
+pub mod analysis;
 pub mod analyze_task;
 pub mod batch_task;
 pub mod config;
