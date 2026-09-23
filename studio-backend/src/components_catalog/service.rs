@@ -7,7 +7,7 @@
 //! back to an in-memory store so the pipeline still runs (and the portal still
 //! shows a catalog) when the graph feature is off.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -821,7 +821,13 @@ impl CatalogService {
                             // merged with, and no profile: the fields a gear
                             // keeps in an editable profile are, for a kit, the
                             // manifest itself.
-                            if let Some(payload) = rg.payload {
+                            if let Some(mut payload) = rg.payload {
+                                if let Some(obj) = payload.as_object_mut() {
+                                    obj.insert(
+                                        "synced_from".to_string(),
+                                        Value::String(rg.source_repo.clone()),
+                                    );
+                                }
                                 kit_values.insert(rg.crate_name.clone(), payload);
                                 continue;
                             }
@@ -838,6 +844,13 @@ impl CatalogService {
                             let status = gear_status(&rg.fields);
                             if let Some(obj) = entry.as_object_mut() {
                                 obj.insert("kind".to_string(), Value::String(kind));
+                                // Which scan produced this, so a later run can
+                                // tell "gone from the source" from "never came
+                                // from a source at all".
+                                obj.insert(
+                                    "synced_from".to_string(),
+                                    Value::String(rg.source_repo.clone()),
+                                );
                                 if let Some(status) = status {
                                     obj.insert(
                                         "status".to_string(),
@@ -916,12 +929,92 @@ impl CatalogService {
         let stored = all_nodes.len();
         self.sink.upsert(ctx, &all_nodes, &version_edges).await?;
 
+        // A component removed from its source is removed from the catalogue.
+        //
+        // The sync only ever added before, so a node outlived whatever produced
+        // it: `studio-kit-sdlc` and `studio-kits-pm` sat in the graph named
+        // after their repositories long after the scan learned to name a kit
+        // after itself, and the page showed four kits where there were two.
+        //
+        // Scoped to what this run actually read, in two ways, because a sync
+        // may name any subset of its sources. A node is a candidate only if it
+        // says it came from a repository THIS run read (`synced_from`), and it
+        // is deleted only if this run did not produce it. A crates.io-only run
+        // reads no repository and therefore deletes nothing.
+        //
+        // `synced_from` is what makes this safe rather than the `repository`
+        // field, which looks like it would do: fifty-nine of the hundred and
+        // eighteen gear nodes on this stand come from crates.io alone and still
+        // name `gears-rust` as their repository. Pruning on that would delete
+        // every one of them.
+        let read_repos: BTreeSet<String> = sources
+            .repos
+            .iter()
+            .map(|r| r.repo.trim().to_string())
+            .collect();
+        let mut pruned = 0usize;
+        if !read_repos.is_empty() {
+            let produced: BTreeSet<&str> =
+                all_nodes.iter().map(|n| n.instance_id.as_str()).collect();
+            // Which repository modes this run actually read. A run over the
+            // gears repository must not clear kits it never looked for.
+            let read_modes: BTreeSet<&str> = sources
+                .repos
+                .iter()
+                .map(|r| match RepoMode::parse(&r.mode) {
+                    RepoMode::Kits => "kits",
+                    RepoMode::Frontx => "frontx",
+                    RepoMode::Gears => "gears",
+                })
+                .collect();
+            for (type_id, scan_only) in [
+                (gts::GEAR_TYPE, false),
+                (gts::KIT_TYPE, read_modes.contains("kits")),
+                (gts::FRONTX_TYPE, read_modes.contains("frontx")),
+            ] {
+                let existing = match self.sink.list(ctx, Some(type_id)).await {
+                    Ok(nodes) => nodes,
+                    // A type the graph has never held is not an error, and a
+                    // listing that fails must not fail the sync that already
+                    // stored its results.
+                    Err(error) => {
+                        tracing::warn!(%error, type_id, "components-catalog: prune skipped a type");
+                        continue;
+                    }
+                };
+                for node in stale(&existing, &produced, &read_repos, scan_only) {
+                    let from = node
+                        .value
+                        .get("synced_from")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    match self.sink.delete(ctx, &node.instance_id).await {
+                        Ok(()) => {
+                            pruned += 1;
+                            tracing::info!(
+                                instance_id = %node.instance_id,
+                                source = %from,
+                                "components-catalog: pruned, gone from its source"
+                            );
+                        }
+                        Err(error) => tracing::warn!(
+                            %error,
+                            instance_id = %node.instance_id,
+                            "components-catalog: prune failed"
+                        ),
+                    }
+                }
+            }
+        }
+
         tracing::info!(
             gears = gears_total,
             kits = kits_total,
             micro_frontends = frontx_total,
             versions = versions_total,
             stored,
+            pruned,
             "components-catalog: sync stored"
         );
         let counts = CatalogCounts {
@@ -1544,6 +1637,51 @@ fn build_gear(detail: &CrateDetail) -> (Vec<GtsNode>, Vec<GtsEdge>, usize) {
     (nodes, edges, vers)
 }
 
+/// Which of the catalogue's existing nodes this run has made stale.
+///
+/// A node qualifies on two counts, and both matter:
+///
+/// * it says it came from a repository THIS run read (`synced_from`), so a run
+///   that names a subset of the sources cannot delete what it did not look at,
+///   and a crates.io-only run — which reads no repository — deletes nothing;
+/// * this run did not produce it, which is what "gone from its source" means.
+///
+/// A node with no `synced_from` is stale only when nothing BUT a repository
+/// scan can have produced its type — `scan_only`. A gear can come from
+/// crates.io, and on this stand fifty-nine of the hundred and eighteen do; they
+/// name `gears-rust` as their repository, which is why the obvious key does not
+/// work and why an unrecorded source must not condemn them. A kit and a
+/// micro-frontend have no such half: crates.io produces neither, so an
+/// unrecorded source there is a node written before the field existed, and the
+/// run that reads its repository is the one that should clear it.
+fn stale<'a>(
+    existing: &'a [GtsNode],
+    produced: &BTreeSet<&str>,
+    read_repos: &BTreeSet<String>,
+    scan_only: bool,
+) -> Vec<&'a GtsNode> {
+    existing
+        .iter()
+        .filter(|node| !produced.contains(node.instance_id.as_str()))
+        .filter(|node| {
+            match node
+                .value
+                .get("synced_from")
+                .and_then(Value::as_str)
+                .filter(|from| !from.is_empty())
+            {
+                Some(from) => read_repos.contains(from),
+                // No source recorded. For a gear that is the crates.io half of
+                // the catalogue and must be left alone. For a type only a
+                // repository scan can produce it is a node from a scan that ran
+                // before the field existed, and leaving it would mean the
+                // catalogue never recovers from its own history.
+                None => scan_only,
+            }
+        })
+        .collect()
+}
+
 /// Whether a scanned component is a gear or a request for one.
 ///
 /// `draft` means a directory of documents: a `gear.toml`, maybe a PRD and a
@@ -1600,6 +1738,134 @@ fn classify_kind(name: &str) -> &'static str {
         "plugin"
     } else {
         "gear"
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn node(id: &str, synced_from: Option<&str>) -> GtsNode {
+        let value = match synced_from {
+            Some(from) => json!({ "name": id, "synced_from": from }),
+            None => json!({ "name": id }),
+        };
+        GtsNode {
+            type_id: gts::GEAR_TYPE,
+            instance_id: id.to_string(),
+            value,
+        }
+    }
+
+    fn repos(list: &[&str]) -> BTreeSet<String> {
+        list.iter().map(|r| r.to_string()).collect()
+    }
+
+    #[test]
+    fn a_component_gone_from_a_repository_this_run_read_is_stale() {
+        let existing = vec![node(
+            "kit:studio-kit-sdlc",
+            Some("constructorfabric/studio-kit-sdlc"),
+        )];
+        let produced = BTreeSet::from(["kit:sdlc"]);
+        let out = stale(
+            &existing,
+            &produced,
+            &repos(&["constructorfabric/studio-kit-sdlc"]),
+            false,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].instance_id, "kit:studio-kit-sdlc");
+    }
+
+    #[test]
+    fn a_component_this_run_produced_is_not_stale() {
+        let existing = vec![node("gear:a", Some("constructorfabric/gears-rust"))];
+        let produced = BTreeSet::from(["gear:a"]);
+        assert!(
+            stale(
+                &existing,
+                &produced,
+                &repos(&["constructorfabric/gears-rust"]),
+                false,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_crates_io_component_is_never_stale() {
+        // Fifty-nine of the hundred and eighteen gear nodes on this stand come
+        // from crates.io alone, and they name `gears-rust` as their repository.
+        // Nothing but `synced_from` tells them apart from a scanned one.
+        let existing = vec![node("gear:published-only", None)];
+        let produced = BTreeSet::new();
+        assert!(
+            stale(
+                &existing,
+                &produced,
+                &repos(&["constructorfabric/gears-rust"]),
+                false,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_run_that_did_not_read_the_repository_deletes_nothing_from_it() {
+        // A sync may name any subset of its sources. One that reads only the
+        // FrontX repository must not delete a gear it never looked for.
+        let existing = vec![node("gear:a", Some("constructorfabric/gears-rust"))];
+        let produced = BTreeSet::new();
+        assert!(
+            stale(
+                &existing,
+                &produced,
+                &repos(&["constructorfabric/gears-frontx"]),
+                false,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_kit_written_before_the_field_existed_is_cleared_by_the_run_that_reads_its_repository() {
+        // `studio-kit-sdlc` and `studio-kits-pm` were written by a scan that
+        // named a kit after its repository and recorded no source. Nothing but
+        // a repository scan produces a kit, so there is no crates.io half to
+        // protect and leaving them would mean the catalogue never recovers.
+        let existing = vec![node("kit:studio-kit-sdlc", None)];
+        let produced = BTreeSet::from(["kit:sdlc"]);
+        let out = stale(
+            &existing,
+            &produced,
+            &repos(&["constructorfabric/studio-kit-sdlc"]),
+            true,
+        );
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_gear_with_no_recorded_source_survives_even_then() {
+        // The flag is per type. A gear's unrecorded source means crates.io.
+        let existing = vec![node("gear:published-only", None)];
+        let produced = BTreeSet::new();
+        assert!(
+            stale(
+                &existing,
+                &produced,
+                &repos(&["constructorfabric/gears-rust"]),
+                false
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_empty_source_name_is_not_a_match() {
+        let existing = vec![node("gear:a", Some(""))];
+        let produced = BTreeSet::new();
+        assert!(stale(&existing, &produced, &repos(&[""]), false).is_empty());
     }
 }
 

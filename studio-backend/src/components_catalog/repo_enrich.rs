@@ -49,6 +49,16 @@ pub struct RepoGear {
     pub kind: Option<String>,
     /// Category / domain, surfaced on the component node for filtering.
     pub category: Option<String>,
+    /// The repository this was scanned out of, `owner/name`.
+    ///
+    /// Written onto the node as `synced_from`, which is what makes pruning
+    /// possible: a component that a scan stops producing can only be deleted
+    /// safely if the catalogue knows the scan produced it in the first place.
+    /// The `repository` field cannot answer that — on this stand fifty-nine of
+    /// the hundred and eighteen gear nodes come from crates.io alone and still
+    /// name `gears-rust` as their repository, so pruning on it would delete
+    /// them.
+    pub source_repo: String,
     /// The node payload, when this kind of component has a model of its own.
     ///
     /// A gear's payload is assembled by the service from crates.io and the
@@ -202,6 +212,7 @@ impl RepoEnricher {
                 out.push(RepoGear {
                     crate_name: kit.slug,
                     description: kit.description,
+                    source_repo: self.repo.clone(),
                     fields: Value::Null,
                     uml: Vec::new(),
                     kind: Some("kit".to_string()),
@@ -249,6 +260,7 @@ impl RepoEnricher {
             out.push(RepoGear {
                 crate_name: format!("cf-gears-{slug}"),
                 description,
+                source_repo: self.repo.clone(),
                 fields,
                 uml,
                 kind,
@@ -420,6 +432,7 @@ impl RepoEnricher {
         RepoGear {
             crate_name: comp,
             description: desc,
+            source_repo: self.repo.clone(),
             fields: Value::Object(f),
             uml: Vec::new(),
             kind: Some("frontx".to_string()),
