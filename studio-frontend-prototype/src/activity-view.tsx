@@ -12,17 +12,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api } from "./api";
-import { activityFeed, matchesQuery, type ActivityEvent, type EventKind } from "./activity";
+import { api, type ActivityEvent, type ActivityEventKind } from "./api";
+import { matchesQuery } from "./activity-filter";
 import { errText, relTime } from "./format";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 
-/** One page of the walk, and the most it reads. A feed nobody can scroll past
- *  two thousand rows of is a feed that needed a filter, not more pages. */
-const PAGE = 200;
-const MAX = 2000;
 
-const KINDS: { id: EventKind; label: string }[] = [
+const KINDS: { id: ActivityEventKind; label: string }[] = [
   { id: "check", label: "Checks" },
   { id: "comment", label: "Comments" },
 ];
@@ -30,7 +26,7 @@ const KINDS: { id: EventKind; label: string }[] = [
 /** The product prints a full timestamp, not "4h ago": an activity row is
  *  evidence, and evidence carries a date. The relative form goes on the title,
  *  where it answers "recently?" without costing the column its precision. */
-function stamp(recorded: string | null): { text: string; title: string } {
+function stamp(recorded: string | null | undefined): { text: string; title: string } {
   if (!recorded) return { text: "—", title: "this record carries no time" };
   const ms = Date.parse(recorded);
   if (Number.isNaN(ms)) return { text: recorded, title: recorded };
@@ -57,39 +53,17 @@ export function ActivityView({
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [kinds, setKinds] = useState<Set<EventKind>>(() => new Set(KINDS.map((k) => k.id)));
+  const [kinds, setKinds] = useState<Set<ActivityEventKind>>(() => new Set(KINDS.map((k) => k.id)));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [view, setView] = useViewMode("activity.view");
 
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const walk = async (type: string) => {
-        const out: { instance_id: string; value: Record<string, unknown> }[] = [];
-        let cursor: string | undefined;
-        do {
-          const page = await api.listArtifactNodes(token, type, projectTenantId, cursor, PAGE);
-          out.push(...(page.nodes ?? []));
-          cursor = page.next_cursor;
-        } while (cursor && out.length < MAX);
-        return out;
-      };
-      // Bindings name the documents. Read alongside, and allowed to fail on
-      // its own: losing the names leaves rows reading by path, which is worse
-      // than a name and much better than no feed.
-      const [findings, comments, bindings] = await Promise.all([
-        walk("spec_finding"),
-        walk("comment"),
-        api.docBindings(token, workspaceId, projectTenantId, { limit: 500 }).catch(() => ({
-          items: [],
-          total: 0,
-        })),
-      ]);
-      const nameByNode = new Map<string, string>();
-      for (const b of bindings.items ?? []) {
-        nameByNode.set(b.node_id, b.path.split("/").pop() ?? b.path);
-      }
-      setEvents(activityFeed(findings, comments, (id) => nameByNode.get(id)));
+      // Both kinds, in one feed, ordered and named by the gear that owns the
+      // nodes. This used to be two paged walks plus a read of every binding
+      // to name the rows.
+      setEvents((await api.activityFeed(token, projectTenantId)).items);
     } catch (e) {
       setErr(errText(e));
       setEvents([]);
@@ -105,7 +79,7 @@ export function ActivityView({
     [events, kinds, query],
   );
 
-  const toggleKind = (kind: EventKind) =>
+  const toggleKind = (kind: ActivityEventKind) =>
     setKinds((current) => {
       const next = new Set(current);
       // Never empty: unticking the last kind would show nothing and read as a

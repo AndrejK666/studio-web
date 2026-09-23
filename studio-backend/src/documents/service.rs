@@ -997,6 +997,58 @@ pub struct ClassifyOutcome {
     pub kept: usize,
 }
 
+/// How many binding names one feed will resolve. Far above any real
+/// project, and present only so a runaway cannot pull an unbounded set.
+const BINDING_NAME_CAP: usize = 20_000;
+
+#[async_trait::async_trait]
+impl crate::documents::port::BindingNames for DocumentsService {
+    async fn names_for(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        // Bindings hang off the parent workspace and are scoped to the
+        // project. Without the parent there is nothing to read, and reading
+        // the wrong rows would be worse than reading none.
+        let workspace_id = self
+            .resolve_tenant(ctx, project_id)
+            .await?
+            .parent_id
+            .map(|p| p.0)
+            .ok_or_else(|| anyhow::anyhow!("project {project_id} has no parent workspace"))?;
+        // Every binding, because the caller is naming a feed rather than
+        // paging one: a name missing from the map costs a row its title, and
+        // the map is one string per file.
+        let (rows, _total) = self
+            .list_bindings(
+                workspace_id,
+                Some(project_id),
+                PageQuery {
+                    offset: Some(0),
+                    limit: Some(BINDING_NAME_CAP),
+                },
+            )
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|b| {
+                // The path's last segment — the same rule the Specs list uses,
+                // so one file does not read as two different things on two
+                // screens.
+                let name = b
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&b.path)
+                    .to_owned();
+                (b.node_id, name)
+            })
+            .collect())
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::documents::port::DocumentCounter for DocumentsService {
     async fn count_bindings(

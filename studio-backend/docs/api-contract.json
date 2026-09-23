@@ -338,6 +338,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/activity",
+      "operation_id": "studio_artifact_ingest.list_activity",
+      "tag": "StudioArtifactIngest",
+      "summary": "What was checked and what was said, in one feed",
+      "authenticated": true,
+      "responses": [
+        "ActivityFeedListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/edges",
       "operation_id": "studio_artifact_ingest.list_edges",
       "tag": "StudioArtifactIngest",
@@ -377,6 +393,22 @@
         "RepoFilesResponse"
       ],
       "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/source-activity",
+      "operation_id": "studio_artifact_ingest.list_source_activity",
+      "tag": "StudioArtifactIngest",
+      "summary": "A week of movement per repository, from the graph a sync filled",
+      "authenticated": true,
+      "responses": [
+        "SourceActivityListDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "500"
       ]

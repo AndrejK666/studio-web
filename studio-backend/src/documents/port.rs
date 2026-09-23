@@ -92,3 +92,34 @@ pub trait DocumentCounter: Send + Sync + 'static {
 /// second, drifting copy of this rule is how the two ends start disagreeing
 /// about what a document is.
 pub use super::classify::is_prose_path;
+
+/// What each ingested file was decided to BE CALLED, for whoever lists what
+/// happened to it.
+///
+/// The Activity feed names a check by the document it is about. A
+/// `spec_finding` node carries its subject's node id and, usually, its path —
+/// but the binding is the record that says which file this project decided
+/// that node is, and it is the better name when both exist. The browser used
+/// to read all the bindings itself to build this map, beside the two graph
+/// walks it was already doing.
+///
+/// Absent is a normal state: losing the names leaves rows reading by path,
+/// which is worse than a name and very much better than no feed.
+#[async_trait]
+pub trait BindingNames: Send + Sync + 'static {
+    /// `node id -> display name` for every binding in this project.
+    ///
+    /// The name is the path's last segment, which is what a reader recognises
+    /// — the same rule the Specs list uses, so one file does not read as two
+    /// different things on two screens.
+    ///
+    /// The PROJECT alone: bindings are stored against its parent workspace and
+    /// scoped to it, and a caller asking what a file is called should not have
+    /// to know that. Resolving the parent is this gear's job because it is
+    /// this gear's storage layout.
+    async fn names_for(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+}
