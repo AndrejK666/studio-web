@@ -71,6 +71,22 @@ function profileText(profile?: Record<string, unknown>): string {
  *  Read from `auto.crates.n`, which the scan writes for a Rust gear and omits
  *  for anything it did not scan that way. Zero is the load-bearing value: a
  *  directory holding `docs/` and `gear.toml` and no crate. */
+/** What the catalogue says, when it says anything.
+ *
+ *  The server computes this during the scan now (`gear_status`), so every
+ *  consumer gets one answer instead of each deriving its own from the crate
+ *  count. Reading the profile stays as the fallback: a graph synced before the
+ *  status existed carries the count and not the word. */
+export function buildStateOf(
+  node: CatalogNode,
+  profile?: Record<string, unknown>,
+): BuildState {
+  const status = node.value.status;
+  if (status === "draft") return "docs-only";
+  if (status === "published") return "built";
+  return buildState(profile);
+}
+
 export function buildState(profile?: Record<string, unknown>): BuildState {
   const auto = profile?.auto;
   if (!auto || typeof auto !== "object") return null;
@@ -157,7 +173,7 @@ export function composePlan(
           kind: g.value.kind ?? "gear",
           score: why.size,
           why: Array.from(why),
-          built: buildState(profile),
+          built: buildStateOf(g, profile),
         };
       })
       .filter((c) => c.score > 0)

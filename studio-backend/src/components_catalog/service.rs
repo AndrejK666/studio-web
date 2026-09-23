@@ -834,8 +834,16 @@ impl CatalogService {
                             let entry = gear_values.entry(rg.crate_name.clone()).or_insert_with(
                                 || json!({ "name": rg.crate_name, "title": rg.crate_name }),
                             );
+                            // Whether this is a gear or a request for one.
+                            let status = gear_status(&rg.fields);
                             if let Some(obj) = entry.as_object_mut() {
                                 obj.insert("kind".to_string(), Value::String(kind));
+                                if let Some(status) = status {
+                                    obj.insert(
+                                        "status".to_string(),
+                                        Value::String(status.to_string()),
+                                    );
+                                }
                                 if let Some(c) = &rg.category {
                                     obj.insert("category".to_string(), Value::String(c.clone()));
                                 }
@@ -1536,6 +1544,51 @@ fn build_gear(detail: &CrateDetail) -> (Vec<GtsNode>, Vec<GtsEdge>, usize) {
     (nodes, edges, vers)
 }
 
+/// Whether a scanned component is a gear or a request for one.
+///
+/// `draft` means a directory of documents: a `gear.toml`, maybe a PRD and a
+/// DESIGN, and no crate under it. Ten of the forty-two gears in `gears-rust`
+/// are in that state, `approval-service` and `graph-analytics` among them, and
+/// interviewing Acronis (2026-09-18) that was the complaint, made while reading
+/// the repository listing on screen: "тут есть документы, дизайн, но ничего
+/// нету, реализации никакой нет. Вот как это считать?"
+///
+/// The catalogue answered that per consumer until now — each one derived it
+/// from the crate count itself — so this computes it once, where the scan
+/// already has the number.
+///
+/// ── Two things this deliberately does NOT do ─────────────────────────────
+///
+/// It does not read "or no tests", although the scenario draft defines `draft`
+/// that way and the data looks available: `unitmods` counts `*_tests.rs` files
+/// and `integfiles` counts `tests/*.rs`. Applying it would move five more gears
+/// to `draft`, and three of those five — `llm-gateway`, `model-registry` and
+/// `simple-user-settings` — are tested inline with `#[cfg(test)]` in their
+/// source (five, nine and nine files respectively), which leaves no separate
+/// test file to count. Seeing those would mean reading every `.rs` in every
+/// gear rather than the file tree, which is a different cost class. Until the
+/// scan can see an inline test, "no test file" is not "untested", and a status
+/// that calls a working gear a request is worse than no status.
+///
+/// It does not emit `certified`. That rung of the ladder means an
+/// expert-verified agent and granted approvals, and this deployment has
+/// neither concept — there is no approval anywhere in the backend to read.
+/// Emitting it from something else would put a word in the catalogue that
+/// nothing backs.
+/// `None` when the scan did not count crates for this component at all.
+///
+/// Absent is not zero. A component nobody walked has not been assessed, and
+/// writing `draft` for it would put "cannot be plugged in" on something no
+/// scan ever looked at. The consumer sees no status and says so, the same way
+/// the matcher already distinguishes "no implementation" from "not scanned".
+fn gear_status(fields: &Value) -> Option<&'static str> {
+    let crates = fields
+        .get("crates")
+        .and_then(|v| v.get("n"))
+        .and_then(Value::as_u64)?;
+    Some(if crates == 0 { "draft" } else { "published" })
+}
+
 /// Classify a crate by name so the UI can group them: gear / sdk / plugin /
 /// toolkit. Purely cosmetic — the graph keeps the full name.
 fn classify_kind(name: &str) -> &'static str {
@@ -1547,6 +1600,34 @@ fn classify_kind(name: &str) -> &'static str {
         "plugin"
     } else {
         "gear"
+    }
+}
+
+#[cfg(test)]
+mod gear_status_tests {
+    use super::*;
+
+    fn fields(crates: u64) -> Value {
+        json!({ "crates": { "n": crates, "v": crates.to_string() } })
+    }
+
+    #[test]
+    fn a_directory_of_documents_is_a_request_for_a_gear() {
+        assert_eq!(gear_status(&fields(0)), Some("draft"));
+    }
+
+    #[test]
+    fn a_gear_with_a_crate_under_it_is_published() {
+        assert_eq!(gear_status(&fields(1)), Some("published"));
+        assert_eq!(gear_status(&fields(3)), Some("published"));
+    }
+
+    #[test]
+    fn a_component_the_scan_did_not_count_has_no_status_at_all() {
+        // Absent is not zero. Writing `draft` here would put "cannot be
+        // plugged in" on a component no scan ever looked at.
+        assert_eq!(gear_status(&json!({})), None);
+        assert_eq!(gear_status(&json!({ "crates": {} })), None);
     }
 }
 
