@@ -297,6 +297,32 @@ pub struct SaveProjectProductRequest {
     pub profile: Option<String>,
 }
 
+/// Picks to complete into a set the engine can resolve.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct CompleteProductRequest {
+    pub gears: Vec<String>,
+}
+
+/// One change completion made, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductChangeDto {
+    /// Crate name.
+    pub gear: String,
+    /// True when added, false when taken out.
+    pub added: bool,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CompleteProductDto {
+    /// The completed picks, by crate name.
+    pub gears: Vec<String>,
+    pub changes: Vec<ProductChangeDto>,
+}
+
 /// Compose a product from picked gears and ask the engine about it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -1000,6 +1026,33 @@ async fn save_project_product(
     Ok(Json(dto))
 }
 
+async fn complete_product(
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<CompleteProductRequest>,
+) -> ApiResult<JsonBody<CompleteProductDto>> {
+    let completion = catalog
+        .gearbox()?
+        .complete(&body.gears)
+        .await
+        .map_err(|e| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(CompleteProductDto {
+        gears: completion.gears,
+        changes: completion
+            .changes
+            .into_iter()
+            .map(|c| ProductChangeDto {
+                gear: c.gear,
+                added: c.added,
+                reason: c.reason,
+            })
+            .collect(),
+    }))
+}
+
 async fn gearbox_status(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<GearboxStatusDto>> {
@@ -1661,6 +1714,27 @@ pub fn register_routes(
             .error_401(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/gearbox/complete")
+        .operation_id("studio_components_catalog.complete_product")
+        .summary("Complete picked gears into a set the Gearbox engine can resolve")
+        .description(
+            "Drops what the gear catalogue proves cannot run (a gear with required \
+             configuration nobody set, a host no plugin fills, a plugin with no \
+             host, a gear that must run with one of those), adds a plugin for a \
+             host that has none and a REST host for REST gears, and says why for \
+             each. Writes nothing.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(complete_product)
+        .json_request::<CompleteProductRequest>(openapi, "Picked gears")
+        .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox")
         .operation_id("studio_components_catalog.gearbox_status")

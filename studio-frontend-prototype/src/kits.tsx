@@ -5,6 +5,7 @@ import {
   type GearboxStatus,
   type KitInstallation,
   type KitMaterialization,
+  type ProductChange,
   type ProductPreview,
   type ProjectProduct,
   type ProjectRepository,
@@ -425,7 +426,7 @@ function SuggestedComponents({
       // per capability. One that has picks keeps them: suggestions are a
       // source of candidates, not the product.
       if (product.composing && product.loaded && product.picks.length === 0) {
-        product.setPicks(() => defaultPicks(next));
+        void product.seed(defaultPicks(next));
       }
     } catch (cause) {
       setError(errText(cause));
@@ -562,6 +563,14 @@ type ProductState = {
   setProfile: (profile: string) => void;
   /** Re-read the record, after a preview wrote its verdict into it. */
   refresh: () => Promise<void>;
+  /** What completion last changed, with its reasons; empty when nothing did. */
+  adjustments: ProductChange[];
+  /** Bumped whenever completion replaces the picks, so a preview can follow. */
+  completedAt: number;
+  /** Start the product from these picks, completed into a set that resolves. */
+  seed: (picks: string[]) => Promise<void>;
+  /** Complete the current picks. */
+  complete: () => Promise<void>;
   saveError: string | null;
 };
 
@@ -575,6 +584,8 @@ function useProjectProduct(token: string, projectId: string, projectName: string
   const [picks, setPicksState] = useState<string[]>([]);
   const [profile, setProfileState] = useState("dev");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [adjustments, setAdjustments] = useState<ProductChange[]>([]);
+  const [completedAt, setCompletedAt] = useState(0);
   // Set by the person's changes and cleared by a write, so what was just
   // read from the server is never written straight back.
   const dirty = useRef(false);
@@ -623,6 +634,20 @@ function useProjectProduct(token: string, projectId: string, projectName: string
     setPicksState(update);
   }, []);
 
+  // Completion is advice the person can undo: it replaces the picks, keeps
+  // its reasons on screen, and if the engine is unreachable the picks stand.
+  const completeInto = async (start: string[]) => {
+    try {
+      const done = await api.completeProduct(token, start);
+      setAdjustments(done.changes);
+      setPicks(() => done.gears);
+      setCompletedAt(Date.now());
+    } catch (cause) {
+      setSaveError(errText(cause));
+      setPicks(() => start);
+    }
+  };
+
   return {
     gearbox,
     composing: gearbox?.enabled === true,
@@ -642,6 +667,10 @@ function useProjectProduct(token: string, projectId: string, projectName: string
       if (saved) setRecord(saved);
     },
     saveError,
+    adjustments,
+    completedAt,
+    seed: (start) => completeInto(start),
+    complete: () => completeInto(picks),
   };
 }
 
@@ -745,6 +774,12 @@ function ProductCard({
     }
   };
 
+  // Completion replaced the picks: show at once what the engine makes of them.
+  useEffect(() => {
+    if (product.completedAt > 0 && picks.length > 0) void run(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.completedAt]);
+
   const errors = preview?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
   const warnings = preview?.diagnostics.filter((d) => d.severity === "warning").length ?? 0;
   const last = record?.last_preview;
@@ -789,6 +824,29 @@ function ProductCard({
           ))
         )}
       </div>
+      {product.adjustments.length > 0 && (
+        <div style={{ fontSize: 12, marginTop: 8 }}>
+          <div style={{ opacity: 0.7 }}>Adjusted so the product can resolve — each can be undone:</div>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {product.adjustments.map((c) => (
+              <li key={`${c.gear}-${c.added}`}>
+                <b>{c.added ? "+" : "−"}</b> <ComponentLink nav={nav} name={c.gear} />
+                <span style={{ opacity: 0.75 }}> — {c.reason}</span>
+                {!c.added && !picks.includes(c.gear) && (
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => product.setPicks((current) => [...current, c.gear])}
+                    style={{ border: "none", background: "transparent", color: "var(--primary)", cursor: "pointer", fontSize: 12 }}
+                  >
+                    put back
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {product.saveError && <div className="error">Not saved: {product.saveError}</div>}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
@@ -801,6 +859,14 @@ function ProductCard({
         </select>
         <button className="primary" disabled={busy !== null || picks.length === 0} onClick={() => void run(false)}>
           {busy === "preview" ? "Resolving…" : "Preview product"}
+        </button>
+        <button
+          className="ghost"
+          disabled={busy !== null || picks.length === 0}
+          title="Take out what the catalogue shows cannot run, add the plugins and hosts that are missing, then preview"
+          onClick={() => void product.complete()}
+        >
+          Make it resolve
         </button>
         {!preview && last && (
           <span style={{ fontSize: 12 }}>
