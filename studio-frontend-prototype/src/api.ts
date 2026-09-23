@@ -1793,6 +1793,20 @@ export const api = {
       sources: { files_known: boolean; counts: { queue: SpecFilter; count: number }[] };
     }>(`/studio-documents/v1/spec-rows?project_id=${encodeURIComponent(projectId)}`, token),
 
+  /** How many specs came out of each repository.
+   *
+   *  Two sources with no join between them: the artifact graph holds the file
+   *  and its repository, studio-documents holds the binding that says what the
+   *  file is. This page used to hold both, by paging the entire file listing.
+   *
+   *  `files_known` false means every count is MISSING rather than zero. */
+  specsPerSource: (token: string, scope: string) =>
+    request<{
+      items: { repo: string; specs: number }[];
+      total: number;
+      files_known: boolean;
+    }>(`/studio-documents/v1/specs-per-source?scope=${encodeURIComponent(scope)}`, token),
+
   /** What a project has of each document type it declares.
    *
    *  The grouping and the coverage rule live in `documents/spec_rows.rs`: a

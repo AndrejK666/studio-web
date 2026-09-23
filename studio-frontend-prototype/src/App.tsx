@@ -6798,13 +6798,6 @@ function ProjectFiles({
   );
 }
 
-/** Page size for the one graph walk this screen still makes.
- *
- *  The movement columns beside it are a single request now; this one pairs
- *  file nodes with the bindings the documents gear holds, which is a seam
- *  rather than a rule and is left for its own change. */
-const FILE_PAGE = 200;
-
 /** The product's source glyph: a branch forking off a trunk. Inline rather
  *  than in the shared icon set, because nothing else asks for it. */
 function GitBranchIcon() {
@@ -6875,6 +6868,9 @@ function ProjectSources({
    *  repo node id. A binding carries a repo-RELATIVE path and nothing else, so
    *  this is joined through the file node, which knows where it came from. */
   const [specsPerRepo, setSpecsPerRepo] = useState<Record<string, number>>({});
+  /** Whether the specs could be counted at all. False means every count is
+   *  MISSING rather than zero — the column then reads "—" for every row. */
+  const [specsKnown, setSpecsKnown] = useState(true);
   const [view, setView] = useViewMode("sources.view");
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -6927,40 +6923,20 @@ function ProjectSources({
       setActivity({});
     }
 
-    // Specs per source. Two listings rather than one join, because the graph
-    // does not hold the binding: the documents gear does, and the only thing
-    // tying them together is the file node's id.
-    //
-    // STILL A WALK, and the last one on this screen: the movement columns
-    // beside it are one request now. Folding this one needs the binding and
-    // the file node in the same place, which is a seam rather than a rule —
-    // left for its own change.
+    // Specs per source, counted by the gear that holds the bindings — it asks
+    // the artifact graph for the file→repository map itself. This page used to
+    // page the whole file listing to build that map, then read every binding.
     try {
-      const repoOfNode: Record<string, string> = {};
-      let cursor: string | undefined;
-      do {
-        const page = await api.listArtifactNodes(token, "file", ws.id, cursor, FILE_PAGE);
-        for (const n of page.nodes ?? []) {
-          if (typeof n.value.repo === "string") repoOfNode[n.instance_id] = n.value.repo;
-        }
-        cursor = page.next_cursor;
-      } while (cursor);
-      const bindings = await api.docBindings(token, parentWorkspaceId ?? ws.id, ws.id, {
-        limit: 500,
-      });
+      const page = await api.specsPerSource(token, ws.id);
       const counts: Record<string, number> = {};
-      for (const b of bindings.items ?? []) {
-        // Only a file somebody decided about counts. A scanner's guess is not
-        // a spec, and `not_a_document` is a decision that it never was.
-        if (b.state !== "confirmed" && b.state !== "manual") continue;
-        const repo = repoOfNode[b.node_id];
-        if (repo) counts[repo] = (counts[repo] ?? 0) + 1;
-      }
+      for (const row of page.items) counts[row.repo] = row.specs;
       setSpecsPerRepo(counts);
+      setSpecsKnown(page.files_known);
     } catch {
-      // The columns read as "\u2014" rather than as zero: nothing was counted, and
-      // nothing counted is not the same as nothing happened.
-      setActivity({});
+      // The column reads as "—" rather than as zero: nothing was counted, and
+      // nothing counted is not the same as nothing found.
+      setSpecsPerRepo({});
+      setSpecsKnown(false);
     }
   }, [token, ws.id, parentWorkspaceId]);
 
@@ -7061,7 +7037,13 @@ function ProjectSources({
                     <span className="src-dot" aria-hidden />
                     {r.source}
                   </td>
-                  <td className="pnum">{rollupText(specsPerRepo[node?.instance_id ?? ""] ?? null)}</td>
+                  {/* A repository we DID count and found nothing in has zero
+                      specs; one we could not count has none. Both used to read
+                      "—", which is the only reading that is wrong for one of
+                      them — a deliberate change, and what `files_known` is for. */}
+                  <td className="pnum">
+                    {rollupText(specsKnown ? (specsPerRepo[node?.instance_id ?? ""] ?? 0) : null)}
+                  </td>
                   <td>
                     {act ? (
                       <div className="src-prs">

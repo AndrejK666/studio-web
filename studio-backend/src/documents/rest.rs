@@ -2196,12 +2196,156 @@ fn parse_project_id(raw: &str) -> ApiResult<Uuid> {
     })
 }
 
+// ── how many specs each repository holds ─────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecsPerSourceQuery {
+    /// Workspace or project tenant whose repositories these are.
+    pub scope: String,
+}
+
+/// One repository, and how many of this scope's specs came out of it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecsPerSourceDto {
+    /// Instance id of the repo node — how a caller joins this to its row.
+    pub repo: String,
+    /// Files in it that somebody DECIDED are documents. A scanner's guess is
+    /// not a spec, and `not_a_document` is a decision that it never was.
+    pub specs: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecsPerSourceListDto {
+    pub items: Vec<SpecsPerSourceDto>,
+    pub total: u32,
+    /// False when the ingested files could not be read, so every count is
+    /// missing rather than zero. A screen must render that as `—`.
+    pub files_known: bool,
+}
+
+/// GET /studio-documents/v1/specs-per-source — specs by the repository they
+/// came from.
+///
+/// TWO SOURCES AND NO JOIN BETWEEN THEM, which is why this exists here. The
+/// artifact graph holds the file and which repository it came from; this gear
+/// holds the binding that says what the file IS. The only thing tying them
+/// together is the file node's id, so somebody has to hold both — and it used
+/// to be the browser, which walked the whole file listing to do it.
+async fn specs_per_source(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecsPerSourceQuery>,
+) -> ApiResult<JsonBody<SpecsPerSourceListDto>> {
+    let scope = query.scope.trim();
+    let scope_id = Uuid::parse_str(scope).map_err(|_| {
+        DocumentsError::invalid_argument()
+            .with_field_violation("scope", "must be a uuid".to_owned(), "INVALID")
+            .create()
+    })?;
+    service.authorize(&ctx, scope_id).await.map_err(no_tenant)?;
+
+    // Which repository each ingested file came from. Absent means the count is
+    // UNKNOWN — a screen must not draw that as zero, because "no specs here"
+    // and "nobody could tell me" are different sentences.
+    let (repo_of, files_known) = match quality.files() {
+        Some(files) => match files.list_files(&ctx, scope).await {
+            Ok(found) => (
+                found
+                    .into_iter()
+                    .filter(|f| !f.repo.is_empty())
+                    .map(|f| (f.node_id, f.repo))
+                    .collect::<std::collections::HashMap<String, String>>(),
+                true,
+            ),
+            Err(_) => (std::collections::HashMap::new(), false),
+        },
+        None => (std::collections::HashMap::new(), false),
+    };
+
+    // The bindings of this scope. A workspace reads its own; a project reads
+    // its own plus what it inherits, which is the pairing every other Documents
+    // read uses and the one this has to repeat to count the same rows.
+    let (workspace_id, project_id) = match service.parent_of(&ctx, scope_id).await {
+        Ok(Some(parent)) => (parent, Some(scope_id)),
+        _ => (scope_id, None),
+    };
+    let (bindings, _) = service
+        .list_bindings(
+            workspace_id,
+            project_id,
+            PageQuery {
+                offset: None,
+                limit: Some(MAX_SPEC_ROWS),
+            },
+        )
+        .await
+        .map_err(internal)?;
+
+    let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for binding in bindings {
+        // Only a file somebody decided about counts.
+        if !matches!(binding.state.as_str(), "confirmed" | "manual") {
+            continue;
+        }
+        if let Some(repo) = repo_of.get(&binding.node_id) {
+            *counts.entry(repo.clone()).or_insert(0) += 1;
+        }
+    }
+
+    let items: Vec<SpecsPerSourceDto> = counts
+        .into_iter()
+        .map(|(repo, specs)| SpecsPerSourceDto { repo, specs })
+        .collect();
+    Ok(Json(SpecsPerSourceListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        files_known,
+    }))
+}
+
 pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<DocumentsService>,
     hub: Arc<toolkit::client_hub::ClientHub>,
 ) -> Router {
+    router = OperationBuilder::get("/studio-documents/v1/specs-per-source")
+        .operation_id("studio_documents.list_specs_per_source")
+        .summary("How many specs came out of each repository")
+        .description(
+            "Two sources and no join between them, which is the whole reason this is an \
+             operation rather than something a caller assembles. The artifact graph holds the \
+             file and which repository it was ingested from; this gear holds the binding that \
+             says what that file IS. The only thing tying the two together is the file node's \
+             id, so somebody has to hold both — and it used to be the browser, which paged the \
+             entire file listing to do it.\n\n\
+             ONLY A FILE SOMEBODY DECIDED ABOUT COUNTS. A binding in `confirmed` or `manual` \
+             state is a decision; `detected` is the scanner's guess, still in the review queue, \
+             and `not_a_document` is a decision that it never was one. Counting a guess would \
+             credit a repository with specs the project has not agreed to.\n\n\
+             `files_known` is false when the ingested files could not be read at all. Every \
+             count is then MISSING rather than zero, and a screen must render `—`: `no specs \
+             here` and `nobody could tell me` are different sentences.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("scope", true, "Workspace or project tenant to count within")
+        .handler(specs_per_source)
+        .json_response_with_schema::<SpecsPerSourceListDto>(
+            openapi,
+            StatusCode::OK,
+            "Specs per repository",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/spec-rows")
         .operation_id("studio_documents.list_spec_rows")
         .summary("Every spec a project has, however it got there")
