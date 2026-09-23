@@ -259,6 +259,15 @@ pub struct DocumentDto {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Where this document would go in a repository: `docs/<type>/<slug>.md`.
+    ///
+    /// A SUGGESTION, not a contract — the publish form shows it in a field
+    /// somebody can edit, and the write takes whatever path it is given. It is
+    /// served because the convention is one: it decided where every document
+    /// this product has written ended up, and it lived only in one portal's
+    /// source. A second portal inventing its own would scatter the same
+    /// documents across two layouts in one repository.
+    pub suggested_path: String,
 }
 
 #[derive(Debug)]
@@ -680,6 +689,8 @@ fn parse_status(s: &str) -> Option<DocStatus> {
 }
 
 fn document_dto(d: Document, inherited: bool) -> DocumentDto {
+    // Read before the fields move into the DTO below.
+    let suggested_path = super::paths::suggested_path(&d.type_key, &d.title);
     DocumentDto {
         id: d.id,
         tenant_id: d.tenant_id,
@@ -691,6 +702,7 @@ fn document_dto(d: Document, inherited: bool) -> DocumentDto {
         status: d.status,
         conforms: d.conforms,
         capabilities: d.capabilities,
+        suggested_path,
         created_by: d.created_by,
         created_at: d.created_at,
         updated_at: d.updated_at,

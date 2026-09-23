@@ -1719,6 +1719,19 @@ async fn list_versions(
     {
         nodes.retain(|n| n.value.get("crate").and_then(Value::as_str) == Some(name));
     }
+    // Newest first, decided here. The projection has no order worth relying
+    // on, so whoever displayed this used to sort it — and "which version is
+    // newer" is a judgement, not a formatting choice.
+    nodes.sort_by(|a, b| {
+        let num = |value: &Value| {
+            value
+                .get("num")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        super::values::newer_first(&num(&a.value), &num(&b.value))
+    });
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,

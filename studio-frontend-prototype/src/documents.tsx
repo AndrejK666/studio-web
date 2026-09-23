@@ -2622,20 +2622,16 @@ const PUBLISH_MODES: { id: PublishMode; label: string; hint: string }[] = [
 
 /** Where a document of this type belongs in a repository, by convention.
  *  Only a starting suggestion — the path is editable. */
-function suggestedPath(doc: Doc): string {
-  return `docs/${doc.type_key}/${slugPath(doc.title)}.md`;
-}
-
-/** A filename-safe slug of a document title. */
-function slugPath(title: string): string {
-  return (
-    title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "untitled"
-  );
+/** The branch a publish opens, from the path the server suggested.
+ *
+ *  The LAYOUT convention — `docs/<type>/<slug>.md` — moved to
+ *  `documents/paths.rs` and arrives as `doc.suggested_path`: it decided where
+ *  every document this product has committed ended up, and a second portal
+ *  inventing its own would scatter them across two layouts in one repository.
+ *  The branch name is this screen's own and stays here. */
+function branchFor(doc: Doc): string {
+  const leaf = (doc.suggested_path ?? "").split("/").pop() ?? "";
+  return `studio/${leaf.replace(/\.md$/, "") || "untitled"}`;
 }
 
 function PublishModal({
@@ -2653,11 +2649,13 @@ function PublishModal({
 }) {
   const target = useRepoTarget(token, tenantId);
   const [mode, setMode] = useState<PublishMode>("pull_request");
-  const [branch, setBranch] = useState(`studio/${slugPath(doc.title)}`);
+  const [branch, setBranch] = useState(branchFor(doc));
   const [base, setBase] = useState("");
   const [prTitle, setPrTitle] = useState(`Publish ${doc.title}`);
   const [prBody, setPrBody] = useState("");
-  const [path, setPath] = useState(suggestedPath(doc));
+  // Editable: the server suggests, the person decides, and the write
+  // takes whatever it is given.
+  const [path, setPath] = useState(doc.suggested_path ?? "");
   const [message, setMessage] = useState(`docs: publish ${doc.title}`);
   const [busy, setBusy] = useState(false);
   const [written, setWritten] = useState<WrittenFile | null>(null);

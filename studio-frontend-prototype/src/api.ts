@@ -1554,6 +1554,9 @@ export interface Doc {
   created_by: string;
   created_at: string;
   updated_at: string;
+  /** Where this document would go in a repository — `docs/<type>/<slug>.md`.
+   *  A suggestion the publish form prefills and a person may edit. */
+  suggested_path?: string;
 }
 export interface DocSectionStatus {
   key: string;
