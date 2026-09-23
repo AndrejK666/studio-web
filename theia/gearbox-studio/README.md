@@ -44,7 +44,7 @@ collab strip, Orca and the Explorer stay as they are.
 | | | |
 |---|---|---|
 | P1 | this package, the engine service, every view reachable from View → Views | done |
-| P2 | native GDL language, markers and completion; retire `theia/gdl-language` | |
+| P2 | native GDL language, markers, completion and the catalogue checks on any `product.gdl`; `theia/gdl-language` leaves the image (kept as the plain VS Code client) | done |
 | P3 | graph, inspector, lock, conflicts, generate verified in a session | |
 | P4 | start screen and the create/add wizards verified | |
 | P5 | the `@Gearbox` chat agent and tools, through Studio's model | |
