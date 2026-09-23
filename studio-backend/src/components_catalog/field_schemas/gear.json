@@ -408,10 +408,10 @@
     },
     {
      "key": "gts",
-     "label": "Extension points (GTS)",
+     "label": "Registers GTS types",
      "source": {
       "class": "repo",
-      "ref": "toolkit-gts"
+      "ref": "src/gts.rs"
      },
      "kind": "bool",
      "lamp": false

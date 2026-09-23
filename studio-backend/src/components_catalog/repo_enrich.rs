@@ -682,8 +682,18 @@ impl RepoEnricher {
             .any(|p| p.contains(&format!("testing/e2e/suites/{}", slug.replace('-', "_"))));
         f.insert("e2e".into(), boolean(e2e));
 
-        // extension points (GTS): a toolkit-gts reference in any manifest heuristic
-        // is content-heavy; presence of a gts.rs module is a cheap proxy.
+        // Whether the gear registers GTS types, by the presence of a `gts.rs`
+        // module.
+        //
+        // This was labelled "Extension points (GTS)" and read as a proxy for
+        // the question `has_extension_point` now answers outright. They are not
+        // the same question and the data says so: across the forty-two gears in
+        // `gears-rust` the two disagree eighteen times, in both directions —
+        // `bss/ledger` has a `gts.rs` and declares no extension point,
+        // `chat-engine` declares one and has no `gts.rs`. Registering types is
+        // not offering somebody else a place to put an implementation, and two
+        // fields on one page claiming to answer the same thing while
+        // disagreeing on nearly half of them is worse than either alone.
         let gts = rel
             .iter()
             .any(|p| p.ends_with("/gts.rs") || p == &"src/gts.rs");
