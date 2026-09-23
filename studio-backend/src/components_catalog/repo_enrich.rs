@@ -49,6 +49,16 @@ pub struct RepoGear {
     pub kind: Option<String>,
     /// Category / domain, surfaced on the component node for filtering.
     pub category: Option<String>,
+    /// The repository this was scanned out of, `owner/name`.
+    ///
+    /// Written onto the node as `synced_from`, which is what makes pruning
+    /// possible: a component that a scan stops producing can only be deleted
+    /// safely if the catalogue knows the scan produced it in the first place.
+    /// The `repository` field cannot answer that — on this stand fifty-nine of
+    /// the hundred and eighteen gear nodes come from crates.io alone and still
+    /// name `gears-rust` as their repository, so pruning on it would delete
+    /// them.
+    pub source_repo: String,
     /// The node payload, when this kind of component has a model of its own.
     ///
     /// A gear's payload is assembled by the service from crates.io and the
@@ -202,6 +212,7 @@ impl RepoEnricher {
                 out.push(RepoGear {
                     crate_name: kit.slug,
                     description: kit.description,
+                    source_repo: self.repo.clone(),
                     fields: Value::Null,
                     uml: Vec::new(),
                     kind: Some("kit".to_string()),
@@ -249,6 +260,7 @@ impl RepoEnricher {
             out.push(RepoGear {
                 crate_name: format!("cf-gears-{slug}"),
                 description,
+                source_repo: self.repo.clone(),
                 fields,
                 uml,
                 kind,
@@ -420,6 +432,7 @@ impl RepoEnricher {
         RepoGear {
             crate_name: comp,
             description: desc,
+            source_repo: self.repo.clone(),
             fields: Value::Object(f),
             uml: Vec::new(),
             kind: Some("frontx".to_string()),
@@ -682,8 +695,18 @@ impl RepoEnricher {
             .any(|p| p.contains(&format!("testing/e2e/suites/{}", slug.replace('-', "_"))));
         f.insert("e2e".into(), boolean(e2e));
 
-        // extension points (GTS): a toolkit-gts reference in any manifest heuristic
-        // is content-heavy; presence of a gts.rs module is a cheap proxy.
+        // Whether the gear registers GTS types, by the presence of a `gts.rs`
+        // module.
+        //
+        // This was labelled "Extension points (GTS)" and read as a proxy for
+        // the question `has_extension_point` now answers outright. They are not
+        // the same question and the data says so: across the forty-two gears in
+        // `gears-rust` the two disagree eighteen times, in both directions —
+        // `bss/ledger` has a `gts.rs` and declares no extension point,
+        // `chat-engine` declares one and has no `gts.rs`. Registering types is
+        // not offering somebody else a place to put an implementation, and two
+        // fields on one page claiming to answer the same thing while
+        // disagreeing on nearly half of them is worse than either alone.
         let gts = rel
             .iter()
             .any(|p| p.ends_with("/gts.rs") || p == &"src/gts.rs");
