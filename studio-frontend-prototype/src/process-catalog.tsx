@@ -228,7 +228,7 @@ export function ProcessCatalogTab({
           </label>
           <label>
             requires
-            <input value={stRequires} onChange={(e) => setStRequires(e.target.value)} placeholder="prd, upstream_reqs" />
+            <input value={stRequires} onChange={(e) => setStRequires(e.target.value)} placeholder="prd, design" />
           </label>
           <label>
             gates

@@ -39,7 +39,7 @@ use serde_json::json;
 use tracing::warn;
 
 use super::analyze_task::{Watched, watch_upstream};
-use super::rest::ProxyState;
+use super::rest::{ProxyState, accepted_doc_types};
 use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Stable task type. A wire contract: stored on every queued run.
@@ -124,6 +124,15 @@ impl TaskHandler for AnalyzeBatchTask {
         let mut outcomes = Vec::with_capacity(total);
         let mut succeeded = 0usize;
 
+        // Asked once, before any submit: the workspace offers more document
+        // types than this service analyses -- it owns the templates, the
+        // service owns what it can judge -- and a document bound to one of the
+        // others used to be found out by posting it and reading
+        // `422 Input should be 'prd', 'design', ...` back. That is a round trip
+        // to be told something the service publishes, and a failure where the
+        // truthful word is "skipped".
+        let accepted = accepted_doc_types(&self.state).await;
+
         for (index, item) in payload.items.iter().enumerate() {
             if ctx.cancelled() {
                 // Everything analysed so far is real and worth keeping: report
@@ -140,6 +149,16 @@ impl TaskHandler for AnalyzeBatchTask {
 
             ctx.progress(format!("{}/{total} · {}", index + 1, item.id))
                 .await;
+
+            if let Some(why) = unanalysable(accepted.as_deref(), &item.payload) {
+                outcomes.push(ItemOutcome {
+                    id: item.id.clone(),
+                    task_id: None,
+                    status: "not_submitted",
+                    error: Some(why),
+                });
+                continue;
+            }
 
             // Submitted here rather than up front: submitting all two hundred
             // at once would queue an hour of upstream work that a Stop could no
@@ -246,6 +265,30 @@ impl TaskHandler for AnalyzeBatchTask {
     }
 }
 
+/// Why this document cannot be analysed, or `None` to go ahead.
+///
+/// Only one reason exists: the payload names a `doc_type` the service does not
+/// have. The message says what it accepts, because the person reading it is
+/// looking at a document type their workspace defines and the upstream has
+/// never heard of, and "unsupported" alone would not tell them which half to
+/// change.
+///
+/// `accepted: None` means the service did not say what it takes, and then
+/// nothing is refused here: being wrong in that direction costs one 422,
+/// while being wrong the other way would silently skip work the service would
+/// happily have done.
+fn unanalysable(accepted: Option<&[String]>, payload: &serde_json::Value) -> Option<String> {
+    let accepted = accepted?;
+    let doc_type = payload.get("doc_type")?.as_str()?;
+    if accepted.iter().any(|t| t == doc_type) {
+        return None;
+    }
+    Some(format!(
+        "Spec Quality does not analyse `{doc_type}` documents; it accepts {}",
+        accepted.join(", ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +321,41 @@ mod tests {
         let json = serde_json::to_value(&lost).unwrap();
         assert!(json.get("task_id").is_none(), "{json}");
         assert_eq!(json["error"], "upstream refused");
+    }
+    /// The case that sent this: a workspace type the service has no name for.
+    #[test]
+    fn a_document_type_the_service_does_not_have_is_skipped_rather_than_posted() {
+        let accepted = ["prd".to_owned(), "design".to_owned(), "adr".to_owned()];
+        let why = unanalysable(
+            Some(&accepted),
+            &serde_json::json!({ "doc_type": "app_spec", "text": "..." }),
+        )
+        .expect("app_spec is not one of the three");
+        assert!(why.contains("app_spec"), "{why}");
+        assert!(why.contains("prd, design, adr"), "{why}");
+    }
+
+    #[test]
+    fn a_document_type_the_service_has_goes_through() {
+        let accepted = ["prd".to_owned(), "design".to_owned()];
+        assert!(
+            unanalysable(
+                Some(&accepted),
+                &serde_json::json!({ "doc_type": "prd", "text": "..." })
+            )
+            .is_none()
+        );
+    }
+
+    /// Nothing is refused on a guess: a service that did not say what it takes
+    /// has not said it takes nothing, and the two detectors that need no type
+    /// send none.
+    #[test]
+    fn nothing_is_refused_when_the_service_did_not_say_or_the_payload_has_no_type() {
+        let payload = serde_json::json!({ "doc_type": "app_spec" });
+        assert!(unanalysable(None, &payload).is_none());
+        let accepted = ["prd".to_owned()];
+        assert!(unanalysable(Some(&accepted), &serde_json::json!({ "text": "..." })).is_none());
+        assert!(unanalysable(Some(&accepted), &serde_json::json!({ "doc_type": null })).is_none());
     }
 }

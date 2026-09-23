@@ -90,10 +90,12 @@ const DETECTORS: { id: Detector; label: string; blurb: string; setwise: boolean 
  *  This used to be a constant here — `["", "prd", "design", "adr", "feature",
  *  "decomposition"]` — and the trouble with a constant is that it is a copy of
  *  somebody else's list with no way of noticing when the two stop agreeing.
- *  They had: a workspace offers seven built-in document types and the service
- *  accepts five, so a document bound to `app_spec` or `upstream_reqs` reached
- *  the upstream and came back
+ *  They had: a workspace offered seven built-in document types and the
+ *  service accepts five, so a document bound to `app_spec` or `upstream_reqs`
+ *  reached the upstream and came back
  *  `422 Input should be 'prd', 'design', 'adr', 'feature' or 'decomposition'`.
+ *  The built-ins are those five now, but a workspace can still define its own
+ *  types, so the question is still worth asking.
  *
  *  The division of ownership this restores is the one that was always intended:
  *  the SERVICE owns which document types it can analyse; the WORKSPACE owns the

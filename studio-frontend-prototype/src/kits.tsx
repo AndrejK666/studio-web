@@ -369,7 +369,7 @@ export function ProjectKits({
  *
  * The question — "из каких компонентов, которые мы знаем в нашей системе, можно
  * построить этот продукт" — is the Components tab's question, and until now it
- * could only be asked from the other end: open one App Spec, press Compose, get
+ * could only be asked from the other end: open one PRD, press Compose, get
  * a modal. That reads one document; a project is a stack of them.
  *
  * Two things it deliberately does NOT do. It does not load on mount: the

@@ -1844,10 +1844,10 @@ mod tests {
     #[test]
     fn a_stage_carries_the_document_types_it_requires() {
         let mut row = stage_row(ORG, "prd", "PRD", 30, false);
-        row.requires = "[\"prd\",\"upstream_reqs\"]".to_string();
+        row.requires = "[\"prd\",\"design\"]".to_string();
         let stages = resolve_stages_of(&[ORG, WS], &[row], Some(WS));
         let prd = stages.iter().find(|s| s.key == "prd").expect("prd");
-        assert_eq!(prd.requires, vec!["prd", "upstream_reqs"]);
+        assert_eq!(prd.requires, vec!["prd", "design"]);
     }
     // -- capabilities --------------------------------------------------------
 

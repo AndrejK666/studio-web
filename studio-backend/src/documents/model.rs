@@ -164,9 +164,9 @@ impl CatalogEntry for Capability {
 /// The platform's capability vocabulary.
 ///
 /// Seeded from the prototype's `CAP_KEYWORDS`, with one addition it was missing:
-/// `domain`. The App Spec questionnaire's first question seeds it
-/// (`app_spec_type`), so every App Spec produced a capability the matcher had
-/// never heard of and silently scored against its own name.
+/// `domain`. The PRD questionnaire's first question seeds it (`prd_type`), so
+/// every intake document produced a capability the matcher had never heard of
+/// and silently scored against its own name.
 pub fn builtin_capabilities() -> Vec<Capability> {
     [
         (
@@ -814,39 +814,72 @@ fn q(
     }
 }
 
-/// The App Spec type: requirements intake for a new application. Unlike the KIT
-/// chain it is filled by answering a questionnaire, and each answer both seeds a
-/// capability for the Composer and lands in a section of the generated document.
-fn app_spec_type() -> DocumentType {
+/// The PRD: requirements intake for a new application, and the one type in this
+/// catalogue that asks rather than only templating. Each answer both seeds a
+/// capability for the Composer and lands in a section of the generated
+/// document.
+///
+/// This was `app_spec`, a seventh type beside a PRD of its own, and two things
+/// made that untenable. Spec Quality analyses five document types and
+/// `app_spec` was not one of them, so the intake document — the first
+/// thing a new project has — was the one document no detector would
+/// look at. And the two types asked the same question in different words: what
+/// are we building, for whom, on what. So there is one, it is called what the
+/// rest of the industry calls it, and its sections are the App Spec's, because
+/// those are the ones the questionnaire fills and the Composer reads.
+fn prd_type() -> DocumentType {
     DocumentType {
-        key: "app_spec".to_string(),
-        name: "App Spec".to_string(),
+        key: "prd".to_string(),
+        name: "Product Requirements (PRD)".to_string(),
         description:
-            "Requirements intake for a new app — answered as a questionnaire, then composed from gears."
+            "What we are building and for whom — answered as a questionnaire, then composed from gears."
                 .to_string(),
         gts_type_id: TYPE_GTS_ID.to_string(),
         owner: Owner::Builtin,
         hidden: false,
         template: TemplateSpec {
-            body: "---\nstatus: draft\nowner: \n---\n\n# App Spec — <title>\n\n## Overview\n\n## Users & Tenancy\n\n## Authentication & Authorization\n\n## Data & Storage\n\n## Integrations & External Systems\n\n## Billing\n\n## Compliance\n\n## Deployment\n".to_string(),
+            // A PRD as the world writes one, with the intake's technical
+            // questions after it. Both halves have to be here: the required six
+            // are how a PRD sitting in somebody's repository is recognised at
+            // all -- `classify` scores a document against the REQUIRED sections
+            // -- and the tail is what the questionnaire fills and the Composer
+            // reads capabilities from. Narrowing the catalogue to the five
+            // types Spec Quality analyses must not cost the classifier the one
+            // type it recognises best.
+            //
+            // So a document composed from the questionnaire starts out NOT
+            // conforming, and says which sections it still needs. That is the
+            // truth about it: the intake settles what is being built and for
+            // whom; the problem, the goals and the success metrics are still
+            // somebody's to write.
+            body: "---\nstatus: draft\nowner: \n---\n\n# PRD — <title>\n\n## Overview\n\n## Problem\n\n## Goals\n\n## Non-Goals\n\n## Users & Use Cases\n\n## Requirements\n\n## Authentication & Authorization\n\n## Data & Storage\n\n## Integrations & External Systems\n\n## Billing\n\n## Compliance\n\n## Deployment\n\n## Success Metrics\n".to_string(),
             sections: vec![
-                sec("overview", "Overview", true, Some(15)),
-                sec("users_tenancy", "Users & Tenancy", true, None),
-                sec("auth", "Authentication & Authorization", true, None),
-                sec("data", "Data & Storage", true, None),
+                sec("overview", "Overview", false, None),
+                sec("problem", "Problem", true, Some(30)),
+                sec("goals", "Goals", true, Some(15)),
+                sec("non_goals", "Non-Goals", true, None),
+                sec("users", "Users & Use Cases", true, Some(20)),
+                sec("requirements", "Requirements", true, Some(30)),
+                sec("auth", "Authentication & Authorization", false, None),
+                sec("data", "Data & Storage", false, None),
                 sec("integrations", "Integrations & External Systems", false, None),
                 sec("billing", "Billing", false, None),
                 sec("compliance", "Compliance", false, None),
-                sec("deployment", "Deployment", true, None),
+                sec("deployment", "Deployment", false, None),
+                sec("success_metrics", "Success Metrics", true, Some(10)),
             ],
             rules: Rules {
+                // `status` only. An owner is a workflow fact nothing in the
+                // questionnaire asks for, and a required field no route fills
+                // is a permanent complaint rather than a check.
                 front_matter: vec!["status".into()],
+                min_title_words: 1,
                 ..Rules::default()
             },
             questionnaire: vec![
                 q("product", "What are we building? Describe the product and its core domain.", QuestionKind::LongText, &[], true, Some("domain"), "overview", None),
-                q("primary_users", "Who are the primary users?", QuestionKind::Text, &[], true, None, "users_tenancy", None),
-                q("tenancy", "What is the tenancy model?", QuestionKind::Single, &["Single-tenant", "Multi-tenant", "Hierarchical tenants"], true, Some("tenancy"), "users_tenancy", None),
+                q("primary_users", "Who are the primary users?", QuestionKind::Text, &[], true, None, "users", None),
+                q("tenancy", "What is the tenancy model?", QuestionKind::Single, &["Single-tenant", "Multi-tenant", "Hierarchical tenants"], true, Some("tenancy"), "users", None),
                 q("auth", "How do users authenticate?", QuestionKind::Single, &["None", "Username & password", "SSO / OIDC (Keycloak)", "External IdP"], true, Some("auth"), "auth", None),
                 q("rbac", "Do you need roles and access control (RBAC)?", QuestionKind::Bool, &[], false, Some("authz"), "auth", None),
                 q("storage", "What data does the app store?", QuestionKind::Multi, &["Relational (Postgres)", "Documents / graph", "Files / blobs", "Full-text search"], true, Some("storage"), "data", None),
@@ -863,42 +896,7 @@ fn app_spec_type() -> DocumentType {
 /// The platform document-type catalogue.
 pub fn builtin_types() -> Vec<DocumentType> {
     vec![
-        builtin(
-            "upstream_reqs",
-            "Upstream Requirements",
-            "Raw stakeholder needs and constraints feeding the PRD.",
-            "---\nstatus: draft\nowner: \n---\n\n# Upstream Requirements — <title>\n\n## Context\n\n## Stakeholders\n\n## Needs\n\n## Constraints\n\n## Out of Scope\n",
-            vec![
-                sec("context", "Context", true, Some(20)),
-                sec("stakeholders", "Stakeholders", true, None),
-                sec("needs", "Needs", true, Some(20)),
-                sec("constraints", "Constraints", false, None),
-                sec("out_of_scope", "Out of Scope", false, None),
-            ],
-            Rules {
-                front_matter: vec!["status".into(), "owner".into()],
-                ..Rules::default()
-            },
-        ),
-        builtin(
-            "prd",
-            "Product Requirements (PRD)",
-            "What we are building and why, and how we will know it works.",
-            "---\nstatus: draft\nowner: \n---\n\n# PRD — <title>\n\n## Problem\n\n## Goals\n\n## Non-Goals\n\n## Users & Use Cases\n\n## Requirements\n\n## Success Metrics\n",
-            vec![
-                sec("problem", "Problem", true, Some(30)),
-                sec("goals", "Goals", true, Some(15)),
-                sec("non_goals", "Non-Goals", true, None),
-                sec("users", "Users & Use Cases", true, Some(20)),
-                sec("requirements", "Requirements", true, Some(30)),
-                sec("success_metrics", "Success Metrics", true, Some(10)),
-            ],
-            Rules {
-                front_matter: vec!["status".into(), "owner".into()],
-                min_title_words: 1,
-                ..Rules::default()
-            },
-        ),
+        prd_type(),
         builtin(
             "adr",
             "Architecture Decision Record",
@@ -964,6 +962,5 @@ pub fn builtin_types() -> Vec<DocumentType> {
                 ..Rules::default()
             },
         ),
-        app_spec_type(),
     ]
 }

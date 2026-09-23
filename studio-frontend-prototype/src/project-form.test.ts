@@ -136,14 +136,14 @@ describe("createSteps", () => {
 
   it("says where each kind's brief actually lands", () => {
     // The brief is not a note filed under `brief` any more. A gear's becomes
-    // the problem statement in its PRD; a product's becomes the App Spec's
-    // first answer, which is the questionnaire question it already was, word
-    // for word — "What are we building? Describe the product and its core
+    // the problem statement in its PRD; a product's becomes the first answer
+    // of the PRD questionnaire, which is the question it already was, word for
+    // word — "What are we building? Describe the product and its core
     // domain."
     const hint = (kind: "new_gears" | "product") =>
       createSteps(kind, "new").find((s) => s.key === "brief")!.hint;
     expect(hint("new_gears")).toContain("PRD");
-    expect(hint("product")).toContain("App Spec");
+    expect(hint("product")).toContain("PRD");
   });
 });
 

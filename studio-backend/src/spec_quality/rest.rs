@@ -65,12 +65,17 @@ pub struct SpecQualityStatusDto {
 /// than restated here.
 ///
 /// The portal used to carry its own copy of the document-type list, as a
-/// constant in the Spec Quality screen. It had drifted: the workspace offers
+/// constant in the Spec Quality screen. It had drifted: the workspace offered
 /// seven built-in types and the service accepts five, so `app_spec` and
 /// `upstream_reqs` reached the upstream only to come back as
 /// `422 Unprocessable Entity` — *"Input should be 'prd', 'design', 'adr',
 /// 'feature' or 'decomposition'"*. A list that has to be kept equal to
 /// somebody else's list by hand is a list that will disagree with it.
+///
+/// The built-in catalogue has since been narrowed to the five, so the drift
+/// that prompted this is gone. Asking is still how it is known: a workspace
+/// may define types of its own, and the service may learn or forget one
+/// without telling us.
 ///
 /// So it is asked for. The service is FastAPI and publishes `/openapi.json`;
 /// both facts below are read out of that document, which is the same source
@@ -509,6 +514,23 @@ async fn capabilities(
         })?;
 
     Ok(Json(read_capabilities(&schema)))
+}
+
+/// What the upstream will accept as a `doc_type`, or `None` when it does not
+/// say.
+///
+/// `None` and "an empty list" mean the same thing here and both mean *unknown*:
+/// a service that stopped declaring the enum has not stopped having one, so a
+/// caller must offer no constraint rather than conclude it accepts nothing.
+/// A failure to reach the service is the same answer — the submit itself will
+/// fail in a moment and say so properly.
+pub(super) async fn accepted_doc_types(state: &ProxyState) -> Option<Vec<String>> {
+    let schema = state
+        .upstream_json(reqwest::Method::GET, "/openapi.json", None)
+        .await
+        .ok()?;
+    let types = read_capabilities(&schema).doc_types;
+    (!types.is_empty()).then_some(types)
 }
 
 /// Pull the two vocabularies out of an OpenAPI document.
