@@ -58,4 +58,12 @@ if [ -n "$ARTIFACT_WORKDIR" ]; then
     chown studio:studio "$ARTIFACT_WORKDIR" 2>/dev/null || true
 fi
 
+# Gearbox corpus volume (product previews): the same root-owned mount, the same
+# fix, or the gear-corpus checkout cannot be created.
+GEARBOX_WORKDIR="${STUDIO_GEARBOX_WORKDIR:-}"
+if [ -n "$GEARBOX_WORKDIR" ]; then
+    mkdir -p "$GEARBOX_WORKDIR" 2>/dev/null || true
+    chown studio:studio "$GEARBOX_WORKDIR" 2>/dev/null || true
+fi
+
 exec gosu studio /app/studio-backend "$@"

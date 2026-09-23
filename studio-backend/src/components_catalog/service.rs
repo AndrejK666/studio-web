@@ -1441,6 +1441,31 @@ impl CatalogService {
         files: Vec<super::scaffold::ScaffoldFile>,
         open_pr: bool,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
+        self.write_to_project_repo(
+            ctx,
+            project_id,
+            Some(&format!("scaffold/{slug}")),
+            &files,
+            &format!("scaffold: {slug} gear skeleton"),
+            pr_title.as_deref(),
+        )
+        .await
+    }
+
+    /// Commit files into the project's connected gear repository: on a new
+    /// `branch` off its base branch (which must not exist yet), with a pull
+    /// request when `pr_title` is given, or with `branch: None` straight onto
+    /// the base branch. Returns the branch the commit landed on.
+    pub async fn write_to_project_repo(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        branch: Option<&str>,
+        files: &[super::scaffold::ScaffoldFile],
+        message: &str,
+        pr_title: Option<&str>,
+    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
         let node = self
             .get_project_repo(ctx, project_id)
             .await?
@@ -1486,19 +1511,16 @@ impl CatalogService {
         };
         let (_driver, auth, _conn) = connectors.driver_and_auth(ctx, tenant, id).await?;
 
-        let branch = format!("scaffold/{slug}");
-        let message = format!("scaffold: {slug} gear skeleton");
-        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
         let http = reqwest::Client::new();
         super::scaffold::write_scaffold(
             &http,
             &auth,
             &repo,
             &base_branch,
-            &branch,
-            &files,
-            &message,
-            pr_title.as_deref(),
+            branch.unwrap_or(&base_branch),
+            files,
+            message,
+            pr_title,
         )
         .await
     }
