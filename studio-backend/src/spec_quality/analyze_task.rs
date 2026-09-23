@@ -189,7 +189,9 @@ impl TaskHandler for AnalyzeTask {
             Watched::Succeeded(result) => {
                 let summary = summarise(&payload.detector, result.as_ref());
                 match result {
-                    Some(result) => TaskOutcome::done_with(summary, result),
+                    Some(result) => {
+                        TaskOutcome::done_with(summary, folded(&payload.detector, result))
+                    }
                     None => TaskOutcome::done(summary),
                 }
             }
@@ -215,6 +217,26 @@ impl TaskHandler for AnalyzeTask {
 
 /// One line for a person, from whatever the detector returned.
 ///
+/// The detector's answer, plus the reading of it that a screen needs.
+///
+/// `bloat` answers about TEXT — clusters of repeated passages — and the
+/// question somebody opened the tab with is which DOCUMENT to go and fix. That
+/// fold used to happen in the browser on every render; here it happens once,
+/// when the analysis does, and every consumer of the stored result inherits
+/// it. The detector's own fields are untouched beside it.
+///
+/// Only `bloat`: the other detectors answer about one document already.
+fn folded(detector: &str, mut result: serde_json::Value) -> serde_json::Value {
+    if detector != "bloat" {
+        return result;
+    }
+    let by_document = super::analysis::bloat_by_document(&result);
+    if let Some(object) = result.as_object_mut() {
+        object.insert("by_document".to_owned(), by_document);
+    }
+    result
+}
+
 /// The result shape belongs to the detector, not to us, so this reads only what
 /// every one of them has — and says the plain thing when it has nothing.
 fn summarise(detector: &str, result: Option<&serde_json::Value>) -> String {

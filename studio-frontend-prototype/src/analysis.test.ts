@@ -1,110 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { duplicationByDocument, weightedMixture } from "./analysis";
+import { weightedMixture } from "./analysis";
 
-/** Three clusters as the service actually returned them, trimmed to the keys
- *  the fold reads.
- *
- *  Taken from a real `bloat` run over fifteen issue/PR documents, not invented:
- *  the two lexical clusters each repeat inside ONE file (a CodeRabbit line
- *  posted three times in the same thread), and the semantic one spans two
- *  files. That mixture is the whole reason the fold distinguishes "repeats
- *  itself" from "repeats another document", and a hand-written fixture would
- *  most likely have had only the second kind. */
-const CLUSTERS = [
-  {
-    confidence: 0.756,
-    cross_section: true,
-    source: "semantic",
-    occurrences: [
-      {
-        file: "issues/2524-pr-400-docs-spec-templates.md",
-        section: "PR #400",
-        line: 17,
-        tokens: new Array(28).fill("w"),
-      },
-      {
-        file: "issues/2840-pr-986-feat-outbox.md",
-        section: "PR #986",
-        line: 17,
-        tokens: new Array(28).fill("w"),
-      },
-    ],
-  },
-  {
-    confidence: 0.857,
-    cross_section: false,
-    source: "lexical",
-    occurrences: [
-      { file: "issues/2840-pr-986-feat-outbox.md", line: 25, tokens: new Array(17).fill("w") },
-      { file: "issues/2840-pr-986-feat-outbox.md", line: 26, tokens: new Array(17).fill("w") },
-      { file: "issues/2840-pr-986-feat-outbox.md", line: 27, tokens: new Array(17).fill("w") },
-    ],
-  },
-  {
-    confidence: 0.818,
-    cross_section: false,
-    source: "lexical",
-    occurrences: [
-      { file: "issues/2524-pr-400-docs-spec-templates.md", line: 25, tokens: new Array(14).fill("w") },
-      { file: "issues/2524-pr-400-docs-spec-templates.md", line: 26, tokens: new Array(14).fill("w") },
-      { file: "issues/2524-pr-400-docs-spec-templates.md", line: 27, tokens: new Array(14).fill("w") },
-    ],
-  },
-];
-
-describe("duplicationByDocument", () => {
-  it("counts a cluster once per file, however many times the file occurs in it", () => {
-    const rows = duplicationByDocument(CLUSTERS);
-    const outbox = rows.find((r) => r.path.includes("2840"))!;
-
-    // Two clusters, four occurrences: one in the semantic cluster and three in
-    // the lexical one. Counting clusters per occurrence would say four.
-    expect(outbox.clusters).toBe(2);
-    expect(outbox.occurrences).toBe(4);
-    expect(outbox.words).toBe(28 + 17 * 3);
-  });
-
-  it("names the documents a file shares text with, and only those", () => {
-    const rows = duplicationByDocument(CLUSTERS);
-    const outbox = rows.find((r) => r.path.includes("2840"))!;
-    const templates = rows.find((r) => r.path.includes("2524"))!;
-
-    // The semantic cluster pairs them; neither lexical cluster adds a partner,
-    // because each repeats inside a single file.
-    expect(outbox.partners).toEqual(["issues/2524-pr-400-docs-spec-templates.md"]);
-    expect(templates.partners).toEqual(["issues/2840-pr-986-feat-outbox.md"]);
-  });
-
-  it("leaves a document that only repeats itself with no partners", () => {
-    const rows = duplicationByDocument([CLUSTERS[1]]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].partners).toEqual([]);
-    expect(rows[0].clusters).toBe(1);
-    expect(rows[0].occurrences).toBe(3);
-  });
-
-  it("ranks the worst offender first, by duplicated words", () => {
-    const rows = duplicationByDocument(CLUSTERS);
-    expect(rows.map((r) => r.words)).toEqual([79, 70]);
-    expect(rows[0].path).toContain("2840");
-  });
-
-  it("lists only the documents that appear in a cluster", () => {
-    // Fifteen documents were scanned; two of them duplicate anything. The
-    // clean thirteen are not rows here — the caller states the total instead.
-    expect(duplicationByDocument(CLUSTERS)).toHaveLength(2);
-  });
-
-  it("survives a payload whose shape it was not told about", () => {
-    expect(duplicationByDocument(null)).toEqual([]);
-    expect(duplicationByDocument([{}, { occurrences: null }])).toEqual([]);
-    // An occurrence with no file is skipped; one with no tokens counts as an
-    // occurrence of zero words rather than as NaN.
-    const rows = duplicationByDocument([{ occurrences: [{ file: "a.md" }, { line: 3 }] }]);
-    expect(rows).toEqual([{ path: "a.md", clusters: 1, occurrences: 1, words: 0, partners: [] }]);
-  });
-});
+/* The `bloat` half of this file moved to `spec_quality/analysis.rs`, and its
+ * tests with it — eleven of them, over the same real payload. What is left is
+ * the set-wide mixture, which stayed in the browser because its only caller
+ * aggregates results this page gathered itself. */
 
 describe("weightedMixture", () => {
   it("weights each document by its length, not by being a document", () => {
