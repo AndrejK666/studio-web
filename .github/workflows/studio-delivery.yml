@@ -393,10 +393,20 @@ jobs:
   test-complete:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.
+    #
+    # IT IS A JOB, SO IT COSTS A RUNNER, and a runner is the scarcest thing in
+    # this pipeline. A deployment of already-published images tests nothing and
+    # builds nothing, so this gate and `build-complete` would attest to work
+    # that did not happen — while queueing for a runner exactly as long as a
+    # job that does. Measured on 2026-09-23: a `Deploy existing images` run
+    # spent over two hours queued for these two `echo` jobs and never reached
+    # the deployment. Skipped, they cost nothing and assert nothing, which is
+    # the same amount of assertion with none of the wait.
     name: 1. Tests passed
     needs: [test-changes, test-backend, test-frontend, test-prototype, test-api-usage, test-theia-session-gate, test-infra, test-deployment-config]
     if: >-
       always() &&
+      github.event.inputs.operation != 'Deploy existing images' &&
       (needs.test-changes.result == 'success' || needs.test-changes.result == 'skipped') &&
       (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
@@ -1014,11 +1024,13 @@ jobs:
     # This gate appears after image build/publish jobs complete.
     name: 2. Images published
     # The publish jobs are intentionally skipped for a manual deployment: it
-    # consumes an already immutable image. Treat skipped as a completed stage
-    # so the graph stays linear without rebuilding the artifact.
+    # consumes an already immutable image. So is this gate now — see the note
+    # on `test-complete`: attesting that nothing was published is not worth a
+    # runner when runners are what the pipeline waits on.
     needs: [build-require-ci, build-service-images, build-infra-images]
     if: >-
       always() &&
+      github.event.inputs.operation != 'Deploy existing images' &&
       (needs.build-require-ci.result == 'success' || needs.build-require-ci.result == 'skipped') &&
       (needs.build-service-images.result == 'success' || needs.build-service-images.result == 'skipped') &&
       (needs.build-infra-images.result == 'success' || needs.build-infra-images.result == 'skipped')
@@ -1036,7 +1048,22 @@ jobs:
     # existing immutable image. `always()` prevents GitHub's implicit
     # success() guard from treating those skipped transitive dependencies as
     # a reason to skip this explicit deployment stage.
-    if: always() && github.event_name == 'workflow_dispatch' && (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.deployment_type == 'Services'
+    #
+    # THE LAST CLAUSE IS THE ONE THAT GATES, and until now nothing did.
+    # `always()` disables the implicit success() check on EVERY dependency, so
+    # a `Build, publish and deploy` whose tests failed still reached this job:
+    # the build jobs were skipped, `build-complete` echoed success over them,
+    # and the deployment only failed later, waiting for an image that was
+    # never published. Requiring `build-complete` to have actually succeeded
+    # fails it at the gate instead, with the reason on the gate. A deployment
+    # of existing images is exempt because there the gate is skipped by
+    # design — it would be attesting to a build that this run never ran.
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') &&
+      github.event.inputs.deployment_type == 'Services' &&
+      (github.event.inputs.operation == 'Deploy existing images' || needs.build-complete.result == 'success')
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       # For Build, publish and deploy the source-validation step derives the
@@ -1506,8 +1533,9 @@ jobs:
 
   deploy-infrastructure:
     name: 3. Deploy Infrastructure
-    # See deploy-services: a deployment consumes an existing immutable image,
-    # but still follows the common stage gate in the visual graph.
+    # See deploy-services, including why the last clause is there: `always()`
+    # switches off the implicit success() check on `build-complete`, so without
+    # it a failed build still reached the deployment.
     needs: build-complete
     if: >-
       always() &&
@@ -1516,7 +1544,8 @@ jobs:
       (
         (github.event.inputs.operation == 'Deploy existing images' && github.ref == 'refs/heads/main') ||
         (github.event.inputs.operation == 'Build, publish and deploy' && github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v'))
-      )
+      ) &&
+      (github.event.inputs.operation == 'Deploy existing images' || needs.build-complete.result == 'success')
     env:
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
       INFRA_TAG: ${{ github.event.inputs.operation == 'Build, publish and deploy' && github.ref_name || github.event.inputs.infra_tag }}
