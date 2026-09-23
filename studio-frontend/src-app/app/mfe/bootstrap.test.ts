@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isValidGtsID } from '@globaltypesystem/gts-ts';
+import { STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL } from '@constructor-studio/mfe-shared';
+import { buildStudioScreenDomain } from './bootstrap';
 
 const registerDomain = vi.fn();
 const updateSharedProperty = vi.fn();
@@ -158,9 +161,98 @@ describe('bootstrapMFE (host-app)', () => {
       'https://studio-dev.cfabric.org',
     );
 
-    expect(resolved.manifest.metaData.publicPath).toBe(
+    // `manifest` is optional on the config type now (a frame package has
+    // none), but this config declares one — optional chaining here is a type
+    // narrowing formality, not a weaker assertion: an absent manifest would
+    // still fail this `.toBe` on a `publicPath` mismatch.
+    expect(resolved.manifest?.metaData.publicPath).toBe(
       'https://studio-dev.cfabric.org/mfes/projects-mfe/',
     );
-    expect(resolved.entries[0].manifest).toBe(resolved.manifest);
+    expect((resolved.entries[0] as { manifest?: unknown }).manifest).toBe(resolved.manifest);
+  });
+
+  it('survives a manifest config that has no manifest at all', async () => {
+    // What the generator emits for a frame package. Before ADR-0021 both
+    // readers dereferenced config.manifest directly and threw on this.
+    const frameConfig = {
+      entries: [
+        {
+          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1',
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.mfe.frame_url.v1~',
+          publicPath: 'http://localhost:3080/',
+        },
+      ],
+    };
+
+    const { resolveRuntimePublicPaths, mfeStylesheetHrefs } = await import('./bootstrap');
+
+    expect(() =>
+      resolveRuntimePublicPaths([frameConfig as never], 'http://localhost:5173')
+    ).not.toThrow();
+    expect(resolveRuntimePublicPaths([frameConfig as never], 'http://localhost:5173')).toEqual([
+      frameConfig,
+    ]);
+    expect(() => mfeStylesheetHrefs([frameConfig as never])).not.toThrow();
+    expect(mfeStylesheetHrefs([frameConfig as never])).toEqual([]);
+  });
+
+  it("resolves a frame package's publicPath as the first frame url", async () => {
+    const federatedConfig = {
+      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
+      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
+    };
+    const frameConfig = {
+      entries: [
+        {
+          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1',
+          requiredProperties: [],
+          actions: [],
+          domainActions: [],
+          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.mfe.frame_url.v1~',
+          publicPath: 'http://localhost:3080/',
+        },
+      ],
+    };
+
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([federatedConfig as never, frameConfig as never])).toBe(
+      'http://localhost:3080/',
+    );
+  });
+
+  it('answers null when the catalogue has only federated packages', async () => {
+    const federatedConfig = {
+      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
+      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
+    };
+
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([federatedConfig as never])).toBeNull();
+  });
+
+  it('answers null for an empty catalogue', async () => {
+    const { firstFrameUrl } = await import('./bootstrap');
+
+    expect(firstFrameUrl([])).toBeNull();
+  });
+
+  it('declares the frame address on the screen domain', () => {
+    // A domain that does not declare a property cannot deliver it: an entry
+    // requiring one fails contract validation instead (ADR-0021).
+    const domain = buildStudioScreenDomain();
+    expect(domain.sharedProperties).toContain(STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL);
+  });
+
+  it('gives the frame address a well-formed GTS id', () => {
+    // A short instance segment (four tokens instead of five) registers fine
+    // and fails much later, inside bootstrapMFE, as "No schema found for
+    // instance" — a message that reads like a missing schema rather than a
+    // malformed id. Running the id through the real parser catches it here.
+    expect(isValidGtsID(STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL)).toBe(true);
   });
 });
