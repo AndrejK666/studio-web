@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use account_management_sdk::{AccountManagementClient, Tenant};
 use anyhow::{Context, Result, bail};
+use gts::GtsTypeId;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
@@ -22,6 +23,10 @@ use super::model::{
     TemplateSpec, TypeCandidate, builtin_capabilities, builtin_stages, builtin_types,
 };
 use super::port::{ClassifiedCounts, DocumentClassifier, IngestedDocument};
+use super::quality;
+
+/// Where a workspace records its repositories, as the portal writes them.
+const WS_SETTINGS_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 use super::repo::{
     DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
     type_row_id,
@@ -1033,6 +1038,72 @@ pub struct BindingDecision {
     pub confidence: Option<f32>,
     /// The file's current text, to re-check conformance in the same call.
     pub content: Option<String>,
+}
+
+impl DocumentsService {
+    /// The text of the bindings a caller named, read from the checkouts a sync
+    /// left on disk.
+    ///
+    /// This is the join nothing but the browser could make: this gear knows
+    /// which files are specs and what type each is, and the text lives with
+    /// whoever holds the checkout. Neither half is stored here — a binding
+    /// keeps a path and a verdict, and the graph keeps an excerpt — so the
+    /// reader is asked every time rather than a copy being kept.
+    pub async fn quality_docs(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        binding_ids: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Vec<quality::SpecDoc>> {
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let wanted: Vec<(String, Option<String>)> = rows
+            .into_iter()
+            .filter(|row| binding_ids.contains(&row.id))
+            .map(|row| (row.path, row.type_key))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // The repositories are the workspace's, wherever the bindings live: a
+        // project's specs are files of its workspace's checkouts.
+        let settings = match self
+            .account_management
+            .get_metadata(ctx, workspace_id, GtsTypeId::new(WS_SETTINGS_TYPE))
+            .await
+        {
+            Ok(entry) => entry.value,
+            // A workspace that has recorded no sources has no checkout to read,
+            // which is an answer rather than a failure.
+            Err(_) => return Ok(Vec::new()),
+        };
+        let dirs = quality::checkout_dirs(&settings);
+
+        let mut by_path: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for dir in dirs {
+            // One repository that was never cloned must not cost the others.
+            match reader
+                .read_repo_files(&workspace_id.to_string(), &dir)
+                .await
+            {
+                Ok(files) => {
+                    for (path, text) in files {
+                        by_path.entry(path).or_insert(text);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
+                }
+            }
+        }
+        Ok(quality::docs_for(&wanted, &by_path))
+    }
 }
 
 /// Whether a re-classification must leave this binding's verdict alone, and

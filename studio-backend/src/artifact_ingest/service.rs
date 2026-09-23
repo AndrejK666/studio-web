@@ -1284,3 +1284,19 @@ impl IngestService {
         Ok((nodes.len(), edges.len()))
     }
 }
+
+/// The checkout, offered to whoever owns the documents in it.
+///
+/// A thin forward to the inherent method the REST route already uses: the
+/// contract exists so another gear can ask without going out through HTTP and
+/// back, not because the reading itself is different.
+#[async_trait::async_trait]
+impl super::port::RepoFileReader for IngestService {
+    async fn read_repo_files(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        IngestService::read_repo_files(self, workspace_id, repo_dir).await
+    }
+}
