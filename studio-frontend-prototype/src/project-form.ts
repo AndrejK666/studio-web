@@ -114,13 +114,20 @@ export function stepBlocker(
     repoMode: RepoMode;
     connectionId: string;
     storePicked: boolean;
+    /** A plugin gear with no host picked: its `gear.gdl` names the SDK of the
+     *  extension point it fills, so there is nothing to write without one. */
+    pluginHostMissing?: boolean;
   },
 ): string | null {
   if (step === "project") return form.name.trim() ? null : "Name the project.";
-  if (step === "repository")
-    return form.kind === "product"
-      ? null
-      : gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+  if (step === "repository") {
+    if (form.kind === "product") return null;
+    const repo = gearRepoBlocker(form.kind, form.repoMode, form.connectionId, form.storePicked);
+    if (repo) return repo;
+    return form.kind === "new_gears" && form.pluginHostMissing
+      ? "Pick the host whose extension point the plugin fills."
+      : null;
+  }
   return null;
 }
 

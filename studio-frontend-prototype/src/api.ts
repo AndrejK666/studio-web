@@ -112,6 +112,18 @@ export const TENANT_TYPES = {
 export const PROJECT_CONFIG_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 
+/** The three shapes the Gearbox engine scaffolds a gear in. */
+export type GearKind = "service" | "minimal" | "plugin";
+
+/** A host a new plugin gear can fill: `GET /gearbox/extension-points`. */
+export interface GearboxExtensionPoint {
+  host: string;
+  host_id: string;
+  /** The SDK crate the extension point is declared in. */
+  sdk: string;
+  runs: boolean;
+}
+
 /** What the project is for, chosen at creation:
  *  - `new_gears`  — build new gears (repo: create new, or an existing gear store);
  *  - `product`    — assemble a product from gears (repo: always a new one);
@@ -3062,6 +3074,11 @@ export const api = {
       problem?: string;
       origin?: string;
       parent_dir?: string;
+      /** `service` (the default), `minimal`, or `plugin`. The gear's
+       *  `gear.gdl` is the Gearbox engine's own scaffold of that kind. */
+      gear_kind?: GearKind;
+      /** For a plugin: the host crate whose extension point it fills. */
+      plugin_host?: string;
       files?: ScaffoldFile[];
       dry_run?: boolean;
       open_pr?: boolean;
@@ -3076,6 +3093,13 @@ export const api = {
       `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** The hosts a new plugin gear can fill, from the Gearbox engine. Hosts that
+   *  can run in a product come first. */
+  gearboxExtensionPoints: (token: string) =>
+    request<{ items: GearboxExtensionPoint[] }>(
+      `/studio-components-catalog/v1/gearbox/extension-points`,
+      token,
     ),
   /** The product the project is composing, or null before anything is picked. */
   projectProduct: async (token: string, projectId: string): Promise<ProjectProduct | null> => {

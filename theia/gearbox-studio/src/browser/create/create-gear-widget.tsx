@@ -28,6 +28,7 @@ import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
+import { GearLocator } from "../shell/gear-locator";
 import { GearSessionService } from "../shell/gear-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
 
@@ -78,6 +79,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
   // The same picker New Product uses. A destination typed into a text field is a
   // path nobody checked, and this wizard already knows the refusal it will get.
   @inject(FileDialogService) protected readonly fileDialog!: FileDialogService;
+  @inject(GearLocator) protected readonly locator!: GearLocator;
 
   /**
    * Which shape to scaffold.
@@ -144,10 +146,27 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
         if (next === this.destination) return;
         this.destination = next;
         void this.refreshPreview();
+        void this.adoptProjectDestination();
       }),
     );
     this.destination = this.defaultDestination();
     void this.refreshPreview();
+    void this.adoptProjectDestination();
+  }
+
+  /**
+   * In a Studio session the workspace root holds checkouts -- the project's
+   * repository and the gear corpus beside it -- so `<root>/gears` is in
+   * neither. Once the checkouts are read, the default moves into the project's
+   * own repository, beside its gears when it has some: the repository the
+   * portal created the project's first gear in. Never over a typed path.
+   */
+  protected async adoptProjectDestination(): Promise<void> {
+    const found = await this.locator.newGearDestination().catch(() => "");
+    if (found === "" || this.destinationTouched || found === this.destination) return;
+    this.destination = found;
+    void this.refreshPreview();
+    this.update();
   }
 
   openWith(state?: CreateGearState): void {
@@ -160,6 +179,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     this.destination = state?.destinationDir ?? this.defaultDestination();
     void this.refreshPreview();
     this.update();
+    void this.adoptProjectDestination();
   }
 
   protected workspaceRoot(): string {
