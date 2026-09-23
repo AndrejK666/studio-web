@@ -19,7 +19,7 @@ import {
 } from "./lazy-screens";
 import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
-import { projectRollup, rollupText, type ProjectRollup } from "./rollups";
+import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
@@ -3367,11 +3367,13 @@ function WorkspaceProjects({
     }
     let alive = true;
     void (async () => {
-      const entries = await Promise.all(
-        projectIds
-          .split(",")
-          .map(async (id) => [id, await projectRollup(token, workspace.id, id)] as const),
-      );
+      // One request for the whole table. It used to be three per project, and
+      // one of those three walked the tenant's entire artifact graph.
+      const { projects } = await portfolioRollups(token);
+      const wanted = new Set(projectIds.split(","));
+      const entries = [...projects.entries()]
+        .filter(([id]) => wanted.has(id))
+        .map(([id, p]) => [id, { documents: p.documents, findings: p.findings, repos: p.repos }] as const);
       if (alive) setRollups(Object.fromEntries(entries));
     })();
     return () => {

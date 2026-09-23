@@ -12,6 +12,7 @@
 //! resumed (see `service`).
 
 mod rest;
+pub mod rollups;
 mod service;
 
 use std::sync::{Arc, OnceLock};
@@ -102,11 +103,40 @@ impl RestApiCapability for StudioOrganizationsGear {
         let service = build_service(ctx);
         let _ = self.service.set(service.clone());
         let self_service = self.self_service.get().copied().unwrap_or(true);
+        // The rollup's sources are resolved here, in the REST phase, because
+        // that is when every gear has registered what it publishes. Each is
+        // optional on purpose: a deployment without the documents database or
+        // without a connector driver still renders a portfolio, with the
+        // columns those gears would have filled reported as unknown rather
+        // than as zero.
+        let sources = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .ok()
+            .map(|am| {
+                Arc::new(rollups::Sources {
+                    am,
+                    documents: ctx
+                        .client_hub()
+                        .get::<dyn crate::documents::port::DocumentCounter>()
+                        .ok(),
+                    artifacts: ctx
+                        .client_hub()
+                        .get::<dyn crate::artifact_ingest::port::ArtifactCounter>()
+                        .ok(),
+                })
+            });
+        if sources.is_none() {
+            warn!(
+                "studio-organizations: account-management is not available — the portfolio's                  counts answer 503 rather than reporting every column as unknown"
+            );
+        }
         Ok(rest::register_routes(
             router,
             openapi,
             service,
             rest::SelfService(self_service),
+            sources,
         ))
     }
 }

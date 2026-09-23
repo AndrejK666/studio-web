@@ -984,6 +984,32 @@ pub struct ClassifyOutcome {
 }
 
 #[async_trait::async_trait]
+impl crate::documents::port::DocumentCounter for DocumentsService {
+    async fn count_bindings(
+        &self,
+        _ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> anyhow::Result<u32> {
+        // One row asked for, the count taken from `total`. The page size is
+        // not a guess at how many there are — the store reports that — and
+        // fetching the rows to call `.len()` on them would read a project's
+        // whole document set to render one cell.
+        let (_rows, total) = self
+            .list_bindings(
+                workspace_id,
+                Some(project_id),
+                PageQuery {
+                    offset: Some(0),
+                    limit: Some(1),
+                },
+            )
+            .await?;
+        Ok(total)
+    }
+}
+
+#[async_trait::async_trait]
 impl DocumentClassifier for DocumentsService {
     async fn classify_ingested(
         &self,

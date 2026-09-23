@@ -1,107 +1,102 @@
-/* The rollups' whole contract is "an unknown count is not a zero", and that is
- * a claim about failure paths, which is exactly what does not get exercised by
- * looking at a working screen. These tests drive the failures on purpose.
+/* What is left to test here after the counting moved to the server.
+ *
+ * The rules this file used to prove — a count that is not known is null and
+ * never 0, one dead gear costs one number rather than the row, a total comes
+ * from the store and not from `length` — did not disappear. They moved with the
+ * code that enforces them, to `studio-backend/src/organizations/rollups.rs`,
+ * and are proved there. A rule whose test stays behind on the side that no
+ * longer owns it is a rule nobody is checking.
+ *
+ * What remains on this side is the mapping of the server's answer onto the two
+ * shapes these screens want, and the one line that renders a count. Both can be
+ * wrong on their own, so both are still tested.
  */
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
-import { api, TENANT_TYPES } from "./api";
-import { projectRollup, rollupText, workspaceRollup } from "./rollups";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { portfolioRollups, projectRollup, rollupText } from "./rollups";
+import { api } from "./api";
 
 describe("rollupText", () => {
   it("renders a dash for unknown and the digits for a known count", () => {
     expect(rollupText(null)).toBe("—");
-    expect(rollupText(3)).toBe("3");
+    expect(rollupText(7)).toBe("7");
   });
 
   it("renders a real zero as 0, not as unknown", () => {
-    // A project with no documents is a fact worth stating; only a count that
-    // could not be read is a dash.
     expect(rollupText(0)).toBe("0");
   });
 });
 
-describe("workspaceRollup", () => {
+describe("portfolioRollups", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("counts only child tenants of type project", async () => {
-    vi.spyOn(api, "tenantChildren").mockResolvedValue({
-      // The real GTS type ids, not "project"/"workspace" — a tenant_type is a
-      // fully-qualified identifier, and a test that invents short ones passes
-      // against a filter that would match nothing in production.
+  it("splits the one answer into workspaces and projects", async () => {
+    vi.spyOn(api, "rollups").mockResolvedValue({
+      total: 3,
       items: [
-        { id: "p1", name: "One", tenant_type: TENANT_TYPES.project },
-        { id: "w1", name: "Nested workspace", tenant_type: TENANT_TYPES.workspace },
-        { id: "p2", name: "Two", tenant_type: TENANT_TYPES.project },
+        { id: "ws", name: "Workspace", kind: "workspace", projects: 2 },
+        { id: "p1", name: "One", kind: "project", parent_id: "ws", documents: 4, findings: 0, repos: 1 },
+        { id: "p2", name: "Two", kind: "project", parent_id: "ws", documents: null, findings: 2, repos: 0 },
       ],
-    } as never);
+    });
 
-    const { rollup, children } = await workspaceRollup("t", "ws");
+    const { workspaces, projects } = await portfolioRollups("t");
 
-    expect(rollup.projects).toBe(2);
-    expect(children?.map((c) => c.id)).toEqual(["p1", "p2"]);
+    expect(workspaces.get("ws")).toEqual({ name: "Workspace", projects: 2 });
+    expect(projects.get("p1")?.documents).toBe(4);
+    // The parentage comes back with the counts, so a tree needs no second ask.
+    expect(projects.get("p2")?.parentId).toBe("ws");
   });
 
-  it("reports unknown, not zero, when the tenant cannot be read", async () => {
-    // A self-managed workspace answers 404 from outside its subtree. That is
-    // isolation working; it is not "this workspace has no projects".
-    vi.spyOn(api, "tenantChildren").mockRejectedValue(new Error("404"));
+  it("keeps a missing count as null and a real zero as zero", async () => {
+    vi.spyOn(api, "rollups").mockResolvedValue({
+      total: 1,
+      items: [
+        { id: "p", name: "P", kind: "project", parent_id: "ws", documents: null, findings: 0, repos: 0 },
+      ],
+    });
 
-    const { rollup, children } = await workspaceRollup("t", "ws");
+    const { projects } = await portfolioRollups("t");
 
-    expect(rollup.projects).toBeNull();
-    expect(children).toBeNull();
-  });
-
-  it("reports a genuinely empty workspace as zero", async () => {
-    vi.spyOn(api, "tenantChildren").mockResolvedValue({ items: [] } as never);
-    expect((await workspaceRollup("t", "ws")).rollup.projects).toBe(0);
+    // The distinction the whole design turns on: one of these means "nobody
+    // could tell me" and the other means "there are none".
+    expect(projects.get("p")?.documents).toBeNull();
+    expect(projects.get("p")?.findings).toBe(0);
   });
 });
 
 describe("projectRollup", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("takes the document count from the page total, not the rows", async () => {
-    // The caller asks for one row; believing `items.length` here would report
-    // every project as having exactly one document.
-    vi.spyOn(api, "docBindings").mockResolvedValue({ items: [{}], total: 42 } as never);
-    vi.spyOn(api, "listArtifactNodes").mockResolvedValue({ nodes: [], total: 0 } as never);
-    vi.spyOn(api, "workspaceSettings").mockResolvedValue({ repos: [] } as never);
+  it("reads the single row the server returns for one project", async () => {
+    vi.spyOn(api, "rollups").mockResolvedValue({
+      total: 1,
+      items: [
+        { id: "p", name: "P", kind: "project", parent_id: "ws", documents: 42, findings: 1, repos: 3 },
+      ],
+    });
 
-    expect((await projectRollup("t", "ws", "p")).documents).toBe(42);
+    expect(await projectRollup("t", "p")).toEqual({ documents: 42, findings: 1, repos: 3 });
   });
 
-  it("settles each count on its own — one dead gear costs one number", async () => {
-    vi.spyOn(api, "docBindings").mockRejectedValue(new Error("no studio-documents"));
-    vi.spyOn(api, "listArtifactNodes").mockResolvedValue({ nodes: [], total: 7 } as never);
-    vi.spyOn(api, "workspaceSettings").mockResolvedValue({ repos: [{}, {}] } as never);
+  it("reports every column as unknown when the call fails", async () => {
+    vi.spyOn(api, "rollups").mockRejectedValue(new Error("gateway"));
 
-    const r = await projectRollup("t", "ws", "p");
-
-    expect(r.documents).toBeNull();
-    expect(r.findings).toBe(7);
-    expect(r.repos).toBe(2);
+    // Not an empty project — a project nobody could count. Rendering zeroes
+    // here would tell somebody there is nothing to look at.
+    expect(await projectRollup("t", "p")).toEqual({
+      documents: null,
+      findings: null,
+      repos: null,
+    });
   });
 
-  it("treats a capped total (no count in the contract) as unknown", async () => {
-    vi.spyOn(api, "docBindings").mockResolvedValue({ items: [], total: 0 } as never);
-    vi.spyOn(api, "listArtifactNodes").mockResolvedValue({ nodes: [] } as never);
-    vi.spyOn(api, "workspaceSettings").mockResolvedValue({ repos: [] } as never);
+  it("reports unknown when the project has no row at all", async () => {
+    vi.spyOn(api, "rollups").mockResolvedValue({ total: 0, items: [] });
 
-    expect((await projectRollup("t", "ws", "p")).findings).toBeNull();
-  });
-
-  it("distinguishes settings with no repos from settings that could not be read", async () => {
-    vi.spyOn(api, "docBindings").mockResolvedValue({ items: [], total: 0 } as never);
-    vi.spyOn(api, "listArtifactNodes").mockResolvedValue({ nodes: [], total: 0 } as never);
-
-    vi.spyOn(api, "workspaceSettings").mockResolvedValue({} as never);
-    expect((await projectRollup("t", "ws", "p")).repos).toBe(0);
-
-    vi.spyOn(api, "workspaceSettings").mockResolvedValue(null as never);
-    expect((await projectRollup("t", "ws", "p")).repos).toBeNull();
-
-    vi.spyOn(api, "workspaceSettings").mockRejectedValue(new Error("boom"));
-    expect((await projectRollup("t", "ws", "p")).repos).toBeNull();
+    expect(await projectRollup("t", "gone")).toEqual({
+      documents: null,
+      findings: null,
+      repos: null,
+    });
   });
 });
