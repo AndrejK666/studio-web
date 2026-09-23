@@ -154,6 +154,59 @@ pub fn bloat_by_document(result: &Value) -> Value {
     Value::Array(rows)
 }
 
+/// The role mixture of a whole SET, weighted by how long each document is.
+///
+/// Averaging the per-file shares would let a forty-word stub count as much as
+/// a four-thousand-word specification, which is how a set that is nearly all
+/// requirements comes out looking evenly mixed. Weighting by `n_tokens` makes
+/// the bar say what share of the SET's words read as each role.
+///
+/// A result that carries a mixture but no token count is weighted 1 rather
+/// than dropped: it shows up as a rounding difference instead of as a document
+/// that silently left the set.
+#[must_use]
+pub fn weighted_mixture(results: &[Value]) -> (BTreeMap<String, f64>, f64) {
+    let mut totals: BTreeMap<String, f64> = BTreeMap::new();
+    let mut tokens = 0.0f64;
+
+    for result in results {
+        let Some(mixture) = result.get("mixture").and_then(Value::as_object) else {
+            continue;
+        };
+        let weight = result
+            .get("n_tokens")
+            .and_then(Value::as_f64)
+            .filter(|n| *n > 0.0)
+            .unwrap_or(1.0);
+        tokens += weight;
+        for (role, share) in mixture {
+            let Some(share) = share.as_f64().filter(|s| s.is_finite()) else {
+                continue;
+            };
+            *totals.entry(role.clone()).or_insert(0.0) += share * weight;
+        }
+    }
+
+    // No readable result is NOT the same as a set that is 0% everything: a
+    // caller given an empty mixture draws an empty bar rather than four
+    // confident zeroes.
+    if tokens == 0.0 {
+        return (BTreeMap::new(), 0.0);
+    }
+    let mixture = totals
+        .into_iter()
+        .map(|(role, sum)| (role, sum / tokens))
+        .collect();
+    (mixture, tokens)
+}
+
+/// The set-wide reading stored beside a purpose sweep's items.
+#[must_use]
+pub fn purpose_mixture(item_results: &[Value]) -> Value {
+    let (mixture, tokens) = weighted_mixture(item_results);
+    json!({ "mixture": mixture, "tokens": tokens })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +340,59 @@ mod tests {
     fn a_result_with_no_clusters_stores_an_empty_reading_not_a_missing_one() {
         // The tab can then say "nothing repeated" rather than "no answer".
         assert_eq!(bloat_by_document(&json!({})), json!([]));
+    }
+    // ---- the set-wide mixture ---------------------------------------------
+
+    fn share(mixture: Value, tokens: f64) -> Value {
+        json!({ "mixture": mixture, "n_tokens": tokens })
+    }
+
+    #[test]
+    fn a_long_document_weighs_more_than_a_short_one() {
+        // The whole reason this is not an average: a forty-word stub must not
+        // count as much as a four-thousand-word specification.
+        let long = share(json!({ "requirements": 1.0 }), 4000.0);
+        let stub = share(json!({ "design": 1.0 }), 40.0);
+        let (mixture, tokens) = weighted_mixture(&[long, stub]);
+        assert_eq!(tokens, 4040.0);
+        assert!(mixture["requirements"] > 0.98, "{mixture:?}");
+        assert!(mixture["design"] < 0.02, "{mixture:?}");
+    }
+
+    #[test]
+    fn a_result_with_no_token_count_weighs_one_rather_than_nothing() {
+        // It shows up as a rounding difference instead of as a document that
+        // silently left the set.
+        let counted = share(json!({ "a": 1.0 }), 9.0);
+        let uncounted = json!({ "mixture": { "b": 1.0 } });
+        let (mixture, tokens) = weighted_mixture(&[counted, uncounted]);
+        assert_eq!(tokens, 10.0);
+        assert!((mixture["a"] - 0.9).abs() < 1e-9, "{mixture:?}");
+        assert!((mixture["b"] - 0.1).abs() < 1e-9, "{mixture:?}");
+    }
+
+    #[test]
+    fn nothing_readable_is_an_empty_mixture_not_four_confident_zeroes() {
+        let (mixture, tokens) = weighted_mixture(&[json!({}), json!(null)]);
+        assert!(mixture.is_empty());
+        assert_eq!(tokens, 0.0);
+    }
+
+    #[test]
+    fn a_share_that_is_not_a_number_is_left_out_rather_than_read_as_zero() {
+        let odd = json!({ "mixture": { "a": 1.0, "b": "lots", "c": null }, "n_tokens": 10.0 });
+        let (mixture, _) = weighted_mixture(&[odd]);
+        assert_eq!(mixture.keys().collect::<Vec<_>>(), vec!["a"]);
+    }
+
+    #[test]
+    fn a_zero_or_negative_token_count_falls_back_to_one() {
+        // `0` would make the document weightless and a negative one would
+        // subtract it from the set, which is not a thing a document can do.
+        let zero = share(json!({ "a": 1.0 }), 0.0);
+        let negative = share(json!({ "b": 1.0 }), -5.0);
+        let (mixture, tokens) = weighted_mixture(&[zero, negative]);
+        assert_eq!(tokens, 2.0);
+        assert!((mixture["a"] - 0.5).abs() < 1e-9, "{mixture:?}");
     }
 }

@@ -121,6 +121,8 @@ impl TaskHandler for AnalyzeBatchTask {
         }
 
         let total = payload.items.len();
+        // What each item that answered is made of, for the set's own reading.
+        let mut shares: Vec<serde_json::Value> = Vec::new();
         let mut outcomes = Vec::with_capacity(total);
         let mut succeeded = 0usize;
 
@@ -205,8 +207,21 @@ impl TaskHandler for AnalyzeBatchTask {
             let watched =
                 watch_upstream(&self.state, ctx, &task_id, PER_ITEM_DEADLINE, |_| {}).await;
             outcomes.push(match watched {
-                Watched::Succeeded(_) => {
+                Watched::Succeeded(result) => {
                     succeeded += 1;
+                    // Kept for the set-wide reading below, and only the two
+                    // fields it weighs: a batch result carrying every item's
+                    // full analysis would be the whole run stored twice. The
+                    // per-item verdicts are read through `/verdicts`, one task
+                    // id at a time, which is why the run reports pointers.
+                    if let Some(result) = result.as_ref()
+                        && result.get("mixture").is_some()
+                    {
+                        shares.push(json!({
+                            "mixture": result.get("mixture"),
+                            "n_tokens": result.get("n_tokens"),
+                        }));
+                    }
                     ItemOutcome {
                         id: item.id.clone(),
                         task_id: Some(task_id),
@@ -242,6 +257,7 @@ impl TaskHandler for AnalyzeBatchTask {
                             "detector": payload.detector,
                             "stopped": true,
                             "items": outcomes,
+                            "mixture": super::analysis::purpose_mixture(&shares),
                         }),
                     );
                 }
@@ -253,6 +269,14 @@ impl TaskHandler for AnalyzeBatchTask {
             json!({
                 "detector": payload.detector,
                 "items": outcomes,
+                // What the SET is made of, weighted by how long each document
+                // is. Read here rather than by whoever draws the bar: an
+                // unweighted average lets a forty-word stub count as much as a
+                // four-thousand-word specification, which is how a set that is
+                // nearly all requirements comes out looking evenly mixed.
+                // Empty for a detector that answers no mixture, which is every
+                // one but `purpose`.
+                "mixture": super::analysis::purpose_mixture(&shares),
             }),
         )
     }

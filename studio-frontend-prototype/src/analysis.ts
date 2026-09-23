@@ -1,14 +1,24 @@
 /** What a whole document SET is made of, as the purpose detector sees it.
  *
  *  The other half of this file — reading a `bloat` result as one row per
- *  document — moved to `spec_quality/analysis.rs`, where it now runs once when
- *  the analysis does rather than on every render.
+ *  document — moved to `spec_quality/analysis.rs`, where it runs once when the
+ *  analysis does rather than on every render.
  *
- *  This half stayed, for a reason worth stating rather than assuming: its only
- *  caller aggregates results THIS PAGE gathered, one document at a time, in a
- *  loop it drives itself. A copy on the server would be a field nobody reads.
- *  When a batch run is read back from the server instead of driven from here,
- *  this belongs beside the other half.
+ *  THIS HALF ALSO EXISTS THERE NOW (`analysis::weighted_mixture`), because a
+ *  project sweep stores the set's reading in its own result and
+ *  `/studio-spec-quality/v1/verdicts` carries each document's mixture. What
+ *  keeps the copy here is not the rule — it is that THIS screen and that sweep
+ *  are not the same operation:
+ *
+ *    * the sweep runs over a project's BINDINGS and reads the text off the
+ *      checkout itself (`POST .../projects/{id}/quality/{detector}`);
+ *    * this screen runs over an arbitrary filtered selection and posts each
+ *      document's TEXT, which is what makes it useful for a file nobody has
+ *      bound yet, or one that is not in a project at all.
+ *
+ *  Making them one thing is a decision about what this screen is for, not a
+ *  refactor — so the loop and this fold stay until that decision is made, and
+ *  the duplicate is deliberate rather than overlooked.
  */
 
 /** What a `purpose` run says one document is made of. Only the two fields this
