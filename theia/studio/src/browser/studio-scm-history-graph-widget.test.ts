@@ -12,10 +12,21 @@ function entry(subject: string, message?: string): HistoryGraphEntry {
         graphRow: {
             lane: 0,
             color: 0,
+            // Theia 1.75 split the lane's colour in two: `color` paints the dot
+            // and the segment below it, `topColor` the segment above, and they
+            // differ when a ref's colour overrides the one inherited from the
+            // chain above. This fixture is about subjects, not about lanes, so
+            // one commit on one lane has the same colour on both sides of it.
+            topColor: 0,
             edges: [],
             hasContinuation: false,
             hasTopLine: false
-        }
+        },
+        // Also new in 1.75: whether this is the commit HEAD points at. These
+        // fixtures are a lone commit standing for "some entry the provider
+        // returned", and nothing here reads it — false is the honest value for
+        // an entry that is not claiming to be the current one.
+        isCurrent: false
     };
 }
 
