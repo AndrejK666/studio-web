@@ -9,7 +9,7 @@
 #
 # Adding a line is a deliberate, reviewable act. See ADR-0020.
 #
-# 234 entries at 2026-09-21.
+# 235 entries at 2026-09-23.
 
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
@@ -211,7 +211,7 @@ path-literal	GET <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_theia/rest.rs>
 
-# --- scope-in-path (60) ---------------------------------------------------
+# --- scope-in-path (61) ---------------------------------------------------
 # Rule C. The scope is a path segment, so the same thought needs one
 # operation per scope. Fixing this is the expensive migration: the tenant moves
 # into the security context and a project becomes `?project_id=`, which collapses
@@ -262,6 +262,7 @@ scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/documents
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/validate
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents
+scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/stages
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/types
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations
