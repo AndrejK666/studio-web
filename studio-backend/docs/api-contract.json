@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 246,
+  "open_violations": 239,
   "operations": [
     {
       "method": "DELETE",
@@ -430,7 +430,7 @@
     {
       "method": "GET",
       "path": "/studio-components-catalog/v1/gearbox",
-      "operation_id": "studio_components_catalog.gearbox_status",
+      "operation_id": "studio_components_catalog.get_gearbox_status",
       "tag": "StudioComponentsCatalog",
       "summary": "Whether product previews can run, and against which gear corpus",
       "authenticated": true,
@@ -484,6 +484,7 @@
       ],
       "errors": [
         "401",
+        "404",
         "500"
       ]
     },
@@ -1662,7 +1663,7 @@
     {
       "method": "POST",
       "path": "/studio-components-catalog/v1/gearbox/complete",
-      "operation_id": "studio_components_catalog.complete_product",
+      "operation_id": "studio_components_catalog.resolve_product",
       "tag": "StudioComponentsCatalog",
       "summary": "Complete picked gears into a set the Gearbox engine can resolve",
       "authenticated": true,
@@ -1713,7 +1714,7 @@
     {
       "method": "POST",
       "path": "/studio-components-catalog/v1/projects/{project_id}/product/preview",
-      "operation_id": "studio_components_catalog.preview_product",
+      "operation_id": "studio_components_catalog.materialize_product_preview",
       "tag": "StudioComponentsCatalog",
       "summary": "Compose a product.gdl from picked gears and resolve it",
       "authenticated": true,
@@ -1724,6 +1725,7 @@
       "errors": [
         "400",
         "401",
+        "404",
         "500"
       ]
     },
@@ -2749,7 +2751,7 @@
     {
       "method": "PUT",
       "path": "/studio-components-catalog/v1/projects/{project_id}/product",
-      "operation_id": "studio_components_catalog.save_project_product",
+      "operation_id": "studio_components_catalog.upsert_project_product",
       "tag": "StudioComponentsCatalog",
       "summary": "Save which gears a project's product is made of",
       "authenticated": true,
@@ -2760,6 +2762,7 @@
       "errors": [
         "400",
         "401",
+        "404",
         "500"
       ]
     },

@@ -9,7 +9,7 @@
 #
 # Adding a line is a deliberate, reviewable act. See ADR-0020.
 #
-# 235 entries at 2026-09-23.
+# 239 entries at 2026-09-23.
 
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
@@ -110,7 +110,7 @@ error-500	GET /studio-events/v1/events
 error-500	GET /studio-events/v1/stream
 error-500	GET /studio-organizations/v1/capabilities
 
-# --- list-envelope (34) ---------------------------------------------------
+# --- list-envelope (35) ---------------------------------------------------
 # Rule B1. A collection that is not `{ items, total }`. Two shapes here:
 # a differently named array (`nodes`, `edges`, `aliases`, `events`, ...) and a
 # missing `total`, which is why several screens cannot say "N of M".
@@ -124,6 +124,7 @@ list-envelope	GET /studio-components-catalog/v1/components
 list-envelope	GET /studio-components-catalog/v1/field-schemas
 list-envelope	GET /studio-components-catalog/v1/profiles
 list-envelope	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
+list-envelope	GET /studio-components-catalog/v1/projects/{project_id}/product
 list-envelope	GET /studio-components-catalog/v1/types
 list-envelope	GET /studio-components-catalog/v1/types/counts
 list-envelope	GET /studio-components-catalog/v1/versions
@@ -211,7 +212,7 @@ path-literal	GET <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_theia/rest.rs>
 
-# --- scope-in-path (61) ---------------------------------------------------
+# --- scope-in-path (64) ---------------------------------------------------
 # Rule C. The scope is a path segment, so the same thought needs one
 # operation per scope. Fixing this is the expensive migration: the tenant moves
 # into the security context and a project becomes `?project_id=`, which collapses
@@ -230,6 +231,7 @@ scope-in-path	DELETE /studio-user/v1/me/memberships/{org_id}
 scope-in-path	DELETE /studio-user/v1/organizations/{org_id}/invitations/{invitation_id}
 scope-in-path	DELETE /studio-user/v1/users/{user_id}/memberships/{org_id}
 scope-in-path	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
+scope-in-path	GET /studio-components-catalog/v1/projects/{project_id}/product
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/capabilities
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/stages
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/types
@@ -252,6 +254,7 @@ scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/status
 scope-in-path	GET /studio-user/v1/organizations/{org_id}/invitations
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/create-repo
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/gear-repo
+scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/product/preview
 scope-in-path	POST /studio-components-catalog/v1/projects/{project_id}/scaffold
 scope-in-path	POST /studio-documents/v1/organizations/{organization_id}/capabilities
 scope-in-path	POST /studio-documents/v1/organizations/{organization_id}/stages
@@ -272,6 +275,7 @@ scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/open
 scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations
 scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry
 scope-in-path	POST /studio-user/v1/organizations/{org_id}/invitations
+scope-in-path	PUT /studio-components-catalog/v1/projects/{project_id}/product
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}/analyses/{detector}
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}

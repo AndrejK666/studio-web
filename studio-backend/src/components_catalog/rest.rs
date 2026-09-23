@@ -1692,12 +1692,13 @@ pub fn register_routes(
                 "Project product",
             )
             .error_401(openapi)
+            .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
 
     let router =
         OperationBuilder::put("/studio-components-catalog/v1/projects/{project_id}/product")
-            .operation_id("studio_components_catalog.save_project_product")
+            .operation_id("studio_components_catalog.upsert_project_product")
             .summary("Save which gears a project's product is made of")
             .description(
                 "Merges the given fields into the project's product record; \
@@ -1712,11 +1713,12 @@ pub fn register_routes(
             .json_response_with_schema::<CatalogNodeDto>(openapi, StatusCode::OK, "Saved product")
             .error_400(openapi)
             .error_401(openapi)
+            .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
 
     let router = OperationBuilder::post("/studio-components-catalog/v1/gearbox/complete")
-        .operation_id("studio_components_catalog.complete_product")
+        .operation_id("studio_components_catalog.resolve_product")
         .summary("Complete picked gears into a set the Gearbox engine can resolve")
         .description(
             "Drops what the gear catalogue proves cannot run (a gear with required \
@@ -1737,7 +1739,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox")
-        .operation_id("studio_components_catalog.gearbox_status")
+        .operation_id("studio_components_catalog.get_gearbox_status")
         .summary("Whether product previews can run, and against which gear corpus")
         .description(
             "Reports the Gearbox engine version and the gear corpus checkout \
@@ -1756,7 +1758,7 @@ pub fn register_routes(
     let router = OperationBuilder::post(
         "/studio-components-catalog/v1/projects/{project_id}/product/preview",
     )
-    .operation_id("studio_components_catalog.preview_product")
+    .operation_id("studio_components_catalog.materialize_product_preview")
     .summary("Compose a product.gdl from picked gears and resolve it")
     .description(
         "Writes a product.gdl naming the picked gears (a plugin under the host \
@@ -1775,6 +1777,7 @@ pub fn register_routes(
     .json_response_with_schema::<ProductPreviewDto>(openapi, StatusCode::OK, "Preview")
     .error_400(openapi)
     .error_401(openapi)
+    .error_404(openapi)
     .error_500(openapi)
     .register(router, openapi);
 
