@@ -254,13 +254,25 @@ const COLLAB_STRIP_CSS = `
 /* The flex rule is what makes "right-aligned" true rather than intended: the
    top panel is a flex ROW, so without it the widget is only as wide as its own
    text and sits hard against the menu bar. Measured in the running IDE — 88px
-   and butted up to the menu without it, 1171px and at the window's edge with
-   it, which is the status line's own position at the other edge. */
+   and butted up to the menu without it, 1187px with it.
+
+   IT USED TO PUT ITS CONTENT AT THE FAR EDGE, for the status line's symmetry.
+   That was decided when this row held nothing else: the strip was the only
+   thing in it, so "at the edge" and "alone in a row" looked the same. The row
+   has a menu bar in it now, and the two together read as two islands with a
+   thousand pixels of nothing between them — which is what a person looking at
+   it called ugly, and they were right.
+
+   So the strip keeps the whole width (it still needs it: the line can grow to
+   several names and four counts) and lays its content out from the LEFT, one
+   gap after Help. The row becomes one line of facts instead of two islands,
+   and the gap plus the muted colour are what keep "Collaboration" from reading
+   as one more menu. */
 #theia-top-panel > .studio-collab-strip { flex: 1 1 auto; min-width: 0; }
-.studio-collab-strip { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+.studio-collab-strip { display: flex; align-items: center; justify-content: flex-start; min-width: 0; }
 .studio-collab-strip-btn {
   display: flex; align-items: center; min-width: 0; max-width: 100%;
-  height: 22px; padding: 0 8px; margin-right: 6px;
+  height: 22px; padding: 0 8px; margin-left: 14px;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--studio-text); font: inherit; font-size: 11px; cursor: pointer;
 }

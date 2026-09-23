@@ -79,14 +79,59 @@ export class StudioContribution implements FrontendApplicationContribution {
         // AI Chat, Outline — and at 149px the one on top is a column of single
         // words, which is what "the IDE opens on a grey strip" turned out to be.
         //
-        // `resize` is the API for saying it: with the panel still collapsed it
-        // records the size, and the expansion below prefers a recorded size over
-        // the default it cannot compute. The person can still drag it, and that
-        // is what is remembered afterwards.
-        const flank = Math.round(app.shell.node.clientWidth * RIGHT_FLANK_RATIO);
-        if (flank > 0) {
-            app.shell.rightPanelHandler.resize(flank);
-        }
         await app.shell.activateWidget(OrcaWidget.ID);
+        this.sizeRightFlank(app);
+    }
+
+    /**
+     * Give the right flank a width, once there is a layout to give it in.
+     *
+     * TWO EARLIER ATTEMPTS AT THIS DID NOTHING, and both looked right. Neither
+     * the number nor the API was wrong — `rightPanelHandler.resize(303)` moves
+     * the flank and the size sticks, confirmed against a running IDE. What was
+     * wrong was the moment. `resize` writes `lastPanelSize` when the dock panel
+     * is hidden and calls `setPanelSize` when it is not, and `setPanelSize`
+     * "assumes that the parent of the panel container is a SplitPanel" — during
+     * `initializeLayout` the shell is attached but not laid out, so neither
+     * branch has anything to act on and the call is swallowed. Theia's own
+     * default is lost to the same moment: `getDefaultPanelSize()` answers
+     * nothing unless the panel's parent `isVisible`, and `revealShell` runs
+     * after every contribution's `initializeLayout`.
+     *
+     * So this waits for the one condition that says the layout happened — the
+     * shell has a width — and then says the size once. Bounded, because a
+     * frame loop with no end is a leak: two seconds at 60fps is far more than
+     * a reveal takes, and a session that somehow never lays out keeps the
+     * flank Lumino gave it rather than spinning.
+     *
+     * It is only ever reached on a FRESH session. Theia calls
+     * `initializeLayout` only when it has no saved layout to restore, so a
+     * flank somebody dragged is never overruled.
+     */
+    protected sizeRightFlank(app: FrontendApplication): void {
+        // Said on the frame the layout appears AND on a few frames after it.
+        //
+        // Not belt and braces: a swallowed `resize` reports nothing, and
+        // `getPanelSize` is protected, so there is no way to ask whether it
+        // landed. The shell having a width is the first moment it CAN land, and
+        // the flank's own container can become ready a frame or two later than
+        // the shell — so repeating briefly costs a handful of idempotent calls
+        // and removes the guess. Nobody drags a panel in the first tenth of a
+        // second of a session, which is the only thing this could overrule.
+        let framesLeft = 120;
+        let repeatsLeft = 6;
+        const attempt = (): void => {
+            const width = app.shell.node.clientWidth;
+            if (width > 0) {
+                app.shell.rightPanelHandler.resize(Math.round(width * RIGHT_FLANK_RATIO));
+                if (--repeatsLeft <= 0) {
+                    return;
+                }
+            } else if (--framesLeft <= 0) {
+                return;
+            }
+            window.requestAnimationFrame(attempt);
+        };
+        window.requestAnimationFrame(attempt);
     }
 }

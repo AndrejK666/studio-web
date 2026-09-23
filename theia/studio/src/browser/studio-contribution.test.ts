@@ -90,10 +90,7 @@ describe('StudioContribution', () => {
                 widget.isAttached = true;
             }),
             activateWidget: jest.fn(),
-            // The flank's width is said out loud before the activation that
-            // expands it; Theia cannot compute its own default this early.
-            node: { clientWidth: 1584 },
-            rightPanelHandler: { resize: jest.fn() }
+                rightPanelHandler: { resize: jest.fn() }
         };
         const contribution = new StudioContribution(widgetManager as never);
 
@@ -131,39 +128,66 @@ describe('StudioContribution', () => {
     });
 
     /* Five panels live in the right flank — Agents, Claude Code, Codex, AI Chat
-       and Outline — and it used to open at 149px in a 1584px window, where the
-       one on top is a column of single words. Theia would have sized it from
-       its own `initialSizeRatio`, but only through `getDefaultPanelSize()`,
-       which answers nothing while the panel's parent is not yet visible — and
-       `revealShell` runs after every contribution's `initializeLayout`. So the
-       size is stated here, before the activation that expands the panel. */
-    it('gives the right flank a width before expanding it', async () => {
-        const widgetManager = {
-            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
-        };
+       and Outline — and it used to open at 101px in a 1584px window, where the
+       one on top is a column of single words.
+
+       TWO EARLIER ATTEMPTS PASSED THIS SUITE AND CHANGED NOTHING, which is why
+       the test now drives the frame callback instead of asserting that a method
+       was called. `resize` is swallowed while the shell has no layout, so a
+       test that only checks "we called resize" agrees with a version that does
+       nothing at all. What has to hold is that the call happens AFTER the shell
+       has a width. */
+    it('waits for a laid-out shell before sizing the right flank', async () => {
+        const frames: (() => void)[] = [];
+        const raf = jest
+            .spyOn(window, 'requestAnimationFrame')
+            .mockImplementation(((cb: () => void) => (frames.push(cb), frames.length)) as never);
         const resize = jest.fn();
+        const node = { clientWidth: 0 };
         const shell = {
             addWidget: jest.fn(async (widget: { isAttached: boolean }) => {
                 widget.isAttached = true;
             }),
             activateWidget: jest.fn(),
-            node: { clientWidth: 1584 },
+            node,
             rightPanelHandler: { resize }
         };
-        const contribution = new StudioContribution(widgetManager as never);
+        const contribution = new StudioContribution({
+            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
+        } as never);
 
-        await contribution.initializeLayout({ shell } as never);
+        try {
+            await contribution.initializeLayout({ shell } as never);
 
-        // Theia's own ratio for this panel, which is the point: the number is
-        // the framework's, not this product's taste.
-        expect(resize).toHaveBeenCalledWith(Math.round(1584 * 0.191));
-        expect(resize.mock.invocationCallOrder[0]).toBeLessThan(
-            shell.activateWidget.mock.invocationCallOrder[0]
-        );
+            // A shell with no width yet says nothing, however many frames pass.
+            frames.shift()!();
+            frames.shift()!();
+            expect(resize).not.toHaveBeenCalled();
+
+            // The frame after the layout lands is the one that speaks.
+            node.clientWidth = 1584;
+            frames.shift()!();
+            expect(resize).toHaveBeenCalledWith(Math.round(1584 * 0.191));
+
+            // And it repeats briefly, because a swallowed resize reports
+            // nothing and the flank's container can be ready a frame later
+            // than the shell — then it stops.
+            let drained = 0;
+            while (frames.length && drained < 100) { frames.shift()!(); drained++; }
+            expect(resize.mock.calls.length).toBe(6);
+            expect(frames).toHaveLength(0);
+        } finally {
+            raf.mockRestore();
+        }
     });
 
-    /* A shell with no width yet is not an instruction to collapse the flank. */
-    it('says nothing about the width when the shell has none to give', async () => {
+    /* A session that never lays out keeps the flank Lumino gave it, rather than
+       spinning on a frame loop with no end. */
+    it('gives up after a bounded number of frames', async () => {
+        const frames: (() => void)[] = [];
+        const raf = jest
+            .spyOn(window, 'requestAnimationFrame')
+            .mockImplementation(((cb: () => void) => (frames.push(cb), frames.length)) as never);
         const resize = jest.fn();
         const shell = {
             addWidget: jest.fn(async (widget: { isAttached: boolean }) => {
@@ -177,10 +201,18 @@ describe('StudioContribution', () => {
             getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
         } as never);
 
-        await contribution.initializeLayout({ shell } as never);
-
-        expect(resize).not.toHaveBeenCalled();
-        expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
+        try {
+            await contribution.initializeLayout({ shell } as never);
+            let drained = 0;
+            while (frames.length && drained < 1000) {
+                frames.shift()!();
+                drained++;
+            }
+            expect(resize).not.toHaveBeenCalled();
+            expect(drained).toBeLessThan(200);
+        } finally {
+            raf.mockRestore();
+        }
     });
 
     it('does not compose the default layout when Theia restores a saved layout', async () => {
@@ -206,7 +238,6 @@ describe('StudioContribution', () => {
                 widget.isAttached = true;
             }),
             activateWidget: jest.fn(),
-            node: { clientWidth: 1584 },
             rightPanelHandler: { resize: jest.fn() },
             pendingUpdates: Promise.resolve()
         };
