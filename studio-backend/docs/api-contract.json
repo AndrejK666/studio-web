@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 234,
+  "open_violations": 235,
   "operations": [
     {
       "method": "DELETE",
@@ -1927,6 +1927,25 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}",
+      "operation_id": "studio_documents.analyze_project_documents",
+      "tag": "StudioDocuments",
+      "summary": "Run a Spec Quality detector over a project's documents",
+      "authenticated": true,
+      "request": "AnalyzeBindingsRequest",
+      "responses": [
+        "AnalyzeEnqueuedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
