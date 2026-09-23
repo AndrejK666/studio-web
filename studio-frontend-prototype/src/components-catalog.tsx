@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
+import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
 import { ViewToggle, useViewMode } from "./view-mode";
 import {
@@ -133,125 +133,25 @@ type Values = Record<string, FieldVal | null>;
 
 type View = "empty" | "filled" | "sources";
 
-// ── crates.io → schema mapping ───────────────────────────────────────────────
+/* ── where a component's fields come from ────────────────────────────────────
+ *
+ * Reconciling the three sources — what crates.io published, what the
+ * repository scan read, what a person set — used to happen here, per row, on
+ * every render. It lives in `components_catalog/values.rs` now and arrives
+ * through `GET /studio-components-catalog/v1/component-values`, so a second
+ * portal inherits the precedence instead of working it out again.
+ *
+ * The one reading still made here is the licence fallback in the detail view,
+ * which is the only place that fetches the version list.
+ */
 
-function shortRepo(url: string): string {
-  return url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
-}
-
-/** Everything the crates.io payload can answer for the schema fields. */
-function deriveFromCrate(value: CatalogNode["value"]): Values {
-  const out: Values = {};
-  const name = String(value.name ?? "");
-  const crateUrl = name ? `https://crates.io/crates/${encodeURIComponent(name)}` : undefined;
-  const latest =
-    (value.max_stable_version as string | undefined) ??
-    (value.newest_version as string | undefined) ??
-    (value.max_version as string | undefined) ??
-    null;
-
-  if (value.description) out.description = { v: String(value.description), b: String(value.description) };
-  if (value.repository) {
-    const r = String(value.repository);
-    out.path = { v: r, b: shortRepo(r), l: r };
-  }
-  if (latest) {
-    out.version = { v: latest, b: latest, l: crateUrl };
-    out.lastrelease = { v: latest, b: latest, l: crateUrl };
-    out.published = { v: `On crates.io — ${name} ${latest}`, b: "crates.io", s: "good", l: crateUrl };
-  }
-  const updated = value.updated_at as string | undefined;
-  if (updated) {
-    const day = updated.slice(0, 10);
-    out.lastchange = { v: day, b: day, u: day };
-  }
-  const cats = (value.categories as string[] | undefined) ?? [];
-  const kws = (value.keywords as string[] | undefined) ?? [];
-  if (cats.length) out.category = { v: cats.join(", "), b: cats[0] };
-  else if (kws.length) out.category = { v: kws.join(", "), b: kws[0] };
-
-  const license = value.license as string | undefined;
-  if (license) out.licence = { v: license, b: license };
-
-  return out;
-}
-
-/** The newest non-yanked version that declares a licence — a client-side
- *  fallback for the Licence field when the gear node predates the parser
- *  change that surfaces it. */
+/** The newest non-yanked version that declares a licence — a fallback for the
+ *  Licence field when the gear node predates the parser change that surfaces
+ *  it. Stays here because `versions` is fetched by the detail view alone. */
 function licenceFromVersions(rows: CatalogNode[] | null): string | null {
   if (!rows) return null;
   const hit = rows.find((v) => !v.value.yanked && typeof v.value.license === "string" && v.value.license);
   return hit ? String(hit.value.license) : null;
-}
-
-/** Turn a bare profile value into a FieldVal if it isn't already one. */
-function toFieldVal(raw: unknown): FieldVal | null {
-  if (raw === null || raw === undefined || raw === "") return null;
-  if (typeof raw === "object" && !Array.isArray(raw)) {
-    const o = raw as Record<string, unknown>;
-    if ("v" in o || "b" in o || "n" in o || "s" in o || "l" in o || "u" in o) return o as FieldVal;
-    // an object we don't recognise — stringify it compactly
-    return { v: JSON.stringify(o), b: JSON.stringify(o) };
-  }
-  if (Array.isArray(raw)) {
-    const s = raw.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ");
-    return s ? { v: s, b: s, n: raw.length } : null;
-  }
-  if (typeof raw === "number") return { v: raw.toLocaleString("en-US"), b: raw.toLocaleString("en-US"), n: raw };
-  return { v: String(raw), b: String(raw) };
-}
-
-/** A few legacy flat profile keys the old editor produced, mapped to schema keys. */
-const LEGACY_KEYS: Record<string, string> = {
-  category: "category",
-  domain: "category",
-  lifecycle_status: "lifecycle",
-  maintainers: "maintainer",
-  repository: "path",
-  code_coverage: "coverage",
-  code_loc: "codeloc",
-  spec_loc: "specloc",
-  unit_test_loc: "unitloc",
-  e2e_test_loc: "e2eloc",
-  supported_databases: "dbs",
-  plugins: "plugins",
-  dependencies: "deps",
-  events_published: "events",
-  feature_flags: "flags",
-  api_spec_link: "openapi",
-};
-
-/** Merge the three sources in precedence order: crates.io < repository < profile. */
-function buildValues(value: CatalogNode["value"], profile: Record<string, unknown> | undefined): Values {
-  const out = deriveFromCrate(value);
-
-  if (profile) {
-    // repository-parsed fields (auto), refreshed on every Sync from the repo files
-    const auto = profile.auto;
-    if (auto && typeof auto === "object" && !Array.isArray(auto)) {
-      for (const [k, raw] of Object.entries(auto as Record<string, unknown>)) {
-        const fv = toFieldVal(raw);
-        if (fv) out[k] = fv;
-      }
-    }
-    // the rich shape: profile.values keyed by schema field id (manual overrides)
-    const richValues = profile.values;
-    if (richValues && typeof richValues === "object" && !Array.isArray(richValues)) {
-      for (const [k, raw] of Object.entries(richValues as Record<string, unknown>)) {
-        out[k] = toFieldVal(raw);
-      }
-    }
-    // legacy flat keys — only fill where nothing is set yet
-    for (const [flat, key] of Object.entries(LEGACY_KEYS)) {
-      if (out[key]) continue;
-      if (flat in profile) {
-        const fv = toFieldVal((profile as Record<string, unknown>)[flat]);
-        if (fv) out[key] = fv;
-      }
-    }
-  }
-  return out;
 }
 
 // ── lamps ────────────────────────────────────────────────────────────────────
@@ -437,28 +337,6 @@ function syncBody(
   return { crates_io, repositories };
 }
 
-/** The category/domain of a component, from its profile or the crates.io node. */
-function componentCategory(g: CatalogNode, profile: Record<string, unknown> | undefined): string {
-  const pick = (obj: unknown, key: string): string | undefined => {
-    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-      const v = (obj as Record<string, unknown>)[key];
-      if (v && typeof v === "object") {
-        const b = (v as Record<string, unknown>).b ?? (v as Record<string, unknown>).v;
-        if (typeof b === "string") return b;
-      }
-      if (typeof v === "string") return v;
-    }
-    return undefined;
-  };
-  const catList = Array.isArray(g.value.categories) ? (g.value.categories as string[]) : [];
-  return (
-    pick(profile?.auto, "category") ??
-    pick(profile?.values, "category") ??
-    (typeof g.value.category === "string" ? (g.value.category as string) : undefined) ??
-    catList[0] ??
-    ""
-  );
-}
 
 
 
@@ -517,6 +395,10 @@ export function ComponentsCatalog({
 }) {
   const [gears, setGears] = useState<CatalogNode[] | null>(null);
   const [profiles, setProfiles] = useState<Record<string, Record<string, unknown>>>({});
+  /** Each component's fields with its three sources reconciled, by the gear
+   *  that owns the precedence. The raw profiles above are still read, because
+   *  the editor writes them — this is what the table reads. */
+  const [resolved, setResolved] = useState<Record<string, ComponentValues>>({});
   const [selected, setSelected] = useState<string | null>(focus?.name ?? null);
   useEffect(() => {
     if (focus) setSelected(focus.name);
@@ -711,6 +593,17 @@ export function ComponentsCatalog({
         if (name) next[name] = node.value as Record<string, unknown>;
       }
       setProfiles(next);
+      try {
+        const answered = await api.componentValues(token);
+        const byName: Record<string, ComponentValues> = {};
+        for (const row of answered.items) byName[row.name] = row;
+        setResolved(byName);
+      } catch {
+        // The table then shows what the node itself says and nothing merged
+        // onto it, which is thin but honest — better than merging it here a
+        // second way.
+        setResolved({});
+      }
     } catch (e) {
       setErr(errText(e));
     }
@@ -775,7 +668,7 @@ export function ComponentsCatalog({
       .filter((g) => !typeFilter || g.type_id === typeFilter)
       .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
       .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
-      .filter((g) => !cat || componentCategory(g, profiles[nameOf(g)]).toLowerCase().includes(cat))
+      .filter((g) => !cat || (resolved[nameOf(g)]?.category ?? "").toLowerCase().includes(cat))
       .filter((g) => {
         if (!needle) return true;
         const name = String(g.value.name ?? "").toLowerCase();
@@ -797,7 +690,7 @@ export function ComponentsCatalog({
     if (!onCategories) return;
     const set = new Set<string>();
     for (const g of gears ?? []) {
-      const c = componentCategory(g, profiles[nameOf(g)]).trim();
+      const c = (resolved[nameOf(g)]?.category ?? "").trim();
       if (c) set.add(c);
     }
     onCategories(Array.from(set).sort((a, b) => a.localeCompare(b)));
@@ -840,6 +733,7 @@ export function ComponentsCatalog({
           token={token}
           gear={selectedGear}
           profile={profiles[selected as string]}
+          values={resolved[selected as string]?.values ?? {}}
           schema={schemaFor(schemas, selectedGear.type_id)}
           activity={activity}
           activityDays={activityDays}
@@ -950,7 +844,7 @@ export function ComponentsCatalog({
                     <GearListRow
                       key={g.instance_id}
                       gear={g}
-                      profile={profiles[nameOf(g)]}
+                      values={resolved[nameOf(g)]?.values ?? {}}
                       schema={schemaFor(schemas, g.type_id)}
                       activity={activity.byGear.get(nameOf(g))}
                       activityDays={activityDays}
@@ -969,7 +863,7 @@ export function ComponentsCatalog({
                 <GearListCard
                   key={g.instance_id}
                   gear={g}
-                  profile={profiles[nameOf(g)]}
+                  values={resolved[nameOf(g)]?.values ?? {}}
                   schema={schemaFor(schemas, g.type_id)}
                   activity={activity.byGear.get(nameOf(g))}
                   onOpen={() => setSelected(nameOf(g))}
@@ -1249,21 +1143,21 @@ function ActivityStatus({ activity }: { activity: ActivityIndex }) {
  */
 function GearListRow({
   gear,
-  profile,
+  values,
   schema,
   activity,
   activityDays,
   onOpen,
 }: {
   gear: CatalogNode;
-  profile: Record<string, unknown> | undefined;
+  /** Reconciled by the gear that owns the precedence, not merged here. */
+  values: Values;
   schema: Schema;
   activity: GearActivity | undefined;
   activityDays: number;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
-  const values = useMemo(() => buildValues(gear.value, profile), [gear.value, profile]);
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
@@ -1365,13 +1259,14 @@ function GearListRow({
 
 function GearListCard({
   gear,
-  profile,
+  values,
   schema,
   activity,
   onOpen,
 }: {
   gear: CatalogNode;
-  profile: Record<string, unknown> | undefined;
+  /** Reconciled by the gear that owns the precedence, not merged here. */
+  values: Values;
   /** This component's own type's schema — the card counts against it, so
    *  "8 of 11" on a micro-frontend rather than "8 of 62". */
   schema: Schema;
@@ -1379,7 +1274,6 @@ function GearListCard({
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
-  const values = useMemo(() => buildValues(gear.value, profile), [gear.value, profile]);
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
@@ -1524,6 +1418,7 @@ function GearDetail({
   token,
   gear,
   profile,
+  values: given,
   schema,
   activity,
   activityDays,
@@ -1533,7 +1428,10 @@ function GearDetail({
 }: {
   token: string;
   gear: CatalogNode;
+  /** What the editor writes. The table below reads `values`. */
   profile: Record<string, unknown> | undefined;
+  /** Reconciled fields, from the gear that owns the precedence. */
+  values: Values;
   /** The presentation of this component's TYPE, as the catalogue serves it.
    *  Rendering a micro-frontend against the gear schema is a page of "no data"
    *  with its handful of real values lost in it, which is what this page used
@@ -1552,13 +1450,16 @@ function GearDetail({
   const [editing, setEditing] = useState(false);
 
   const values = useMemo(() => {
-    const base = buildValues(gear.value, profile);
+    // The reconciled fields, plus one fallback this view alone can make: it
+    // is the only place that fetches the version list, and a gear node from
+    // before the parser surfaced `license` has the answer only there.
+    const base: Values = { ...given };
     if (!base.licence) {
       const lic = licenceFromVersions(versions);
       if (lic) base.licence = { v: lic, b: lic };
     }
     return base;
-  }, [gear.value, profile, versions]);
+  }, [given, versions]);
   const filled = schemaFields.filter((f) => values[f.key]).length;
   const pct = schemaFields.length ? Math.round((filled / schemaFields.length) * 100) : 0;
   const derivable = schemaFields.filter(

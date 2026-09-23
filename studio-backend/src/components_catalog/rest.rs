@@ -1004,6 +1004,84 @@ async fn gear_activity(
     }))
 }
 
+// ── what a component's fields actually say ───────────────────────────────────
+
+/// One component, with its three sources already reconciled.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentValuesDto {
+    /// The component's catalogue name — how a caller joins this to its row.
+    pub name: String,
+    /// Field id to its answer. An answer is `{ v, b, n, s, l, u }`, every part
+    /// optional: a source that knows the value but not its grade says so
+    /// rather than inventing one. A field a person CLEARED is present and
+    /// null, which is different from absent — absent means nothing answered.
+    pub values: serde_json::Value,
+    /// What to file the component under, out of the four places a category
+    /// hides. Empty when nothing answers, which is a fact about the component
+    /// and reads better than an "Uncategorised" invented for it.
+    pub category: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentValuesListDto {
+    pub items: Vec<ComponentValuesDto>,
+    pub total: u32,
+    /// Insight's ranking capped a page, so this is a prefix of the catalogue
+    /// rather than all of it.
+    pub truncated: bool,
+}
+
+/// GET /studio-components-catalog/v1/component-values — the reconciled fields.
+///
+/// The whole catalogue in one answer, because the screen that wants it is a
+/// table of the whole catalogue: asking per component would be one request per
+/// row for something already read in one.
+async fn component_values(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<ComponentValuesListDto>> {
+    let (nodes, truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let profile_nodes = catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // Profiles are keyed by the component name they are about, which is
+    // `gear_name` on the node rather than the node's own name.
+    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for node in profile_nodes {
+        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+
+    let items: Vec<ComponentValuesDto> = nodes
+        .into_iter()
+        .filter_map(|node| {
+            let name = node.value.get("name").and_then(Value::as_str)?.to_owned();
+            let profile = profiles.get(&name);
+            Some(ComponentValuesDto {
+                values: Value::Object(super::values::resolve(&node.value, profile)),
+                category: super::values::category_of(&node.value, profile),
+                name,
+            })
+        })
+        .collect();
+
+    Ok(Json(ComponentValuesListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        truncated,
+    }))
+}
+
 async fn list_profiles(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -1757,6 +1835,44 @@ pub fn register_routes(
             "Per-gear delivery activity",
         )
         .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/component-values")
+        .operation_id("studio_components_catalog.list_component_values")
+        .summary("What each component's fields say, with its three sources reconciled")
+        .description(
+            "A catalogued component has three sources and they disagree on purpose: what \
+             crates.io published, what the repository scan read (`profile.auto`), and what a \
+             PERSON set (`profile.values`). LATER WINS. That order is the whole rule, and it is \
+             not obvious from any one of them — a person's correction must survive the next \
+             sync, and a sync must still fill in what nobody has corrected.\n\n\
+             A field a person CLEARED comes back present and null. That is different from \
+             absent: clearing is a decision, and falling back to what the scan found would \
+             quietly undo it. Absent means nothing answered at all.\n\n\
+             Flat keys from the old editor (`domain`, `code_loc`, `api_spec_link`, …) fill only \
+             what is still unanswered. They are the oldest and least trustworthy source, and \
+             reading them any earlier would overwrite an edit with a stale field in a way \
+             nobody notices.\n\n\
+             `category` is looked for in four places in order: the scan, the profile, the node \
+             itself, then the first published category. Empty when nothing answers — a fact \
+             about the component, and better than an `Uncategorised` invented for it.\n\n\
+             NUMBERS COME BACK AS DIGITS, with the number itself in `n`. Thousands separators \
+             are a locale decision and this side does not hold one; a portal that does formats \
+             `n`. The same reason the access catalogue serves privilege ids and not their \
+             English names.\n\n\
+             This used to run in the portal, per row, on every render.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(component_values)
+        .json_response_with_schema::<ComponentValuesListDto>(
+            openapi,
+            StatusCode::OK,
+            "The reconciled fields",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

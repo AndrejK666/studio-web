@@ -19,6 +19,7 @@ mod scaffold;
 mod service;
 mod skeleton;
 mod sync_task;
+mod values;
 
 use std::sync::Arc;
 
