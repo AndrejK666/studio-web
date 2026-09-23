@@ -509,6 +509,16 @@ pub struct VerdictDto {
     /// `purpose`: whether the gate passed. Null when the service answered
     /// without one — which keeps a gate shut rather than guessing.
     pub gate_passed: Option<bool>,
+    /// `purpose`: what the document is made of, role to share. Reported
+    /// because `spec_share` is one number out of it and a reader comparing
+    /// documents wants the rest — and because a SET's mixture is these,
+    /// weighted, which nobody can work out from the single number.
+    pub mixture: Option<std::collections::BTreeMap<String, f64>>,
+    /// `purpose`: how long the document was, in the detector's own tokens.
+    /// The weight a set-wide mixture uses, so it travels with the mixture.
+    pub n_tokens: Option<f64>,
+    /// `purpose`: how many sections the detector split it into.
+    pub n_sections: Option<u32>,
     /// `leak`: whether the foreign share stayed under the threshold.
     pub passed: Option<bool>,
     /// `leak`: how much of the document read as belonging to another kind.
@@ -588,6 +598,23 @@ async fn get_verdict(
             dto.doc_type = v.doc_type;
             dto.spec_share = Some(v.spec_share);
             dto.gate_passed = v.gate_passed;
+            dto.mixture = result
+                .and_then(|r| r.get("mixture"))
+                .and_then(serde_json::Value::as_object)
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(role, share)| {
+                            Some((role.clone(), share.as_f64().filter(|s| s.is_finite())?))
+                        })
+                        .collect()
+                });
+            dto.n_tokens = result
+                .and_then(|r| r.get("n_tokens"))
+                .and_then(serde_json::Value::as_f64);
+            dto.n_sections = result
+                .and_then(|r| r.get("n_sections"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok());
         }
         Detector::Leak => {
             let v = super::verdict::leak(result);
