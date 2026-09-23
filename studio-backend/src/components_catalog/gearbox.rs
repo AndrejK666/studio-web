@@ -147,6 +147,11 @@ pub struct EngineConfigField {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EnginePackage {
     pub crate_name: String,
+    #[serde(default)]
+    pub lib_ident: Option<String>,
+    /// Relative to the corpus root.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -628,6 +633,231 @@ pub fn gear_facts(catalogue: &EngineCatalogue, corpus: &str) -> BTreeMap<String,
             (g.package.crate_name.clone(), fields)
         })
         .collect()
+}
+
+// ── New gears: the engine's own scaffold ──────────────────────────────────
+
+/// The three shapes the engine scaffolds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GearKind {
+    Minimal,
+    Service,
+    Plugin,
+}
+
+impl GearKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "minimal" => Some(Self::Minimal),
+            "service" | "" => Some(Self::Service),
+            "plugin" => Some(Self::Plugin),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Service => "service",
+            Self::Plugin => "plugin",
+        }
+    }
+}
+
+/// Where the SDK a plugin implements lives, as its `gear.gdl` writes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdkLocator {
+    pub crate_name: String,
+    pub lib_ident: String,
+    /// Relative to the new gear's own directory.
+    pub path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GearScaffold {
+    /// The crate, which is also the id the engine names the package after.
+    pub crate_name: String,
+    pub name: String,
+    pub kind: GearKind,
+    pub plugin: Option<SdkLocator>,
+}
+
+/// A host a new plugin can fill, and the SDK its extension point is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostPoint {
+    pub host_id: String,
+    pub host_crate: String,
+    pub sdk_crate: String,
+    pub sdk_lib: String,
+    /// Relative to the corpus root.
+    pub sdk_path: String,
+    /// Whether the host can run in a product from this corpus.
+    pub runs: bool,
+}
+
+pub fn host_points(catalogue: &EngineCatalogue) -> Vec<HostPoint> {
+    let dead = catalogue.dead();
+    let mut out: Vec<HostPoint> = catalogue
+        .gears
+        .values()
+        .flat_map(|g| {
+            let runs = !dead.contains_key(&g.id);
+            g.extension_points.iter().filter_map(move |p| {
+                Some(HostPoint {
+                    host_id: g.id.clone(),
+                    host_crate: g.package.crate_name.clone(),
+                    sdk_crate: p.sdk.crate_name.clone(),
+                    sdk_lib: p.sdk.lib_ident.clone()?,
+                    sdk_path: p.sdk.path.clone()?,
+                    runs,
+                })
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| (!a.runs, &a.host_crate).cmp(&(!b.runs, &b.host_crate)));
+    out
+}
+
+/// The SDK path as a new gear's `gear.gdl` must write it, in a Studio
+/// workspace: the gear sits at `<checkout>/<parent_dir>/<slug>`, and the corpus
+/// is the `gears-rust` checkout beside the project's.
+pub fn sdk_path_from_gear(parent_dir: &str, sdk_path: &str) -> String {
+    let depth = parent_dir
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .count()
+        + 2;
+    format!(
+        "{}{CORPUS_SOURCE_ID}/{}",
+        "../".repeat(depth),
+        sdk_path.trim_start_matches('/')
+    )
+}
+
+fn answer_gdl(result: &Value) -> anyhow::Result<String> {
+    if let Some(error) = result.get("error") {
+        bail!(
+            "the engine refused the scaffold: {}",
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("no message")
+        );
+    }
+    result
+        .pointer("/result/gear_gdl")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("the engine's scaffold answer has no gear_gdl"))
+}
+
+/// One request to `gearbox rpc --stdio`: initialize (writes declared, because
+/// the scaffold method refuses a read-only session even for a dry run), the
+/// request, shut down. Returns the request's whole response. Blocking.
+fn rpc_once(
+    bin: &Path,
+    root: &Path,
+    workspace: &Path,
+    method: &str,
+    params: Value,
+) -> anyhow::Result<Value> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut child = Command::new(bin)
+        .args(["rpc", "--stdio", "--root"])
+        .arg(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow!("cannot run the Gearbox engine `{}`: {e}", bin.display()))?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let stdout = child.stdout.take().expect("stdout is piped");
+
+    let (tx, rx) = std::sync::mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut length = None;
+            loop {
+                let mut line = String::new();
+                if reader
+                    .read_line(&mut line)
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .is_none()
+                {
+                    return;
+                }
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("Content-Length:") {
+                    length = v.trim().parse::<usize>().ok();
+                }
+            }
+            let Some(n) = length else { return };
+            let mut body = vec![0u8; n];
+            if std::io::Read::read_exact(&mut reader, &mut body).is_err() {
+                return;
+            }
+            if let Ok(v) = serde_json::from_slice::<Value>(&body)
+                && tx.send(v).is_err()
+            {
+                return;
+            }
+        }
+    });
+
+    let mut send = |message: Value| -> anyhow::Result<()> {
+        let body = serde_json::to_vec(&message)?;
+        write!(stdin, "Content-Length: {}\r\n\r\n", body.len())?;
+        stdin.write_all(&body)?;
+        stdin.flush()?;
+        Ok(())
+    };
+    let deadline = Instant::now() + ENGINE_TIMEOUT;
+    let wait_for = |id: i64| -> anyhow::Result<Value> {
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let message = rx.recv_timeout(left).map_err(|_| {
+                anyhow!(
+                    "the Gearbox engine did not answer within {}s",
+                    ENGINE_TIMEOUT.as_secs()
+                )
+            })?;
+            if message.get("id").and_then(Value::as_i64) == Some(id) {
+                return Ok(message);
+            }
+        }
+    };
+
+    let outcome = (|| {
+        send(
+            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "roots": [root.to_string_lossy()],
+                "workspace": workspace.to_string_lossy(),
+                "allow_writes": true,
+            }}),
+        )?;
+        let init = wait_for(1)?;
+        if let Some(e) = init.get("error") {
+            bail!("the engine refused to initialize: {e}");
+        }
+        send(serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }))?;
+        send(serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": method, "params": params }))?;
+        let answer = wait_for(2)?;
+        let _ = send(
+            serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null }),
+        );
+        let _ = send(serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }));
+        Ok(answer)
+    })();
+    let _ = child.kill();
+    let _ = child.wait();
+    outcome
 }
 
 /// Whether `dir` holds a `gear.gdl` anywhere below it, within a depth that
@@ -1200,6 +1430,45 @@ impl Gearbox {
     pub async fn complete(&self, picked: &[String]) -> anyhow::Result<Completion> {
         let (_, _, catalogue) = self.ensure_corpus().await?;
         Ok(complete(&catalogue, picked))
+    }
+
+    /// The extension points a new plugin gear can fill, one per host.
+    pub async fn extension_points(&self) -> anyhow::Result<Vec<HostPoint>> {
+        let (_, _, catalogue) = self.ensure_corpus().await?;
+        Ok(host_points(&catalogue))
+    }
+
+    /// The `gear.gdl` the engine writes for a new gear, from its own
+    /// scaffold, so a gear Studio creates is described the way Gearbox Studio
+    /// describes one. Dry run: nothing is written; the text is returned.
+    pub async fn scaffold_gdl(&self, spec: GearScaffold) -> anyhow::Result<String> {
+        let (corpus, _, _) = self.ensure_corpus().await?;
+        let bin = self.cfg.bin.clone();
+        let scratch =
+            std::env::temp_dir().join(format!("studio-gearbox-scaffold-{}", uuid::Uuid::new_v4()));
+        let result = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&scratch)?;
+            let params = serde_json::json!({
+                "id": spec.crate_name,
+                "name": spec.name,
+                "version": "0.1.0",
+                "kind": spec.kind.as_str(),
+                "plugin": spec.plugin.as_ref().map(|p| serde_json::json!({
+                    "crate_name": p.crate_name,
+                    "lib_ident": p.lib_ident,
+                    "path": p.path,
+                    "plugin_interface": serde_json::Value::Null,
+                })),
+                "destination_dir": scratch.join("gear").to_string_lossy(),
+                "dry_run": true,
+            });
+            let answer = rpc_once(&bin, &corpus, &scratch, "gearbox/gear/scaffold", params);
+            let _ = std::fs::remove_dir_all(&scratch);
+            answer
+        })
+        .await
+        .context("scaffold task")??;
+        answer_gdl(&result)
     }
 
     pub async fn preview(&self, input: PreviewInput) -> anyhow::Result<Preview> {
@@ -1788,5 +2057,66 @@ mod tests {
         assert_eq!(reasons["static-authn-plugin"], ["plugin of authn-resolver"]);
         assert_eq!(reasons["types-registry"], ["colocated with authn-resolver"]);
         assert_eq!(r.diagnostics[0].code, "GBX0315");
+    }
+
+    #[test]
+    fn a_host_is_offered_only_when_its_sdk_can_be_located() {
+        let c: EngineCatalogue = serde_json::from_value(json!({
+            "gears": {
+                "authn-resolver": {
+                    "id": "authn-resolver",
+                    "package": {"crate_name": "cf-gears-authn-resolver"},
+                    "extension_points": [{"sdk": {
+                        "crate_name": "cf-gears-authn-resolver-sdk",
+                        "lib_ident": "authn_resolver_sdk",
+                        "path": "gears/system/authn-resolver/authn-resolver-sdk"
+                    }}]
+                },
+                // Without a path a plugin's `gear.gdl` could not point at it.
+                "credstore": {
+                    "id": "credstore",
+                    "package": {"crate_name": "cf-gears-credstore"},
+                    "extension_points": [{"sdk": {"crate_name": "cf-gears-credstore-sdk"}}]
+                }
+            }
+        }))
+        .expect("fixture parses");
+        let points = host_points(&c);
+        assert_eq!(points.len(), 1, "{points:?}");
+        assert_eq!(points[0].host_crate, "cf-gears-authn-resolver");
+        assert_eq!(points[0].sdk_lib, "authn_resolver_sdk");
+    }
+
+    #[test]
+    fn the_sdk_path_climbs_out_of_the_new_gear_into_the_corpus_checkout() {
+        // <checkout>/gears/<slug>/ → up three to the workspace, then gears-rust.
+        assert_eq!(
+            sdk_path_from_gear("gears", "gears/system/x-sdk"),
+            "../../../gears-rust/gears/system/x-sdk"
+        );
+        assert_eq!(
+            sdk_path_from_gear("/gears/bss/", "/gears/x-sdk"),
+            "../../../../gears-rust/gears/x-sdk"
+        );
+        // An empty parent is the checkout root: <checkout>/<slug>/.
+        assert_eq!(sdk_path_from_gear("", "x-sdk"), "../../gears-rust/x-sdk");
+    }
+
+    #[test]
+    fn a_scaffold_answer_yields_its_gdl_or_the_engines_refusal() {
+        let ok = json!({"id": 2, "result": {"gear_gdl": "gear x {}\n", "plans": []}});
+        assert_eq!(answer_gdl(&ok).expect("gdl"), "gear x {}\n");
+        let refused =
+            json!({"id": 2, "error": {"code": -32602, "message": "id is not kebab-case"}});
+        let e = answer_gdl(&refused).expect_err("refused");
+        assert!(format!("{e}").contains("id is not kebab-case"), "{e}");
+        assert!(answer_gdl(&json!({"id": 2, "result": {}})).is_err());
+    }
+
+    #[test]
+    fn an_unknown_gear_kind_is_refused_and_blank_means_service() {
+        assert_eq!(GearKind::parse(""), Some(GearKind::Service));
+        assert_eq!(GearKind::parse(" plugin "), Some(GearKind::Plugin));
+        assert_eq!(GearKind::parse("library"), None);
     }
 }
