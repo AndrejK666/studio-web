@@ -13,6 +13,7 @@ mod cratesio;
 pub(crate) mod field_schema;
 mod gearbox;
 pub(crate) mod gts;
+pub mod port;
 mod repo_enrich;
 mod rest;
 mod scaffold;
@@ -157,6 +158,11 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         if let Some(g) = &gearbox {
             service.set_gearbox(Arc::clone(g));
         }
+
+        // The three repository acts a provisioning run performs, so a run can
+        // do them without going out through HTTP and back.
+        ctx.client_hub()
+            .register::<dyn port::ProjectRepos>(service.clone());
 
         let _ = self.service.set(service.clone());
         Ok(rest::register_routes(

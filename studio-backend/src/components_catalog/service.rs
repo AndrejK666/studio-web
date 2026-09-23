@@ -2670,3 +2670,103 @@ mod type_count_tests {
         assert!(!counts[0].capped);
     }
 }
+
+/// The three acts a provisioning run needs, forwarded to the methods the REST
+/// routes already use.
+///
+/// A thin forward on purpose: the seam exists so a run can perform them
+/// without going out through HTTP and back, not because performing them is
+/// different. The skeleton is composed here for the same reason it is composed
+/// in the route — it left the browser once already.
+#[async_trait::async_trait]
+impl super::port::ProjectRepos for CatalogService {
+    async fn attached_repo(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .get_project_repo(ctx, &project_id.to_string())
+            .await?
+            .and_then(|node| {
+                node.value
+                    .get("repo")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            }))
+    }
+
+    async fn create_repo(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        spec: &super::port::NewRepo,
+    ) -> anyhow::Result<super::port::CreatedRepo> {
+        let created = CatalogService::create_project_repo(
+            self,
+            ctx,
+            &project_id.to_string(),
+            spec.connection_tenant,
+            spec.connection_id,
+            spec.owner.as_deref(),
+            spec.is_org,
+            &spec.name,
+            spec.private,
+        )
+        .await?;
+        Ok(super::port::CreatedRepo {
+            full_name: created.full_name,
+            default_branch: created.default_branch,
+            html_url: created.html_url,
+        })
+    }
+
+    async fn attach_repo(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        connection_tenant: Uuid,
+        connection_id: Option<Uuid>,
+        repo: &str,
+        branch: &str,
+    ) -> anyhow::Result<()> {
+        let _ = connection_tenant;
+        self.set_project_repo(
+            ctx,
+            &project_id.to_string(),
+            serde_json::json!({
+                "connection_id": connection_id.map(|id| id.to_string()),
+                "repo": repo,
+                "branch": branch,
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn scaffold(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        spec: &super::port::Scaffold,
+    ) -> anyhow::Result<()> {
+        let files = super::skeleton::generate(&super::skeleton::SkeletonSpec {
+            capability: spec.slug.clone(),
+            app_title: spec.app_title.clone(),
+            problem: spec.problem.clone(),
+            origin: spec.origin.clone(),
+            parent_dir: spec.parent_dir.clone(),
+        })
+        .1;
+        self.scaffold_into_repo(
+            ctx,
+            &project_id.to_string(),
+            &spec.slug,
+            files,
+            spec.open_pr,
+        )
+        .await?;
+        Ok(())
+    }
+}

@@ -123,3 +123,40 @@ pub trait BindingNames: Send + Sync + 'static {
         project_id: Uuid,
     ) -> anyhow::Result<std::collections::HashMap<String, String>>;
 }
+
+/// Writing one document, for whoever is creating the project it belongs to.
+///
+/// Creating a product project ends at its App Spec, not at a list of gears:
+/// the questionnaire is what turns prose into capabilities, and capabilities
+/// are what the component matcher reads. So the brief somebody typed into the
+/// New project card IS the answer to that questionnaire's first question, and
+/// the sequence that creates the project writes it as one.
+///
+/// Absent is a normal state — a deployment with no documents database simply
+/// does not seed the document, and the provisioning run says which step was
+/// skipped rather than failing the project over it.
+#[async_trait]
+pub trait DocumentAuthor: Send + Sync + 'static {
+    /// Does this project already have a document of this type?
+    ///
+    /// `Ok(true)` short-circuits the step. An `Err` means the question could
+    /// not be asked, and the caller then writes one — a duplicate document is
+    /// visible and deletable, where a missing App Spec is the thing that makes
+    /// a product project useless.
+    async fn has_document(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        type_key: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Write one, returning its id.
+    async fn author(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        type_key: &str,
+        title: &str,
+        first_answer: Option<String>,
+    ) -> anyhow::Result<String>;
+}

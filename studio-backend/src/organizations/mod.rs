@@ -102,6 +102,24 @@ impl RestApiCapability for StudioOrganizationsGear {
     ) -> anyhow::Result<Router> {
         let service = build_service(ctx);
         let _ = self.service.set(service.clone());
+
+        // Creating a project is a sequence across four gears, and it used to
+        // live in the browser — where it lasted exactly as long as the page
+        // did. Registered here because this is the gear that holds the
+        // account-management client the first two steps need, and refused
+        // loudly if something else has claimed the task type.
+        if let Ok(am) = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            crate::tasks::registry::register(Arc::new(
+                crate::projects::provision_task::ProvisionTask::new(ctx.client_hub(), am),
+            ))?;
+        } else {
+            warn!(
+                "studio-organizations: account-management is not available — projects cannot be                  created here, and the enqueue answers 503"
+            );
+        }
         let self_service = self.self_service.get().copied().unwrap_or(true);
         // The rollup's sources are resolved here, in the REST phase, because
         // that is when every gear has registered what it publishes. Each is
@@ -137,6 +155,7 @@ impl RestApiCapability for StudioOrganizationsGear {
             service,
             rest::SelfService(self_service),
             sources,
+            ctx.client_hub(),
         ))
     }
 }

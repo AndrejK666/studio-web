@@ -643,6 +643,53 @@ fn upgrade_installation(mut installation: KitInstallation) -> KitInstallation {
     installation
 }
 
+/// Installing what a new project was told to have, for the run that makes it.
+///
+/// A thin forward to the methods the REST routes already use. The catalogue
+/// decides the version, not the caller: a project created today and one
+/// created tomorrow should both get what the kit says is current.
+#[async_trait::async_trait]
+impl super::port::KitInstaller for KitRegistryService {
+    async fn wanted(&self, ctx: &SecurityContext, project_id: Uuid) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .list_installations(ctx, project_id)
+            .await?
+            .into_iter()
+            .map(|installation| installation.kit_slug)
+            .collect())
+    }
+
+    async fn want(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        kit_slug: &str,
+        version: &str,
+    ) -> anyhow::Result<()> {
+        let version = if version.is_empty() {
+            self.catalogue()
+                .into_iter()
+                .find(|kit| kit.slug == kit_slug)
+                .map(|kit| kit.default_version)
+                .unwrap_or_default()
+        } else {
+            version.to_owned()
+        };
+        self.request_installation(
+            ctx,
+            project_id,
+            kit_slug,
+            &version,
+            // What the card asked for, and the only mode a GitHub-sourced kit
+            // accepts: the copy is the project's to change.
+            "copy",
+            "all-repositories",
+        )
+        .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

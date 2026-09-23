@@ -5,6 +5,7 @@
 //! desired installations; `cfs` remains the only component that materializes
 //! kit files into a checkout.
 
+pub mod port;
 mod rest;
 pub(crate) mod service;
 
@@ -32,11 +33,17 @@ pub struct StudioKitsGear {
 impl Gear for StudioKitsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let account_management = ctx.client_hub().get::<dyn AccountManagementClient>()?;
+        let service = Arc::new(KitRegistryService::new(
+            account_management,
+            ctx.client_hub(),
+        ));
+        // Installing what a new project was told to have, for the run that
+        // makes it: a kit somebody ticked on the card is part of creating the
+        // project, not a thing they do afterwards.
+        ctx.client_hub()
+            .register::<dyn port::KitInstaller>(service.clone());
         self.service
-            .set(Arc::new(KitRegistryService::new(
-                account_management,
-                ctx.client_hub(),
-            )))
+            .set(service)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
         Ok(())
     }

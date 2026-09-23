@@ -6,6 +6,7 @@ use axum::{Extension, Router, extract::Path};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::ClientScope;
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
@@ -276,12 +277,176 @@ async fn list_rollups(
     }))
 }
 
+// ── creating a project ───────────────────────────────────────────────────────
+
+/// Everything the New project card asked for.
+///
+/// Forwarded to the run as-is rather than validated field by field here: what
+/// a kind needs is decided by the plan, which is the one place that knows a
+/// gear project has a starter gear and a product has a spec.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct CreateProjectRequest {
+    /// The workspace the project hangs from.
+    pub workspace_id: String,
+    pub name: String,
+    /// `new_gears`, `product` or `existing`.
+    pub kind: String,
+    /// What the person typed. For a product this is not filed away — it IS the
+    /// answer to the App Spec questionnaire's first question, word for word.
+    #[serde(default)]
+    pub brief: Option<String>,
+    /// `new` creates a repository; `existing` records one already chosen.
+    #[serde(default)]
+    pub repo_mode: Option<String>,
+    #[serde(default)]
+    pub repo_name: Option<String>,
+    #[serde(default)]
+    pub repo_owner: Option<String>,
+    #[serde(default)]
+    pub repo_is_org: Option<bool>,
+    #[serde(default)]
+    pub repo_private: Option<bool>,
+    #[serde(default)]
+    pub existing_repo: Option<String>,
+    #[serde(default)]
+    pub existing_branch: Option<String>,
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub gear_dir: Option<String>,
+    #[serde(default)]
+    pub gear_slug: Option<String>,
+    #[serde(default)]
+    pub open_pr: Option<bool>,
+    #[serde(default)]
+    pub spec_type: Option<String>,
+    /// Kits to install. Part of creating the project rather than something
+    /// done to it afterwards.
+    #[serde(default)]
+    pub kits: Option<Vec<String>>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectRunDto {
+    /// The run to follow. Poll it through studio-tasks, or watch the push
+    /// channel — the same way every other long job here is followed.
+    pub run_id: String,
+    /// How many steps the plan has, so a caller can draw the checklist before
+    /// the first phase arrives.
+    pub steps: u32,
+}
+
+/// POST /studio-organizations/v1/projects — create one, as a run.
+///
+/// Answers a run id rather than a project, and that is the point. The sequence
+/// is four-to-five non-atomic writes across four gears; performed here it
+/// finishes whether or not the person who asked is still watching, where the
+/// browser's version left a half-made project behind if the tab closed.
+///
+/// Enqueued with an idempotency key of `(workspace, name)`, so pressing Create
+/// twice is one run rather than two projects.
+async fn create_project(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(hub): Extension<Arc<toolkit::client_hub::ClientHub>>,
+    Json(body): Json<CreateProjectRequest>,
+) -> ApiResult<JsonBody<ProjectRunDto>> {
+    let name = body.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(OrganizationError::invalid_argument()
+            .with_constraint("a project needs a name")
+            .create());
+    }
+    let workspace_id = Uuid::parse_str(body.workspace_id.trim()).map_err(|_| {
+        OrganizationError::invalid_argument()
+            .with_constraint("workspace_id must be a uuid")
+            .create()
+    })?;
+    let kind = match body.kind.trim() {
+        "new_gears" => "new_gears",
+        "product" => "product",
+        "existing" => "existing",
+        other => {
+            return Err(OrganizationError::invalid_argument()
+                .with_constraint(format!(
+                    "kind must be new_gears, product or existing, not `{other}`"
+                ))
+                .create());
+        }
+    };
+
+    let payload = serde_json::json!({
+        "workspace_id": workspace_id,
+        "name": name,
+        "kind": kind,
+        "brief": body.brief.unwrap_or_default(),
+        "repo_mode": body.repo_mode,
+        "repo_name": body.repo_name,
+        "repo_owner": body.repo_owner,
+        "repo_is_org": body.repo_is_org.unwrap_or(false),
+        "repo_private": body.repo_private.unwrap_or(false),
+        "existing_repo": body.existing_repo,
+        "existing_branch": body.existing_branch,
+        "connection_id": body.connection_id,
+        "gear_dir": body.gear_dir,
+        "gear_slug": body.gear_slug,
+        "open_pr": body.open_pr.unwrap_or(false),
+        "spec_type": body.spec_type,
+        "kits": body.kits.unwrap_or_default(),
+    });
+
+    // How many steps this kind has, read from the plan rather than counted
+    // here: two places deciding that is two checklists that can disagree.
+    let steps = crate::projects::steps::step_count(&payload).unwrap_or(0);
+
+    let queue = hub
+        .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+            crate::tasks::TASK_QUEUE_INSTANCE_ID,
+        ))
+        .map_err(|_| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "projects cannot be created in this deployment                      (studio-tasks has no database configured)",
+                )
+                .create()
+        })?;
+    // One project at a time per workspace: two runs creating projects under
+    // the same parent would race on the find-or-create probe that is what
+    // keeps them from duplicating each other.
+    let partition = workspace_id.to_string();
+    // Pressing Create twice is ONE run rather than two projects.
+    let once = format!("{workspace_id}:{name}");
+    let run = queue
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: workspace_id,
+                task_type: crate::projects::provision_task::TASK_TYPE,
+                payload,
+                partition_key: Some(&partition),
+                idempotency_key: Some(&once),
+                notify_workspace_id: None,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    Ok(Json(ProjectRunDto {
+        run_id: run.to_string(),
+        steps,
+    }))
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<OrganizationService>>,
     self_service: SelfService,
     sources: Option<Arc<super::rollups::Sources>>,
+    // Resolved per request rather than held: creating a project enqueues a
+    // run, and this gear must not care whether studio-tasks initialised first.
+    hub: Arc<toolkit::client_hub::ClientHub>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-organizations/v1/capabilities")
         .operation_id("studio_organizations.capabilities")
@@ -375,6 +540,43 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::post("/studio-organizations/v1/projects")
+        .operation_id("studio_organizations.create_project")
+        .summary("Create a project, as a run that finishes without you")
+        .description(
+            "Answers a RUN ID rather than a project, and that is the point. Making a project is \
+             four-to-five non-atomic writes across four gears (ADR-0010) — a tenant, its \
+             configuration, a repository created or attached, and then a starter gear or the \
+             one document an assembly reads. That sequence used to run in the browser, where it \
+             lived exactly as long as the page did: closing the tab on step three left a tenant \
+             with no configuration, or a configuration with no source. Nothing wrong enough to \
+             notice, nothing right enough to use, and the only cure was opening the same form \
+             again.\n\n\
+             Performed here it finishes whether or not anybody is watching. Follow the run the \
+             way every other long job in this assembly is followed; its phases are the \
+             checklist, and its result carries the project id, the repository and each step's \
+             outcome.\n\n\
+             EVERY STEP ASKS BEFORE IT ACTS, which is what makes a retry heal a half-made \
+             project rather than build a second one beside it — the tenant step in particular \
+             finds-or-creates by name. The one step that cannot ask is the starter gear, which \
+             writes onto a branch of its own, so a second attempt costs a branch.\n\n\
+             Enqueued with an idempotency key of `(workspace, name)`: pressing Create twice is \
+             one run, not two projects. Runs under one workspace queue behind each other, \
+             because two of them would race on exactly the probe that keeps them apart.\n\n\
+             A step whose gear is not in this deployment fails THAT STEP with a reason — a \
+             deployment with no connector driver still gets its tenant and its configuration.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<CreateProjectRequest>(openapi, "What the project is")
+        .handler(create_project)
+        .json_response_with_schema::<ProjectRunDto>(openapi, StatusCode::OK, "The run to follow")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-organizations/v1/rollups")
         .operation_id("studio_organizations.list_rollups")
         .summary("What each workspace and project contains")
@@ -399,4 +601,5 @@ This composition used to live in the portal, which spent three requests         
         .layer(Extension(service))
         .layer(Extension(self_service))
         .layer(Extension(sources))
+        .layer(Extension(hub))
 }

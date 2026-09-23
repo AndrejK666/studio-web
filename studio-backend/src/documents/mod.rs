@@ -112,6 +112,10 @@ impl toolkit::Gear for StudioDocumentsGear {
         // to it. Registered beside the count and absent the same way.
         ctx.client_hub()
             .register::<dyn port::BindingNames>(service.clone());
+        // Writing the one document a new product project starts from, for the
+        // run that creates it.
+        ctx.client_hub()
+            .register::<dyn port::DocumentAuthor>(service.clone());
 
         self.service
             .set(service)

@@ -1751,6 +1751,44 @@ export const api = {
     return request<SpecQualityVerdict>(`/studio-spec-quality/v1/verdicts?${q.toString()}`, token);
   },
 
+  /** Create a project, as a run that finishes without you.
+   *
+   *  Answers a RUN ID rather than a project. Making one is four-to-five
+   *  non-atomic writes across four gears (ADR-0010), and this page used to
+   *  perform them itself — so closing the tab on step three left a tenant with
+   *  no configuration, or a configuration with no source. Performed by the
+   *  server it finishes whether or not anybody is watching.
+   *
+   *  Every step asks before it acts, so a retry heals a half-made project
+   *  instead of building a second one. Enqueued with an idempotency key of
+   *  `(workspace, name)`: pressing Create twice is one run, not two projects. */
+  createProject: (
+    token: string,
+    body: {
+      workspace_id: string;
+      name: string;
+      kind: "new_gears" | "product" | "existing";
+      brief?: string;
+      repo_mode?: string;
+      repo_name?: string;
+      repo_owner?: string;
+      repo_is_org?: boolean;
+      repo_private?: boolean;
+      existing_repo?: string;
+      existing_branch?: string;
+      connection_id?: string;
+      gear_dir?: string;
+      gear_slug?: string;
+      open_pr?: boolean;
+      spec_type?: string;
+      kits?: string[];
+    },
+  ) =>
+    request<{ run_id: string; steps: number }>("/studio-organizations/v1/projects", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   /** What every workspace and project contains, in one request.
    *
    *  The portal used to compose this itself — three requests per row, one of

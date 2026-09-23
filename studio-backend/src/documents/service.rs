@@ -91,6 +91,18 @@ impl DocumentsService {
             .map(|p| p.0))
     }
 
+    /// The same read, for callers that cannot proceed without an answer.
+    ///
+    /// `parent_of` reports absence; this refuses it. A caller deciding whether
+    /// to SHOW something can render "no parent"; a caller about to READ a
+    /// project's rows cannot, because the alternative to knowing the workspace
+    /// is reading the wrong one.
+    async fn workspace_of(&self, ctx: &SecurityContext, project_id: Uuid) -> Result<Uuid> {
+        self.parent_of(ctx, project_id)
+            .await?
+            .context("that project has no parent workspace")
+    }
+
     async fn owner_chain(&self, ctx: &SecurityContext, workspace_id: Uuid) -> Result<Vec<Uuid>> {
         let workspace = self.resolve_tenant(ctx, workspace_id).await?;
         Ok(match workspace.parent_id {
@@ -2454,5 +2466,78 @@ mod reclassification_tests {
         assert!(keep_existing_verdict(&row("detected", Some("heuristic"))).is_none());
         assert!(keep_existing_verdict(&row("detected", Some("front_matter"))).is_none());
         assert!(keep_existing_verdict(&row("unknown", None)).is_none());
+    }
+}
+
+/// How many documents one probe reads before deciding the type is absent.
+/// A project with more than this many of one type is not the project this
+/// question is about.
+const DOCUMENT_PROBE_CAP: usize = 500;
+
+#[async_trait::async_trait]
+impl crate::documents::port::DocumentAuthor for DocumentsService {
+    async fn has_document(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        type_key: &str,
+    ) -> anyhow::Result<bool> {
+        let workspace_id = self.workspace_of(ctx, project_id).await?;
+        let (documents, _) = self
+            .list_documents(
+                workspace_id,
+                Some(project_id),
+                PageQuery {
+                    offset: Some(0),
+                    limit: Some(DOCUMENT_PROBE_CAP),
+                },
+            )
+            .await?;
+        Ok(documents.iter().any(|d| d.type_key == type_key))
+    }
+
+    async fn author(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        type_key: &str,
+        title: &str,
+        first_answer: Option<String>,
+    ) -> anyhow::Result<String> {
+        let workspace_id = self.workspace_of(ctx, project_id).await?;
+        // The brief is the answer to the questionnaire's FIRST question, word
+        // for word — "What are we building? Describe the product and its core
+        // domain." So it is handed over as the answer it is, rather than filed
+        // under `brief` and asked for again.
+        let answers = match first_answer.filter(|a| !a.trim().is_empty()) {
+            Some(text) => {
+                let ty = self
+                    .get_type(ctx, workspace_id, type_key)
+                    .await?
+                    .context("unknown document type")?;
+                ty.template.questionnaire.first().map(|q| {
+                    vec![crate::documents::intake::Answer {
+                        question_id: q.id.clone(),
+                        text: Some(text),
+                        choices: None,
+                        flag: None,
+                    }]
+                })
+            }
+            None => None,
+        };
+        let created = self
+            .create_document(
+                ctx,
+                workspace_id,
+                Some(project_id),
+                type_key,
+                title,
+                None,
+                answers,
+                ctx.subject_id().to_string(),
+            )
+            .await?;
+        Ok(created.id.to_string())
     }
 }
