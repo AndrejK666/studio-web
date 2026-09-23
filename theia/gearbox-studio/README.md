@@ -35,6 +35,12 @@ collab strip, Orca and the Explorer stay as they are.
     perspective.
   - No view opens at start-up. The Product view opens when a person opens a
     product.
+- **Opening from the portal.** Each portal section opens the IDE its own way:
+  a document from Specs in Documents, a file from Sources in the Workbench, the
+  artifact graph from Artifacts, and a product from Components in the Gearbox
+  perspective (`studio.openProduct` → `gearbox.product.openAt`), with the
+  catalogue left, the product in the middle, the Inspector right and Conflicts
+  below. Nothing of Studio's is hidden; switching back restores each layout.
 - **Not ported:** everything under Gearbox Studio's `browser/theia/` except
   the read-only `product.lock` editor, its layout migration, the Anthropic key
   settings and `@theia/ai-anthropic`.
@@ -48,4 +54,5 @@ collab strip, Orca and the Explorer stay as they are.
 | P3 | graph, inspector, lock, conflicts, generate verified in a session | |
 | P4 | start screen and the create/add wizards verified | |
 | P5 | the `@Gearbox` chat agent and tools, through Studio's model | |
-| P6 | an opt-in Gearbox perspective, toolbar actions, screen scope, themes | |
+| P6a | the Gearbox perspective beside Workbench and Documents; `studio.openProduct` lands a portal product in it; the Inspector links a gear to its page in the portal's component catalogue (`studio.openComponent`) | done |
+| P6b | toolbar actions on the Product view, screen scope inside the Gearbox perspective, the optional Fabric themes | |

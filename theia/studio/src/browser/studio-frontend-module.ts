@@ -156,6 +156,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // no parent window.
     bind(PortalBridgeContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(PortalBridgeContribution);
+    bind(CommandContribution).toService(PortalBridgeContribution);
 
     // Reports this session into the portal's presence gear, and shows the
     // notes that come back. Bound after the bridge because it reads what the

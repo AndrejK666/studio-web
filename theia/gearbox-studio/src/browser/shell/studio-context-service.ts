@@ -28,7 +28,6 @@ import { FrontendApplicationContribution } from "@theia/core/lib/browser";
 import { ContextKey, ContextKeyService } from "@theia/core/lib/browser/context-key-service";
 import { FrontendApplicationStateService } from "@theia/core/lib/browser/frontend-application-state";
 import { PerspectiveService } from "@theia/core/lib/browser/perspective-service";
-import { gearboxOwnsLayout } from "./gearbox-shell-gate";
 import { Emitter, Event } from "@theia/core/lib/common/event";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 
@@ -202,18 +201,12 @@ export class StudioContextService implements FrontendApplicationContribution {
     }
 
     const wanted = perspectiveFor(next);
-    // Constructor Studio: only between Gearbox's own perspectives. Opening a
-    // product from Workbench or Documents leaves the person where they are.
-    if (
-      this.layoutReady &&
-      gearboxOwnsLayout(this.perspectives) &&
-      this.perspectives.getActivePerspectiveId() !== wanted
-    ) {
-      // Swallowed here rather than at every `settled()` call: a failed layout
-      // switch is already logged by `PerspectiveService`, and an unhandled
-      // rejection on a field nobody happens to await is noise, not a signal.
-      this.switching = this.perspectives.switchPerspective(wanted).catch(() => undefined);
-    }
+    // Constructor Studio: the context never switches the perspective. Gearbox
+    // Studio had one perspective per context and moved between them as a product
+    // opened or closed; here there is one Gearbox perspective beside Studio's
+    // own, entered by choice or by the portal (`studio-gearbox-perspective.ts`),
+    // and opening or closing a product leaves the person where they are.
+    void wanted;
 
     if (changed) {
       this.onDidChangeEmitter.fire(next);

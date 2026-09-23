@@ -63,6 +63,10 @@ export interface StudioBridge {
   openDocument(target: StudioTarget, doc: StudioDocumentRef): Promise<void>;
   /** Open a checkout-relative repository file in the IDE's editor. */
   openFile(target: StudioTarget, path: string): Promise<void>;
+  /** Open a checkout-relative product.gdl in the IDE's Gearbox perspective,
+   *  through Gearbox (resolved, with its graph, lock and conflicts). An IDE
+   *  without Gearbox opens it as a file. */
+  openProduct(target: StudioTarget, path: string): Promise<void>;
   /** Open the IDE's Artifact Graph view. */
   openGraph(target: StudioTarget): Promise<void>;
   /** The target currently being launched, if any — for button spinners. */

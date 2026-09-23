@@ -1154,6 +1154,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         ),
       openFile: (target: StudioTarget, path: string) =>
         openInStudio(target, { type: "studio.openInEditor", path }),
+      openProduct: (target: StudioTarget, path: string) =>
+        openInStudio(target, { type: "studio.openProduct", path }),
       openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
       opening,
       isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
@@ -1171,6 +1173,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         dirty?: number;
         workspaceId?: string;
         documentId?: string;
+        name?: string;
       };
       if (typeof d?.type === "string" && d.type.startsWith("studio.")) {
         stopInitRetry(sp.wsId); // the bridge is alive — handshake done
@@ -1192,6 +1195,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           at: Date.now(),
         });
       }
+      if (d?.type === "studio.openComponent" && typeof d.name === "string" && d.name) {
+        // A gear in the IDE asked for its catalogue page (the Gearbox Inspector's
+        // link): leave the space for the catalogue, open on that component. The
+        // session stays mounted, so going back to it is a switch, not a reload.
+        setActiveSpace(null);
+        portalNav.openComponent(d.name);
+      }
       if (d?.type === "studio.status" && typeof d.dirty === "number") {
         const dirty = d.dirty; // narrow before the closure
         setSpaceDirty((prev) =>
@@ -1201,7 +1211,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [spaces, flushSpaceQueue, spaceOrigin, stopInitRetry]);
+  }, [spaces, flushSpaceQueue, spaceOrigin, stopInitRetry, portalNav]);
 
   useEffect(() => {
     // Broadcast portal theme changes to every mounted space.
