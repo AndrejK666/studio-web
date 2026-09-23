@@ -27,6 +27,7 @@ import {
   DocSection,
   DocType,
   DocValidation,
+  PlanRow,
   RemoteRepo,
   ScaffoldFile,
   SpecFinding,
@@ -42,7 +43,6 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
-import { composePlan, profilesByName, type PlanRow } from "./compose";
 import { gearSlug } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
 import {
@@ -427,14 +427,13 @@ function DocumentsView({
     setComposeBusy(true);
     setErr(null);
     try {
-      const [components, profs, vocab] = await Promise.all([
-        api.listComponents(token),
-        api.listComponentProfiles(token).catch(() => ({ nodes: [] as import("./api").CatalogNode[] })),
-        api.capabilities(token, workspaceId),
-      ]);
-      const profiles = profilesByName(profs.nodes ?? []);
+      // The catalogue and the profiles are no longer fetched here: the server
+      // reads them itself and answers with the plan. The vocabulary still
+      // travels with the question, because it belongs to the workspace.
+      const vocab = await api.capabilities(token, workspaceId);
       const caps = selected.capabilities ?? [];
-      setPlan(composePlan(caps, components.nodes ?? [], profiles, vocab.items ?? []));
+      const plan = await api.composePlan(token, caps, vocab.items ?? []);
+      setPlan(plan.items);
     } catch (e) {
       setErr(errText(e));
     } finally {

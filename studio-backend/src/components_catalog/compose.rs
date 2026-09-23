@@ -224,7 +224,7 @@ pub fn plan(
                             .to_owned(),
                         score: why.len(),
                         why,
-                        built: build_state(profiles.get(name)),
+                        built: build_state(component, profiles.get(name)),
                     })
                 })
                 .collect();
@@ -237,9 +237,21 @@ pub fn plan(
                     .then(b.score.cmp(&a.score))
                     .then(a.name.cmp(&b.name))
             });
-            let unbuilt =
-                !candidates.is_empty() && !candidates.iter().any(|c| c.built == BuildState::Built);
+            // One component, one candidate. Sixteen of the 118 names on the
+            // reference stand are stored TWICE — the same FrontX package under
+            // both `catalog.frontx.v1` and `catalog.gear.v1` — and a list of
+            // five that spends two slots on one package is offering four.
+            // After the sort, so the copy that survives is the better-ranked
+            // one; before the cut, so the duplicate does not eat a slot.
+            let mut seen = std::collections::HashSet::new();
+            candidates.retain(|c| seen.insert(c.name.clone()));
             candidates.truncate(SHORTLIST);
+            // Read off the list that is actually shown, and only when every one
+            // of them is KNOWN to be docs-only. An `Unknown` among them is not
+            // evidence of absence — saying "nothing here is built" over a
+            // component nobody scanned asserts more than the catalogue said.
+            let unbuilt = !candidates.is_empty()
+                && candidates.iter().all(|c| c.built == BuildState::DocsOnly);
             PlanRow {
                 capability: capability.clone(),
                 gap: candidates.is_empty(),
@@ -255,7 +267,15 @@ pub fn plan(
 /// The scan computes `gear_status` now, so every consumer gets one answer
 /// instead of deriving its own. Reading the crate count stays as the fallback:
 /// a graph synced before the status existed carries the count and not the word.
-fn build_state(profile: Option<&Value>) -> BuildState {
+fn build_state(component: &Value, profile: Option<&Value>) -> BuildState {
+    // The node's own publication status is the first word, because it is the
+    // one a person set. `draft` and `published` are the catalogue's vocabulary;
+    // anything else is not a third state, it is no answer, and falls through.
+    match component.get("status").and_then(Value::as_str) {
+        Some("draft") => return BuildState::DocsOnly,
+        Some("published") => return BuildState::Built,
+        _ => {}
+    }
     let Some(profile) = profile else {
         return BuildState::Unknown;
     };
@@ -449,19 +469,114 @@ mod tests {
     #[test]
     fn the_scans_own_word_is_preferred_to_the_crate_count() {
         let profile = json!({ "auto": { "gear_status": "docs-only", "crates": { "n": 9 } } });
-        assert_eq!(build_state(Some(&profile)), BuildState::DocsOnly);
+        assert_eq!(
+            build_state(&json!({}), Some(&profile)),
+            BuildState::DocsOnly
+        );
     }
 
     #[test]
     fn no_profile_is_unknown_rather_than_docs_only() {
         // Never scanned is not the same fact as scanned and found empty.
-        assert_eq!(build_state(None), BuildState::Unknown);
-        assert_eq!(build_state(Some(&json!({}))), BuildState::Unknown);
+        assert_eq!(build_state(&json!({}), None), BuildState::Unknown);
+        assert_eq!(
+            build_state(&json!({}), Some(&json!({}))),
+            BuildState::Unknown
+        );
     }
 
     #[test]
     fn a_zero_crate_count_is_the_load_bearing_one() {
         let profile = json!({ "auto": { "crates": { "n": 0 } } });
-        assert_eq!(build_state(Some(&profile)), BuildState::DocsOnly);
+        assert_eq!(
+            build_state(&json!({}), Some(&profile)),
+            BuildState::DocsOnly
+        );
+    }
+    #[test]
+    fn a_node_that_says_it_is_published_is_not_asked_again() {
+        // The status is what a person set; the crate count is what a scan
+        // guessed. When both speak, the person wins.
+        let node = json!({ "name": "x", "status": "published" });
+        let profile = json!({ "auto": { "crates": { "n": 0 } } });
+        assert_eq!(build_state(&node, Some(&profile)), BuildState::Built);
+
+        let draft = json!({ "name": "x", "status": "draft" });
+        assert_eq!(
+            build_state(&draft, Some(&json!({ "auto": { "crates": { "n": 7 } } }))),
+            BuildState::DocsOnly
+        );
+    }
+
+    #[test]
+    fn a_status_the_catalogue_does_not_use_is_no_answer_at_all() {
+        // Not a third state — it falls through to what the scan found.
+        let node = json!({ "name": "x", "status": "archived" });
+        let profile = json!({ "auto": { "crates": { "n": 3 } } });
+        assert_eq!(build_state(&node, Some(&profile)), BuildState::Built);
+        assert_eq!(build_state(&node, None), BuildState::Unknown);
+    }
+
+    // ---- one component, one candidate ------------------------------------
+
+    /// Sixteen of the 118 names on the reference stand are stored twice.
+    #[test]
+    fn a_component_stored_twice_is_offered_once() {
+        let components = vec![
+            json!({ "name": "@gears-frontx/state", "kind": "frontx", "description": "chat state" }),
+            json!({ "name": "@gears-frontx/state", "kind": "gear", "description": "chat state" }),
+            json!({ "name": "other-chat", "kind": "gear", "description": "chat" }),
+        ];
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &serde_json::Map::new(),
+            &vocabulary(&[]),
+        );
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["@gears-frontx/state", "other-chat"]);
+    }
+
+    /// The duplicate must not eat a slot: dedup comes before the cut.
+    #[test]
+    fn a_duplicate_does_not_cost_the_shortlist_a_place() {
+        let mut components: Vec<Value> = (0..SHORTLIST)
+            .map(|i| component(&format!("chat-{i}"), "chat"))
+            .collect();
+        components.insert(0, component("chat-0", "chat"));
+        let rows = plan(
+            &["chat".to_owned()],
+            &components,
+            &serde_json::Map::new(),
+            &vocabulary(&[]),
+        );
+        assert_eq!(rows[0].candidates.len(), SHORTLIST);
+        let mut names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), SHORTLIST);
+    }
+
+    /// `unbuilt` is a claim about the list that is shown, and only when every
+    /// candidate on it is KNOWN to be docs-only.
+    #[test]
+    fn an_unscanned_candidate_does_not_make_a_row_unbuilt() {
+        let profiles: serde_json::Map<String, Value> = [(
+            "stub".to_owned(),
+            json!({ "auto": { "crates": { "n": 0 } } }),
+        )]
+        .into_iter()
+        .collect();
+        let rows = plan(
+            &["chat".to_owned()],
+            &[
+                component("stub", "chat"),
+                component("never-scanned", "chat"),
+            ],
+            &profiles,
+            &vocabulary(&[]),
+        );
+        assert_eq!(rows[0].candidates.len(), 2);
+        assert!(!rows[0].unbuilt, "one of them might well be built");
     }
 }

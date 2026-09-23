@@ -165,6 +165,34 @@ export const STATUS_LADDER: ProjectStatus[] = ["draft", "active", "archived"];
  *  Was `CAP_KEYWORDS` in documents.tsx — a table in a UI file that decided
  *  which components a workspace could be offered. It is catalogue data now,
  *  overlaid the same three ways as everything else. */
+/** What the catalogue can say about whether a component was ever built.
+ *
+ *  `"unknown"` is not a maybe — it means the question does not apply or was
+ *  never asked. A FrontX package carries no crate count at all, and a component
+ *  with no profile has not been scanned. Neither is evidence of absence. */
+export type BuildState = "built" | "docs-only" | "unknown";
+
+/** One component offered for one capability. */
+export interface Candidate {
+  name: string;
+  kind: string;
+  /** How many of the capability's terms this component mentions. */
+  score: number;
+  /** Which terms they were, so a suggestion can be argued with. */
+  why: string[];
+  built: BuildState;
+}
+
+/** One capability, and what could fill it. */
+export interface PlanRow {
+  capability: string;
+  candidates: Candidate[];
+  /** No candidate at all — the capability has nothing to build from. */
+  gap: boolean;
+  /** Candidates exist, but none of them has been built. */
+  unbuilt: boolean;
+}
+
 export interface Capability {
   key: string;
   label: string;
@@ -2193,6 +2221,22 @@ export const api = {
 
   /* ── Organization access config (AM tenant metadata) ── */
 
+  /** The privilege catalogue and the seeded role ladder, from the side that
+   *  evaluates them.
+   *
+   *  Both used to be a second copy in `access.ts` under a comment saying they
+   *  "must match" `access_config.rs`, guarded by a test that parsed the Rust
+   *  source. They match because the server is now asked.
+   *
+   *  Ids and the ladder only — what a privilege is CALLED is not served, and
+   *  deliberately so (see `AccessCatalogueDto`): the strings belong to whoever
+   *  draws the screen. `PRIVILEGE_LABELS` in `access.ts` is this portal's set. */
+  accessCatalogue: (token: string) =>
+    request<{ privileges: string[]; default_roles: import("./access").RoleDef[] }>(
+      "/studio-organizations/v1/access-catalogue",
+      token,
+    ),
+
   /** The org's access model + role definitions. `null` = never set (defaults). */
   accessConfig: async (token: string, tenantId: string): Promise<import("./access").AccessConfig | null> => {
     try {
@@ -2649,6 +2693,27 @@ export const api = {
       versions: number;
       stored: number;
     }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
+  /** Match what a product needs against the components this system knows.
+   *
+   *  The rules — head-anchored term matching, built-first ordering, one
+   *  component per candidate, the cut to a shortlist after the sort — live in
+   *  `components_catalog/compose.rs`. They used to live in this portal, and a
+   *  second portal would have grown its own copy and disagreed quietly.
+   *
+   *  A POST because the vocabulary travels with the question: a workspace's
+   *  terms are a map, and a map does not belong in a query string. */
+  composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+    // A capability with no terms is matched against its own name, which is what
+    // it meant before vocabularies existed — so it is left out of the map
+    // rather than sent as an empty list.
+    const terms: Record<string, string[]> = {};
+    for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
+    return request<{ items: PlanRow[]; total: number }>(
+      "/studio-components-catalog/v1/compose",
+      token,
+      { method: "POST", body: JSON.stringify({ capabilities, terms }) },
+    );
+  },
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
     request<{ nodes: CatalogNode[]; truncated?: boolean }>(

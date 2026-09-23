@@ -23,6 +23,7 @@ import {
   normalizeAccessConfig,
   type AccessConfig,
   type GrantDef,
+  type RoleDef,
 } from "./access";
 import type { RootProject } from "./projects";
 
@@ -70,7 +71,7 @@ export function PeopleView({
     setError(null);
     const list = ids ? ids.split(",") : [];
     try {
-      const [perRoot, orgUsers, access] = await Promise.all([
+      const [perRoot, orgUsers, access, catalogue] = await Promise.all([
         Promise.all(
           list.map(async (id) => {
             const users = await api.tenantUsers(token, id).then(
@@ -92,6 +93,13 @@ export function PeopleView({
               () => null,
             )
           : Promise.resolve(null),
+        // The ladder a fresh organization is seeded with, from the side that
+        // seeds it. Best-effort like the rest: an empty ladder renders a role
+        // key rather than its name, which is better than not rendering at all.
+        api.accessCatalogue(token).then(
+          (c) => c.default_roles,
+          () => [] as RoleDef[],
+        ),
       ]);
 
       const merged = new Map<string, Person>();
@@ -111,7 +119,7 @@ export function PeopleView({
         }
       }
       setPeople([...merged.values()]);
-      setCfg(normalizeAccessConfig(access));
+      setCfg(normalizeAccessConfig(access, catalogue));
     } catch (e) {
       setError(errText(e));
       setPeople([]);

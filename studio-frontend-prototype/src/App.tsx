@@ -39,10 +39,8 @@ import {
 } from "./studio-bridge";
 import {
   ACCESS_MODELS,
-  defaultAccessConfig,
   normalizeAccessConfig,
   privilegesByGroup,
-  PRIVILEGES,
   type AccessConfig,
   type AccessModel,
   type GrantDef,
@@ -8602,6 +8600,8 @@ function AccessView({
   meName: string;
 }) {
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
+  /** Every privilege the PDP understands, in catalogue order, from the server. */
+  const [privileges, setPrivileges] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -8625,11 +8625,13 @@ function AccessView({
       setLoading(false);
       return;
     }
-    api
-      .accessConfig(token, org.id)
-      .then((v) => {
+    // The catalogue and the ladder come from the side that evaluates them, so
+    // this screen cannot save a role the PDP has never heard of.
+    Promise.all([api.accessConfig(token, org.id), api.accessCatalogue(token)])
+      .then(([v, catalogue]) => {
         if (!live) return;
-        setCfg(normalizeAccessConfig(v ?? defaultAccessConfig()));
+        setPrivileges(catalogue.privileges);
+        setCfg(normalizeAccessConfig(v, catalogue.default_roles));
       })
       .catch((e) => live && setError(errText(e)))
       .finally(() => live && setLoading(false));
@@ -8754,7 +8756,7 @@ function AccessView({
 
   function addRole() {
     if (!cfg) return;
-    const key = `role_${cfg.roles.length + 1}_${PRIVILEGES.length}`.replace(/[^a-z0-9_]/gi, "");
+    const key = `role_${cfg.roles.length + 1}_${privileges.length}`.replace(/[^a-z0-9_]/gi, "");
     mutate({
       ...cfg,
       roles: [...cfg.roles, { key, name: "New role", privileges: ["people.view"] }],
@@ -8781,7 +8783,7 @@ function AccessView({
     }
   }
 
-  const groups = privilegesByGroup();
+  const groups = privilegesByGroup(privileges);
 
   return (
     <>
@@ -8873,7 +8875,7 @@ function AccessView({
                       </button>
                     )}
                     <span className="sub" style={{ marginLeft: "auto" }}>
-                      {role.privileges.length} / {PRIVILEGES.length} privileges
+                      {role.privileges.length} / {privileges.length} privileges
                     </span>
                   </div>
                   <div className="role-grid">

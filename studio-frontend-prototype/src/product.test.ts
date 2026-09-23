@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GearboxStatus, RepoEntry } from "./api";
-import type { Candidate, PlanRow } from "./compose";
+import type { Candidate, PlanRow } from "./api";
 import {
   defaultPicks,
   groupDiagnostics,
