@@ -517,7 +517,13 @@ gears:
       # installation. Nothing else makes an administrator: the token's tenant
       # stopped being one (ADR-0018 §3), and an installation that names nobody
       # here has none — the gear says so at boot.
-      platform_admins: []
+      # ONE VALUE, FROM THE ENVIRONMENT, because this file is shared by every
+      # cluster and a Keycloak subject id is not: the same person is a
+      # different subject on studio-dev and studio-test. The chart supplies it
+      # (`backend.platformAdmins`); unset, this is a list of one empty string,
+      # which the gear drops and then reports as nobody. Several administrators
+      # go in one value, comma-separated.
+      platform_admins: ["${STUDIO_PLATFORM_ADMINS:-}"]
 
   studio-credstore-pg:
     database:

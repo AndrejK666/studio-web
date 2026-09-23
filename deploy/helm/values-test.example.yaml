@@ -4,6 +4,10 @@ global:
   environmentType: test
 
 backend:
+  # Who administers this environment, as Keycloak subject ids in ITS realm.
+  # A subject id is per-installation, so this value cannot be shared with
+  # another environment — this is `admin` in the studio realm of studio-test.cfabric.org.
+  platformAdmins: "00208b90-b311-443c-ad82-383778d7dcbe"
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1

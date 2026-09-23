@@ -473,7 +473,25 @@ impl RestApiCapability for StudioUserGear {
                     svc.set_first_login_join(Some((join.organization, join.role.clone())));
                 }
             }
-            let admins = cfg.platform_admins;
+            // One entry per administrator, and an entry may carry several
+            // separated by commas.
+            //
+            // EMPTIES ARE DROPPED BEFORE THE CHECK BELOW, and that is what
+            // makes the deployment's shape work. A subject id differs between
+            // installations while the config file is shared by all of them, so
+            // the value arrives through an environment variable and the file
+            // reads `["${STUDIO_PLATFORM_ADMINS:-}"]`. Unset, that is a list of
+            // one empty string — which is nobody, and has to warn like nobody
+            // rather than quietly seeding zero administrators and saying
+            // nothing.
+            let admins: Vec<String> = cfg
+                .platform_admins
+                .iter()
+                .flat_map(|entry| entry.split(','))
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_owned)
+                .collect();
             if admins.is_empty() {
                 warn!(
                     "studio-user: no platform_admins configured. Being a platform administrator \

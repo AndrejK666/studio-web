@@ -106,6 +106,19 @@ backend:
   # embed_api_key [required when embedding.provider=remote]).
   appSecrets:
     existingSecret: "studio-web-app"
+  # WHO ADMINISTERS THIS INSTALLATION, as Keycloak subject ids, comma-separated.
+  #
+  # A platform administrator is a membership of the platform root and nothing
+  # else (ADR-0018 SS3); the gear writes that membership from this list at every
+  # start, so it survives a database that is recreated. Empty means the
+  # installation has no administrator and the gear says so at boot -- the
+  # directory's administrative routes then answer 403 to everyone, which is the
+  # honest answer and not a bug.
+  #
+  # It is per-environment because a subject id is: the same person is a
+  # different subject on each Keycloak. Find one with
+  #   GET /auth/admin/realms/studio/users?username=<name>&exact=true
+  platformAdmins: ""
   # Knowledge-graph embeddings (graph-storage gear). ONE provider per
   # deployment; switching it over a populated graph blocks vector search until
   # the graph is re-embedded, and the backend logs that at boot.

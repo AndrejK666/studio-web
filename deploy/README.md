@@ -38,6 +38,24 @@ One image, any environment:
 
 ## Feature flags in cluster v1
 
+- **An installation names its own administrators** (`backend.platformAdmins`).
+  A platform administrator is a membership of the platform root and nothing
+  else (ADR-0018 §3): the token's tenant stopped granting it, so an
+  installation that names nobody has no administrator at all, and the identity
+  directory's routes answer `403 PLATFORM_ADMIN_REQUIRED` to everyone. The gear
+  writes the membership from this list at every start, which is what makes it
+  survive a database recreated from scratch.
+
+  The value is Keycloak **subject ids**, comma-separated, and it is
+  per-environment because a subject id is — the same person is a different
+  subject on each Keycloak. Find one with
+
+  ```bash
+  curl -H "Authorization: Bearer $TOKEN"     "https://<host>/auth/admin/realms/studio/users?username=<name>&exact=true"
+  ```
+
+  Empty is a legitimate setting and the gear says so at boot rather than
+  failing; it is only wrong if somebody expected to administer the place.
 - **IDE sessions are environment-controlled** (`backend.sessions.enabled`).
   Dev enables the Kubernetes Pod driver and launches the immutable
   `cf-studio-theia` image matching the backend SHA. The backend needs a
