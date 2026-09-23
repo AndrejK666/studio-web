@@ -160,9 +160,9 @@ RUN --mount=type=secret,id=github_token \
     /opt/cfs/bin/python -c "import sys; from studio_proxy.cache import download_and_cache; ok, message = download_and_cache(version='${STUDIO_CFS_ENGINE}'); print(message); sys.exit(0 if ok else 1)" \
     && /opt/cfs/bin/python -c "import sys; from studio_proxy.resolve import find_cached_skill; entry = find_cached_skill(); print('skill engine entry point:', entry); sys.exit(0 if entry else 1)"
 
-# ── Gearbox engine: the `.gdl` language server ──
-# `gearbox rpc --stdio` is an LSP server for gear.gdl / product.gdl (diagnostics,
-# completion, hover), and the same binary resolves and generates products. Built
+# ── Gearbox engine ──
+# `gearbox rpc --stdio` serves gearbox-studio: the gear catalogue, products and
+# their resolution, and the `.gdl` language (diagnostics, completion, hover). Built
 # from source at a pinned commit: the repository publishes no release and no
 # crate. Linked against glibc only, so the bookworm build runs on the
 # bookworm-slim runtime. Debug info is stripped: 92 MB with it.
@@ -177,18 +177,6 @@ RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
     cargo build --release --locked -p gearbox-cli \
     && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
     && gearbox --version
-
-# ── GDL language extension (a VS Code extension, run by the plugin host) ──
-# Built in its own stage with its own lockfile, so neither its dependencies nor
-# its build tree reach /app; only the bundled extension is copied into plugins/.
-FROM node:22.23.1-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37 AS gdl
-WORKDIR /gdl
-COPY gdl-language/package.json gdl-language/package-lock.json ./
-RUN npm ci --no-audit --no-fund
-COPY gdl-language/ ./
-RUN npm run typecheck && npm test && npm run build \
-    && mkdir -p /out/extension \
-    && cp -r package.json language-configuration.json syntaxes dist /out/extension/
 
 # ── Runtime ──
 FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
@@ -333,11 +321,6 @@ RUN url="$STUDIO_ORCA_DEB_URL"; sha="$STUDIO_ORCA_DEB_SHA256"; \
 USER node
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app
-# start-browser.js stages every directory under /app/plugins. Flat, with
-# package.json at the top: the deployer only looks under extension/ when an
-# extension.vsixmanifest says so, which an unpacked .vsix has and this does not
-# ("ENOENT … /app/plugins/gearbox.gdl/package.json" otherwise).
-COPY --from=gdl --chown=node:node /out/extension /app/plugins/gearbox.gdl
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 COPY --chown=node:node docker/materialize-workspace.mjs /usr/local/lib/studio-materialize-workspace.mjs

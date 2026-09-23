@@ -8,8 +8,7 @@
 // Studio's own views. Those rebinds are not ported, and every service that
 // still arranges panels asks `gearboxOwnsLayout` first (shell/gearbox-shell-gate.ts).
 //
-// Phased (see theia/gearbox-studio/README.md): the native GDL language
-// contributions replace theia/gdl-language in P2, the chat agent is P5, and the
+// Phased (see theia/gearbox-studio/README.md): the chat agent is P5, and the
 // Gearbox perspective with its toolbar, screen scope and themes is P6. Until
 // then nothing here opens a view on its own except the Product view, when a
 // person opens a product.
@@ -20,6 +19,7 @@ import { CommandContribution } from "@theia/core/lib/common/command";
 import { MenuContribution } from "@theia/core/lib/common/menu";
 import { ContainerModule, injectable } from "@theia/core/shared/inversify";
 import { MonacoEditorProvider } from "@theia/monaco/lib/browser/monaco-editor-provider";
+import { LanguageGrammarDefinitionContribution } from "@theia/monaco/lib/browser/textmate/textmate-contribution";
 
 import { GEARBOX_SERVICE_PATH, GearboxClient, GearboxService } from "../common/protocol";
 import { CatalogueStore } from "./catalogue-store";
@@ -59,6 +59,9 @@ import { ProductWidget } from "./product/product-widget";
 import { GearAuthorWidget } from "./gear/gear-author-widget";
 import { StartWidget } from "./start/start-widget";
 import { DescriptionMarkers } from "./gdl/description-markers";
+import { GdlAssistContribution } from "./gdl/gdl-assist-contribution";
+import { GdlLanguageContribution } from "./gdl/gdl-language-contribution";
+import { ProductFileChecks } from "./gdl/product-file-checks";
 import { GearSessionService } from "./shell/gear-session-service";
 import { ProductSessionService } from "./shell/product-session-service";
 import { EngineConnectionService } from "./shell/engine-connection-service";
@@ -104,10 +107,18 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(ResolutionMarkers).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(ResolutionMarkers);
 
-  // Bound so the service's document callback has somewhere to go; not an
-  // application contribution until P2, where it takes over from
-  // theia/gdl-language and starts watching editors.
+  // The `.gdl` language, natively: the grammar (Monaco has no other), the
+  // description markers from the engine's `textDocument/*` surface, completion
+  // and hover, and the catalogue checks on any product.gdl opened as a file.
+  // These replace theia/gdl-language, so one engine serves the editor and the
+  // views instead of two.
+  bind(LanguageGrammarDefinitionContribution).to(GdlLanguageContribution).inSingletonScope();
   bind(DescriptionMarkers).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(DescriptionMarkers);
+  bind(GdlAssistContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(GdlAssistContribution);
+  bind(ProductFileChecks).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(ProductFileChecks);
 
   bind(ProductSessionService).toSelf().inSingletonScope();
   bind(GearSessionService).toSelf().inSingletonScope();
