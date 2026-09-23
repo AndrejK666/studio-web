@@ -3652,21 +3652,26 @@ function WorkspaceProjects({
       if (brief.trim()) {
         steps.push({
           key: "spec",
-          label: "App Spec",
+          label: "PRD",
           check: async (ctx) => {
             const docs = await api
               .projectDocuments(token, workspace.id, ctx.tenantId)
               .then((r) => r.items)
               .catch(() => []);
-            return docs.some((d) => d.type_key === "app_spec");
+            return docs.some((d) => d.type_key === "prd");
           },
           run: async (ctx) => {
             // One answer, not a whole questionnaire: the rest is asked in
             // Specs, where there is room for it. This one seeds the `domain`
             // capability, so the project opens with something for the
             // component matching to work from rather than an empty spec.
+            //
+            // The document is a PRD, and it will not conform yet: a problem
+            // statement, goals and success metrics are nobody's answer here.
+            // That is the point of writing it now rather than later -- the
+            // Specs tab opens with exactly what is missing.
             await api.createProjectDocument(token, workspace.id, ctx.tenantId, {
-              type_key: "app_spec",
+              type_key: "prd",
               title: name,
               answers: [{ question_id: "product", text: brief.trim() }],
             });

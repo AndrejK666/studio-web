@@ -84,7 +84,7 @@ export function createSteps(kind: ProjectKind, repoMode: RepoMode): CreateStep[]
         ? "What the gear is for. Becomes the problem statement in its PRD."
         : kind === "existing"
           ? "What this app is, and what is being modernized."
-          : "What is being built. Becomes the App Spec's first answer, which is what the component matching reads.",
+          : "What is being built. Becomes the PRD's first answer, which is what the component matching reads.",
   });
   if (layout.components) {
     steps.push({
