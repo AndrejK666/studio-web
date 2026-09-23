@@ -501,6 +501,7 @@ export function ComponentsCatalog({
   hideSdk = false,
   categoryFilter = "",
   onCategories,
+  focus = null,
 }: {
   token: string;
   tenantId?: string;
@@ -510,10 +511,16 @@ export function ComponentsCatalog({
   hideSdk?: boolean;
   categoryFilter?: string;
   onCategories?: (cats: string[]) => void;
+  /** A component page to open on, asked for from outside the catalogue (a
+   *  project's product links here). */
+  focus?: { name: string; at: number } | null;
 }) {
   const [gears, setGears] = useState<CatalogNode[] | null>(null);
   const [profiles, setProfiles] = useState<Record<string, Record<string, unknown>>>({});
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(focus?.name ?? null);
+  useEffect(() => {
+    if (focus) setSelected(focus.name);
+  }, [focus]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState("");

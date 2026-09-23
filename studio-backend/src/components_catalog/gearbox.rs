@@ -137,7 +137,8 @@ impl EngineCatalogue {
             .or_else(|| self.gears.values().find(|g| g.package.crate_name == name))
     }
 
-    /// Every gear filling one of `host`'s extension points, by id.
+    /// Every gear filling one of `host`'s extension points, by crate name —
+    /// the spelling the portal picks by, so an offer reads like a suggestion.
     fn implementers_of(&self, host: &EngineGear) -> Vec<String> {
         self.gears
             .values()
@@ -149,7 +150,7 @@ impl EngineCatalogue {
                             .any(|p| p.sdk.crate_name == f.point.sdk.crate_name)
                     })
             })
-            .map(|g| g.id.clone())
+            .map(|g| g.package.crate_name.clone())
             .collect()
     }
 
