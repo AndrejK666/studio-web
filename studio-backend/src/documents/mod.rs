@@ -20,6 +20,7 @@ pub(crate) mod intake;
 mod migrations;
 mod model;
 pub(crate) mod port;
+mod quality;
 mod repo;
 #[cfg(test)]
 mod repo_tests;
@@ -123,7 +124,7 @@ impl DatabaseCapability for StudioDocumentsGear {
 impl RestApiCapability for StudioDocumentsGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
@@ -133,6 +134,11 @@ impl RestApiCapability for StudioDocumentsGear {
             warn!("studio-documents: not initialized (no database) — no routes registered");
             return Ok(router);
         };
-        Ok(rest::register_routes(router, openapi, service))
+        Ok(rest::register_routes(
+            router,
+            openapi,
+            service,
+            ctx.client_hub(),
+        ))
     }
 }

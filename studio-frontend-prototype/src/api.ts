@@ -1891,7 +1891,7 @@ export const api = {
     projectId: string | null,
     files: { node_id: string; path: string; content: string }[],
   ) =>
-    request<{ items: DocBinding[]; skipped: number }>(
+    request<{ items: DocBinding[]; not_documents: number; kept: number }>(
       projectId
         ? `/studio-documents/v1/workspaces/${workspaceId}/projects/${projectId}/document-bindings/classify`
         : `/studio-documents/v1/workspaces/${workspaceId}/document-bindings/classify`,

@@ -412,8 +412,11 @@ pub struct DocumentBindingListDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ClassifyResultDto {
     pub items: Vec<DocumentBindingDto>,
-    /// Files that were not prose at all and so got no binding.
-    pub skipped: i64,
+    /// Files recorded as not documents, by their path.
+    pub not_documents: i64,
+    /// Files left as they were, because a person had ruled on them or Spec
+    /// Quality had paid for the answer.
+    pub kept: i64,
 }
 
 #[derive(Debug)]
@@ -1533,7 +1536,150 @@ async fn classify_workspace_files(
             .into_iter()
             .map(|b| binding_dto(b, false))
             .collect(),
-        skipped: outcome.skipped as i64,
+        not_documents: outcome.not_documents as i64,
+        kept: outcome.kept as i64,
+    }))
+}
+
+/// What the quality route resolves per request.
+///
+/// Lazily, and separately from the service, for the reason the components
+/// catalogue does the same: neither the checkout reader nor the task queue is
+/// this gear's, and holding a handle from `init` would make this gear care
+/// about which gear initialised first. Absent is a normal state with a plain
+/// answer rather than a panic.
+#[derive(Clone)]
+pub struct Quality {
+    hub: Arc<toolkit::client_hub::ClientHub>,
+}
+
+impl Quality {
+    fn reader(&self) -> ApiResult<Arc<dyn crate::artifact_ingest::port::RepoFileReader>> {
+        self.hub
+            .get::<dyn crate::artifact_ingest::port::RepoFileReader>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "documents cannot be analysed in this deployment: nothing here \
+                         holds a checkout to read them from",
+                    )
+                    .create()
+            })
+    }
+
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&toolkit::client_hub::ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "documents cannot be analysed in this deployment \
+                         (studio-tasks has no database configured)",
+                    )
+                    .create()
+            })
+    }
+}
+
+/// Which bindings to analyse. Their TEXT is not here, and that is the point.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AnalyzeBindingsRequest {
+    /// Bindings this run should cover. Naming them is the caller's decision —
+    /// which documents deserve a detector is policy, and only the reading of
+    /// them moved to the server.
+    pub binding_ids: Vec<Uuid>,
+}
+
+/// The run doing the work.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AnalyzeEnqueuedDto {
+    pub run_id: String,
+    /// Where to follow it, the same way every other run in the assembly is
+    /// followed.
+    pub poll: String,
+    /// How many documents the run will actually analyse. Lower than the
+    /// bindings asked for when a checkout does not hold one of them.
+    pub documents: i64,
+}
+
+async fn analyze_project_documents(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path((workspace_id, project_id, detector)): Path<(Uuid, Uuid, String)>,
+    Json(body): Json<AnalyzeBindingsRequest>,
+) -> ApiResult<JsonBody<AnalyzeEnqueuedDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+
+    let detector = crate::documents::quality::Detector::parse(&detector).ok_or_else(|| {
+        DocumentsError::invalid_argument()
+            .with_constraint("detector must be one of purpose, leak, bloat, traceability")
+            .create()
+    })?;
+
+    let reader = quality.reader()?;
+    let docs = service
+        .quality_docs(
+            &ctx,
+            workspace_id,
+            Some(project_id),
+            &body.binding_ids,
+            reader.as_ref(),
+        )
+        .await
+        .map_err(internal)?;
+    if docs.is_empty() {
+        return Err(DocumentsError::invalid_argument()
+            .with_constraint(
+                "none of those bindings has text in a checkout — sync the repository, \
+                 or open the project in the IDE to clone it",
+            )
+            .create());
+    }
+
+    let documents = docs.len() as i64;
+    let items = crate::documents::quality::build_items(detector, &docs, &project_id.to_string());
+    let payload = serde_json::json!({
+        "detector": detector.as_str(),
+        "items": items
+            .into_iter()
+            .map(|i| serde_json::json!({ "id": i.id, "payload": i.payload }))
+            .collect::<Vec<_>>(),
+    });
+
+    let run_id = quality
+        .queue()?
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: ctx.subject_tenant_id(),
+                task_type: crate::spec_quality::batch_task::BATCH_TASK_TYPE,
+                payload,
+                partition_key: None,
+                idempotency_key: None,
+                // Nothing to tell an IDE session about: this run's result is
+                // read on the Specs screen that asked for it.
+                notify_workspace_id: None,
+            },
+        )
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    Ok(Json(AnalyzeEnqueuedDto {
+        poll: format!("/studio-tasks/v1/runs/{run_id}"),
+        run_id: run_id.to_string(),
+        documents,
     }))
 }
 
@@ -1561,7 +1707,8 @@ async fn classify_project_files(
             .into_iter()
             .map(|b| binding_dto(b, false))
             .collect(),
-        skipped: outcome.skipped as i64,
+        not_documents: outcome.not_documents as i64,
+        kept: outcome.kept as i64,
     }))
 }
 
@@ -1655,7 +1802,35 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<DocumentsService>,
+    hub: Arc<toolkit::client_hub::ClientHub>,
 ) -> Router {
+    router = OperationBuilder::post(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}",
+    )
+    .operation_id("studio_documents.analyze_project_documents")
+    .summary("Run a Spec Quality detector over a project's documents")
+    .description(
+        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .path_param("detector", "purpose | leak | bloat | traceability")
+    .json_request::<AnalyzeBindingsRequest>(openapi, "Bindings to analyse")
+    .handler(analyze_project_documents)
+    .json_response_with_schema::<AnalyzeEnqueuedDto>(
+        openapi,
+        StatusCode::OK,
+        "The run doing the analysis",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/workspaces/{workspace_id}/types")
         .operation_id("studio_documents.list_types")
         .summary("List effective document types for a workspace")
@@ -2288,9 +2463,12 @@ pub fn register_routes(
     const CLASSIFY_DESC: &str = "Classify ingested files against the workspace's effective \
          document types and record the result as bindings. A binding a person has \
          already ruled on keeps its type; only its conformance is refreshed. Files \
-         whose path is not prose (source, images, lockfiles) get no binding and are \
-         counted as skipped. Send a few dozen files per call — the whole repository \
-         in one body exceeds the gateway's request-size limit.";
+         whose path is not prose (source, images, lockfiles) are recorded as not \
+         documents rather than left without a binding — a file with none reads as \
+         'not scanned yet', which is a queue that never empties. Send them with an \
+         empty body: the verdict for one is its path. Send a few dozen files per \
+         call — the whole repository in one body exceeds the gateway's \
+         request-size limit.";
 
     router = OperationBuilder::post(
         "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify",
@@ -2307,7 +2485,7 @@ pub fn register_routes(
     .json_response_with_schema::<ClassifyResultDto>(
         openapi,
         StatusCode::OK,
-        "Bindings written, and how many files were skipped",
+        "Bindings written, and what the pass decided",
     )
     .error_400(openapi)
     .error_401(openapi)
@@ -2331,7 +2509,7 @@ pub fn register_routes(
     .json_response_with_schema::<ClassifyResultDto>(
         openapi,
         StatusCode::OK,
-        "Bindings written, and how many files were skipped",
+        "Bindings written, and what the pass decided",
     )
     .error_400(openapi)
     .error_401(openapi)
@@ -2451,5 +2629,7 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
-    router.layer(Extension(service))
+    router
+        .layer(Extension(Quality { hub }))
+        .layer(Extension(service))
 }

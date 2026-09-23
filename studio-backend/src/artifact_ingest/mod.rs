@@ -18,6 +18,7 @@ mod graph;
 mod graph_backend;
 pub(crate) mod gts;
 mod ingest_task;
+pub mod port;
 mod rest;
 mod service;
 
@@ -199,7 +200,7 @@ impl RestApiCapability for StudioArtifactIngestGear {
             {
                 Ok(c) => {
                     info!(
-                        "studio-artifact-ingest: studio-documents wired — a sync classifies the prose it reads"
+                        "studio-artifact-ingest: studio-documents wired — a sync decides what every file it reads is"
                     );
                     Some(c)
                 }
@@ -228,6 +229,18 @@ impl RestApiCapability for StudioArtifactIngestGear {
             crate::tasks::registry::register(Arc::new(ingest_task::IngestTask::new(Arc::clone(
                 service,
             ))))?;
+        }
+
+        // Offer the checkout to whoever owns the documents in it.
+        //
+        // The documents gear knows which files are specs and what type each is;
+        // what it has never had is their text, because nobody stores it: the
+        // graph keeps an excerpt and a binding keeps a path. Without this the
+        // only thing that could join the two was the browser, which read the
+        // files out through REST and posted them back to be analysed.
+        if let Some(service) = &service {
+            ctx.client_hub()
+                .register::<dyn port::RepoFileReader>(service.clone());
         }
 
         // Retain for the process lifetime; the router also owns a clone.

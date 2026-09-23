@@ -276,11 +276,19 @@ impl IngestService {
             token: token.to_string(),
         };
 
-        // The prose the walk turns up, kept for the classification pass at the
-        // end. Only prose, and only from a checkout: a tree-API sync has no
-        // text to offer, and copying every source file's bytes to find that out
-        // would be the expensive way to learn nothing.
-        let mut prose: Vec<IngestedDocument> = Vec::new();
+        // What the walk turns up, kept for the classification pass at the end.
+        //
+        // Every file, not only the prose — but a non-prose one carries no
+        // content, because the verdict for it is its path. Copying a
+        // repository's source bytes to be told what its own extensions already
+        // say would still be the expensive way to learn nothing; sending the
+        // path is what lets the classifier RECORD the answer instead of
+        // silently dropping the file, which left it reading as "not scanned"
+        // on the Specs screen forever.
+        //
+        // Still only from a checkout: a tree-API sync has no text to offer at
+        // all, so it has nothing to classify.
+        let mut scanned: Vec<IngestedDocument> = Vec::new();
 
         let mut nodes: Vec<GtsNode> = Vec::new();
         // Relations between the nodes, and the author nodes they reference.
@@ -539,8 +547,23 @@ impl IngestService {
                         Some(t) => Some(t),
                         None => self.parse_binary_text(ctx, &dir, &wf.path, wf.size).await,
                     };
-                    if let Some(content) = text.as_deref().filter(|_| is_prose_path(&wf.path)) {
-                        prose.push(IngestedDocument {
+                    if is_prose_path(&wf.path) {
+                        if let Some(content) = text.as_deref() {
+                            scanned.push(IngestedDocument {
+                                node_id: gts::file_instance_id(
+                                    source_scope,
+                                    connector_id,
+                                    repo_full_path,
+                                    &wf.path,
+                                ),
+                                path: wf.path.clone(),
+                                content: content.to_string(),
+                            });
+                        }
+                        // Prose the walk could not read is left alone rather
+                        // than called undetermined: nothing has looked at it.
+                    } else {
+                        scanned.push(IngestedDocument {
                             node_id: gts::file_instance_id(
                                 source_scope,
                                 connector_id,
@@ -548,7 +571,7 @@ impl IngestService {
                                 &wf.path,
                             ),
                             path: wf.path.clone(),
-                            content: content.to_string(),
+                            content: String::new(),
                         });
                     }
                     nodes.push(gts::file_node_cloned(
@@ -600,10 +623,10 @@ impl IngestService {
             }
         }
 
-        // Decide what the prose is, now, while the whole repository's text is in
-        // hand. Doing it here rather than on someone pressing a button later is
-        // the difference between a synced repository whose documents are known
-        // and one that merely has files in it.
+        // Decide what every file is, now, while the whole repository's text is
+        // in hand. Doing it here rather than on someone pressing a button later
+        // is the difference between a synced repository whose documents are
+        // known and one that merely has files in it.
         //
         // It never fails the sync. The repository is ingested either way, and
         // the pass is idempotent, so a failure costs a re-run of the cheap half
@@ -611,20 +634,21 @@ impl IngestService {
         if let (Some(classifier), Some(workspace)) = (
             self.classifier.as_ref(),
             workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
-        ) && !prose.is_empty()
+        ) && !scanned.is_empty()
         {
-            let count = prose.len();
-            progress.set(format!("classifying {count} document(s)…"));
+            let count = scanned.len();
+            progress.set(format!("classifying {count} file(s)…"));
             let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
             match classifier
-                .classify_ingested(ctx, workspace, project, std::mem::take(&mut prose))
+                .classify_ingested(ctx, workspace, project, std::mem::take(&mut scanned))
                 .await
             {
                 Ok(counts) => info!(
                     classified = counts.classified,
-                    skipped = counts.skipped,
+                    not_documents = counts.not_documents,
+                    kept = counts.kept,
                     repo = repo_full_path,
-                    "studio-artifact-ingest: documents classified"
+                    "studio-artifact-ingest: files classified"
                 ),
                 Err(e) => warn!(
                     error = %e,
@@ -1258,5 +1282,21 @@ impl IngestService {
             self.graph.upsert_edges(ctx, &edges).await?;
         }
         Ok((nodes.len(), edges.len()))
+    }
+}
+
+/// The checkout, offered to whoever owns the documents in it.
+///
+/// A thin forward to the inherent method the REST route already uses: the
+/// contract exists so another gear can ask without going out through HTTP and
+/// back, not because the reading itself is different.
+#[async_trait::async_trait]
+impl super::port::RepoFileReader for IngestService {
+    async fn read_repo_files(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        IngestService::read_repo_files(self, workspace_id, repo_dir).await
     }
 }

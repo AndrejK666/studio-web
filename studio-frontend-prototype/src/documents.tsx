@@ -713,9 +713,20 @@ function DocumentsView({
 // each file IS, so the same templates that govern documents written in Studio
 // can be applied to documents that were not.
 
-/** How many files go into one classify request. The whole repository in one
- *  body would blow the gateway's request-size limit. */
-const CLASSIFY_BATCH = 25;
+/** Extensions that can hold a specification, mirroring `DOC_EXT` in
+ *  `documents/classify.rs`.
+ *
+ *  A preview, not the contract: the server decides what a file is, during the
+ *  sync, and records `not_a_document` for everything else. This is only here so
+ *  the browser does not hold a repository's source bytes in memory to hand the
+ *  detectors prose they will never be asked about. */
+const DOC_EXT = ["md", "markdown", "txt", "rst", "adoc", "asciidoc"];
+
+function isProsePath(path: string): boolean {
+  const leaf = path.split(/[\\/]/).pop() ?? path;
+  if (!leaf.includes(".")) return false;
+  return DOC_EXT.includes(leaf.split(".").pop()!.toLowerCase());
+}
 
 /** Page size when walking the artifact graph's file nodes. The server clamps
  *  this to 200, so it is the fewest round trips the walk can take. */
@@ -1077,9 +1088,27 @@ function IngestedDocumentsView({
     return byPath;
   }, [token, projectTenantId]);
 
-  /** Walk the ingested file nodes, take each one's text from the checkout (or
-   *  from the node, when ingest did capture it), and classify what is prose. */
-  const scan = async () => {
+  /** Load the repository's text for the detectors.
+   *
+   *  This used to classify as well: it read every ingested file node, pulled
+   *  each file's text out of a checkout through `repo-files`, and posted it
+   *  back to `/classify` in batches -- a full round trip through the browser
+   *  of text the backend had just read off its own disk. That is where "Read
+   *  4000 files…" came from, and the 413 the fetch layer still apologises for.
+   *
+   *  The sync already classifies, and does it better: `artifact_ingest` decides
+   *  while the whole repository's text is in hand, which is the difference
+   *  between a synced repository whose documents are known and one that merely
+   *  has files in it. A second implementation here could only ever reach the
+   *  same answer, later and more expensively. So the classify half is gone and
+   *  the screen shows what the sync decided.
+   *
+   *  The reading half stays, because the Spec Quality detectors below run in
+   *  the browser and take the text from `contentByNode`. Moving THEM to the
+   *  backend is a separate decision -- the sync runs on every push, and a
+   *  quality pass is not a thing to run on every push -- and until it is made,
+   *  this is what fills their input. */
+  const loadForAnalysis = async () => {
     setBusy(true);
     setErr(null);
     setNote("");
@@ -1103,55 +1132,40 @@ function IngestedDocumentsView({
       } while (cursor);
 
       if (nodes.length === 0) {
-        setNote("No files ingested yet — run Sync on a repository in the Artifacts tab first.");
+        setNote("No files ingested yet — run Sync on a repository in the Sources tab first.");
         return;
       }
 
-      const files: { node_id: string; path: string; content: string }[] = [];
-      let withoutText = 0;
+      // Only prose is worth holding: the detectors read documents, and the
+      // classifier -- which is the sync's now -- needs nothing from here.
       const seen: Record<string, string> = {};
+      let withoutText = 0;
       for (const n of nodes) {
         const path = typeof n.value.path === "string" ? n.value.path : "";
-        if (!path || n.value.is_dir) continue;
+        if (!path || n.value.is_dir || !isProsePath(path)) continue;
         const text =
           fromCheckout[path] ?? (typeof n.value.text === "string" ? n.value.text : "");
         if (!text) {
           withoutText += 1;
           continue;
         }
-        files.push({ node_id: n.instance_id, path, content: text });
         seen[n.instance_id] = text;
       }
 
-      if (files.length === 0) {
-        // Not a dead end any more: the prose is listed under "Not scanned"
-        // from the ingest metadata alone. What is missing is the CONTENT,
-        // which classification needs and only a checkout can provide.
-        setNote(
-          `The ${nodes.length} ingested files are listed, but none carries its text and no ` +
-            "checkout of this project's repositories has it either — so there is nothing to " +
-            "classify yet. A sync with a clone volume fills this in; opening the project in " +
-            "the IDE also clones it.",
-        );
-        return;
-      }
-
-      let classified = 0;
-      let skipped = 0;
-      for (let i = 0; i < files.length; i += CLASSIFY_BATCH) {
-        const batch = files.slice(i, i + CLASSIFY_BATCH);
-        setProgress(`Classifying ${i + 1}–${i + batch.length} of ${files.length}…`);
-        const res = await api.classifyDocFiles(token, workspaceId, projectTenantId, batch);
-        classified += res.items.length;
-        skipped += res.skipped;
-      }
       setContentByNode((prev) => ({ ...prev, ...seen }));
       await reload();
+      const held = Object.keys(seen).length;
       setNote(
-        `Classified ${classified} document${classified === 1 ? "" : "s"}` +
-          (skipped ? `, skipped ${skipped} non-prose file${skipped === 1 ? "" : "s"}` : "") +
-          (withoutText ? `, ${withoutText} file${withoutText === 1 ? "" : "s"} had no text` : "") +
-          ".",
+        held === 0
+          ? "None of the ingested documents carries its text, and no checkout of this " +
+              "project's repositories has it either — so there is nothing for the detectors " +
+              "to read. A sync with a clone volume fills this in; opening the project in the " +
+              "IDE also clones it."
+          : `Read ${held} document${held === 1 ? "" : "s"}` +
+              (withoutText
+                ? `, ${withoutText} had no text available`
+                : "") +
+              ". The detectors below can run on them.",
       );
     } catch (e) {
       setErr(errText(e));
@@ -1717,8 +1731,8 @@ function IngestedDocumentsView({
       </div>
 
       <div className="ing-bar">
-        <button className="primary" onClick={scan} disabled={busy}>
-          {busy ? "Working…" : "Scan repository"}
+        <button className="primary" onClick={loadForAnalysis} disabled={busy}>
+          {busy ? "Working…" : "Read documents for analysis"}
         </button>
         <button
           onClick={refineWithSpecQuality}
@@ -1829,8 +1843,8 @@ function IngestedDocumentsView({
               type each document is, and what the detectors find in them.
             </p>
             <div className="ing-start-routes">
-              <button className="primary" onClick={scan} disabled={busy}>
-                {busy ? "Working…" : "Scan the repository"}
+              <button className="primary" onClick={loadForAnalysis} disabled={busy}>
+                {busy ? "Working…" : "Read documents for analysis"}
               </button>
               <button onClick={onWriteDoc} disabled={busy}>
                 Write the first one
@@ -1838,7 +1852,7 @@ function IngestedDocumentsView({
             </div>
             <p className="ing-start-note">
               {filesPulled
-                ? "A scan reads the files the sync pulled in and works out which template each was written against. Anything it cannot place waits here for you to say."
+                ? "The sync works out which template each file was written against as it pulls them in; anything it cannot place waits here for you to say. Reading them here is what the detectors need to run."
                 : "Connect a repository under Sources and a scan will read whatever prose is already in it. Until then, documents written here are the project's."}
             </p>
           </div>

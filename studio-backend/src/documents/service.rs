@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use account_management_sdk::{AccountManagementClient, Tenant};
 use anyhow::{Context, Result, bail};
+use gts::GtsTypeId;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
@@ -22,6 +23,10 @@ use super::model::{
     TemplateSpec, TypeCandidate, builtin_capabilities, builtin_stages, builtin_types,
 };
 use super::port::{ClassifiedCounts, DocumentClassifier, IngestedDocument};
+use super::quality;
+
+/// Where a workspace records its repositories, as the portal writes them.
+const WS_SETTINGS_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 use super::repo::{
     DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
     type_row_id,
@@ -968,9 +973,14 @@ pub struct IngestedFile {
 /// What a classification run did.
 pub struct ClassifyOutcome {
     pub bindings: Vec<DocumentBinding>,
-    /// Files whose path is not prose at all (source, images, lockfiles). They
-    /// get no binding — there is nothing to be undecided about.
-    pub skipped: usize,
+    /// Files recorded as not documents, by their path (source, images,
+    /// lockfiles). They get a binding saying so: a file with none reads as
+    /// "not scanned yet" on the Specs screen, which is a queue that then never
+    /// empties.
+    pub not_documents: usize,
+    /// Files left exactly as they were, because a person had ruled on them or
+    /// Spec Quality had paid for the answer.
+    pub kept: usize,
 }
 
 #[async_trait::async_trait]
@@ -998,8 +1008,11 @@ impl DocumentClassifier for DocumentsService {
         )
         .await?;
         Ok(ClassifiedCounts {
-            classified: outcome.bindings.len(),
-            skipped: outcome.skipped,
+            // Every file now gets a binding, so "classified" is the ones that
+            // came back as documents rather than the size of the whole pass.
+            classified: outcome.bindings.len().saturating_sub(outcome.not_documents),
+            not_documents: outcome.not_documents,
+            kept: outcome.kept,
         })
     }
 }
@@ -1025,6 +1038,72 @@ pub struct BindingDecision {
     pub confidence: Option<f32>,
     /// The file's current text, to re-check conformance in the same call.
     pub content: Option<String>,
+}
+
+impl DocumentsService {
+    /// The text of the bindings a caller named, read from the checkouts a sync
+    /// left on disk.
+    ///
+    /// This is the join nothing but the browser could make: this gear knows
+    /// which files are specs and what type each is, and the text lives with
+    /// whoever holds the checkout. Neither half is stored here — a binding
+    /// keeps a path and a verdict, and the graph keeps an excerpt — so the
+    /// reader is asked every time rather than a copy being kept.
+    pub async fn quality_docs(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        binding_ids: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Vec<quality::SpecDoc>> {
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let wanted: Vec<(String, Option<String>)> = rows
+            .into_iter()
+            .filter(|row| binding_ids.contains(&row.id))
+            .map(|row| (row.path, row.type_key))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // The repositories are the workspace's, wherever the bindings live: a
+        // project's specs are files of its workspace's checkouts.
+        let settings = match self
+            .account_management
+            .get_metadata(ctx, workspace_id, GtsTypeId::new(WS_SETTINGS_TYPE))
+            .await
+        {
+            Ok(entry) => entry.value,
+            // A workspace that has recorded no sources has no checkout to read,
+            // which is an answer rather than a failure.
+            Err(_) => return Ok(Vec::new()),
+        };
+        let dirs = quality::checkout_dirs(&settings);
+
+        let mut by_path: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for dir in dirs {
+            // One repository that was never cloned must not cost the others.
+            match reader
+                .read_repo_files(&workspace_id.to_string(), &dir)
+                .await
+            {
+                Ok(files) => {
+                    for (path, text) in files {
+                        by_path.entry(path).or_insert(text);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
+                }
+            }
+        }
+        Ok(quality::docs_for(&wanted, &by_path))
+    }
 }
 
 /// Whether a re-classification must leave this binding's verdict alone, and
@@ -1132,13 +1211,10 @@ impl DocumentsService {
 
         let now = OffsetDateTime::now_utc();
         let mut written: Vec<document_binding::Model> = Vec::new();
-        let mut skipped = 0usize;
+        let mut not_documents = 0usize;
+        let mut kept = 0usize;
 
         for file in files {
-            if !is_prose_path(&file.path) {
-                skipped += 1;
-                continue;
-            }
             let id = binding_row_id(workspace_id, project_id, &file.node_id);
             let prior = existing.get(&id);
             let sha = content_digest(&file.content);
@@ -1147,6 +1223,74 @@ impl DocumentsService {
             // produce keeps it; only its conformance is refreshed against what
             // the file says today.
             let keep = prior.and_then(keep_existing_verdict);
+            if keep.is_some() {
+                kept += 1;
+            }
+
+            // A file whose path is not prose is not a document, and saying so
+            // is the whole point of recording it.
+            //
+            // This used to `continue` instead, which left the file with no
+            // binding at all — and the Specs screen calls a file with no
+            // binding "not scanned". So the queue it opens on could never
+            // empty: a repository of five thousand source files stayed five
+            // thousand files "waiting to be scanned" however often it was,
+            // and `not_a_document` only ever appeared when a person pressed
+            // Reject by hand.
+            //
+            // A person's verdict still wins: `keep_existing_verdict` covers
+            // `Manual`, so a file somebody declared a document stays one
+            // whatever its extension.
+            if !is_prose_path(&file.path) {
+                if let Some(state) = keep {
+                    written.push(document_binding::Model {
+                        id,
+                        tenant_id: workspace_id,
+                        project_id,
+                        node_id: file.node_id,
+                        path: file.path,
+                        type_key: prior.and_then(|p| p.type_key.clone()),
+                        state: state.as_str().to_string(),
+                        confidence: prior.and_then(|p| p.confidence),
+                        source: prior.and_then(|p| p.source.clone()),
+                        candidates: prior
+                            .map(|p| p.candidates.clone())
+                            .unwrap_or_else(|| "[]".to_string()),
+                        conforms: prior.and_then(|p| p.conforms),
+                        validation: prior
+                            .map(|p| p.validation.clone())
+                            .unwrap_or_else(|| "{}".to_string()),
+                        content_sha: prior
+                            .map(|p| p.content_sha.clone())
+                            .unwrap_or_else(|| sha.clone()),
+                        created_at: prior.map(|p| p.created_at).unwrap_or(now),
+                        updated_at: now,
+                    });
+                    continue;
+                }
+                not_documents += 1;
+                written.push(document_binding::Model {
+                    id,
+                    tenant_id: workspace_id,
+                    project_id,
+                    node_id: file.node_id,
+                    path: file.path,
+                    type_key: None,
+                    state: BindingState::NotADocument.as_str().to_string(),
+                    confidence: None,
+                    // Heuristic, not manual: nobody decided this, the path did.
+                    // The distinction matters on the row, where a person's
+                    // ruling and a scan's guess must not read the same.
+                    source: Some(DetectionSource::Heuristic.as_str().to_string()),
+                    candidates: "[]".to_string(),
+                    conforms: None,
+                    validation: "{}".to_string(),
+                    content_sha: sha,
+                    created_at: prior.map(|p| p.created_at).unwrap_or(now),
+                    updated_at: now,
+                });
+                continue;
+            }
 
             let (type_key, state, confidence, source, candidates) = match keep {
                 Some(state) => (
@@ -1199,7 +1343,11 @@ impl DocumentsService {
             .into_iter()
             .map(binding_from_row)
             .collect::<Result<Vec<_>>>()?;
-        Ok(ClassifyOutcome { bindings, skipped })
+        Ok(ClassifyOutcome {
+            bindings,
+            not_documents,
+            kept,
+        })
     }
 
     /// Effective bindings: workspace-level ones, plus the project's own when a
