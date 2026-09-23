@@ -1314,6 +1314,54 @@ impl super::port::ArtifactCounter for IngestService {
     }
 }
 
+/// The files, offered to the gear that decides what each one is.
+///
+/// The same projection read and the same scope predicate as the count beside
+/// it — `node_in_scope` rather than a second spelling of it, because two
+/// spellings is how a list and a count start disagreeing about one project.
+#[async_trait::async_trait]
+impl super::port::ArtifactFiles for IngestService {
+    async fn list_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
+        let nodes = self.list_nodes(ctx, Some("file")).await?;
+        let mut files = Vec::new();
+        for node in nodes.iter() {
+            if !super::rest::node_in_scope(&node.value, Some(scope)) {
+                continue;
+            }
+            let obj = match node.value.as_object() {
+                Some(o) => o,
+                None => continue,
+            };
+            // A directory is not a file the way this caller means it, and a
+            // node with no path is nothing anybody can show.
+            if obj.get("is_dir").and_then(serde_json::Value::as_bool) == Some(true) {
+                continue;
+            }
+            let path = obj
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if path.is_empty() {
+                continue;
+            }
+            files.push(super::port::IngestedFile {
+                node_id: node.instance_id.clone(),
+                path: path.to_owned(),
+                repo: obj
+                    .get("repo")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            });
+        }
+        Ok(files)
+    }
+}
+
 /// The checkout, offered to whoever owns the documents in it.
 ///
 /// A thin forward to the inherent method the REST route already uses: the

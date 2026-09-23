@@ -77,6 +77,20 @@ impl DocumentsService {
     /// catalogue must not require permission to read the level that published
     /// it. A workspace directly under the platform root simply has a shorter
     /// chain.
+    /// The tenant a project hangs from.
+    ///
+    /// `None` when it hangs from nothing, which for a project means the caller
+    /// is holding something that is not one. Its documents and bindings are
+    /// stored against this parent and scoped to the project, so a reader that
+    /// cannot find it must say so rather than read the wrong rows.
+    pub async fn parent_of(&self, ctx: &SecurityContext, tenant_id: Uuid) -> Result<Option<Uuid>> {
+        Ok(self
+            .resolve_tenant(ctx, tenant_id)
+            .await?
+            .parent_id
+            .map(|p| p.0))
+    }
+
     async fn owner_chain(&self, ctx: &SecurityContext, workspace_id: Uuid) -> Result<Vec<Uuid>> {
         let workspace = self.resolve_tenant(ctx, workspace_id).await?;
         Ok(match workspace.parent_id {

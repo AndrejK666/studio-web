@@ -1567,6 +1567,18 @@ impl Quality {
             })
     }
 
+    /// The ingested files, for the Specs list.
+    ///
+    /// Absent is not fatal here and must not be: a project with no ingest gear
+    /// still has its authored documents and its bindings, and losing the
+    /// never-classified files costs one queue rather than the screen. The
+    /// caller is told which, through `files_known`.
+    fn files(&self) -> Option<Arc<dyn crate::artifact_ingest::port::ArtifactFiles>> {
+        self.hub
+            .get::<dyn crate::artifact_ingest::port::ArtifactFiles>()
+            .ok()
+    }
+
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
         self.hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&toolkit::client_hub::ClientScope::gts_id(
@@ -1827,12 +1839,442 @@ async fn delete_binding(
 
 // ── registration ─────────────────────────────────────────────────────────────
 
+// ── the Specs list, folded here rather than in a page ────────────────────────
+
+/// How many rows one project's fold will read. Far above any real project, and
+/// present only so a runaway cannot pull an unbounded set into memory.
+const MAX_SPEC_ROWS: usize = 20_000;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecScopeQuery {
+    /// The project whose specs these are. Its parent workspace is resolved
+    /// here, because bindings are stored against the workspace and scoped to
+    /// the project — a caller should not have to know that.
+    pub project_id: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecRowDto {
+    /// Unique across all three kinds a row can be.
+    pub id: String,
+    /// `repository` or `authored` — where the bytes live, which is the one
+    /// thing the two kinds genuinely differ in.
+    pub origin: String,
+    pub name: String,
+    /// Empty for an authored document: it has no path until somebody commits it.
+    pub path: String,
+    /// Null when nothing has decided a type yet.
+    pub type_key: Option<String>,
+    /// Graph node id for a repository row — what findings are keyed on.
+    pub node_id: Option<String>,
+    /// `detected`, `confirmed`, `manual`, `unknown`, `not_a_document`; null for
+    /// an authored document, which nobody has to decide the type of.
+    pub state: Option<String>,
+    /// `draft`, `review` or `approved` for an authored row; null otherwise — a
+    /// repository file has no editorial status, only a type decision.
+    pub status: Option<String>,
+    pub conforms: Option<bool>,
+    pub updated_at: String,
+    /// The repository the file was ingested from. Empty for an authored row.
+    pub repo: String,
+    /// Which queues this row is in, out of `not-scanned`, `needs-review`,
+    /// `bound` and `not-documents`.
+    ///
+    /// Carried per row rather than left to the caller to work out: which queue
+    /// a row belongs in is the rule this endpoint exists to own, and a second
+    /// portal deciding it again is how two screens start disagreeing about
+    /// what needs review.
+    pub queues: Vec<String>,
+}
+
+/// How many rows are in each queue.
+///
+/// Counted from the same list they label, so the chips and the table cannot
+/// disagree — which they did when each was worked out separately.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecCountDto {
+    /// `not-scanned`, `needs-review`, `bound`, `not-documents` or `all`.
+    pub queue: String,
+    pub count: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecRowsSourcesDto {
+    /// Whether the never-classified files could be read at all. False means
+    /// nobody could ask, so `not-scanned` is empty for that reason rather than
+    /// because the project has none — a distinction a screen must not collapse.
+    pub files_known: bool,
+    pub counts: Vec<SpecCountDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecRowListDto {
+    pub items: Vec<SpecRowDto>,
+    pub total: u32,
+    pub sources: SpecRowsSourcesDto,
+}
+
+/// One document under a type.
+///
+/// `conforms` travels with it so a screen holding a FRESHER verdict than the
+/// record — a "Validate all" run that supersedes what was written at the last
+/// save — can apply its own without asking again. That override is screen
+/// state; which documents are eligible to be counted at all is not, and that
+/// part is decided here.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PipelineEntryDto {
+    pub id: String,
+    /// An authored document's title, or a bound file's last path segment.
+    pub name: String,
+    pub conforms: Option<bool>,
+    /// `draft`, `review` or `approved` for an authored document; null for a
+    /// repository file, which has no editorial status.
+    pub status: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PipelineRowDto {
+    pub type_key: String,
+    pub type_name: String,
+    /// What the type is for. The only thing there is to say about a type
+    /// nothing has started yet.
+    pub type_description: String,
+    /// The documents written in Studio.
+    pub authored: Vec<PipelineEntryDto>,
+    /// The bindings a person decided on.
+    pub bound: Vec<PipelineEntryDto>,
+    /// The bindings the scanner only proposed. Shown, and deliberately NOT in
+    /// `total`.
+    pub proposed: Vec<PipelineEntryDto>,
+    /// Nothing of this type and nothing proposed — the only state that
+    /// honestly reads "not started".
+    pub untouched: bool,
+    /// Of `total`, how many passed their type's checks. A document nobody has
+    /// checked has not passed anything.
+    pub valid: u32,
+    /// `authored` + `bound`, never the proposals.
+    pub total: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PipelineListDto {
+    pub items: Vec<PipelineRowDto>,
+    pub total: u32,
+}
+
+/// The workspace a project's rows are stored against.
+///
+/// Bindings and documents live on the PARENT workspace and are scoped to the
+/// project. Without the parent nothing can be read, and reading the wrong rows
+/// would be worse than saying so.
+async fn parent_workspace(
+    service: &Arc<DocumentsService>,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> ApiResult<Uuid> {
+    service
+        .authorize(ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    let parent = service
+        .parent_of(ctx, project_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("that project has no parent workspace to read specs from")
+                .with_resource("tenant")
+                .create()
+        })?;
+    service.authorize(ctx, parent).await.map_err(no_tenant)?;
+    Ok(parent)
+}
+
+/// Everything a project has of both kinds, in one list.
+async fn list_spec_rows(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecRowListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+
+    let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
+
+    // The never-classified files, and their provenance. Absent when no ingest
+    // gear is here, which costs one queue rather than the screen.
+    let (candidates, repos, files_known) = match quality.files() {
+        Some(files) => match files.list_files(&ctx, &project_id.to_string()).await {
+            Ok(found) => {
+                let repos: std::collections::HashMap<String, String> = found
+                    .iter()
+                    .map(|f| (f.node_id.clone(), f.repo.clone()))
+                    .collect();
+                let candidates: Vec<super::spec_rows::Candidate> = found
+                    .into_iter()
+                    .map(|f| super::spec_rows::Candidate {
+                        node_id: f.node_id,
+                        path: f.path,
+                    })
+                    .collect();
+                (candidates, repos, true)
+            }
+            Err(_) => (Vec::new(), std::collections::HashMap::new(), false),
+        },
+        None => (Vec::new(), std::collections::HashMap::new(), false),
+    };
+
+    let repo_of = |node: &str| repos.get(node).cloned().unwrap_or_default();
+    let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &repo_of);
+    let counts = super::spec_rows::counts(&rows)
+        .into_iter()
+        .map(|(queue, count)| SpecCountDto {
+            queue: queue.as_str().to_owned(),
+            count,
+        })
+        .collect();
+
+    let items: Vec<SpecRowDto> = rows
+        .into_iter()
+        .map(|r| SpecRowDto {
+            queues: super::spec_rows::queues_of(&r)
+                .into_iter()
+                .map(|q| q.as_str().to_owned())
+                .collect(),
+            id: r.id,
+            origin: r.origin.as_str().to_owned(),
+            name: r.name,
+            path: r.path,
+            type_key: r.type_key,
+            node_id: r.node_id,
+            state: r.state.map(|s| s.as_str().to_owned()),
+            status: r.status,
+            conforms: r.conforms,
+            updated_at: r.updated_at,
+            repo: r.repo,
+        })
+        .collect();
+
+    Ok(Json(SpecRowListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        sources: SpecRowsSourcesDto {
+            files_known,
+            counts,
+        },
+    }))
+}
+
+/// What the project has of each declared type.
+async fn list_spec_pipeline(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<PipelineListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+
+    let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
+    let types: Vec<super::spec_rows::PipelineType> = service
+        .list_types(&ctx, workspace_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|t| super::spec_rows::PipelineType {
+            key: t.key,
+            name: t.name,
+            description: t.description,
+        })
+        .collect();
+
+    let items: Vec<PipelineRowDto> = super::spec_rows::pipeline(&types, &authored, &bindings)
+        .into_iter()
+        .map(|r| PipelineRowDto {
+            type_key: r.type_key,
+            type_name: r.type_name,
+            type_description: r.type_description,
+            authored: r.authored.into_iter().map(entry_dto).collect(),
+            bound: r.bound.into_iter().map(entry_dto).collect(),
+            proposed: r.proposed.into_iter().map(entry_dto).collect(),
+            untouched: r.untouched,
+            valid: r.valid,
+            total: r.total,
+        })
+        .collect();
+
+    Ok(Json(PipelineListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// The two record sets both folds need, read the same way for both.
+///
+/// Every row, not a page: a fold that saw half its inputs would answer a
+/// different question, and both of these are per-project lists rather than
+/// something anybody scrolls.
+async fn read_both(
+    service: &Arc<DocumentsService>,
+    workspace_id: Uuid,
+    project_id: Uuid,
+) -> ApiResult<(
+    Vec<super::spec_rows::Binding>,
+    Vec<super::spec_rows::Authored>,
+)> {
+    let all = || PageQuery {
+        offset: None,
+        limit: Some(MAX_SPEC_ROWS),
+    };
+    let (bindings, _) = service
+        .list_bindings(workspace_id, Some(project_id), all())
+        .await
+        .map_err(internal)?;
+    let (documents, _) = service
+        .list_documents(workspace_id, Some(project_id), all())
+        .await
+        .map_err(internal)?;
+
+    let bindings = bindings
+        .into_iter()
+        .map(|b| super::spec_rows::Binding {
+            id: b.id.to_string(),
+            state: super::spec_rows::BindingState::parse(b.state.as_str())
+                .unwrap_or(super::spec_rows::BindingState::Unknown),
+            node_id: b.node_id,
+            path: b.path,
+            type_key: b.type_key,
+            conforms: b.conforms,
+            updated_at: b.updated_at,
+        })
+        .collect();
+    let documents = documents
+        .into_iter()
+        .map(|d| super::spec_rows::Authored {
+            id: d.id.to_string(),
+            title: d.title,
+            type_key: Some(d.type_key),
+            status: doc_status(d.status).to_owned(),
+            // Always a verdict on this side: the column is a `bool`, so
+            // `false` means checked and not conforming rather than unchecked.
+            conforms: Some(d.conforms),
+            updated_at: d.updated_at,
+        })
+        .collect();
+    Ok((bindings, documents))
+}
+
+/// The wire spelling of a status, the one the DTOs already serialise.
+fn doc_status(status: DocStatus) -> &'static str {
+    match status {
+        DocStatus::Draft => "draft",
+        DocStatus::Review => "review",
+        DocStatus::Approved => "approved",
+    }
+}
+
+fn entry_dto(e: super::spec_rows::PipelineEntry) -> PipelineEntryDto {
+    PipelineEntryDto {
+        id: e.id,
+        name: e.name,
+        conforms: e.conforms,
+        status: e.status,
+    }
+}
+
+fn parse_project_id(raw: &str) -> ApiResult<Uuid> {
+    Uuid::parse_str(raw.trim()).map_err(|_| {
+        DocumentsError::invalid_argument()
+            .with_field_violation("project_id", "must be a uuid".to_owned(), "INVALID")
+            .create()
+    })
+}
+
 pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<DocumentsService>,
     hub: Arc<toolkit::client_hub::ClientHub>,
 ) -> Router {
+    router = OperationBuilder::get("/studio-documents/v1/spec-rows")
+        .operation_id("studio_documents.list_spec_rows")
+        .summary("Every spec a project has, however it got there")
+        .description(
+            "One list for both kinds of document a project can have. Somebody writes one in \
+             Studio — an authored document, whose content is a Postgres column — or the \
+             repository already had one and a sync bound the file to a type, in which case the \
+             content is in the artifact graph. Where the bytes live is an implementation detail; \
+             the question a reader has is what specs exist and whether they are any good, and \
+             answering it used to mean reading two lists and merging them by eye.\n\n\
+             The third kind is a file the sync ingested that NOTHING has classified yet. Those \
+             exist the moment a repository is synced, long before anyone presses Scan, and \
+             showing them is the difference between `this project has 5785 files, none analysed` \
+             and an empty screen that reads as `there is nothing here`. A candidate disappears \
+             the moment a binding exists for the same node — that is the same file one step \
+             further along, and listing both would count one file twice.\n\n\
+             Newest first, with an authored document ahead of a repository file at the same \
+             instant, and an unreadable date LAST rather than first. `sources.counts` labels \
+             each queue, counted from this same list so the chips and the table cannot disagree. \
+             `not-scanned` is files nothing has looked at; `needs-review` is files a detector \
+             already had an opinion about — two different queues, and a queue that lists things \
+             nobody can act on stops being read.\n\n\
+             `sources.files_known` is false when the ingest gear is not in this deployment: \
+             `not-scanned` is then empty because nobody could ask, which is not the same fact as \
+             the project having none.\n\n\
+             This fold used to run in the portal, which had to page the whole artifact file \
+             graph to do it — the projection cannot narrow by a payload field, so each page is a \
+             slice of the tenant's entire typed node set.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose specs to list")
+        .handler(list_spec_rows)
+        .json_response_with_schema::<SpecRowListDto>(openapi, StatusCode::OK, "The specs")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-pipeline")
+        .operation_id("studio_documents.list_spec_pipeline")
+        .summary("What a project has of each document type it declares")
+        .description(
+            "One row per type the workspace declares, in the order it declares them — the \
+             workspace decides that order and this does not reshuffle it. A binding naming a \
+             type the workspace no longer declares is dropped rather than invented into a row: \
+             the type list is the authority on what types exist.\n\n\
+             WHAT COUNTS AS COVERAGE is the rule to read twice. `bound` is repository files a \
+             PERSON decided the type of; `proposed` is files the scanner only thinks are that \
+             type. Both are shown, and only `bound` and `authored` are in `total` — folding a \
+             guess in would report coverage the project has not agreed to. `untouched` means \
+             nothing of the type exists and nothing has been proposed, which is the only state \
+             that honestly reads `not started`.\n\n\
+             `valid` counts those of `total` that passed their type's checks. A document nobody \
+             has checked has not passed anything, so an absent verdict counts as not-valid. A \
+             screen holding a fresher verdict than the record — a `Validate all` run that \
+             supersedes what was written at the last save — still applies it itself; that is \
+             screen state, and it is the one part of this fold that stays in the browser.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose pipeline to read")
+        .handler(list_spec_pipeline)
+        .json_response_with_schema::<PipelineListDto>(openapi, StatusCode::OK, "The pipeline")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::post(
         "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}",
     )

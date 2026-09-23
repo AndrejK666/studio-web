@@ -240,6 +240,61 @@ export interface GearActivity {
   points: ActivityPoint[];
 }
 
+/** One document under a type in the Spec pipeline.
+ *
+ *  `conforms` travels with it so a screen holding a fresher verdict — a
+ *  "Validate all" run that supersedes what the record was saved with — can
+ *  apply its own without asking again. */
+export interface PipelineEntry {
+  id: string;
+  /** An authored document's title, or a bound file's last path segment. */
+  name: string;
+  conforms?: boolean | null;
+  /** `draft` | `review` | `approved` for an authored document; null for a
+   *  repository file, which has no editorial status. */
+  status?: string | null;
+}
+
+/** One document type, and what the project has of it. */
+export interface PipelineRow {
+  type_key: string;
+  type_name: string;
+  type_description: string;
+  authored: PipelineEntry[];
+  bound: PipelineEntry[];
+  /** Shown, and deliberately NOT in `total`: a guess is not coverage. */
+  proposed: PipelineEntry[];
+  untouched: boolean;
+  valid: number;
+  total: number;
+}
+
+/** One spec a project has, whichever way it got there. */
+export interface SpecRow {
+  id: string;
+  /** `repository` or `authored` — where the bytes live. */
+  origin: "repository" | "authored";
+  name: string;
+  /** Empty for an authored document: no path until somebody commits it. */
+  path: string;
+  type_key?: string | null;
+  /** Graph node id for a repository row — what findings are keyed on. */
+  node_id?: string | null;
+  state?: DocBindingState | null;
+  /** `draft` | `review` | `approved` for an authored row; null otherwise. */
+  status?: Doc["status"] | null;
+  conforms?: boolean | null;
+  updated_at: string;
+  /** Instance id of the repo node this file came from. Empty for an authored row. */
+  repo: string;
+  /** Which queues this row is in. Decided by the server, because a second
+   *  portal deciding it again is how two screens start disagreeing about what
+   *  needs review. */
+  queues: SpecFilter[];
+}
+
+export type SpecFilter = "not-scanned" | "needs-review" | "bound" | "not-documents" | "all";
+
 export interface Capability {
   key: string;
   label: string;
@@ -1673,6 +1728,37 @@ export const api = {
       `/studio-documents/v1/workspaces/${workspaceId}/capabilities/${encodeURIComponent(key)}`,
       token,
       { method: "DELETE" },
+    ),
+
+  /** Every spec a project has, in one list, with each queue counted.
+   *
+   *  The merge, the ordering and the queues live in `documents/spec_rows.rs`.
+   *  This used to be `spec-rows.ts`, which meant the page first had to page
+   *  the WHOLE artifact file graph to find the files nothing had classified
+   *  yet — the projection cannot narrow by a payload field, so every one of
+   *  those pages was a slice of the tenant's entire typed node set.
+   *
+   *  `sources.files_known` false means nobody could ask for those files, so
+   *  `not-scanned` is empty for that reason rather than because there are none. */
+  specRows: (token: string, projectId: string) =>
+    request<{
+      items: SpecRow[];
+      total: number;
+      sources: { files_known: boolean; counts: { queue: SpecFilter; count: number }[] };
+    }>(`/studio-documents/v1/spec-rows?project_id=${encodeURIComponent(projectId)}`, token),
+
+  /** What a project has of each document type it declares.
+   *
+   *  The grouping and the coverage rule live in `documents/spec_rows.rs`: a
+   *  repository file a person bound to a type is a document of that type, a
+   *  file the scanner only proposed is shown but NOT counted, and a document
+   *  nobody has checked has not passed anything. This used to be
+   *  `spec-pipeline.ts`, which meant the screen had to fetch every binding to
+   *  work it out. */
+  specPipeline: (token: string, projectId: string) =>
+    request<{ items: PipelineRow[]; total: number }>(
+      `/studio-documents/v1/spec-pipeline?project_id=${encodeURIComponent(projectId)}`,
+      token,
     ),
 
   /** The effective capability vocabulary for a workspace (ADR-0014 s5). */

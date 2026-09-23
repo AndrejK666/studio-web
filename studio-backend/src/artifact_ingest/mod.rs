@@ -244,6 +244,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The portfolio's finding count, for whoever composes the rollup.
             ctx.client_hub()
                 .register::<dyn port::ArtifactCounter>(service.clone());
+            // The ingested files, for the gear that decides what each one is.
+            ctx.client_hub()
+                .register::<dyn port::ArtifactFiles>(service.clone());
         }
 
         // Retain for the process lifetime; the router also owns a clone.

@@ -28,6 +28,8 @@ import {
   DocType,
   DocValidation,
   PlanRow,
+  SpecFilter,
+  SpecRow,
   RemoteRepo,
   ScaffoldFile,
   SpecFinding,
@@ -45,13 +47,6 @@ import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
-import {
-  inFilter,
-  specCounts,
-  specRows,
-  type SpecCandidate,
-  type SpecFilter,
-} from "./spec-rows";
 
 const STATUSES: Doc["status"][] = ["draft", "review", "approved"];
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
@@ -708,10 +703,6 @@ function DocumentsView({
 // each file IS, so the same templates that govern documents written in Studio
 // can be applied to documents that were not.
 
-/** Page size when walking the artifact graph's file nodes. The server clamps
- *  this to 200, so it is the fewest round trips the walk can take. */
-const NODE_PAGE = 200;
-
 /** How many rows are put in the DOM at once.
  *
  *  A synced repository is thousands of files and every row is a dozen elements,
@@ -722,21 +713,6 @@ const NODE_PAGE = 200;
  *  end silently on a lie. */
 const RENDER_PAGE = 200;
 
-/** Whether an ingested node is a file this tab should list.
- *
- *  Every file, not a guessed subset. What is and is not a document is the
- *  analysis's answer, and it has one — `not_a_document` is a state a binding
- *  can hold and a queue this list already shows. Deciding it here by extension
- *  would be this tab guessing ahead of the detector, and guessing wrong
- *  silently: a spec named `DESIGN` with no extension would never appear, and
- *  nothing would say why.
- *
- *  So: directories out, everything else in, and the scan sorts them afterwards.
- */
-function isFileCandidate(value: Record<string, unknown>): boolean {
-  if (value.is_dir === true) return false;
-  return typeof value.path === "string" && value.path.length > 0;
-}
 
 /** Only these need a person: everything else is either settled or not a doc. */
 
@@ -860,15 +836,6 @@ function IngestedDocumentsView({
   const [err, setErr] = useState<string | null>(null);
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
-  /** Which repository each document came from, keyed by its graph node id.
-   *
-   *  Read from the file nodes rather than inferred from the path: a binding
-   *  carries a repo-RELATIVE path and nothing else, so two repositories with a
-   *  `docs/prd.md` each are indistinguishable by path alone. The node knows,
-   *  because ingest wrote `value.repo` when it pulled the file. This listing is
-   *  metadata only — it never asks for the text — so it costs a page walk, not
-   *  a clone. */
-  const [repoByNode, setRepoByNode] = useState<Record<string, string>>({});
   /** What each repository is called, keyed by its node id.
    *
    *  A file node carries only the repo's instance id — a v5 UUID over
@@ -878,12 +845,17 @@ function IngestedDocumentsView({
    *  missing from the map keeps its id: unnamed provenance still beats none. */
   const [repoNames, setRepoNames] = useState<Record<string, string>>({});
   const [view, setView] = useViewMode("specs.view");
-  /** The documents written here. Read alongside the bindings so both origins
-   *  land in one list; failing separately, because losing one must not empty
-   *  the other. */
-  const [authored, setAuthored] = useState<Doc[]>([]);
-  /** Ingested prose nothing has classified yet — the list before a scan. */
-  const [candidates, setCandidates] = useState<SpecCandidate[]>([]);
+  /** The list itself, folded by studio-documents.
+   *
+   *  Bindings, authored documents and the files nothing has classified yet,
+   *  merged and ordered there. This screen used to do it here, which meant
+   *  paging the whole artifact file graph first. */
+  const [rows, setRows] = useState<SpecRow[]>([]);
+  const [rowCounts, setRowCounts] = useState<{ queue: SpecFilter; count: number }[]>([]);
+  /** False when nothing could be asked for the ingested files, so the
+   *  `not scanned` queue is empty for that reason rather than because the
+   *  project has none. The two must not read the same. */
+  const [filesKnown, setFilesKnown] = useState(true);
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -895,57 +867,26 @@ function IngestedDocumentsView({
     [types],
   );
 
-  /** Walk the ingested file nodes ONCE, and answer both questions about them.
-   *
-   *  This used to be two walks of the same collection, a few lines apart in the
-   *  same reload — one collecting classification candidates, one collecting
-   *  which repository each node came from. Same endpoint, same page size, same
-   *  pages: on a project with 5,785 files that was 58 requests to read 29
-   *  pages, and every node's payload arrived twice.
-   *
-   *  Metadata only — no text is asked for and no checkout has to exist, which
-   *  is the whole point: this answers "what is in there" the moment a sync has
-   *  run, while reading the content still needs a clone the backend can see.
-   *
-   *  The two results now fail together, where they used to have a `catch`
-   *  each. That is not a loss: they were always one request sequence, so a
-   *  failure of one was a failure of the other, and the separate handlers only
-   *  made them look independent.
-   */
-  const readFiles = useCallback(async (): Promise<{
-    candidates: SpecCandidate[];
-    repoByNode: Record<string, string>;
-  }> => {
-    const candidates: SpecCandidate[] = [];
-    const repoByNode: Record<string, string> = {};
-    let cursor: string | undefined;
-    do {
-      const page = await api.listArtifactNodes(token, "file", projectTenantId, cursor, NODE_PAGE);
-      for (const n of page.nodes ?? []) {
-        // Provenance is wanted for every file, candidate or not: the Specs
-        // table shows the repository beside a bound document too.
-        if (typeof n.value.repo === "string") repoByNode[n.instance_id] = n.value.repo;
-        if (!isFileCandidate(n.value)) continue;
-        const path = typeof n.value.path === "string" ? n.value.path : "";
-        if (path) candidates.push({ nodeId: n.instance_id, path });
-      }
-      cursor = page.next_cursor;
-    } while (cursor);
-    return { candidates, repoByNode };
-  }, [token, projectTenantId]);
 
   const reload = useCallback(async () => {
     setErr(null);
+    // The list itself: both origins, the unclassified files, the ordering and
+    // the queue each row is in, all decided by the gear that owns the records.
+    let specs: Awaited<ReturnType<typeof api.specRows>> | null = null;
     try {
-      setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
+      specs = await api.specRows(token, projectTenantId);
+      setRows(specs.items);
+      setRowCounts(specs.sources.counts);
+      setFilesKnown(specs.sources.files_known);
     } catch (e) {
       setErr(errText(e));
     }
+    // The binding records themselves, for the panel that acts on one. The list
+    // above no longer needs them — this is the detail, not the queue.
     try {
-      setAuthored((await api.projectDocuments(token, workspaceId, projectTenantId)).items);
+      setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
     } catch {
-      // The list still holds what the repository has. An authored document
-      // missing from it is a gap; an empty screen would be a bigger one.
+      // The rows are still on screen; only the detail panel loses its record.
     }
     // Findings are their own nodes in the graph and outlive this tab, the
     // session and the detector run that produced them. A failure to read them
@@ -968,10 +909,9 @@ function IngestedDocumentsView({
     } catch {
       // Leave whatever was already read; the column simply shows nothing.
     }
-    // The names behind the repository ids `readFiles` collects. Its own
-    // listing — `repo` nodes, not `file` ones — so it neither waits for that
-    // walk nor repeats it, and it is allowed to fail separately: losing the
-    // names must leave the ids on screen, not blank the column.
+    // The names behind the repository ids each row carries. Its own listing —
+    // `repo` nodes, not `file` ones — and allowed to fail separately: losing
+    // the names must leave the ids on screen, not blank the column.
     try {
       const names: Record<string, string> = {};
       let cursor: string | undefined;
@@ -987,43 +927,13 @@ function IngestedDocumentsView({
     } catch {
       // Ids stay on screen.
     }
+    return specs;
   }, [token, workspaceId, projectTenantId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  /** The file walk, kept off `reload`.
-   *
-   *  `readFiles` pages the whole file listing, and the server caps a page at
-   *  200 — so a repository of six thousand files is thirty round trips even
-   *  after #302 merged the two walks into one. `reload` runs after every
-   *  decision, every detector pass and every commit, which made changing one
-   *  dropdown cost thirty requests about files that had not moved.
-   *
-   *  What it answers only changes when a SYNC runs, and that is another tab:
-   *  within this one a file leaves the list by gaining a binding, and
-   *  `specRows` drops it from what is already in memory, while a file's
-   *  repository never changes at all. So: once per project.
-   */
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const files = await readFiles();
-        if (!alive) return;
-        setCandidates(files.candidates);
-        setRepoByNode(files.repoByNode);
-      } catch {
-        // Candidates are a head start, not the record, and the repository is
-        // provenance rather than identity. The bindings are the queue that
-        // matters, and losing either of these must not cost them.
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [readFiles]);
 
   useEffect(
     () => () => {
@@ -1041,23 +951,20 @@ function IngestedDocumentsView({
    *  worth offering is the thing a person wants right after a sync: look
    *  again.
    *
-   *  It re-walks the file listing, which `reload` deliberately does not -- a
-   *  sync is exactly the event that changes what that walk would answer. */
+   *  It is a plain reload now: the list is folded on the server, which reads
+   *  the ingested files itself, so there is no separate walk to re-run. */
   const recheck = async () => {
     setBusy(true);
     setErr(null);
     setNote("");
     setProgress("Looking again…");
     try {
-      await reload();
-      const files = await readFiles();
-      setCandidates(files.candidates);
-      setRepoByNode(files.repoByNode);
+      const specs = await reload();
+      const unplaced = specs?.sources.counts.find((c) => c.queue === "not-scanned")?.count ?? 0;
       setNote(
-        files.candidates.length === 0
+        unplaced === 0
           ? "Nothing new. Every file the sync pulled in already has a verdict."
-          : `${files.candidates.length} file${files.candidates.length === 1 ? "" : "s"} ` +
-            "the sync has not placed yet.",
+          : `${unplaced} file${unplaced === 1 ? "" : "s"} the sync has not placed yet.`,
       );
     } catch (e) {
       setErr(errText(e));
@@ -1620,26 +1527,32 @@ function IngestedDocumentsView({
   };
 
   /** Every spec the project has, from both origins, newest first. */
-  const rows = useMemo(
-    () => specRows(bindings, authored, candidates),
-    [bindings, authored, candidates],
-  );
-  const counts = useMemo(() => specCounts(rows), [rows]);
+  const counts = useMemo(() => {
+    const out = {
+      "not-scanned": 0,
+      "needs-review": 0,
+      bound: 0,
+      "not-documents": 0,
+      all: 0,
+    } as Record<SpecFilter, number>;
+    for (const c of rowCounts) out[c.queue] = c.count;
+    return out;
+  }, [rowCounts]);
 
   /** The types this project's documents actually are, for the picker. Offering
    *  the whole catalogue would list types nothing here has. */
   const presentTypes = useMemo(() => {
     const keys = new Set<string>();
-    for (const row of rows) if (row.typeKey) keys.add(row.typeKey);
+    for (const row of rows) if (row.type_key) keys.add(row.type_key);
     return [...keys].sort((a, b) => typeName(a).localeCompare(typeName(b)));
   }, [rows, typeName]);
 
   const shown = useMemo(() => {
     const list = rows.filter((row) => {
-      if (typeFilter === "-" && row.typeKey) return false;
-      if (typeFilter && typeFilter !== "-" && row.typeKey !== typeFilter) return false;
+      if (typeFilter === "-" && row.type_key) return false;
+      if (typeFilter && typeFilter !== "-" && row.type_key !== typeFilter) return false;
       if (originFilter !== "any" && row.origin !== originFilter) return false;
-      return inFilter(row, filter);
+      return filter === "all" || row.queues.includes(filter);
     });
     return [...list].sort((a, b) => a.path.localeCompare(b.path));
     // `rows` and `originFilter` belong here: the list is derived from them, and
@@ -1659,15 +1572,27 @@ function IngestedDocumentsView({
    *  document opens in the editor instead, where it can be changed; a panel
    *  that only says what its type expects would be a worse answer than the
    *  place that lets you do something about it. */
-  const selected = useMemo(
-    () => shown.find((row) => row.id === selectedId)?.binding ?? null,
-    [shown, selectedId],
-  );
+  const selected = useMemo(() => {
+    const row = shown.find((r) => r.id === selectedId);
+    if (!row || row.origin !== "repository") return null;
+    // A row's id IS its binding's id for a bound file; a candidate has no
+    // record to show, and finds nothing here, which is correct.
+    return bindings.find((b) => b.id === row.id) ?? null;
+  }, [shown, selectedId, bindings]);
 
-  const FILTERS: { id: SpecFilter; label: string; count: number }[] = [
+  const FILTERS: { id: SpecFilter; label: string; count: number; unknown?: boolean }[] = [
     // First, because it is the state a freshly synced project is in: prose the
     // sync found, nothing has read yet.
-    { id: "not-scanned", label: "Not scanned", count: counts["not-scanned"] },
+    //
+    // When the ingested files could not be read at all, this chip is not
+    // "zero": it is "nobody could tell me". A count of zero would say the sync
+    // found nothing, which is a claim about the project rather than about us.
+    {
+      id: "not-scanned",
+      label: "Not scanned",
+      count: counts["not-scanned"],
+      unknown: !filesKnown,
+    },
     { id: "needs-review", label: "Needs review", count: counts["needs-review"] },
     { id: "bound", label: "Bound", count: counts.bound },
     { id: "not-documents", label: "Not documents", count: counts["not-documents"] },
@@ -1752,7 +1677,13 @@ function IngestedDocumentsView({
             className={filter === f.id ? "ing-filter on" : "ing-filter"}
             onClick={() => setFilter(f.id)}
           >
-            {f.label} <span className="ing-count">{f.count}</span>
+            {f.label}{" "}
+            <span
+              className="ing-count"
+              title={f.unknown ? "The ingested files could not be read, so this is not a count of zero" : undefined}
+            >
+              {f.unknown ? "—" : f.count}
+            </span>
           </button>
         ))}
         <select
@@ -1828,8 +1759,8 @@ function IngestedDocumentsView({
                got". */
             <TileGrid>
               {visible.map((row) => {
-                const open = row.nodeId ? (findings[row.nodeId] ?? []).length : 0;
-                const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
+                const open = row.node_id ? (findings[row.node_id] ?? []).length : 0;
+                const repoId = row.repo || undefined;
                 return (
                   <Tile
                     key={row.id}
@@ -1845,7 +1776,7 @@ function IngestedDocumentsView({
                       row.origin === "authored" ? onOpenDoc(row.id) : setSelectedId(row.id)
                     }
                     stats={[
-                      { label: "type", value: typeName(row.typeKey) },
+                      { label: "type", value: typeName(row.type_key) },
                       {
                         label: "findings",
                         value: open > 0 ? <span className="pnum-attn">{open}</span> : "—",
@@ -1863,7 +1794,7 @@ function IngestedDocumentsView({
                               ? (repoNames[repoId] ?? repoId)
                               : "—"}
                         </span>
-                        <span style={{ marginLeft: "auto" }}>{relTime(row.updatedAt)}</span>
+                        <span style={{ marginLeft: "auto" }}>{relTime(row.updated_at)}</span>
                       </>
                     }
                   />
@@ -1888,9 +1819,9 @@ function IngestedDocumentsView({
               <span />
             </div>
             {visible.map((row) => {
-              const b = row.binding;
-              const open = row.nodeId ? findings[row.nodeId] : undefined;
-              const repoId = row.nodeId ? repoByNode[row.nodeId] : undefined;
+              const b = bindings.find((x) => x.id === row.id);
+              const open = row.node_id ? findings[row.node_id] : undefined;
+              const repoId = row.repo || undefined;
               return (
               <div
                 key={row.id}
@@ -1916,7 +1847,7 @@ function IngestedDocumentsView({
                 {b ? (
                   <span onClick={(e) => e.stopPropagation()}>
                     <select
-                      value={row.typeKey ?? ""}
+                      value={row.type_key ?? ""}
                       disabled={busy}
                       onChange={(e) =>
                         e.target.value
@@ -1933,7 +1864,7 @@ function IngestedDocumentsView({
                     </select>
                   </span>
                 ) : (
-                  <span>{typeName(row.typeKey)}</span>
+                  <span>{typeName(row.type_key)}</span>
                 )}
                 {/* Where it came from. For a repository file that is the
                     repository, named rather than hashed — the id stays on the
@@ -1964,8 +1895,8 @@ function IngestedDocumentsView({
                             ? ` · ${Math.round(b.confidence * 100)}%`
                             : ""
                         }`
-                      : row.doc
-                        ? `written here · ${row.doc.status ?? "draft"}`
+                      : row.origin === "authored"
+                        ? `written here · ${row.status ?? "draft"}`
                         : "ingested · not analysed yet",
                     b?.source ? (SOURCE_LABEL[b.source] ?? b.source) : "",
                     row.conforms == null
@@ -1987,7 +1918,7 @@ function IngestedDocumentsView({
                       editorial status instead of a finding count it cannot
                       have. */}
                   {row.origin === "authored"
-                    ? (row.doc?.status ?? "draft")
+                    ? (row.status ?? "draft")
                     : b
                       ? findingLabel(open)
                       : /* Nothing has read this file yet, so it has no verdict
@@ -1995,11 +1926,11 @@ function IngestedDocumentsView({
                            it came back clean. */
                         "not scanned"}
                 </span>
-                <span className="ing-updated" title={row.updatedAt}>
+                <span className="ing-updated" title={row.updated_at}>
                   {/* A candidate carries no timestamp: the graph node's is
                       about the sync, not about the file, and showing the
                       sync's time here would read as "this document changed". */}
-                  {row.updatedAt ? relTime(row.updatedAt) : <span className="ing-dash">—</span>}
+                  {row.updated_at ? relTime(row.updated_at) : <span className="ing-dash">—</span>}
                 </span>
                 <span className="ing-actions" onClick={(e) => e.stopPropagation()}>
                   {b ? (

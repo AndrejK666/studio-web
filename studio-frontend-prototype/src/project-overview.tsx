@@ -20,11 +20,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import { coverage, pipelineRows } from "./spec-pipeline";
 import type {
   ArtifactNode,
   Doc,
-  DocBinding,
+  PipelineRow,
   JourneyStage,
   DocType,
   DocValidation,
@@ -183,7 +182,8 @@ export function ProjectOverview({
   const [stageCatalogue, setStageCatalogue] = useState<JourneyStage[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   /** Repository files joined to a document type. */
-  const [bindings, setBindings] = useState<DocBinding[]>([]);
+  /** One row per declared type, folded by studio-documents. */
+  const [rows, setRows] = useState<PipelineRow[]>([]);
   const [repoNodes, setRepoNodes] = useState<ArtifactNode[]>([]);
   const [counts, setCounts] = useState<{ issue: number; pull_request: number; file: number }>({
     issue: 0,
@@ -223,7 +223,7 @@ export function ProjectOverview({
         typePage,
         stagePage,
         docPage,
-        bindingPage,
+        pipelinePage,
         repoPage,
         issue,
         prs,
@@ -253,11 +253,13 @@ export function ProjectOverview({
           // The repository's side of the same question. A file bound to a type
           // is a document of that type, and reading only the authored ones is
           // why this screen used to say "not started" about types the Specs
-          // table was already listing fourteen documents under.
+          // table was already listing fourteen documents under. Both sides are
+          // folded by the server now, so the bindings themselves are no longer
+          // fetched here — only the answer.
           optional(
-            "document bindings",
-            api.docBindings(token, parentWorkspaceId, project.id, { limit: 500 }),
-            { items: [] as DocBinding[], total: 0 },
+            "spec pipeline",
+            api.specPipeline(token, project.id),
+            { items: [] as PipelineRow[], total: 0 },
             misses,
           ),
           optional(
@@ -294,7 +296,7 @@ export function ProjectOverview({
       setTypes(typePage.items ?? []);
       setStageCatalogue(stagePage.items ?? []);
       setDocs(docPage.items ?? []);
-      setBindings(bindingPage.items ?? []);
+      setRows(pipelinePage.items ?? []);
       setRepoNodes(repoPage.nodes ?? []);
       setCounts({ issue, pull_request: prs, file: files });
       setFindings(findingPage.nodes ?? []);
@@ -349,10 +351,6 @@ export function ProjectOverview({
   const syncedRepos = repos.filter((r) => graphRepo(r) !== undefined).length;
   const artifactTotal = counts.issue + counts.pull_request + counts.file;
   const artifactsKnown = !["issues", "pull requests", "files"].some(missed);
-
-  /** Every document the project has of each type — written here and found in
-   *  the repository both. */
-  const rows = useMemo(() => pipelineRows(types, docs, bindings), [types, docs, bindings]);
 
   const started = rows.filter((r) => !r.untouched);
   const notStarted = rows.filter((r) => r.untouched);
@@ -586,21 +584,29 @@ export function ProjectOverview({
                 </thead>
                 <tbody>
                   {started.map((row) => {
-                    const { valid, total } = coverage(row, conformsOf);
+                    // `row.valid` is the server's count, from the verdict on
+                    // each record. This screen may hold a fresher one — a
+                    // "Validate all" run — so it recounts when it does, and
+                    // takes the server's answer when it does not.
+                    const total = row.total;
+                    const counted = [...row.authored, ...row.bound];
+                    const valid = counted.some((e) => checks[e.id])
+                      ? counted.filter((e) => (checks[e.id]?.conforms ?? e.conforms) === true).length
+                      : row.valid;
                     // Titles first, then repository paths: an authored
                     // document has a name somebody chose, a bound file has a
                     // path, and mixing them without order makes the line read
                     // as neither.
                     const names = [
-                      ...row.authored.map((d) => d.title),
-                      ...row.bound.map((b) => b.path.split("/").pop() ?? b.path),
+                      ...row.authored.map((d) => d.name),
+                      ...row.bound.map((b) => b.name),
                     ];
                     return (
-                      <tr key={row.type.key} className="prow root">
+                      <tr key={row.type_key} className="prow root">
                         <td>
                           <div className="pcell">
                             <div>
-                              <div className="name">{row.type.name}</div>
+                              <div className="name">{row.type_name}</div>
                               <div className="sub">
                                 {names.slice(0, 3).join(", ")}
                                 {names.length > 3 ? ` +${names.length - 3}` : ""}
@@ -651,15 +657,15 @@ export function ProjectOverview({
                       </tr>
                     );
                   })}
-                  {notStarted.map(({ type: t }) => (
-                    <tr key={t.key} className="prow nested">
+                  {notStarted.map((t) => (
+                    <tr key={t.type_key} className="prow nested">
                       <td>
                         <div className="pcell">
                           <div>
                             <div className="name" style={{ fontWeight: 500 }}>
-                              {t.name}
+                              {t.type_name}
                             </div>
-                            <div className="sub">{t.description}</div>
+                            <div className="sub">{t.type_description}</div>
                           </div>
                         </div>
                       </td>
