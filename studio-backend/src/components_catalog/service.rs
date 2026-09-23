@@ -1763,7 +1763,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 62);
+        assert_eq!(gear.fields().count(), 64);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

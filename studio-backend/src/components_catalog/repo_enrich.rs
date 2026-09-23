@@ -235,12 +235,23 @@ impl RepoEnricher {
                 .await;
             let description = brief_of(&fields, "description");
             let category = brief_of(&fields, "category");
+            // A gear that declares `is_plugin = true` IS a plugin, whatever it
+            // is called. The service otherwise reads the crate name for
+            // `-plugin`, which agrees with every declaration in `gears-rust`
+            // today -- so this decides nothing yet and is here because a name
+            // is a convention and a declaration is not. `None` keeps the name
+            // fallback for a manifest that says nothing, rather than asserting
+            // `gear` on its behalf.
+            let kind = match brief_of(&fields, "is_plugin").as_deref() {
+                Some("yes") => Some("plugin".to_string()),
+                _ => None,
+            };
             out.push(RepoGear {
                 crate_name: format!("cf-gears-{slug}"),
                 description,
                 fields,
                 uml,
-                kind: None,
+                kind,
                 category,
                 payload: None,
             });
@@ -755,6 +766,15 @@ impl RepoEnricher {
                 }
                 f.insert("plugins".into(), v);
             }
+            if let Some(declared) = parsed.extension_point {
+                f.insert("extpoint".into(), boolean(declared));
+            }
+            // What the manifest calls this component. Kept as a field of its
+            // own rather than only as the node's `kind`, so a page can show
+            // that the answer was read and not inferred.
+            if let Some(is_plugin) = parsed.is_plugin {
+                f.insert("is_plugin".into(), boolean(is_plugin));
+            }
         }
 
         // owner from CODEOWNERS: the last matching pattern wins in CODEOWNERS,
@@ -948,6 +968,25 @@ struct GearToml {
     description: Option<String>,
     category: Option<String>,
     plugins: Option<bool>,
+    /// The gear says it IS a plugin.
+    ///
+    /// `classify_kind` decides this from the crate name instead, and on
+    /// today's `gears-rust` the two agree for all forty-two gears — so reading
+    /// the declaration changes nothing yet and is insurance, not a fix: a
+    /// plugin named without the word, or a gear named with it, is a rename
+    /// away.
+    is_plugin: Option<bool>,
+    /// The gear says it offers a place for somebody else's implementation.
+    ///
+    /// This is the one that pays now. Twenty-five of the forty-two gears
+    /// declare an extension point and eighteen declare plugins, and the
+    /// catalogue recorded none of it — zero of forty-two profiles carried
+    /// either answer, because until the `[gear]` table could be read the
+    /// manifest was unreadable. An extension point is where a company's
+    /// specifics attach without the gear knowing about that company, so a
+    /// catalogue that cannot say which gears have one cannot answer the
+    /// question a brownfield assembly starts from.
+    extension_point: Option<bool>,
 }
 
 /// Minimal top-level TOML reader — enough for `description`, `category`/`domain`
@@ -957,6 +996,8 @@ fn parse_gear_toml(body: &str) -> GearToml {
         description: None,
         category: None,
         plugins: None,
+        is_plugin: None,
+        extension_point: None,
     };
     // `[gear]` counts as the top level.
     //
@@ -1000,6 +1041,8 @@ fn parse_gear_toml(body: &str) -> GearToml {
                     val.starts_with("true") || (val.starts_with('[') && val.contains('"'));
                 out.plugins = Some(declared);
             }
+            "is_plugin" => out.is_plugin = Some(v.trim().starts_with("true")),
+            "has_extension_point" => out.extension_point = Some(v.trim().starts_with("true")),
             _ => {}
         }
     }
@@ -1472,6 +1515,36 @@ category = \"wrong\"
         );
         assert_eq!(parsed.description.as_deref(), Some("The gear."));
         assert_eq!(parsed.category, None);
+    }
+
+    #[test]
+    fn a_gear_says_whether_it_is_a_plugin_and_whether_it_offers_a_seam() {
+        // `credstore` declares both, and until the `[gear]` table could be read
+        // the catalogue recorded neither: zero of the forty-two scanned gears
+        // carried a plugins or extension-point answer at all.
+        let parsed = parse_gear_toml(
+            "[gear]\nname = \"Credentials Store\"\nis_plugin = false\n\
+             has_plugins = true\nhas_extension_point = true\n",
+        );
+        assert_eq!(parsed.is_plugin, Some(false));
+        assert_eq!(parsed.extension_point, Some(true));
+        assert_eq!(parsed.plugins, Some(true));
+    }
+
+    #[test]
+    fn a_plugin_says_so_rather_than_being_guessed_from_its_name() {
+        let parsed = parse_gear_toml("[gear]\nname = \"ECB rates\"\nis_plugin = true\n");
+        assert_eq!(parsed.is_plugin, Some(true));
+    }
+
+    #[test]
+    fn a_manifest_that_says_nothing_leaves_the_guess_in_place() {
+        // `None`, not `Some(false)`: the service falls back to reading the
+        // crate name, and an invented `false` would take that fallback away
+        // from every gear whose manifest predates the key.
+        let parsed = parse_gear_toml("[gear]\nname = \"Ledger\"\ncategory = \"bss\"\n");
+        assert_eq!(parsed.is_plugin, None);
+        assert_eq!(parsed.extension_point, None);
     }
 
     #[test]
