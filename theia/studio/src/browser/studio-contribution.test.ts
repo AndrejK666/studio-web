@@ -89,7 +89,11 @@ describe('StudioContribution', () => {
             addWidget: jest.fn(async (widget: { isAttached: boolean }, _options: unknown) => {
                 widget.isAttached = true;
             }),
-            activateWidget: jest.fn()
+            activateWidget: jest.fn(),
+            // The flank's width is said out loud before the activation that
+            // expands it; Theia cannot compute its own default this early.
+            node: { clientWidth: 1584 },
+            rightPanelHandler: { resize: jest.fn() }
         };
         const contribution = new StudioContribution(widgetManager as never);
 
@@ -126,63 +130,56 @@ describe('StudioContribution', () => {
         );
     });
 
-    /* The release image is built without the Orca runtime, while the deployment
-       still sets STUDIO_ORCA_ENABLED=1. Measured on the dev stand: no `orca` on
-       PATH, no `orca serve` running, and the right flank expanded on a panel
-       whose only content was an explanation of why it had none. The header
-       above keeps the Workspace Graph and Object Details out of a fresh session
-       for exactly this reason; the Agents panel differs only in that it is true
-       of some sessions and not others, so it is asked per session. */
-    it('leaves the Agents panel out when the image carries no Orca runtime', async () => {
+    /* Five panels live in the right flank — Agents, Claude Code, Codex, AI Chat
+       and Outline — and it used to open at 149px in a 1584px window, where the
+       one on top is a column of single words. Theia would have sized it from
+       its own `initialSizeRatio`, but only through `getDefaultPanelSize()`,
+       which answers nothing while the panel's parent is not yet visible — and
+       `revealShell` runs after every contribution's `initializeLayout`. So the
+       size is stated here, before the activation that expands the panel. */
+    it('gives the right flank a width before expanding it', async () => {
         const widgetManager = {
             getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
         };
+        const resize = jest.fn();
         const shell = {
-            addWidget: jest.fn(async (widget: { isAttached: boolean }, _options: unknown) => {
+            addWidget: jest.fn(async (widget: { isAttached: boolean }) => {
                 widget.isAttached = true;
             }),
-            activateWidget: jest.fn()
+            activateWidget: jest.fn(),
+            node: { clientWidth: 1584 },
+            rightPanelHandler: { resize }
         };
         const contribution = new StudioContribution(widgetManager as never);
-        Object.defineProperty(contribution, 'orca', {
-            value: { status: async () => ({ reachable: false, cliMissing: true }) }
-        });
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledTimes(2);
-        expect(shell.addWidget).not.toHaveBeenCalledWith(
-            expect.objectContaining({ id: OrcaWidget.ID }),
-            expect.anything()
+        // Theia's own ratio for this panel, which is the point: the number is
+        // the framework's, not this product's taste.
+        expect(resize).toHaveBeenCalledWith(Math.round(1584 * 0.191));
+        expect(resize.mock.invocationCallOrder[0]).toBeLessThan(
+            shell.activateWidget.mock.invocationCallOrder[0]
         );
-        // And the right flank is not expanded onto it either, which is the half
-        // a person actually sees.
-        expect(shell.activateWidget).not.toHaveBeenCalled();
     });
 
-    /* A runtime that is merely not running is one `orca serve` away, and the
-       panel's own hint says so — that is worth a flank. */
-    it('keeps the Agents panel when the runtime is installed but not running', async () => {
-        const widgetManager = {
-            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
-        };
+    /* A shell with no width yet is not an instruction to collapse the flank. */
+    it('says nothing about the width when the shell has none to give', async () => {
+        const resize = jest.fn();
         const shell = {
-            addWidget: jest.fn(async (widget: { isAttached: boolean }, _options: unknown) => {
+            addWidget: jest.fn(async (widget: { isAttached: boolean }) => {
                 widget.isAttached = true;
             }),
-            activateWidget: jest.fn()
+            activateWidget: jest.fn(),
+            node: { clientWidth: 0 },
+            rightPanelHandler: { resize }
         };
-        const contribution = new StudioContribution(widgetManager as never);
-        Object.defineProperty(contribution, 'orca', {
-            value: { status: async () => ({ reachable: false, cliMissing: false }) }
-        });
+        const contribution = new StudioContribution({
+            getOrCreateWidget: jest.fn(async (id: string) => ({ id, isAttached: false }))
+        } as never);
 
         await contribution.initializeLayout({ shell } as never);
 
-        expect(shell.addWidget).toHaveBeenCalledWith(
-            expect.objectContaining({ id: OrcaWidget.ID }),
-            { area: 'right' }
-        );
+        expect(resize).not.toHaveBeenCalled();
         expect(shell.activateWidget).toHaveBeenCalledWith(OrcaWidget.ID);
     });
 
@@ -209,6 +206,8 @@ describe('StudioContribution', () => {
                 widget.isAttached = true;
             }),
             activateWidget: jest.fn(),
+            node: { clientWidth: 1584 },
+            rightPanelHandler: { resize: jest.fn() },
             pendingUpdates: Promise.resolve()
         };
         const application = new TestFrontendApplication(
