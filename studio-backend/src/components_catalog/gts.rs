@@ -22,6 +22,10 @@ pub const GEAR_PROFILE_TYPE: &str = "gts.cf.studio.catalog.gear_profile.v1~";
 /// The gear repository connected to one project — where that project's gears
 /// live and where scaffolded gears are written. Keyed on the project id.
 pub const PROJECT_GEAR_REPO_TYPE: &str = "gts.cf.studio.catalog.project_gear_repo.v1~";
+/// The product a project is composing out of gears: the gears picked, the
+/// deployment profile, and what the Gearbox engine last said about them. Keyed
+/// on the project id, like the gear repo it is written to.
+pub const PROJECT_PRODUCT_TYPE: &str = "gts.cf.studio.catalog.project_product.v1~";
 
 /// A kit: a set of files a project installs into its repositories.
 ///
@@ -59,11 +63,12 @@ pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
 pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
 
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 7] = [
+pub const ALL_NODE_TYPES: [&str; 8] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
     PROJECT_GEAR_REPO_TYPE,
+    PROJECT_PRODUCT_TYPE,
     KIT_TYPE,
     FRONTX_TYPE,
     FIELD_SCHEMA_TYPE,
@@ -146,7 +151,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 7] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -166,6 +171,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 7] = [
         PROJECT_GEAR_REPO_TYPE,
         "ProjectGearRepo",
         "The gear repository connected to a project (connector, repo, branch).",
+    ),
+    (
+        PROJECT_PRODUCT_TYPE,
+        "ProjectProduct",
+        "The gears a project composes into a product, and what the Gearbox engine last said about them.",
     ),
     (
         KIT_TYPE,
@@ -368,6 +378,21 @@ pub fn project_gear_repo_node(project_id: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: PROJECT_GEAR_REPO_TYPE,
         instance_id: project_gear_repo_instance_id(project_id),
+        value,
+    }
+}
+
+/// The instance id of a project's product node (keyed on the project id).
+pub fn project_product_instance_id(project_id: &str) -> String {
+    anon_id(&["project_product", project_id])
+}
+
+/// The product one project is composing. `value` carries `project_id` plus
+/// `{product_id, name, gears, profile, last_preview?, written?}`.
+pub fn project_product_node(project_id: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: PROJECT_PRODUCT_TYPE,
+        instance_id: project_product_instance_id(project_id),
         value,
     }
 }

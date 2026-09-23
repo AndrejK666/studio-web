@@ -82,6 +82,7 @@ import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
 import { withCorpusSource } from "./product";
+import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pins";
 import {
   clampStep,
@@ -725,6 +726,18 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // made in between.
   const restoredPlace = useRef<Partial<Place>>(readPlace()).current;
   const [view, setView] = useState<View>(restoredPlace.view ?? "projects");
+  /** A component page the platform catalogue should open on, asked for from
+   *  elsewhere (a project's product). Stamped, so asking twice reopens it. */
+  const [componentFocus, setComponentFocus] = useState<{ name: string; at: number } | null>(null);
+  const portalNav = useMemo<PortalNav>(
+    () => ({
+      openComponent: (name: string) => {
+        setComponentFocus({ name, at: Date.now() });
+        setView("gears");
+      },
+    }),
+    [],
+  );
   /** Position in the project → nested project drill-down. Two levels, one noun. */
   const [crumb, setCrumb] = useState<Crumb>(restoredPlace.crumb ?? {});
   /** Name of the opened nested project, kept for the crumb: the record is not
@@ -1503,6 +1516,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
 
   return (
     <StudioBridgeProvider value={studioBridge}>
+    <PortalNavProvider value={portalNav}>
     <div className="shell">
       <PresenceNotes messages={presence.messages} onDismiss={presence.dismiss} />
       {/* The only chrome in the flow: one 56px row carrying the control that
@@ -2362,6 +2376,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             hideSdk={filters.gearHideSdk}
             categoryFilter={filters.gearCategory}
             onCategories={setComponentCategories}
+            focus={componentFocus}
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
@@ -2460,6 +2475,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         </div>
       )}
     </div>
+    </PortalNavProvider>
     </StudioBridgeProvider>
   );
 }

@@ -1417,6 +1417,29 @@ export interface GearboxApplication {
   listens: { name: string; gear: string; address: string }[];
 }
 
+/** The product a project is composing, as the server remembers it. */
+export interface ProjectProduct {
+  project_id?: string;
+  product_id?: string;
+  name?: string;
+  /** Catalogue names (`cf-gears-api-gateway`), in the order they were picked. */
+  gears?: string[];
+  profile?: string;
+  updated_at?: string;
+  /** What the engine said the last time the product was previewed. */
+  last_preview?: {
+    profile: string;
+    ok: boolean;
+    errors: number;
+    warnings: number;
+    applications: string[];
+    /** Every gear the resolution contains, picked or pulled in, by crate. */
+    gears: string[];
+    corpus_commit?: string | null;
+  };
+  written?: { branch: string; commit_sha: string; pr_url?: string | null };
+}
+
 /** What the Gearbox engine made of a set of picked gears. */
 export interface ProductPreview {
   product_gdl: string;
@@ -2640,6 +2663,25 @@ export const api = {
       `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** The product the project is composing, or null before anything is picked. */
+  projectProduct: async (token: string, projectId: string): Promise<ProjectProduct | null> => {
+    const r = await request<{ nodes: { value: ProjectProduct }[] }>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product`,
+      token,
+    );
+    return r.nodes?.[0]?.value ?? null;
+  },
+  /** Merge fields into the project's product; omitted fields keep their value. */
+  saveProjectProduct: (
+    token: string,
+    projectId: string,
+    body: { product_id?: string; name?: string; gears?: string[]; profile?: string },
+  ) =>
+    request<{ value: ProjectProduct }>(
+      `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>

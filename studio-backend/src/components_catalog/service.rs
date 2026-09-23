@@ -1429,6 +1429,54 @@ impl CatalogService {
         Ok(node)
     }
 
+    /// The product a project is composing, or `None` before anything was picked.
+    pub async fn get_project_product(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<GtsNode>> {
+        let want = gts::project_product_instance_id(project_id);
+        let nodes = self.sink.list(ctx, Some("project_product")).await?;
+        Ok(nodes.into_iter().find(|n| n.instance_id == want))
+    }
+
+    /// Merge `patch` into the project's product record and persist it. A merge,
+    /// not a replace: the picks are saved as they change, the last preview when
+    /// it runs, and neither write may erase the other's half.
+    pub async fn update_project_product(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        patch: serde_json::Map<String, Value>,
+    ) -> anyhow::Result<GtsNode> {
+        let mut value = self
+            .get_project_product(ctx, project_id)
+            .await?
+            .and_then(|n| n.value.as_object().cloned())
+            .unwrap_or_default();
+        for (k, v) in patch {
+            value.insert(k, v);
+        }
+        value.insert(
+            "project_id".to_owned(),
+            Value::String(project_id.to_owned()),
+        );
+        value.insert(
+            "updated_at".to_owned(),
+            Value::String(
+                time::OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
+            ),
+        );
+        let node = gts::project_product_node(project_id, Value::Object(value));
+        self.sink.register_types(ctx).await?;
+        self.sink
+            .upsert(ctx, std::slice::from_ref(&node), &[])
+            .await?;
+        Ok(node)
+    }
+
     /// Write a scaffolded gear into the project's connected gear repository: a
     /// branch off the connected base branch carrying the skeleton files, and an
     /// optional pull request. The connection token is resolved via the

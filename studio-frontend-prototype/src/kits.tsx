@@ -6,6 +6,7 @@ import {
   type KitInstallation,
   type KitMaterialization,
   type ProductPreview,
+  type ProjectProduct,
   type ProjectRepository,
   type StudioKit,
 } from "./api";
@@ -19,6 +20,7 @@ import {
   productIdFrom,
   groupDiagnostics,
 } from "./product";
+import { usePortalNav, type PortalNav } from "./portal-nav";
 import { useStudioBridge } from "./studio-bridge";
 
 export function ProjectKits({
@@ -46,6 +48,7 @@ export function ProjectKits({
   // Slug@version pairs already reconciled on this mount, so a reload does not
   // re-run a rollout that has nothing left to do.
   const reconciled = useRef(new Set<string>());
+  const product = useProjectProduct(token, projectId, projectName);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -209,12 +212,16 @@ export function ProjectKits({
 
   return (
     <section className="kits-view">
-      <SuggestedComponents
-        token={token}
-        projectId={projectId}
-        projectName={projectName}
-        workspaceId={workspaceId}
-      />
+      {product.composing && (
+        <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
+      )}
+      {product.gearbox && !product.gearbox.enabled && (
+        <p className="hint" style={{ fontSize: 12 }}>
+          Composing a product from gears needs the Gearbox engine, which is off in this deployment
+          {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
+        </p>
+      )}
+      <SuggestedComponents token={token} projectId={projectId} workspaceId={workspaceId} product={product} />
 
       <div className="card-head">
         <div>
@@ -375,35 +382,31 @@ export function ProjectKits({
 function SuggestedComponents({
   token,
   projectId,
-  projectName,
   workspaceId,
+  product,
 }: {
   token: string;
   projectId: string;
-  projectName: string;
   workspaceId: string;
+  product: ProductState;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   const [docCount, setDocCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The product step: the gears picked from the suggestions, and what the
-  // Gearbox engine made of them. `gearbox` is null until the first Suggest.
-  const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
-  const [picks, setPicks] = useState<string[]>([]);
+  const nav = usePortalNav();
 
   const suggest = async () => {
     setBusy(true);
     setError(null);
     try {
-      const [docs, components, profs, vocab, engine] = await Promise.all([
+      const [docs, components, profs, vocab] = await Promise.all([
         api.projectDocuments(token, workspaceId, projectId),
         api.listComponents(token),
         api
           .listComponentProfiles(token)
           .catch(() => ({ nodes: [] as CatalogNode[] })),
         api.capabilities(token, workspaceId),
-        api.gearboxStatus(token).catch(() => null),
       ]);
       // Every capability the project's documents declare, deduplicated and in
       // the order they were first met. The server indexes these from front
@@ -418,9 +421,12 @@ function SuggestedComponents({
       setDocCount(seen);
       const next = composePlan(caps, components.nodes ?? [], profilesByName(profs.nodes ?? []), vocab.items ?? []);
       setPlan(next);
-      setGearbox(engine);
-      // A refresh keeps what the person picked; only a first plan is seeded.
-      setPicks((current) => (plan === null ? defaultPicks(next) : current));
+      // A product nobody has picked for yet starts from the best built gear
+      // per capability. One that has picks keeps them: suggestions are a
+      // source of candidates, not the product.
+      if (product.composing && product.loaded && product.picks.length === 0) {
+        product.setPicks(() => defaultPicks(next));
+      }
     } catch (cause) {
       setError(errText(cause));
     } finally {
@@ -428,13 +434,10 @@ function SuggestedComponents({
     }
   };
 
-  const togglePick = (name: string) =>
-    setPicks((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
-
   const built = plan?.flatMap((r) => r.candidates).filter((c) => c.built !== "docs-only").length ?? 0;
   const gaps = plan?.filter((r) => r.gap).length ?? 0;
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
-  const composing = gearbox?.enabled === true;
+  const composing = product.composing;
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -444,7 +447,7 @@ function SuggestedComponents({
           <p className="subtitle">
             The capabilities this project&apos;s documents declare, matched against the component
             catalogue. Components that have been built come first.
-            {composing && " Pick the gears the product is made of, then preview it."}
+            {composing && " + puts a gear into the product above; its name opens its page in the catalogue."}
           </p>
         </div>
         <button className="ghost" onClick={() => void suggest()} disabled={busy}>
@@ -497,47 +500,37 @@ function SuggestedComponents({
                     >
                       {row.candidates.map((c) => {
                         const pickable = composing && isPickable(c);
-                        const picked = pickable && picks.includes(c.name);
-                        const title =
-                          `matched: ${c.why.join(", ")}` +
-                          (c.built === "docs-only"
-                            ? " · the catalogue found no crate under this component — docs and a manifest only"
-                            : "") +
-                          (pickable ? (picked ? " · in the product — click to leave it out" : " · click to put it in the product") : "");
-                        const style = {
-                          fontSize: 11,
-                          border: picked ? "1px solid var(--primary)" : "1px solid var(--border)",
-                          background: picked ? "var(--accent)" : "transparent",
-                          borderRadius: 999,
-                          padding: "2px 8px",
-                          opacity: c.built === "docs-only" ? 0.6 : 1,
-                          color: "inherit",
-                          cursor: pickable ? "pointer" : "default",
-                        } as const;
-                        const body = (
-                          <>
-                            {pickable && <span style={{ marginRight: 4 }}>{picked ? "✓" : "+"}</span>}
-                            <b>{gearLabel(c.name)}</b>
+                        const picked = pickable && product.picks.includes(c.name);
+                        return (
+                          <span
+                            key={c.name}
+                            title={
+                              `matched: ${c.why.join(", ")}` +
+                              (c.built === "docs-only"
+                                ? " · the catalogue found no crate under this component — docs and a manifest only"
+                                : "")
+                            }
+                            style={{
+                              ...chipStyle(picked),
+                              opacity: c.built === "docs-only" ? 0.6 : 1,
+                            }}
+                          >
+                            {pickable && (
+                              <button
+                                type="button"
+                                aria-pressed={picked}
+                                title={picked ? "In the product — click to take it out" : "Put it into the product"}
+                                onClick={() => product.toggle(c.name)}
+                                style={chipToggleStyle}
+                              >
+                                {picked ? "✓" : "+"}
+                              </button>
+                            )}
+                            <ComponentLink nav={nav} name={c.name} />
                             <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
                             {c.built === "docs-only" && (
                               <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
                             )}
-                          </>
-                        );
-                        return pickable ? (
-                          <button
-                            key={c.name}
-                            type="button"
-                            title={title}
-                            aria-pressed={picked}
-                            onClick={() => togglePick(c.name)}
-                            style={style}
-                          >
-                            {body}
-                          </button>
-                        ) : (
-                          <span key={c.name} title={title} style={style}>
-                            {body}
                           </span>
                         );
                       })}
@@ -546,49 +539,168 @@ function SuggestedComponents({
                 </div>
               ))}
             </div>
-            {gearbox && !gearbox.enabled && (
-              <p className="hint" style={{ fontSize: 12, marginTop: 12 }}>
-                Composing a product from these needs the Gearbox engine, which is off in this
-                deployment{gearbox.problem ? ` (${gearbox.problem})` : ""}.
-              </p>
-            )}
-            {composing && (
-              <ProductComposer
-                token={token}
-                projectId={projectId}
-                projectName={projectName}
-                picks={picks}
-                gearbox={gearbox}
-                onPick={(id) => setPicks((current) => (current.includes(id) ? current : [...current, id]))}
-              />
-            )}
           </>
         ))}
     </section>
   );
 }
 
-/** The picked gears as a product: the engine's verdict on them, the
- *  product.gdl it was asked about, and the two ways onward — into the project's
- *  repository, and into the IDE where the language server keeps checking it. */
-function ProductComposer({
+/* ── The project's product ────────────────────────────────────────────────── */
+
+type ProductState = {
+  /** The engine's status; null while loading or when the call failed. */
+  gearbox: GearboxStatus | null;
+  /** Whether previews run here at all. */
+  composing: boolean;
+  /** The saved record has been read, so picks can be written back. */
+  loaded: boolean;
+  record: ProjectProduct | null;
+  picks: string[];
+  setPicks: (update: (current: string[]) => string[]) => void;
+  toggle: (name: string) => void;
+  profile: string;
+  setProfile: (profile: string) => void;
+  /** Re-read the record, after a preview wrote its verdict into it. */
+  refresh: () => Promise<void>;
+  saveError: string | null;
+};
+
+/** The project's product as the server keeps it: read on mount, and written
+ *  back as picks and profile change, so leaving the tab keeps what was chosen
+ *  and every screen that asks sees the same product. */
+function useProjectProduct(token: string, projectId: string, projectName: string): ProductState {
+  const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
+  const [record, setRecord] = useState<ProjectProduct | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [picks, setPicksState] = useState<string[]>([]);
+  const [profile, setProfileState] = useState("dev");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Set by the person's changes and cleared by a write, so what was just
+  // read from the server is never written straight back.
+  const dirty = useRef(false);
+
+  useEffect(() => {
+    let live = true;
+    setLoaded(false);
+    void Promise.all([
+      api.gearboxStatus(token).catch(() => null),
+      api.projectProduct(token, projectId).catch(() => null),
+    ]).then(([engine, saved]) => {
+      if (!live) return;
+      setGearbox(engine);
+      setRecord(saved);
+      setPicksState(saved?.gears ?? []);
+      setProfileState(saved?.profile ?? "dev");
+      setLoaded(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+
+  useEffect(() => {
+    if (!loaded || !dirty.current) return;
+    const timer = setTimeout(() => {
+      dirty.current = false;
+      api
+        .saveProjectProduct(token, projectId, {
+          product_id: productIdFrom(projectName),
+          name: projectName,
+          gears: picks,
+          profile,
+        })
+        .then((saved) => {
+          setRecord(saved.value);
+          setSaveError(null);
+        })
+        .catch((cause) => setSaveError(errText(cause)));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [picks, profile, loaded, token, projectId, projectName]);
+
+  const setPicks = useCallback((update: (current: string[]) => string[]) => {
+    dirty.current = true;
+    setPicksState(update);
+  }, []);
+
+  return {
+    gearbox,
+    composing: gearbox?.enabled === true,
+    loaded,
+    record,
+    picks,
+    setPicks,
+    toggle: (name) =>
+      setPicks((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name])),
+    profile,
+    setProfile: (next) => {
+      dirty.current = true;
+      setProfileState(next);
+    },
+    refresh: async () => {
+      const saved = await api.projectProduct(token, projectId).catch(() => null);
+      if (saved) setRecord(saved);
+    },
+    saveError,
+  };
+}
+
+const chipStyle = (picked: boolean) =>
+  ({
+    fontSize: 11,
+    display: "inline-flex",
+    alignItems: "center",
+    border: picked ? "1px solid var(--primary)" : "1px solid var(--border)",
+    background: picked ? "var(--accent)" : "transparent",
+    borderRadius: 999,
+    padding: "2px 8px",
+  }) as const;
+
+const chipToggleStyle = {
+  border: "none",
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+  padding: "0 4px 0 0",
+  font: "inherit",
+  fontWeight: 700,
+} as const;
+
+/** A component's name that opens its page in the platform catalogue. */
+function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: string; label?: string }) {
+  const text = label ?? gearLabel(name);
+  if (!nav) return <b>{text}</b>;
+  return (
+    <button
+      type="button"
+      className="link"
+      title={`Open ${name} in the component catalogue`}
+      onClick={() => nav.openComponent(name)}
+      style={{ border: "none", background: "transparent", padding: 0, font: "inherit", fontWeight: 700, color: "var(--primary)", cursor: "pointer" }}
+    >
+      {text}
+    </button>
+  );
+}
+
+/** The product this project is made of: the gears in it, each leading to its
+ *  catalogue page; the engine's verdict on them; and the two ways onward — into
+ *  the project's repository, and into the IDE where the language server keeps
+ *  checking it. */
+function ProductCard({
   token,
   projectId,
   projectName,
-  picks,
-  gearbox,
-  onPick,
+  product,
 }: {
   token: string;
   projectId: string;
   projectName: string;
-  picks: string[];
-  gearbox: GearboxStatus;
-  /** Adds a gear the preview suggested, by engine id. */
-  onPick: (id: string) => void;
+  product: ProductState;
 }) {
   const studio = useStudioBridge();
-  const [profile, setProfile] = useState("dev");
+  const nav = usePortalNav();
+  const { gearbox, picks, profile, record } = product;
   const [asPr, setAsPr] = useState(false);
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -609,6 +721,8 @@ function ProductComposer({
   const question = JSON.stringify([profile, [...picks].sort()]);
   const stale = preview !== null && asked !== question;
   const productId = productIdFrom(projectName);
+  // The crate behind an engine id, for linking a resolved gear to its page.
+  const crateOf = (id: string) => preview?.gears.find((g) => g.id === id)?.crate_name ?? `cf-gears-${id}`;
 
   const run = async (write: boolean) => {
     setBusy(write ? "save" : "preview");
@@ -623,6 +737,7 @@ function ProductComposer({
       });
       setPreview(result);
       setAsked(question);
+      await product.refresh();
     } catch (cause) {
       setError(errText(cause));
     } finally {
@@ -632,16 +747,52 @@ function ProductComposer({
 
   const errors = preview?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
   const warnings = preview?.diagnostics.filter((d) => d.severity === "warning").length ?? 0;
+  const last = record?.last_preview;
 
   return (
-    <div style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <b style={{ fontSize: 13 }}>Product</b>
-        <code style={{ fontSize: 12 }}>{productId}</code>
-        <span style={{ fontSize: 12, opacity: 0.7 }}>
-          {picks.length} gear{picks.length === 1 ? "" : "s"} picked
+    <section className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <div>
+          <h2>
+            Product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>
+          </h2>
+          <p className="subtitle">
+            The gears this project ships as one product, composed and checked by the Gearbox engine.
+            Saved with the project; a gear&apos;s name opens its page in the component catalogue.
+          </p>
+        </div>
+        <span className="hint" style={{ fontSize: 11 }}>
+          {gearbox?.engine_version ?? "gearbox"} · {gearbox?.corpus_ref}
+          {gearbox?.corpus_commit ? `@${gearbox.corpus_commit.slice(0, 7)}` : ""}
         </span>
-        <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Deployment profile">
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        {picks.length === 0 ? (
+          <span className="empty" style={{ fontSize: 12 }}>
+            Nothing in the product yet — press Suggest below and pick gears with +.
+          </span>
+        ) : (
+          picks.map((name) => (
+            <span key={name} style={chipStyle(true)}>
+              <ComponentLink nav={nav} name={name} />
+              <button
+                type="button"
+                title="Take it out of the product"
+                aria-label={`Remove ${name}`}
+                onClick={() => product.toggle(name)}
+                style={{ ...chipToggleStyle, padding: "0 0 0 6px", opacity: 0.6 }}
+              >
+                ×
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+      {product.saveError && <div className="error">Not saved: {product.saveError}</div>}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        <select value={profile} onChange={(e) => product.setProfile(e.target.value)} aria-label="Deployment profile">
           {PRODUCT_PROFILES.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
@@ -651,10 +802,19 @@ function ProductComposer({
         <button className="primary" disabled={busy !== null || picks.length === 0} onClick={() => void run(false)}>
           {busy === "preview" ? "Resolving…" : "Preview product"}
         </button>
-        <span className="hint" style={{ fontSize: 11 }}>
-          {gearbox.engine_version ?? "gearbox"} · {gearbox.corpus_ref}
-          {gearbox.corpus_commit ? `@${gearbox.corpus_commit.slice(0, 7)}` : ""}
-        </span>
+        {!preview && last && (
+          <span style={{ fontSize: 12 }}>
+            <span className={`badge ${last.ok ? "ok" : "failed"}`}>
+              {last.ok ? `resolved for ${last.profile}` : `did not resolve for ${last.profile}`}
+            </span>{" "}
+            <span style={{ opacity: 0.7 }}>
+              {last.errors} error{last.errors === 1 ? "" : "s"} · {last.warnings} warning
+              {last.warnings === 1 ? "" : "s"}
+              {last.applications.length > 0 ? ` · ${last.applications.join(", ")}` : ""}
+              {record?.updated_at ? ` · ${new Date(record.updated_at).toLocaleString()}` : ""}
+            </span>
+          </span>
+        )}
       </div>
       {error && <div className="error">{error}</div>}
 
@@ -667,16 +827,20 @@ function ProductComposer({
             <span style={{ fontSize: 12, opacity: 0.75 }}>
               {errors} error{errors === 1 ? "" : "s"} · {warnings} warning{warnings === 1 ? "" : "s"}
             </span>
-            {stale && (
-              <span className="badge warn">the picks changed since — preview again</span>
-            )}
+            {stale && <span className="badge warn">the product changed since — preview again</span>}
           </div>
 
           {preview.not_described.length > 0 && (
             <p className="hint" style={{ fontSize: 12 }}>
               Left out, because no <code>gear.gdl</code> describes{" "}
               {preview.not_described.length === 1 ? "it" : "them"} yet:{" "}
-              {preview.not_described.map(gearLabel).join(", ")}.
+              {preview.not_described.map((n, i) => (
+                <span key={n}>
+                  {i > 0 && ", "}
+                  <ComponentLink nav={nav} name={n} />
+                </span>
+              ))}
+              .
             </p>
           )}
           {preview.added.length > 0 && (
@@ -692,18 +856,19 @@ function ProductComposer({
                   <span>
                     <b>{o.host}</b> needs a plugin:
                   </span>
-                  {o.available.map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className="ghost"
-                      disabled={picks.includes(id)}
-                      title="Put this plugin into the product, then preview again"
-                      onClick={() => onPick(id)}
-                      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, border: "1px solid var(--border)" }}
-                    >
-                      {picks.includes(id) ? "✓" : "+"} {id}
-                    </button>
+                  {o.available.map((name) => (
+                    <span key={name} style={chipStyle(picks.includes(name))}>
+                      <button
+                        type="button"
+                        disabled={picks.includes(name)}
+                        title="Put this plugin into the product, then preview again"
+                        onClick={() => product.setPicks((current) => (current.includes(name) ? current : [...current, name]))}
+                        style={chipToggleStyle}
+                      >
+                        {picks.includes(name) ? "✓" : "+"}
+                      </button>
+                      <ComponentLink nav={nav} name={name} />
+                    </span>
                   ))}
                 </div>
               ))}
@@ -718,9 +883,7 @@ function ProductComposer({
                     {d.code}
                   </span>{" "}
                   {d.message}
-                  {d.profiles.length > 0 && (
-                    <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>
-                  )}
+                  {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
                   {d.file && (
                     <span style={{ opacity: 0.6 }}>
                       {" "}
@@ -748,17 +911,13 @@ function ProductComposer({
                     {a.replicas > 1 ? ` · ×${a.replicas}` : ""}
                     {a.listens.length > 0 ? ` · ${a.listens.map((l) => `${l.name} ${l.address}`).join(", ")}` : ""}
                   </span>
-                  <div style={{ marginTop: 4 }}>
+                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {a.gears.map((g) => {
                       const why = preview.gears.find((x) => x.id === g)?.reasons ?? [];
                       const pulled = why.length > 0 && !why.includes("selected");
                       return (
-                        <span
-                          key={g}
-                          title={why.join("; ")}
-                          style={{ marginRight: 8, opacity: pulled ? 0.65 : 1 }}
-                        >
-                          {g}
+                        <span key={g} title={why.join("; ")} style={{ opacity: pulled ? 0.7 : 1 }}>
+                          <ComponentLink nav={nav} name={crateOf(g)} label={g} />
                           {pulled && <span style={{ fontSize: 10 }}> ({why[0]})</span>}
                         </span>
                       );
@@ -773,48 +932,54 @@ function ProductComposer({
             <summary style={{ fontSize: 12, cursor: "pointer" }}>product.gdl</summary>
             <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto" }}>{preview.product_gdl}</pre>
           </details>
+        </div>
+      )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button className="ghost" disabled={busy !== null || stale} onClick={() => void run(true)}>
-              {busy === "save" ? "Saving…" : "Save product.gdl to the repository"}
-            </button>
-            <label style={{ fontSize: 12 }}>
-              <input type="checkbox" checked={asPr} onChange={(e) => setAsPr(e.target.checked)} /> as a pull
-              request
-            </label>
-            {studio && (
-              <button
-                className="ghost"
-                disabled={studio.opening !== null}
-                title="Opens this project's IDE session with the gear corpus beside it; the GDL language server checks the file as you edit"
-                onClick={() => void studio.openFile({ id: projectId, name: projectName }, "product.gdl")}
-              >
-                Open in IDE
+      {(preview || record?.written) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+          {preview && (
+            <>
+              <button className="ghost" disabled={busy !== null || stale} onClick={() => void run(true)}>
+                {busy === "save" ? "Saving…" : "Save product.gdl to the repository"}
               </button>
-            )}
-          </div>
-          {preview.written && (
-            <p className="hint" style={{ fontSize: 12 }}>
-              {preview.written.pr_url ? (
-                <>
-                  Pull request opened:{" "}
-                  <a href={preview.written.pr_url} target="_blank" rel="noreferrer">
-                    {preview.written.pr_url}
-                  </a>
-                </>
-              ) : (
-                <>
-                  Committed to <code>{preview.written.branch}</code> as{" "}
-                  <code>{preview.written.commit_sha.slice(0, 7)}</code>.
-                </>
-              )}{" "}
-              {ownsRepo
-                ? "The IDE opens the repository's sources from the Sources tab; if the project repository is not there yet, add it there first."
-                : "This project's gear repository may be shared, so the description went onto its own branch; the IDE shows it once that branch is merged or checked out."}
-            </p>
+              <label style={{ fontSize: 12 }}>
+                <input type="checkbox" checked={asPr} onChange={(e) => setAsPr(e.target.checked)} /> as a pull
+                request
+              </label>
+            </>
+          )}
+          {studio && record?.written && (
+            <button
+              className="ghost"
+              disabled={studio.opening !== null}
+              title="Opens this project's IDE session with the gear corpus beside it; the GDL language server checks the file as you edit"
+              onClick={() => void studio.openFile({ id: projectId, name: projectName }, "product.gdl")}
+            >
+              Open in IDE
+            </button>
           )}
         </div>
       )}
-    </div>
+      {record?.written && (
+        <p className="hint" style={{ fontSize: 12 }}>
+          {record.written.pr_url ? (
+            <>
+              product.gdl is in a pull request:{" "}
+              <a href={record.written.pr_url} target="_blank" rel="noreferrer">
+                {record.written.pr_url}
+              </a>
+            </>
+          ) : (
+            <>
+              product.gdl is committed on <code>{record.written.branch}</code> as{" "}
+              <code>{record.written.commit_sha.slice(0, 7)}</code>.
+            </>
+          )}{" "}
+          {ownsRepo
+            ? "The IDE opens the repository's sources from the Sources tab; if the project repository is not there yet, add it there first."
+            : "This project's gear repository may be shared, so the description went onto its own branch; the IDE shows it once that branch is merged or checked out."}
+        </p>
+      )}
+    </section>
   );
 }
