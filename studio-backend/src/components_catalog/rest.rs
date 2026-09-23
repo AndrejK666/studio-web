@@ -1667,7 +1667,8 @@ async fn preview_product(
 
     let written = if body.write.unwrap_or(false) {
         // A `product/…` branch named after the content by default, so the
-        // same description asked for twice says it already exists, and a
+        // same description saved twice lands on the branch it already has
+        // (`write_scaffold` returns it rather than refusing), and a
         // connected repository that is shared never has its base branch moved
         // by a preview. `onto_base` is for a repository the product owns
         // outright: a session opens the base branch, so there the description

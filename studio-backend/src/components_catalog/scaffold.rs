@@ -106,6 +106,9 @@ pub async fn write_scaffold(
     // the base moved onto it. Not forced: a push that landed between step 1
     // and here makes this a non-fast-forward, which fails rather than drops it.
     let onto_base = branch == base_branch;
+    // What the branch points at once this is done: the commit just made, or —
+    // when the branch was already there holding these very files — its own tip.
+    let mut commit_sha = new_commit.sha.clone();
     if onto_base {
         let _: serde_json::Value = patch_json(
             http,
@@ -116,20 +119,44 @@ pub async fn write_scaffold(
         .await
         .map_err(|e| anyhow!("advance '{branch}' (did it move meanwhile?): {e}"))?;
     } else {
-        let _: serde_json::Value = post_json(
+        let created: Result<serde_json::Value> = post_json(
             http,
             auth,
             &format!("/repos/{repo}/git/refs"),
             json!({ "ref": format!("refs/heads/{branch}"), "sha": new_commit.sha }),
         )
-        .await
-        .map_err(|e| anyhow!("create branch '{branch}' (does it already exist?): {e}"))?;
+        .await;
+        match created {
+            Ok(_) => {}
+            // **Asking twice for the same thing is not a failure.** A product
+            // description's branch is named after its content
+            // (`product/<id>-<digest>`), so saving the same description again
+            // finds its own branch. When that branch already holds exactly
+            // these files it IS the answer — returned, not refused. When it
+            // holds something else, the name is taken and nothing is moved.
+            Err(e) if e.to_string().contains("Reference already exists") => {
+                let holds = branch_holds(http, auth, repo, branch, files).await?;
+                if !holds {
+                    return Err(anyhow!(
+                        "branch '{branch}' already exists with different content; nothing was \
+                         overwritten. Delete or rename it, or pick another branch"
+                    ));
+                }
+                let tip: RefObj =
+                    get_json(http, auth, &format!("/repos/{repo}/git/ref/heads/{branch}"))
+                        .await
+                        .map_err(|e| anyhow!("read existing branch '{branch}': {e}"))?;
+                commit_sha = tip.object.sha;
+            }
+            Err(e) => return Err(anyhow!("create branch '{branch}': {e}")),
+        }
     }
 
     // 6. optionally, a pull request. There is nothing to request when the
-    // commit is already on the base branch.
+    // commit is already on the base branch. A branch found already there may
+    // already have its pull request, which is then the one returned.
     let pr_url = if let (Some(title), false) = (pr_title, onto_base) {
-        let pr: PrCreated = post_json(
+        let pr: Result<PrCreated> = post_json(
             http,
             auth,
             &format!("/repos/{repo}/pulls"),
@@ -140,17 +167,65 @@ pub async fn write_scaffold(
                 "body": "Scaffolded gear skeleton from an App Spec gap. Fill in the service, then review.",
             }),
         )
-        .await?;
-        Some(pr.html_url)
+        .await;
+        match pr {
+            Ok(pr) => Some(pr.html_url),
+            Err(e) if e.to_string().contains("A pull request already exists") => {
+                let owner = repo.split('/').next().unwrap_or_default();
+                let open: Vec<PrCreated> = get_json(
+                    http,
+                    auth,
+                    &format!("/repos/{repo}/pulls?state=open&head={owner}:{branch}"),
+                )
+                .await?;
+                open.into_iter().next().map(|pr| pr.html_url)
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         None
     };
 
     Ok(ScaffoldWrite {
         branch: branch.to_string(),
-        commit_sha: new_commit.sha,
+        commit_sha,
         pr_url,
     })
+}
+
+#[derive(Deserialize)]
+struct ContentObj {
+    #[serde(default)]
+    content: String,
+}
+
+/// Whether `branch` already has every one of `files`, byte for byte.
+async fn branch_holds(
+    http: &Client,
+    auth: &ConnectionAuth,
+    repo: &str,
+    branch: &str,
+    files: &[ScaffoldFile],
+) -> Result<bool> {
+    use base64::Engine as _;
+    for f in files {
+        let found: Result<ContentObj> = get_json(
+            http,
+            auth,
+            &format!("/repos/{repo}/contents/{}?ref={branch}", f.path),
+        )
+        .await;
+        let Ok(found) = found else { return Ok(false) };
+        // GitHub wraps the base64 body at 60 columns.
+        let packed: String = found.content.split_whitespace().collect();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(packed)
+            .map_err(|e| anyhow!("decode {} on '{branch}': {e}", f.path))?;
+        if bytes != f.content.as_bytes() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A repository created through the connector.
@@ -260,4 +335,103 @@ async fn send_json<T: for<'de> Deserialize<'de>>(
         ));
     }
     Ok(resp.json::<T>().await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{Method, StatusCode, Uri};
+    use axum::response::IntoResponse;
+    use base64::Engine as _;
+
+    /// A GitHub that already has `product/p-1`, holding `on_branch` as its
+    /// `product.gdl`, when `exists`; otherwise it creates the ref.
+    async fn fake_github(exists: bool, on_branch: &'static str) -> String {
+        let handler = move |method: Method, uri: Uri| async move {
+            let path = uri.path().to_string();
+            let json = |v: serde_json::Value| axum::Json(v).into_response();
+            match (method.as_str(), path.as_str()) {
+                ("GET", "/repos/o/r/git/ref/heads/main") => {
+                    json(json!({"object": {"sha": "base"}}))
+                }
+                ("GET", "/repos/o/r/git/ref/heads/product/p-1") => {
+                    json(json!({"object": {"sha": "tip-existing"}}))
+                }
+                ("GET", "/repos/o/r/git/commits/base") => json(json!({"tree": {"sha": "t0"}})),
+                ("POST", "/repos/o/r/git/trees") => json(json!({"sha": "t1"})),
+                ("POST", "/repos/o/r/git/commits") => json(json!({"sha": "c-new"})),
+                ("POST", "/repos/o/r/git/refs") if exists => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"message":"Reference already exists","status":"422"}"#,
+                )
+                    .into_response(),
+                ("POST", "/repos/o/r/git/refs") => json(json!({"ref": "refs/heads/product/p-1"})),
+                ("GET", "/repos/o/r/contents/product.gdl") => {
+                    let body = base64::engine::general_purpose::STANDARD.encode(on_branch);
+                    // Wrapped, the way GitHub sends it.
+                    let (a, b) = body.split_at(body.len() / 2);
+                    json(json!({"content": format!("{a}\n{b}\n")}))
+                }
+                _ => (StatusCode::NOT_FOUND, path).into_response(),
+            }
+        };
+        let app = axum::Router::new().fallback(handler);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        format!("http://{addr}")
+    }
+
+    async fn save(base_url: String) -> Result<ScaffoldWrite> {
+        let auth = ConnectionAuth {
+            base_url,
+            token: "t".into(),
+        };
+        write_scaffold(
+            &Client::new(),
+            &auth,
+            "o/r",
+            "main",
+            "product/p-1",
+            &[ScaffoldFile {
+                path: "product.gdl".into(),
+                content: "product(id = \"p\")\n".into(),
+            }],
+            "product: describe p",
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn saving_the_same_description_again_returns_the_branch_it_already_has() {
+        let w = save(fake_github(true, "product(id = \"p\")\n").await)
+            .await
+            .expect("idempotent save");
+        assert_eq!(w.branch, "product/p-1");
+        assert_eq!(
+            w.commit_sha, "tip-existing",
+            "the branch's own tip, not an orphan commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_branch_holding_something_else_is_refused_and_left_alone() {
+        let e = save(fake_github(true, "product(id = \"other\")\n").await)
+            .await
+            .expect_err("taken");
+        assert!(
+            e.to_string()
+                .contains("already exists with different content"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_branch_is_created_as_before() {
+        let w = save(fake_github(false, "").await).await.expect("created");
+        assert_eq!(w.commit_sha, "c-new");
+    }
 }
