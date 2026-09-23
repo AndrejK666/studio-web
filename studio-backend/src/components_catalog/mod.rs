@@ -9,6 +9,7 @@
 
 mod cratesio;
 pub(crate) mod field_schema;
+mod gearbox;
 pub(crate) mod gts;
 mod repo_enrich;
 mod rest;
@@ -141,12 +142,23 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             &service,
         ))))?;
 
+        let gearbox = gearbox::GearboxConfig::from_env().map(|cfg| {
+            info!(
+                workdir = %cfg.workdir.display(),
+                corpus = %cfg.corpus_url,
+                corpus_ref = %cfg.corpus_ref,
+                "studio-components-catalog: product previews through the Gearbox engine"
+            );
+            Arc::new(gearbox::Gearbox::new(cfg))
+        });
+
         let _ = self.service.set(service.clone());
         Ok(rest::register_routes(
             router,
             openapi,
             service,
             ctx.client_hub(),
+            gearbox,
         ))
     }
 }

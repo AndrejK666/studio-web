@@ -2,21 +2,35 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type CatalogNode,
+  type GearboxStatus,
   type KitInstallation,
   type KitMaterialization,
+  type ProductPreview,
   type ProjectRepository,
   type StudioKit,
 } from "./api";
 import { composePlan, profilesByName, type PlanRow } from "./compose";
 import { errText } from "./format";
+import {
+  PRODUCT_PROFILES,
+  defaultPicks,
+  gearLabel,
+  isPickable,
+  productIdFrom,
+  groupDiagnostics,
+} from "./product";
+import { useStudioBridge } from "./studio-bridge";
 
 export function ProjectKits({
   token,
   projectId,
+  projectName,
   workspaceId,
 }: {
   token: string;
   projectId: string;
+  /** Names the product a picked set of gears is composed into. */
+  projectName: string;
   /** The parent workspace — documents and the capability vocabulary hang off it. */
   workspaceId: string;
 }) {
@@ -195,7 +209,12 @@ export function ProjectKits({
 
   return (
     <section className="kits-view">
-      <SuggestedComponents token={token} projectId={projectId} workspaceId={workspaceId} />
+      <SuggestedComponents
+        token={token}
+        projectId={projectId}
+        projectName={projectName}
+        workspaceId={workspaceId}
+      />
 
       <div className="card-head">
         <div>
@@ -356,28 +375,35 @@ export function ProjectKits({
 function SuggestedComponents({
   token,
   projectId,
+  projectName,
   workspaceId,
 }: {
   token: string;
   projectId: string;
+  projectName: string;
   workspaceId: string;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   const [docCount, setDocCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The product step: the gears picked from the suggestions, and what the
+  // Gearbox engine made of them. `gearbox` is null until the first Suggest.
+  const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
+  const [picks, setPicks] = useState<string[]>([]);
 
   const suggest = async () => {
     setBusy(true);
     setError(null);
     try {
-      const [docs, components, profs, vocab] = await Promise.all([
+      const [docs, components, profs, vocab, engine] = await Promise.all([
         api.projectDocuments(token, workspaceId, projectId),
         api.listComponents(token),
         api
           .listComponentProfiles(token)
           .catch(() => ({ nodes: [] as CatalogNode[] })),
         api.capabilities(token, workspaceId),
+        api.gearboxStatus(token).catch(() => null),
       ]);
       // Every capability the project's documents declare, deduplicated and in
       // the order they were first met. The server indexes these from front
@@ -390,7 +416,11 @@ function SuggestedComponents({
         for (const cap of doc.capabilities) if (!caps.includes(cap)) caps.push(cap);
       }
       setDocCount(seen);
-      setPlan(composePlan(caps, components.nodes ?? [], profilesByName(profs.nodes ?? []), vocab.items ?? []));
+      const next = composePlan(caps, components.nodes ?? [], profilesByName(profs.nodes ?? []), vocab.items ?? []);
+      setPlan(next);
+      setGearbox(engine);
+      // A refresh keeps what the person picked; only a first plan is seeded.
+      setPicks((current) => (plan === null ? defaultPicks(next) : current));
     } catch (cause) {
       setError(errText(cause));
     } finally {
@@ -398,9 +428,13 @@ function SuggestedComponents({
     }
   };
 
+  const togglePick = (name: string) =>
+    setPicks((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
+
   const built = plan?.flatMap((r) => r.candidates).filter((c) => c.built !== "docs-only").length ?? 0;
   const gaps = plan?.filter((r) => r.gap).length ?? 0;
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
+  const composing = gearbox?.enabled === true;
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -410,6 +444,7 @@ function SuggestedComponents({
           <p className="subtitle">
             The capabilities this project&apos;s documents declare, matched against the component
             catalogue. Components that have been built come first.
+            {composing && " Pick the gears the product is made of, then preview it."}
           </p>
         </div>
         <button className="ghost" onClick={() => void suggest()} disabled={busy}>
@@ -460,37 +495,326 @@ function SuggestedComponents({
                     <div
                       style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}
                     >
-                      {row.candidates.map((c) => (
-                        <span
-                          key={c.name}
-                          title={
-                            `matched: ${c.why.join(", ")}` +
-                            (c.built === "docs-only"
-                              ? " · the catalogue found no crate under this component — docs and a manifest only"
-                              : "")
-                          }
-                          style={{
-                            fontSize: 11,
-                            border: "1px solid var(--border)",
-                            borderRadius: 999,
-                            padding: "2px 8px",
-                            opacity: c.built === "docs-only" ? 0.6 : 1,
-                          }}
-                        >
-                          <b>{c.name.replace(/^cf-gears-/, "").replace(/^@[^/]+\//, "")}</b>
-                          <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                          {c.built === "docs-only" && (
-                            <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
-                          )}
-                        </span>
-                      ))}
+                      {row.candidates.map((c) => {
+                        const pickable = composing && isPickable(c);
+                        const picked = pickable && picks.includes(c.name);
+                        const title =
+                          `matched: ${c.why.join(", ")}` +
+                          (c.built === "docs-only"
+                            ? " · the catalogue found no crate under this component — docs and a manifest only"
+                            : "") +
+                          (pickable ? (picked ? " · in the product — click to leave it out" : " · click to put it in the product") : "");
+                        const style = {
+                          fontSize: 11,
+                          border: picked ? "1px solid var(--primary)" : "1px solid var(--border)",
+                          background: picked ? "var(--accent)" : "transparent",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          opacity: c.built === "docs-only" ? 0.6 : 1,
+                          color: "inherit",
+                          cursor: pickable ? "pointer" : "default",
+                        } as const;
+                        const body = (
+                          <>
+                            {pickable && <span style={{ marginRight: 4 }}>{picked ? "✓" : "+"}</span>}
+                            <b>{gearLabel(c.name)}</b>
+                            <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                            {c.built === "docs-only" && (
+                              <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
+                            )}
+                          </>
+                        );
+                        return pickable ? (
+                          <button
+                            key={c.name}
+                            type="button"
+                            title={title}
+                            aria-pressed={picked}
+                            onClick={() => togglePick(c.name)}
+                            style={style}
+                          >
+                            {body}
+                          </button>
+                        ) : (
+                          <span key={c.name} title={title} style={style}>
+                            {body}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               ))}
             </div>
+            {gearbox && !gearbox.enabled && (
+              <p className="hint" style={{ fontSize: 12, marginTop: 12 }}>
+                Composing a product from these needs the Gearbox engine, which is off in this
+                deployment{gearbox.problem ? ` (${gearbox.problem})` : ""}.
+              </p>
+            )}
+            {composing && (
+              <ProductComposer
+                token={token}
+                projectId={projectId}
+                projectName={projectName}
+                picks={picks}
+                gearbox={gearbox}
+                onPick={(id) => setPicks((current) => (current.includes(id) ? current : [...current, id]))}
+              />
+            )}
           </>
         ))}
     </section>
+  );
+}
+
+/** The picked gears as a product: the engine's verdict on them, the
+ *  product.gdl it was asked about, and the two ways onward — into the project's
+ *  repository, and into the IDE where the language server keeps checking it. */
+function ProductComposer({
+  token,
+  projectId,
+  projectName,
+  picks,
+  gearbox,
+  onPick,
+}: {
+  token: string;
+  projectId: string;
+  projectName: string;
+  picks: string[];
+  gearbox: GearboxStatus;
+  /** Adds a gear the preview suggested, by engine id. */
+  onPick: (id: string) => void;
+}) {
+  const studio = useStudioBridge();
+  const [profile, setProfile] = useState("dev");
+  const [asPr, setAsPr] = useState(false);
+  const [busy, setBusy] = useState<"preview" | "save" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ProductPreview | null>(null);
+  // A product project owns the repository its wizard created, so saving goes
+  // onto the base branch the IDE opens. Any other project's gear repo may be
+  // shared, and gets a `product/…` branch instead.
+  const [ownsRepo, setOwnsRepo] = useState(false);
+  useEffect(() => {
+    api
+      .projectConfig(token, projectId)
+      .then((c) => setOwnsRepo(c?.kind === "product"))
+      .catch(() => setOwnsRepo(false));
+  }, [token, projectId]);
+  // The picks and profile the shown preview answers. Anything else and the
+  // preview is about a different product, which the screen has to say.
+  const [asked, setAsked] = useState<string | null>(null);
+  const question = JSON.stringify([profile, [...picks].sort()]);
+  const stale = preview !== null && asked !== question;
+  const productId = productIdFrom(projectName);
+
+  const run = async (write: boolean) => {
+    setBusy(write ? "save" : "preview");
+    setError(null);
+    try {
+      const result = await api.previewProduct(token, projectId, {
+        product_id: productId,
+        name: projectName,
+        gears: picks,
+        profile,
+        ...(write ? { write: true, open_pr: asPr, onto_base: ownsRepo } : {}),
+      });
+      setPreview(result);
+      setAsked(question);
+    } catch (cause) {
+      setError(errText(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const errors = preview?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
+  const warnings = preview?.diagnostics.filter((d) => d.severity === "warning").length ?? 0;
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>Product</b>
+        <code style={{ fontSize: 12 }}>{productId}</code>
+        <span style={{ fontSize: 12, opacity: 0.7 }}>
+          {picks.length} gear{picks.length === 1 ? "" : "s"} picked
+        </span>
+        <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Deployment profile">
+          {PRODUCT_PROFILES.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <button className="primary" disabled={busy !== null || picks.length === 0} onClick={() => void run(false)}>
+          {busy === "preview" ? "Resolving…" : "Preview product"}
+        </button>
+        <span className="hint" style={{ fontSize: 11 }}>
+          {gearbox.engine_version ?? "gearbox"} · {gearbox.corpus_ref}
+          {gearbox.corpus_commit ? `@${gearbox.corpus_commit.slice(0, 7)}` : ""}
+        </span>
+      </div>
+      {error && <div className="error">{error}</div>}
+
+      {preview && (
+        <div style={{ marginTop: 10, opacity: stale ? 0.55 : 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span className={`badge ${preview.ok ? "ok" : "failed"}`}>
+              {preview.ok ? `resolves for ${preview.profile}` : `does not resolve for ${preview.profile}`}
+            </span>
+            <span style={{ fontSize: 12, opacity: 0.75 }}>
+              {errors} error{errors === 1 ? "" : "s"} · {warnings} warning{warnings === 1 ? "" : "s"}
+            </span>
+            {stale && (
+              <span className="badge warn">the picks changed since — preview again</span>
+            )}
+          </div>
+
+          {preview.not_described.length > 0 && (
+            <p className="hint" style={{ fontSize: 12 }}>
+              Left out, because no <code>gear.gdl</code> describes{" "}
+              {preview.not_described.length === 1 ? "it" : "them"} yet:{" "}
+              {preview.not_described.map(gearLabel).join(", ")}.
+            </p>
+          )}
+          {preview.added.length > 0 && (
+            <p className="hint" style={{ fontSize: 12 }}>
+              Added: {preview.added.map((a) => `${a.id} (${a.reason})`).join(", ")}.
+            </p>
+          )}
+
+          {preview.plugin_options.length > 0 && (
+            <div style={{ fontSize: 12, margin: "8px 0" }}>
+              {preview.plugin_options.map((o) => (
+                <div key={o.host} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", margin: "0 0 4px" }}>
+                  <span>
+                    <b>{o.host}</b> needs a plugin:
+                  </span>
+                  {o.available.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="ghost"
+                      disabled={picks.includes(id)}
+                      title="Put this plugin into the product, then preview again"
+                      onClick={() => onPick(id)}
+                      style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, border: "1px solid var(--border)" }}
+                    >
+                      {picks.includes(id) ? "✓" : "+"} {id}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {preview.diagnostics.length > 0 && (
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
+              {groupDiagnostics(preview.diagnostics).map((d, i) => (
+                <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
+                  <span className={`badge ${d.severity === "error" ? "danger" : d.severity === "warning" ? "warn" : "info"}`}>
+                    {d.code}
+                  </span>{" "}
+                  {d.message}
+                  {d.profiles.length > 0 && (
+                    <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>
+                  )}
+                  {d.file && (
+                    <span style={{ opacity: 0.6 }}>
+                      {" "}
+                      — {d.file}
+                      {d.line ? `:${d.line}` : ""}
+                    </span>
+                  )}
+                  {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {preview.applications.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "8px 0" }}>
+              {preview.applications.map((a) => (
+                <div
+                  key={a.name}
+                  style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}
+                >
+                  <b>{a.name}</b>
+                  <span style={{ opacity: 0.6 }}>
+                    {" "}
+                    · {a.kind}
+                    {a.replicas > 1 ? ` · ×${a.replicas}` : ""}
+                    {a.listens.length > 0 ? ` · ${a.listens.map((l) => `${l.name} ${l.address}`).join(", ")}` : ""}
+                  </span>
+                  <div style={{ marginTop: 4 }}>
+                    {a.gears.map((g) => {
+                      const why = preview.gears.find((x) => x.id === g)?.reasons ?? [];
+                      const pulled = why.length > 0 && !why.includes("selected");
+                      return (
+                        <span
+                          key={g}
+                          title={why.join("; ")}
+                          style={{ marginRight: 8, opacity: pulled ? 0.65 : 1 }}
+                        >
+                          {g}
+                          {pulled && <span style={{ fontSize: 10 }}> ({why[0]})</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <details style={{ margin: "8px 0" }}>
+            <summary style={{ fontSize: 12, cursor: "pointer" }}>product.gdl</summary>
+            <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto" }}>{preview.product_gdl}</pre>
+          </details>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button className="ghost" disabled={busy !== null || stale} onClick={() => void run(true)}>
+              {busy === "save" ? "Saving…" : "Save product.gdl to the repository"}
+            </button>
+            <label style={{ fontSize: 12 }}>
+              <input type="checkbox" checked={asPr} onChange={(e) => setAsPr(e.target.checked)} /> as a pull
+              request
+            </label>
+            {studio && (
+              <button
+                className="ghost"
+                disabled={studio.opening !== null}
+                title="Opens this project's IDE session with the gear corpus beside it; the GDL language server checks the file as you edit"
+                onClick={() => void studio.openFile({ id: projectId, name: projectName }, "product.gdl")}
+              >
+                Open in IDE
+              </button>
+            )}
+          </div>
+          {preview.written && (
+            <p className="hint" style={{ fontSize: 12 }}>
+              {preview.written.pr_url ? (
+                <>
+                  Pull request opened:{" "}
+                  <a href={preview.written.pr_url} target="_blank" rel="noreferrer">
+                    {preview.written.pr_url}
+                  </a>
+                </>
+              ) : (
+                <>
+                  Committed to <code>{preview.written.branch}</code> as{" "}
+                  <code>{preview.written.commit_sha.slice(0, 7)}</code>.
+                </>
+              )}{" "}
+              {ownsRepo
+                ? "The IDE opens the repository's sources from the Sources tab; if the project repository is not there yet, add it there first."
+                : "This project's gear repository may be shared, so the description went onto its own branch; the IDE shows it once that branch is merged or checked out."}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

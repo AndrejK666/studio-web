@@ -102,18 +102,33 @@ pub async fn write_scaffold(
     )
     .await?;
 
-    // 5. the branch pointing at it.
-    let _: serde_json::Value = post_json(
-        http,
-        auth,
-        &format!("/repos/{repo}/git/refs"),
-        json!({ "ref": format!("refs/heads/{branch}"), "sha": new_commit.sha }),
-    )
-    .await
-    .map_err(|e| anyhow!("create branch '{branch}' (does it already exist?): {e}"))?;
+    // 5. the branch pointing at it — or, when the target IS the base branch,
+    // the base moved onto it. Not forced: a push that landed between step 1
+    // and here makes this a non-fast-forward, which fails rather than drops it.
+    let onto_base = branch == base_branch;
+    if onto_base {
+        let _: serde_json::Value = patch_json(
+            http,
+            auth,
+            &format!("/repos/{repo}/git/refs/heads/{branch}"),
+            json!({ "sha": new_commit.sha, "force": false }),
+        )
+        .await
+        .map_err(|e| anyhow!("advance '{branch}' (did it move meanwhile?): {e}"))?;
+    } else {
+        let _: serde_json::Value = post_json(
+            http,
+            auth,
+            &format!("/repos/{repo}/git/refs"),
+            json!({ "ref": format!("refs/heads/{branch}"), "sha": new_commit.sha }),
+        )
+        .await
+        .map_err(|e| anyhow!("create branch '{branch}' (does it already exist?): {e}"))?;
+    }
 
-    // 6. optionally, a pull request.
-    let pr_url = if let Some(title) = pr_title {
+    // 6. optionally, a pull request. There is nothing to request when the
+    // commit is already on the base branch.
+    let pr_url = if let (Some(title), false) = (pr_title, onto_base) {
         let pr: PrCreated = post_json(
             http,
             auth,
@@ -211,8 +226,26 @@ async fn post_json<T: for<'de> Deserialize<'de>>(
     path: &str,
     body: serde_json::Value,
 ) -> Result<T> {
-    let resp = http
-        .post(api(auth, path))
+    send_json(http.post(api(auth, path)), auth, "POST", path, body).await
+}
+
+async fn patch_json<T: for<'de> Deserialize<'de>>(
+    http: &Client,
+    auth: &ConnectionAuth,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<T> {
+    send_json(http.patch(api(auth, path)), auth, "PATCH", path, body).await
+}
+
+async fn send_json<T: for<'de> Deserialize<'de>>(
+    request: reqwest::RequestBuilder,
+    auth: &ConnectionAuth,
+    method: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<T> {
+    let resp = request
         .bearer_auth(&auth.token)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "studio-components-catalog")
@@ -222,7 +255,7 @@ async fn post_json<T: for<'de> Deserialize<'de>>(
     let status = resp.status();
     if !status.is_success() {
         return Err(anyhow!(
-            "POST {path}: HTTP {status} — {}",
+            "{method} {path}: HTTP {status} — {}",
             resp.text().await.unwrap_or_default()
         ));
     }
