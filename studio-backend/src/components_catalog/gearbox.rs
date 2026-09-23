@@ -110,6 +110,38 @@ pub struct EngineGear {
     /// Set on a host: the extension points plugins fill.
     #[serde(default)]
     pub extension_points: Vec<EnginePoint>,
+    /// `rest`, `rest_host`, `grpc_hub`, … — projected from `#[toolkit::gear]`.
+    #[serde(default)]
+    pub runtime_caps: Vec<String>,
+    /// Gears that must share a binary with this one, by engine id.
+    #[serde(default)]
+    pub colocated_deps: Vec<String>,
+    /// Endpoints; their `config_key` is written by generation, not by a person.
+    #[serde(default)]
+    pub serves: Vec<EngineEndpoint>,
+    #[serde(default)]
+    pub config_schema: Option<EngineConfigSchema>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EngineEndpoint {
+    #[serde(default)]
+    pub config_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EngineConfigSchema {
+    #[serde(default)]
+    pub fields: Vec<EngineConfigField>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineConfigField {
+    pub name: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -120,6 +152,9 @@ pub struct EnginePackage {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EngineFills {
     pub point: EnginePoint,
+    /// Lower wins, as the runtime's plugin selector reads it.
+    #[serde(default)]
+    pub default_priority: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,16 +175,8 @@ impl EngineCatalogue {
     /// Every gear filling one of `host`'s extension points, by crate name —
     /// the spelling the portal picks by, so an offer reads like a suggestion.
     fn implementers_of(&self, host: &EngineGear) -> Vec<String> {
-        self.gears
-            .values()
-            .filter(|g| {
-                g.id != host.id
-                    && g.fills.as_ref().is_some_and(|f| {
-                        host.extension_points
-                            .iter()
-                            .any(|p| p.sdk.crate_name == f.point.sdk.crate_name)
-                    })
-            })
+        self.implementers(host)
+            .into_iter()
             .map(|g| g.package.crate_name.clone())
             .collect()
     }
@@ -246,6 +273,294 @@ pub fn compose(catalogue: &EngineCatalogue, picked: &[String]) -> Composition {
         }
     }
     out
+}
+
+// ── Completion: from picks to a set the engine can resolve ────────────────
+
+/// One thing [`complete`] did to a pick, and why — shown to the person, who
+/// is entitled to undo any of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    /// Crate name, like every pick.
+    pub gear: String,
+    pub added: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Completion {
+    /// The completed picks, by crate name, in pick order with additions last.
+    pub gears: Vec<String>,
+    pub changes: Vec<Change>,
+}
+
+/// Why a gear cannot be part of a product built from this corpus as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Dead {
+    /// Required configuration with no default; nobody has supplied it.
+    NeedsConfig(Vec<String>),
+    /// A host no gear in the corpus can plug into.
+    NoPlugin,
+    /// A plugin for an extension point no gear in the corpus hosts.
+    NoHost,
+    /// Must share a binary with a gear that is itself dead.
+    Dep(String),
+}
+
+impl EngineCatalogue {
+    /// Required fields a person would have to write: required, no default,
+    /// and not an address generation writes from the topology.
+    fn unset_config(&self, g: &EngineGear) -> Vec<String> {
+        let derived: BTreeSet<&str> = g
+            .serves
+            .iter()
+            .filter_map(|e| e.config_key.as_deref())
+            .collect();
+        g.config_schema
+            .as_ref()
+            .map(|s| {
+                s.fields
+                    .iter()
+                    .filter(|f| f.required && f.default.as_ref().is_none_or(Value::is_null))
+                    .filter(|f| !derived.contains(f.name.as_str()))
+                    .map(|f| f.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn implementers(&self, host: &EngineGear) -> Vec<&EngineGear> {
+        self.gears
+            .values()
+            .filter(|g| {
+                g.id != host.id
+                    && g.fills.as_ref().is_some_and(|f| {
+                        host.extension_points
+                            .iter()
+                            .any(|p| p.sdk.crate_name == f.point.sdk.crate_name)
+                    })
+            })
+            .collect()
+    }
+
+    /// Every gear that cannot run in a product from this corpus, and why,
+    /// computed to a fixpoint: a gear is dead when its own facts say so, or
+    /// when something it must share a binary with is, or — for a host — when
+    /// every plugin it could take is.
+    fn dead(&self) -> BTreeMap<String, Dead> {
+        let mut dead: BTreeMap<String, Dead> = BTreeMap::new();
+        for g in self.gears.values() {
+            let unset = self.unset_config(g);
+            if !unset.is_empty() {
+                dead.insert(g.id.clone(), Dead::NeedsConfig(unset));
+            } else if g.fills.is_some() && self.host_of(g).is_none() {
+                dead.insert(g.id.clone(), Dead::NoHost);
+            }
+        }
+        loop {
+            let mut changed = false;
+            for g in self.gears.values() {
+                if dead.contains_key(&g.id) {
+                    continue;
+                }
+                if let Some(dep) = g.colocated_deps.iter().find(|d| dead.contains_key(*d)) {
+                    dead.insert(g.id.clone(), Dead::Dep(dep.clone()));
+                    changed = true;
+                    continue;
+                }
+                if let Some(host) = self.host_of(g).filter(|h| dead.contains_key(&h.id)) {
+                    dead.insert(g.id.clone(), Dead::Dep(host.id.clone()));
+                    changed = true;
+                    continue;
+                }
+                if !g.extension_points.is_empty()
+                    && self
+                        .implementers(g)
+                        .iter()
+                        .all(|p| dead.contains_key(&p.id))
+                {
+                    dead.insert(g.id.clone(), Dead::NoPlugin);
+                    changed = true;
+                }
+            }
+            if !changed {
+                return dead;
+            }
+        }
+    }
+
+    /// The plugin to put under `host` when nobody chose one: alive, then the
+    /// runtime's own priority (lower wins), then a `static` one — it runs with
+    /// no external service, which is what a first build needs — then by name.
+    fn default_plugin<'a>(
+        &'a self,
+        host: &EngineGear,
+        dead: &BTreeMap<String, Dead>,
+    ) -> Option<&'a EngineGear> {
+        let mut alive: Vec<&EngineGear> = self
+            .implementers(host)
+            .into_iter()
+            .filter(|p| !dead.contains_key(&p.id))
+            .collect();
+        alive.sort_by_key(|p| {
+            (
+                p.fills
+                    .as_ref()
+                    .and_then(|f| f.default_priority)
+                    .unwrap_or(i64::MAX),
+                !p.id.contains("static"),
+                p.id.clone(),
+            )
+        });
+        alive.into_iter().next()
+    }
+
+    /// `ids` and everything they must share a binary with.
+    fn closure(&self, ids: &[String]) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = ids.to_vec();
+        while let Some(id) = todo.pop() {
+            if !out.insert(id.clone()) {
+                continue;
+            }
+            if let Some(g) = self.gears.get(&id) {
+                todo.extend(g.colocated_deps.iter().cloned());
+            }
+        }
+        out
+    }
+}
+
+fn dead_reason(catalogue: &EngineCatalogue, why: &Dead) -> String {
+    match why {
+        Dead::NeedsConfig(fields) => format!(
+            "needs configuration nobody has given yet: {} — add it back and set it in product.gdl",
+            fields.join(", ")
+        ),
+        Dead::NoPlugin => "no plugin in the corpus fills its extension point".to_string(),
+        Dead::NoHost => "a plugin for an extension point no gear in the corpus hosts".to_string(),
+        Dead::Dep(dep) => {
+            let crate_name = catalogue
+                .gears
+                .get(dep)
+                .map_or(dep.as_str(), |g| g.package.crate_name.as_str());
+            format!("must run with {crate_name}, which cannot run here")
+        }
+    }
+}
+
+/// Turn picks into a set the engine can resolve, saying what changed and why.
+///
+/// Only what the catalogue proves: a gear is dropped when its own
+/// descriptor, or one it must share a binary with, rules it out; a plugin
+/// is added when a host in the product has none; a REST host when REST
+/// gears have nothing to serve them. Nothing is guessed about what the
+/// product is for. The engine still has the last word — the caller resolves
+/// the result.
+pub fn complete(catalogue: &EngineCatalogue, picked: &[String]) -> Completion {
+    let dead = catalogue.dead();
+    let crate_of = |id: &str| {
+        catalogue
+            .gears
+            .get(id)
+            .map_or(id.to_string(), |g| g.package.crate_name.clone())
+    };
+    let mut changes: Vec<Change> = Vec::new();
+    let mut set: Vec<String> = Vec::new();
+
+    for name in picked {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let Some(g) = catalogue.find(name) else {
+            if !changes.iter().any(|c| c.gear == name) {
+                changes.push(Change {
+                    gear: name.to_string(),
+                    added: false,
+                    reason: "no gear.gdl describes it yet, so it cannot be composed".to_string(),
+                });
+            }
+            continue;
+        };
+        if let Some(why) = dead.get(&g.id) {
+            changes.push(Change {
+                gear: g.package.crate_name.clone(),
+                added: false,
+                reason: dead_reason(catalogue, why),
+            });
+            continue;
+        }
+        if !set.contains(&g.id) {
+            set.push(g.id.clone());
+        }
+    }
+
+    // Additions settle in a few rounds: a REST host brings its own deps,
+    // which may be hosts wanting a plugin. Bounded, because each round only
+    // adds from a finite catalogue.
+    for _ in 0..catalogue.gears.len().max(1) {
+        let mut added = false;
+        let effective = catalogue.closure(&set);
+
+        for host_id in &effective {
+            let Some(host) = catalogue.gears.get(host_id) else {
+                continue;
+            };
+            if host.extension_points.is_empty() {
+                continue;
+            }
+            let filled = catalogue
+                .implementers(host)
+                .iter()
+                .any(|p| set.contains(&p.id));
+            if filled {
+                continue;
+            }
+            if let Some(p) = catalogue.default_plugin(host, &dead) {
+                set.push(p.id.clone());
+                changes.push(Change {
+                    gear: p.package.crate_name.clone(),
+                    added: true,
+                    reason: format!(
+                        "{} needs a plugin; this one runs with no configuration",
+                        crate_of(host_id)
+                    ),
+                });
+                added = true;
+            }
+        }
+
+        let effective = catalogue.closure(&set);
+        let has = |cap: &str| {
+            effective
+                .iter()
+                .filter_map(|id| catalogue.gears.get(id))
+                .any(|g| g.runtime_caps.iter().any(|c| c == cap))
+        };
+        if has("rest") && !has("rest_host") {
+            let host = catalogue.gears.values().find(|g| {
+                g.runtime_caps.iter().any(|c| c == "rest_host") && !dead.contains_key(&g.id)
+            });
+            if let Some(h) = host {
+                set.push(h.id.clone());
+                changes.push(Change {
+                    gear: h.package.crate_name.clone(),
+                    added: true,
+                    reason: "the REST gears need a REST host to serve their routes".to_string(),
+                });
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+
+    Completion {
+        gears: set.iter().map(|id| crate_of(id)).collect(),
+        changes,
+    }
 }
 
 /// A product id is a kebab-case id in GDL: lowercase letters, digits, single
@@ -692,6 +1007,12 @@ impl Gearbox {
         ))
     }
 
+    /// [`complete`] against the current corpus.
+    pub async fn complete(&self, picked: &[String]) -> anyhow::Result<Completion> {
+        let (_, _, catalogue) = self.ensure_corpus().await?;
+        Ok(complete(&catalogue, picked))
+    }
+
     pub async fn preview(&self, input: PreviewInput) -> anyhow::Result<Preview> {
         if !is_kebab_id(&input.product_id) {
             bail!(
@@ -995,6 +1316,110 @@ mod tests {
         assert!(c.added_hosts.is_empty());
     }
 
+    /// The shape of the real corpus on feature/gearbox, cut down to what
+    /// completion reasons about.
+    fn corpus() -> EngineCatalogue {
+        let point = |sdk: &str| json!({"sdk": {"crate_name": sdk}});
+        let plugin = |id: &str, sdk: &str, prio: i64, deps: &[&str]| {
+            json!({"id": id, "package": {"crate_name": format!("cf-gears-{id}")},
+                   "fills": {"point": point(sdk), "default_priority": prio}, "colocated_deps": deps})
+        };
+        serde_json::from_value(json!({"gears": {
+            "types-registry": {"id": "types-registry", "package": {"crate_name": "cf-gears-types-registry"},
+                               "runtime_caps": ["db", "rest", "system"]},
+            "authn-resolver": {"id": "authn-resolver", "package": {"crate_name": "cf-gears-authn-resolver"},
+                               "extension_points": [point("authn-sdk")], "colocated_deps": ["types-registry"]},
+            "oidc-authn-plugin": plugin("oidc-authn-plugin", "authn-sdk", 100, &["authn-resolver"]),
+            "static-authn-plugin": plugin("static-authn-plugin", "authn-sdk", 100, &["types-registry"]),
+            "authz-resolver": {"id": "authz-resolver", "package": {"crate_name": "cf-gears-authz-resolver"},
+                               "extension_points": [point("authz-sdk")], "runtime_caps": ["rest"]},
+            "resource-group": {"id": "resource-group", "package": {"crate_name": "cf-gears-resource-group"},
+                               "colocated_deps": ["authz-resolver"], "runtime_caps": ["rest"]},
+            "tenant-resolver": {"id": "tenant-resolver", "package": {"crate_name": "cf-gears-tenant-resolver"},
+                                "extension_points": [point("tr-sdk")]},
+            "static-tr-plugin": plugin("static-tr-plugin", "tr-sdk", 100, &[]),
+            "single-tenant-tr-plugin": plugin("single-tenant-tr-plugin", "tr-sdk", 1000, &[]),
+            "rg-tr-plugin": plugin("rg-tr-plugin", "tr-sdk", 50, &["resource-group"]),
+            "account-management": plugin("account-management", "idp-sdk", 100, &[]),
+            "api-gateway": {"id": "api-gateway", "package": {"crate_name": "cf-gears-api-gateway"},
+                            "runtime_caps": ["rest", "rest_host"], "colocated_deps": ["authn-resolver"],
+                            "serves": [{"config_key": "bind_addr"}],
+                            "config_schema": {"fields": [{"name": "bind_addr", "required": true}]}},
+            "event-broker": {"id": "event-broker", "package": {"crate_name": "cf-gears-event-broker"},
+                             "config_schema": {"fields": [
+                                 {"name": "mode", "required": true, "default": null},
+                                 {"name": "retention", "required": true, "default": "7d"},
+                                 {"name": "tuning", "required": false}]}}
+        }}))
+        .expect("corpus fixture parses")
+    }
+
+    #[test]
+    fn completion_drops_what_cannot_run_and_adds_what_is_missing() {
+        let c = complete(
+            &corpus(),
+            &names(&[
+                "cf-gears-types-registry",
+                "cf-gears-resource-group",
+                "cf-gears-event-broker",
+                "cf-gears-account-management",
+                "cf-gears-tenant-resolver",
+                "cf-gears-ledger",
+            ]),
+        );
+        assert_eq!(
+            c.gears,
+            [
+                "cf-gears-types-registry",
+                "cf-gears-tenant-resolver",
+                // the host's plugin: rg-tr has the best priority but must run
+                // with resource-group, which needs authz-resolver, which
+                // nothing in the corpus can plug
+                "cf-gears-static-tr-plugin",
+                // the REST host, bound through `serves` so `bind_addr` is not
+                // a missing field, and it brings authn-resolver along
+                "cf-gears-api-gateway",
+                // …whose plugin comes a round later; static beats oidc on the tie
+                "cf-gears-static-authn-plugin",
+            ]
+        );
+        let why: BTreeMap<&str, (bool, &str)> = c
+            .changes
+            .iter()
+            .map(|ch| (ch.gear.as_str(), (ch.added, ch.reason.as_str())))
+            .collect();
+        assert!(!why["cf-gears-ledger"].0);
+        assert!(
+            why["cf-gears-resource-group"]
+                .1
+                .contains("cf-gears-authz-resolver")
+        );
+        assert!(why["cf-gears-event-broker"].1.contains("mode"));
+        assert!(
+            !why["cf-gears-event-broker"].1.contains("retention"),
+            "a default is not a missing field"
+        );
+        assert!(
+            why["cf-gears-account-management"]
+                .1
+                .contains("no gear in the corpus hosts")
+        );
+        assert!(why["cf-gears-static-tr-plugin"].0);
+        assert!(why["cf-gears-api-gateway"].1.contains("REST host"));
+    }
+
+    #[test]
+    fn a_complete_set_is_left_as_it_is() {
+        let picks = names(&[
+            "cf-gears-api-gateway",
+            "cf-gears-authn-resolver",
+            "cf-gears-oidc-authn-plugin",
+        ]);
+        let c = complete(&corpus(), &picks);
+        assert_eq!(c.gears, picks);
+        assert!(c.changes.is_empty());
+    }
+
     #[test]
     fn a_host_picked_without_a_plugin_is_offered_the_ones_that_fill_it() {
         let c = compose(
@@ -1006,8 +1431,8 @@ mod tests {
             vec![(
                 "authn-resolver".to_string(),
                 vec![
-                    "oidc-authn-plugin".to_string(),
-                    "static-authn-plugin".to_string()
+                    "cf-gears-oidc-authn-plugin".to_string(),
+                    "cf-gears-static-authn-plugin".to_string()
                 ]
             )]
         );
