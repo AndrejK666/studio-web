@@ -645,11 +645,37 @@ export function ComponentsCatalog({
       // deployment which has never run a kit sync still shows them.
       const nodes = componentResponse.nodes ?? [];
       setTruncated(Boolean(componentResponse.truncated));
+      const registry = new Map((kitResponse.items ?? []).map((k) => [k.slug, k]));
       const synced = new Set(
         nodes
           .filter((n) => n.type_id === KIT_TYPE)
           .map((n) => String(n.value.name ?? "")),
       );
+      // A synced kit still wins, but it does not win the fields it has none of.
+      //
+      // A kit manifest declares `slug`, `name` and `version` in its `[[kits]]`
+      // block and nothing else -- neither of the two real kit repositories puts
+      // a description there, and the ones further down belong to the kit's
+      // RESOURCES, not to the kit. So a synced kit row came back bare.
+      //
+      // It only started coming back bare when the scan learned to name a kit
+      // after itself: while the synced node was called `studio-kit-sdlc` it
+      // never matched the registry's `sdlc`, so the registry row with its
+      // description was the one that showed. Making the name right is what
+      // exposed this, which is the ordinary shape of a fix landing on top of a
+      // bug that was hiding it.
+      const described = nodes.map((n) => {
+        if (n.type_id !== KIT_TYPE) return n;
+        const built = registry.get(String(n.value.name ?? ""));
+        if (!built) return n;
+        const value = { ...n.value };
+        if (!String(value.description ?? "").trim()) value.description = built.description;
+        if (!value.repository) value.repository = built.repository_url || null;
+        if (!value.keywords?.length) {
+          value.keywords = [built.publisher, built.visibility].filter(Boolean) as string[];
+        }
+        return { ...n, value };
+      });
       const builtIns = (kitResponse.items ?? [])
         .filter((k) => !synced.has(k.slug))
         .map(kitAsNode);
@@ -671,7 +697,7 @@ export function ComponentsCatalog({
       // an organization decides which types exist, and the Specs tab, where the
       // documents written against them live. A third listing here meant the
       // component counts on this page answered a question nobody asked of it.
-      setGears([...nodes, ...builtIns]);
+      setGears([...described, ...builtIns]);
       const next: Record<string, Record<string, unknown>> = {};
       for (const node of profileResponse.nodes ?? []) {
         const name = typeof node.value.gear_name === "string" ? node.value.gear_name : "";
