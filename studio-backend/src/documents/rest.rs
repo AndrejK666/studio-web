@@ -1793,10 +1793,10 @@ async fn decide_binding(
         && let Ok(reader) = quality.reader()
     {
         match service
-            .quality_docs(&ctx, workspace_id, None, &[id], reader.as_ref())
+            .binding_text(&ctx, workspace_id, id, reader.as_ref())
             .await
         {
-            Ok(docs) => decision.content = docs.into_iter().next().map(|d| d.text),
+            Ok(text) => decision.content = text,
             Err(error) => {
                 tracing::warn!(%error, %id, "studio-documents: conformance not re-checked");
             }
