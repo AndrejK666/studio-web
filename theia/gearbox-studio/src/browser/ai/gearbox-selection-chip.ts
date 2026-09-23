@@ -25,10 +25,12 @@ import type { FrontendApplicationContribution, LabelProviderContribution } from 
 import { WidgetManager } from "@theia/core/lib/browser";
 import { AIVariableResolutionRequest } from "@theia/ai-core";
 import { ChatViewWidget } from "@theia/ai-chat-ui/lib/browser/chat-view-widget";
+import { PerspectiveService } from "@theia/core/lib/browser/perspective-service";
 
 import { CatalogueStore } from "../catalogue-store";
 import { SelectionService, sameSelection } from "../shell/selection-service";
 import type { Selection } from "../shell/selection-service";
+import { gearboxOwnsLayout } from "../shell/gearbox-shell-gate";
 import { selectionLabel } from "./gearbox-snapshot";
 import {
   DIAGNOSTICS_VARIABLE,
@@ -89,6 +91,7 @@ export class GearboxVariableLabelProvider implements LabelProviderContribution {
 export class GearboxSelectionChip implements FrontendApplicationContribution {
   @inject(SelectionService) protected readonly selection!: SelectionService;
   @inject(WidgetManager) protected readonly widgets!: WidgetManager;
+  @inject(PerspectiveService) protected readonly perspectives!: PerspectiveService;
 
   protected last: Selection | undefined;
 
@@ -123,6 +126,11 @@ export class GearboxSelectionChip implements FrontendApplicationContribution {
    */
   protected sync(): void {
     if (this.selection.current === undefined) return;
+    // Constructor Studio: one chat serves every perspective, and a chip once
+    // attached cannot be removed from outside the input widget -- so it is
+    // attached only while the person is working in Gearbox, never onto a
+    // conversation with Codex about a document.
+    if (!gearboxOwnsLayout(this.perspectives)) return;
     const view = this.widgets.tryGetWidget<ChatViewWidget>(ChatViewWidget.ID);
     if (view === undefined) return;
     const input = view.inputWidget;

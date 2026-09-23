@@ -8,12 +8,19 @@
 // Studio's own views. Those rebinds are not ported, and every service that
 // still arranges panels asks `gearboxOwnsLayout` first (shell/gearbox-shell-gate.ts).
 //
-// Phased (see theia/gearbox-studio/README.md): the chat agent is P5, and the
-// Gearbox perspective with its toolbar, screen scope and themes is P6. Until
-// then nothing here opens a view on its own except the Product view, when a
-// person opens a product.
+// Phased (see theia/gearbox-studio/README.md). The `@Gearbox` chat agent (P5)
+// answers on Studio's own model; it is one agent among Studio's, reached by
+// mention, never the default. Nothing here opens a view on its own except the
+// Product view, when a person opens a product.
 
-import { FrontendApplicationContribution, bindViewContribution } from "@theia/core/lib/browser";
+import { FrontendApplicationContribution, LabelProviderContribution, bindViewContribution } from "@theia/core/lib/browser";
+import { Agent, AIVariableContribution, bindToolProvider } from "@theia/ai-core";
+import { ChatAgent } from "@theia/ai-chat";
+import { GearboxChatAgent } from "./ai/gearbox-chat-agent";
+import { GearboxContextContribution } from "./ai/gearbox-context";
+import { GearboxSelectionChip, GearboxVariableLabelProvider } from "./ai/gearbox-selection-chip";
+import { GEARBOX_TOOLS } from "./ai/gearbox-tools";
+import { ProductGearTool } from "./ai/product-tools";
 import { WebSocketConnectionProvider } from "@theia/core/lib/browser/messaging";
 import { PerspectiveContribution } from "@theia/core/lib/browser/perspective-service";
 import { CommandContribution } from "@theia/core/lib/common/command";
@@ -213,4 +220,42 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bindViewContribution(bind, ConflictsViewContribution);
   bindViewContribution(bind, LockViewContribution);
   bindViewContribution(bind, GenerateViewContribution);
+
+  // ── P5: the `@Gearbox` chat agent ──────────────────────────────────────────
+  //
+  // As Gearbox Studio binds it, minus two things that were its shell's:
+  //
+  //  * **Not the default agent.** Gearbox Studio bound `DefaultChatAgentId` and
+  //    `FallbackChatAgentId` to itself, being the only agent there was. Studio
+  //    has Codex and Claude Code and chooses its default in the portal bridge
+  //    (`ai-features.chat.defaultChatAgent`), so `@Gearbox` is asked by name.
+  //  * **The chat stays where Studio puts it.** `ChatInTheBottomPanel` (a
+  //    rebind of `AIChatContribution`) is not ported.
+  //
+  // The model is Studio's: the agent asks for `default/universal`, which the
+  // bridge aliases to `studio-llm` when the portal hands over its token.
+  bind(GearboxChatAgent).toSelf().inSingletonScope();
+  bind(Agent).toService(GearboxChatAgent);
+  bind(ChatAgent).toService(GearboxChatAgent);
+
+  // The eight read tools, and the one write verb. The write goes through the
+  // same `ProductEditService.toggle` the catalogue control uses, so its diff
+  // preview and its refusal on unsaved edits are the ones already in place.
+  for (const tool of GEARBOX_TOOLS) bindToolProvider(tool, bind);
+  bindToolProvider(ProductGearTool, bind);
+
+  // Context the chat gets without being told -- selection, product,
+  // diagnostics, topology, the selected gear's configuration -- read from the
+  // stores the views render from.
+  bind(GearboxContextContribution).toSelf().inSingletonScope();
+  bind(AIVariableContribution).toService(GearboxContextContribution);
+
+  // Without a label provider a context chip renders as an empty pill.
+  bind(GearboxVariableLabelProvider).toSelf().inSingletonScope();
+  bind(LabelProviderContribution).toService(GearboxVariableLabelProvider);
+
+  // One selection chip on the chat input, only while in the Gearbox
+  // perspective (see the gate in `GearboxSelectionChip.sync`).
+  bind(GearboxSelectionChip).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(GearboxSelectionChip);
 });

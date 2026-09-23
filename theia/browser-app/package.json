@@ -60,6 +60,17 @@
             "**/target/**": true,
             "**/.gearbox/**": true
           },
+          "//ai-features.chat.toolConfirmation": "From Gearbox Studio's app. The eight `@Gearbox` read tools return engine output and write nothing, so they run without a dialog; `gearbox_toggle_gear`, the one write, is absent and keeps the default `confirm`, on top of its own diff preview.",
+          "ai-features.chat.toolConfirmation": {
+            "gearbox_get_selection": "always_allow",
+            "gearbox_get_product": "always_allow",
+            "gearbox_list_gears": "always_allow",
+            "gearbox_get_gear": "always_allow",
+            "gearbox_get_diagnostics": "always_allow",
+            "gearbox_explain_diagnostic": "always_allow",
+            "gearbox_resolve_preview": "always_allow",
+            "gearbox_generate_preview": "always_allow"
+          },
           "//files.exclude": "Theia's own defaults, plus `.gearbox`: generated and disposable, and reached through the Generate and Lock views rather than the Explorer.",
           "files.exclude": {
             "**/.git": true,
