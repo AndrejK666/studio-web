@@ -21,8 +21,8 @@
         },
         "placement": {
           "type": "string",
-          "enum": ["main", "settings"],
-          "$comment": "Where in the level's rail the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. Defaults to 'main' when absent."
+          "enum": ["main", "settings", "hidden"],
+          "$comment": "Where in the level's rail the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the rail, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent."
         }
       },
       "required": ["level"]

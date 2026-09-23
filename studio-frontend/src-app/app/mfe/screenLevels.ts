@@ -14,7 +14,9 @@ export const SCREEN_LEVELS = ['organization', 'workspace', 'project'] as const;
 
 export type ScreenLevel = (typeof SCREEN_LEVELS)[number];
 
-export type ScreenPlacement = 'main' | 'settings';
+// 'hidden' is registered and mountable but never listed: a screen reached by
+// something other than the rail, such as opening an artifact.
+export type ScreenPlacement = 'main' | 'settings' | 'hidden';
 
 export interface LeveledPresentation {
   level?: string;
@@ -51,9 +53,8 @@ export function sectionOf(extension: ScreenExtension): string | undefined {
 }
 
 export function placementOf(extension: ScreenExtension): ScreenPlacement {
-  return (extension as LeveledScreenExtension).presentation.placement === 'settings'
-    ? 'settings'
-    : 'main';
+  const declared = (extension as LeveledScreenExtension).presentation.placement;
+  return declared === 'settings' || declared === 'hidden' ? declared : 'main';
 }
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-entry-point:p1
@@ -79,8 +80,12 @@ export function resolveLevelMenu(
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-4
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-5
+  // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-7
+  // Hidden items fall out here by being neither main nor settings. That is also
+  // what keeps them from being a level's entry point, which is this list's head.
   const main = byOrder.filter((extension) => placementOf(extension) === 'main');
   const settings = byOrder.filter((extension) => placementOf(extension) === 'settings');
+  // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-7
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-5
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-6

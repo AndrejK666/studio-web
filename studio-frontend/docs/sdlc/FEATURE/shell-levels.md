@@ -191,7 +191,7 @@ rest on are the Definitions of Done, which are traced.
 
 **Input**: the level in scope, and the screen extensions registered in the screen domain
 
-**Output**: the items of the rail, in order, and which of them is the settings item
+**Output**: the items of the rail, in order, and which of them is the settings item. A hidden item is not among them
 
 **Steps**:
 1. [x] - `p1` - Keep the extensions whose declared level is the level in scope - `inst-1`
@@ -199,7 +199,8 @@ rest on are the Definitions of Done, which are traced.
    1. [x] - `p1` - Treat it as belonging to the organization level, so an un-migrated manifest stays reachable - `inst-3`
 3. [x] - `p1` - Sort what is left by `presentation.order` - `inst-4`
 4. [x] - `p1` - Move the item marked as the level's settings to the end - `inst-5`
-5. [x] - `p1` - **RETURN** the ordered items - `inst-6`
+5. [x] - `p1` - Drop the items marked hidden: they stay registered and mountable, reached by something other than the rail - `inst-7`
+6. [x] - `p1` - **RETURN** the ordered items - `inst-6`
 
 ### Decide what a menu click does
 
@@ -470,7 +471,9 @@ whatever section the MFE is showing.
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-entry-point`
 
 The system **MUST** mount the first item of the level in scope, by order, and
-**MUST NOT** name any screen in the shell's code to decide that.
+**MUST NOT** name any screen in the shell's code to decide that. A hidden item
+is never that first item: it is not in the rail, so it cannot be where a level
+opens.
 
 `MfeScreenContainer` currently prefers the extension whose route is `/projects`
 and falls back to the lowest order. After this feature there is no such screen
@@ -562,3 +565,4 @@ configuration change rather than a rewrite.
 - [ ] Reloading the page returns the session to the organization level, with the level's first item mounted, and nothing in the console claims a route.
 - [ ] No MFE reads `location` or pushes browser history; the back button behaves exactly as it did before this feature.
 - [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.
+- [ ] A screen declared `placement: hidden` appears in no level's rail and is never the screen a level opens on, yet the shell still mounts it when asked by id.

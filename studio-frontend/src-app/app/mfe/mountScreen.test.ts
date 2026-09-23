@@ -26,6 +26,12 @@ const timeline = {
   presentation: { label: 'Timeline', level: 'project', section: 'timeline' },
 } as unknown as ScreenExtension;
 
+const editor = {
+  id: 'ext.project.editor',
+  entry: 'entry.editor',
+  presentation: { label: 'Editor', level: 'project', placement: 'hidden' },
+} as unknown as ScreenExtension;
+
 const people = {
   id: 'ext.people',
   entry: 'entry.people',
@@ -70,6 +76,14 @@ describe('mountScreen', () => {
     // written before it began. Naming it here would name it on the far side of
     // an await, where a later click can no longer overrule it.
     expect(mockEmit).not.toHaveBeenCalled();
+  });
+
+  it('mounts a screen hidden from the rail like any other', async () => {
+    const registry = registryThat(() => Promise.resolve());
+
+    await mountScreen(registry, editor);
+
+    expect(registry.getMountedExtensions('any')).toEqual([editor.id]);
   });
 
   // `ExclusiveMountStrategy` reads the mounted list once and then awaits, so two

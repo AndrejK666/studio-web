@@ -22,6 +22,7 @@
         "route": "/fixture/frame",
         "order": 900,
         "level": "organization",
+        "placement": "hidden",
         "section": "frame-fixture"
       }
     }
