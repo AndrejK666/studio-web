@@ -23,6 +23,8 @@ import { MarkdownEditorOpenHandler } from './markdown-editor/markdown-editor-ope
 import { MarkdownEditorWidget } from './markdown-editor/markdown-editor-widget';
 import { GraphOpenHandler } from './graph-open-handler';
 import { ObjectDetailsWidget } from './object-details-widget';
+import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-widget';
+import { DesktopStudioContribution } from './desktop-studio-contribution';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
 import { ArtifactGraphContribution } from './artifact-graph-contribution';
 import { ArtifactGraphWidget } from './artifact-graph-widget';
@@ -182,6 +184,15 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WorkspaceGraphWidget).toSelf();
     bind(AnalyzeWidget).toSelf();
     bind(ObjectDetailsWidget).toSelf();
+    // ADR-0027: the desktop Studio's sign-in and workspace view; opens only when
+    // the IDE backend is connected to a Studio (STUDIO_DESKTOP_URL).
+    bind(DesktopStudioWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: DESKTOP_STUDIO_WIDGET_ID,
+        createWidget: () => ctx.container.get<DesktopStudioWidget>(DesktopStudioWidget)
+    })).inSingletonScope();
+    bindViewContribution(bind, DesktopStudioContribution);
+    bind(FrontendApplicationContribution).toService(DesktopStudioContribution);
     bind(WorkspaceSourcesWidget).toSelf();
     bind(OrcaWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({

@@ -795,6 +795,8 @@ gears:
           token_scopes: "scope"
         first_party_clients:
           - "studio-portal"
+          # The desktop Studio (ADR-0027): the same member, signed in from electron-app.
+          - "studio-desktop"
       # The plugin refuses plain http for IdP endpoints, so dev Keycloak runs
       # TLS with a self-signed chain; docker-compose.yml mounts its CA here.
       http_client:

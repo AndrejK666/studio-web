@@ -116,6 +116,8 @@ gears:
           token_scopes: "scope"
         first_party_clients:
           - "studio-portal"
+          # The desktop Studio (ADR-0027): the same member, signed in from electron-app.
+          - "studio-desktop"
       http_client:
         custom_ca_certificate_paths:
           - "../docker/keycloak/certs/dev-ca.pem"   # relative to studio-backend cwd
