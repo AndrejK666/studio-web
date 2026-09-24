@@ -39,7 +39,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0024](0024-domain-model-in-graph-storage.md) | The Studio domain model lives in Graph Storage and the type registry | proposed | 2026-09-08 |
 | [0025](0025-the-person-is-the-key-not-the-login.md) | The person is the key on the request path, not the login | proposed | 2026-09-10 |
 | [0026](0026-studio-events-push-channel.md) | One push channel to the portal, and it is not anyone's protocol | accepted | 2026-09-11 |
-| [0027](0027-a-desktop-session-keeps-the-secrets-on-the-server.md) | A desktop Studio is a session on the member's machine, and the secrets stay on the server | proposed | 2026-09-24 |
+| [0027](0027-a-desktop-session-keeps-the-secrets-on-the-server.md) | A desktop Studio is a session on the member's machine, and the secrets stay on the server | accepted | 2026-09-24 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

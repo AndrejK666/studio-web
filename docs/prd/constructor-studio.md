@@ -91,6 +91,8 @@ Positioning).
 
 - A member opens a project and reaches a working IDE session with its
   repositories cloned and its agents authenticated, without a local checkout.
+  A member who works on a desktop instead gets the same session on their own
+  machine, and no credential reaches it (ADR-0027).
 - No provider key or Git token is readable in a session container or in a
   browser.
 - Every surface the portal shows is backed by a backend read, or is labelled as
@@ -206,6 +208,7 @@ These terms are used with exactly this meaning in every document under `docs/`.
 - Tenant-scoped authorization through the Studio PDP, with administrative authority answered from the access config.
 - Connections to source hosts, model providers and chat platforms, with credentials kept in credstore.
 - Per-workspace IDE sessions, the backend-to-backend bridge into them, and the LLM proxy their agents use.
+- The desktop session: `theia/electron-app` on the member's machine, with Git and the LLM proxied through the backend (ADR-0027).
 - Document types, documents, repository document bindings and specification quality.
 - Ingest of repository artifacts and of the Studio domain model into the knowledge graph.
 - The gear catalogue, gear scaffolding, Gearbox products, kits and Constructor Insight delivery metrics.
@@ -219,7 +222,6 @@ These terms are used with exactly this meaning in every document under `docs/`.
 - Customers, pricing, licensing terms and public marketing copy: `PRODUCT.md` records that none exist.
 - SSH cloning into a session.
 - A committed Studio brand identity: the FrontX marks in the tree are template scaffolding (`PRODUCT.md`, Brand Commitments).
-- The `theia/electron-app` desktop build: it is present as a package but is not built into the session image or deployed.
 - The kustomize manifests in `deploy/k8s/*.yaml`: they belong to the earlier proposal in `docs/deploy-k8s-cicd.md`; the supported Kubernetes path is the Helm chart.
 
 ## 5. Functional Requirements
