@@ -121,6 +121,11 @@ pub struct EngineGear {
     pub serves: Vec<EngineEndpoint>,
     #[serde(default)]
     pub config_schema: Option<EngineConfigSchema>,
+    /// Set on a host: the vendor it selects among its plugins by default. A
+    /// plugin registers under its own `vendor` (a config field with a
+    /// default); the two must agree or the engine refuses (GBX0512).
+    #[serde(default)]
+    pub vendor_selector: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -304,6 +309,75 @@ pub struct Completion {
     /// The completed picks, by crate name, in pick order with additions last.
     pub gears: Vec<String>,
     pub changes: Vec<Change>,
+    /// Configuration the product sets on its gears, by crate name: what was
+    /// passed in, plus what completion had to set for the result to resolve.
+    pub config: GearConfig,
+}
+
+/// A product's configuration of its gears: crate name -> field -> value.
+/// Written into `product.gdl` as `use_gear(..., config = {...})` for a gear
+/// and `plugin(..., config = {...})` for a plugin.
+pub type GearConfig = BTreeMap<String, serde_json::Map<String, Value>>;
+
+/// Read a `GearConfig` from JSON: an object of objects. Anything else is the
+/// caller's mistake, named.
+pub fn gear_config_from(value: Option<&Value>) -> anyhow::Result<GearConfig> {
+    let Some(value) = value else {
+        return Ok(GearConfig::new());
+    };
+    if value.is_null() {
+        return Ok(GearConfig::new());
+    }
+    let Some(obj) = value.as_object() else {
+        bail!("config is an object of gear name -> {{field: value}}");
+    };
+    let mut out = GearConfig::new();
+    for (gear, fields) in obj {
+        let Some(fields) = fields.as_object() else {
+            bail!("config for `{gear}` is an object of field -> value");
+        };
+        if !fields.is_empty() {
+            out.insert(gear.clone(), fields.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// The vendor a plugin registers under: its `vendor` config field, as the
+/// product sets it or else as the gear defaults it.
+fn plugin_vendor(
+    plugin: &EngineGear,
+    config: Option<&serde_json::Map<String, Value>>,
+) -> Option<String> {
+    if let Some(v) = config.and_then(|c| c.get("vendor")).and_then(Value::as_str) {
+        return Some(v.to_string());
+    }
+    plugin
+        .config_schema
+        .as_ref()?
+        .fields
+        .iter()
+        .find(|f| f.name == "vendor")?
+        .default
+        .as_ref()?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Whether the host would find this plugin by vendor. A host that selects no
+/// vendor, or a plugin that declares none, agrees with anything.
+fn vendor_agrees(
+    host: &EngineGear,
+    plugin: &EngineGear,
+    config: Option<&serde_json::Map<String, Value>>,
+) -> bool {
+    match (
+        host.vendor_selector.as_deref(),
+        plugin_vendor(plugin, config),
+    ) {
+        (Some(want), Some(have)) => want == have,
+        _ => true,
+    }
 }
 
 /// Why a gear cannot be part of a product built from this corpus as it is.
@@ -414,8 +488,12 @@ impl EngineCatalogue {
             .into_iter()
             .filter(|p| !dead.contains_key(&p.id))
             .collect();
+        // A plugin registered under the vendor the host selects needs nothing
+        // set to be found; prefer it over one that would need its vendor
+        // overridden.
         alive.sort_by_key(|p| {
             (
+                !vendor_agrees(host, p, None),
                 p.fills
                     .as_ref()
                     .and_then(|f| f.default_priority)
@@ -469,8 +547,9 @@ fn dead_reason(catalogue: &EngineCatalogue, why: &Dead) -> String {
 /// gears have nothing to serve them. Nothing is guessed about what the
 /// product is for. The engine still has the last word — the caller resolves
 /// the result.
-pub fn complete(catalogue: &EngineCatalogue, picked: &[String]) -> Completion {
+pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearConfig) -> Completion {
     let dead = catalogue.dead();
+    let mut config = config.clone();
     let crate_of = |id: &str| {
         catalogue
             .gears
@@ -569,9 +648,50 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String]) -> Completion {
         }
     }
 
+    // Every plugin in the product registers under the vendor its host
+    // selects, or the engine refuses the pair (GBX0512). A plugin whose own
+    // default disagrees gets the host's vendor set -- unless the product
+    // already sets a vendor on it, which is somebody's decision to keep.
+    let effective = catalogue.closure(&set);
+    for host_id in &effective {
+        let Some(host) = catalogue.gears.get(host_id) else {
+            continue;
+        };
+        let Some(want) = host.vendor_selector.clone() else {
+            continue;
+        };
+        for p in catalogue.implementers(host) {
+            if !set.contains(&p.id) {
+                continue;
+            }
+            let crate_name = p.package.crate_name.clone();
+            let set_here = config
+                .get(&crate_name)
+                .is_some_and(|c| c.contains_key("vendor"));
+            if set_here || vendor_agrees(host, p, None) {
+                continue;
+            }
+            config
+                .entry(crate_name.clone())
+                .or_default()
+                .insert("vendor".to_string(), Value::String(want.clone()));
+            changes.push(Change {
+                gear: crate_name,
+                added: true,
+                reason: format!(
+                    "vendor set to `{want}`: {} selects its plugins by that vendor, and this one \
+                     registers under `{}` by default",
+                    crate_of(host_id),
+                    plugin_vendor(p, None).unwrap_or_default()
+                ),
+            });
+        }
+    }
+
     Completion {
         gears: set.iter().map(|id| crate_of(id)).collect(),
         changes,
+        config,
     }
 }
 
@@ -960,6 +1080,39 @@ pub fn is_kebab_id(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
+/// A JSON value as a GDL literal: strings quoted, `True`/`False`, lists and
+/// maps nested. `null` has no GDL spelling and is left out by the caller.
+fn gdl_value(v: &Value) -> String {
+    match v {
+        Value::String(s) => gdl_string(s),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .filter(|i| !i.is_null())
+                .map(gdl_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(map) => gdl_map(map),
+        Value::Null => "None".to_string(),
+    }
+}
+
+/// `{"key": value, ...}`, keys in order, nulls dropped.
+fn gdl_map(map: &serde_json::Map<String, Value>) -> String {
+    let body = map
+        .iter()
+        .filter(|(_, v)| !v.is_null())
+        .map(|(k, v)| format!("{}: {}", gdl_string(k), gdl_value(v)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{{body}}}")
+}
+
 fn gdl_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -997,26 +1150,37 @@ pub fn render_product_gdl(
     composition: &Composition,
     default_profile: &str,
     pin: Option<CorpusPin<'_>>,
+    config: &BTreeMap<String, serde_json::Map<String, Value>>,
 ) -> String {
+    // `config` is keyed by engine id here; the caller maps crate names.
+    let config_arg = |id: &str| {
+        config
+            .get(id)
+            .filter(|c| c.values().any(|v| !v.is_null()))
+            .map(|c| format!(", config = {}", gdl_map(c)))
+            .unwrap_or_default()
+    };
     let mut gears = String::new();
     for g in &composition.gears {
         if g.plugins.is_empty() {
             gears.push_str(&format!(
-                "        use_gear({}, source = {}),\n",
+                "        use_gear({}, source = {}{}),\n",
                 gdl_string(&g.id),
-                gdl_string(CORPUS_SOURCE_ID)
+                gdl_string(CORPUS_SOURCE_ID),
+                config_arg(&g.id)
             ));
         } else {
             let plugins = g
                 .plugins
                 .iter()
-                .map(|p| format!("plugin({})", gdl_string(p)))
+                .map(|p| format!("plugin({}{})", gdl_string(p), config_arg(p)))
                 .collect::<Vec<_>>()
                 .join(", ");
             gears.push_str(&format!(
-                "        use_gear({}, source = {}, plugins = [{plugins}]),\n",
+                "        use_gear({}, source = {}{}, plugins = [{plugins}]),\n",
                 gdl_string(&g.id),
-                gdl_string(CORPUS_SOURCE_ID)
+                gdl_string(CORPUS_SOURCE_ID),
+                config_arg(&g.id)
             ));
         }
     }
@@ -1273,6 +1437,8 @@ pub struct PreviewInput {
     pub name: String,
     pub gears: Vec<String>,
     pub profile: String,
+    /// The product's configuration of its gears, by crate name or engine id.
+    pub config: GearConfig,
 }
 
 pub struct Preview {
@@ -1526,9 +1692,13 @@ impl Gearbox {
     }
 
     /// [`complete`] against the current corpus.
-    pub async fn complete(&self, picked: &[String]) -> anyhow::Result<Completion> {
+    pub async fn complete(
+        &self,
+        picked: &[String],
+        config: &GearConfig,
+    ) -> anyhow::Result<Completion> {
         let (_, _, catalogue) = self.ensure_corpus().await?;
-        Ok(complete(&catalogue, picked))
+        Ok(complete(&catalogue, picked, config))
     }
 
     /// The extension points a new plugin gear can fill, one per host.
@@ -1597,12 +1767,20 @@ impl Gearbox {
         let composition = compose(&catalogue, &input.gears);
         let url = self.current_source().url;
         let pin = commit.as_deref().map(|rev| CorpusPin { url: &url, rev });
+        // Config arrives keyed as the picks are (crate names); the description
+        // names gears by engine id.
+        let by_id: BTreeMap<String, serde_json::Map<String, Value>> = input
+            .config
+            .iter()
+            .filter_map(|(k, v)| catalogue.find(k).map(|g| (g.id.clone(), v.clone())))
+            .collect();
         let product_gdl = render_product_gdl(
             &input.product_id,
             &input.name,
             &composition,
             &input.profile,
             pin,
+            &by_id,
         );
 
         let bin = self.cfg.bin.clone();
@@ -1939,6 +2117,7 @@ mod tests {
                 "cf-gears-tenant-resolver",
                 "cf-gears-ledger",
             ]),
+            &GearConfig::new(),
         );
         assert_eq!(
             c.gears,
@@ -2039,7 +2218,7 @@ mod tests {
             "cf-gears-authn-resolver",
             "cf-gears-oidc-authn-plugin",
         ]);
-        let c = complete(&corpus(), &picks);
+        let c = complete(&corpus(), &picks, &GearConfig::new());
         assert_eq!(c.gears, picks);
         assert!(c.changes.is_empty());
     }
@@ -2096,6 +2275,7 @@ mod tests {
                 url: "https://github.com/MikeFalcon77/gears-rust.git",
                 rev: "a0a42cec5e68b313c31e3ceb00254b0df89cd8b8",
             }),
+            &BTreeMap::new(),
         );
         assert!(
             gdl.contains(
@@ -2112,7 +2292,14 @@ mod tests {
             &catalogue(),
             &names(&["api-gateway", "static-authn-plugin"]),
         );
-        let gdl = render_product_gdl("my-shop", "My \"Shop\"", &c, "local", None);
+        let gdl = render_product_gdl(
+            "my-shop",
+            "My \"Shop\"",
+            &c,
+            "local",
+            None,
+            &BTreeMap::new(),
+        );
         assert!(gdl.contains("id = \"my-shop\""));
         assert!(gdl.contains("name = \"My \\\"Shop\\\"\""));
         assert!(gdl.contains("source(id = \"gears-rust\", at = path(\"../gears-rust\"))"));
@@ -2289,5 +2476,122 @@ mod tests {
         assert_eq!(GearKind::parse(""), Some(GearKind::Service));
         assert_eq!(GearKind::parse(" plugin "), Some(GearKind::Plugin));
         assert_eq!(GearKind::parse("library"), None);
+    }
+
+    fn vendor_corpus(plugins: &[(&str, &str)]) -> EngineCatalogue {
+        let mut gears = serde_json::Map::new();
+        gears.insert(
+            "account-management".into(),
+            json!({
+                "id": "account-management",
+                "package": {"crate_name": "cf-gears-account-management"},
+                "vendor_selector": "constructorfabric",
+                "extension_points": [{"spec": "cf.toolkit.plugins.plugin.v1~cf.core.idp.plugin.v1~",
+                                      "sdk": {"crate_name": "cf-gears-account-management-sdk"}}]
+            }),
+        );
+        for (id, vendor) in plugins {
+            gears.insert(
+                (*id).into(),
+                json!({
+                    "id": id,
+                    "package": {"crate_name": format!("cf-gears-{id}")},
+                    "fills": {"point": {"sdk": {"crate_name": "cf-gears-account-management-sdk"}}},
+                    "config_schema": {"fields": [{"name": "vendor", "default": vendor}]}
+                }),
+            );
+        }
+        serde_json::from_value(json!({ "gears": gears })).expect("fixture parses")
+    }
+
+    #[test]
+    fn a_plugin_under_the_hosts_vendor_is_preferred() {
+        let c = vendor_corpus(&[
+            ("keycloak-idp-plugin", "keycloak"),
+            ("cf-idp-plugin", "constructorfabric"),
+        ]);
+        let done = complete(
+            &c,
+            &names(&["cf-gears-account-management"]),
+            &GearConfig::new(),
+        );
+        assert!(
+            done.gears.contains(&"cf-gears-cf-idp-plugin".to_string()),
+            "{:?}",
+            done.gears
+        );
+        assert!(
+            done.config.is_empty(),
+            "nothing needed setting: {:?}",
+            done.config
+        );
+    }
+
+    #[test]
+    fn a_plugin_under_another_vendor_gets_the_hosts() {
+        // The corpus as it is today: the host selects `constructorfabric`,
+        // its plugin registers under `cf` (GBX0512).
+        let c = vendor_corpus(&[("static-idp-plugin", "cf")]);
+        let done = complete(
+            &c,
+            &names(&["cf-gears-account-management"]),
+            &GearConfig::new(),
+        );
+        assert!(
+            done.gears
+                .contains(&"cf-gears-static-idp-plugin".to_string())
+        );
+        assert_eq!(
+            done.config["cf-gears-static-idp-plugin"]["vendor"],
+            "constructorfabric"
+        );
+        assert!(
+            done.changes
+                .iter()
+                .any(|ch| ch.reason.contains("vendor set to `constructorfabric`"))
+        );
+    }
+
+    #[test]
+    fn a_vendor_somebody_set_is_kept() {
+        let c = vendor_corpus(&[("static-idp-plugin", "cf")]);
+        let mut mine = GearConfig::new();
+        mine.entry("cf-gears-static-idp-plugin".into())
+            .or_default()
+            .insert("vendor".into(), json!("mine"));
+        let done = complete(
+            &c,
+            &names(&["cf-gears-account-management", "cf-gears-static-idp-plugin"]),
+            &mine,
+        );
+        assert_eq!(done.config["cf-gears-static-idp-plugin"]["vendor"], "mine");
+    }
+
+    #[test]
+    fn configuration_is_written_on_the_gear_and_on_its_plugin() {
+        let composition = Composition {
+            gears: vec![GearUse {
+                id: "account-management".into(),
+                plugins: vec!["static-idp-plugin".into()],
+            }],
+            ..Composition::default()
+        };
+        let mut config = BTreeMap::new();
+        config.insert(
+            "static-idp-plugin".to_string(),
+            json!({"vendor": "constructorfabric", "priority": 100})
+                .as_object()
+                .expect("object")
+                .clone(),
+        );
+        config.insert(
+            "account-management".to_string(),
+            json!({"strict": true}).as_object().expect("object").clone(),
+        );
+        let gdl = render_product_gdl("p", "P", &composition, "dev", None, &config);
+        assert!(
+            gdl.contains(r#"use_gear("account-management", source = "gears-rust", config = {"strict": True}, plugins = [plugin("static-idp-plugin", config = {"priority": 100, "vendor": "constructorfabric"})])"#),
+            "{gdl}"
+        );
     }
 }

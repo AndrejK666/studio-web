@@ -1654,8 +1654,14 @@ export interface ProductChange {
 }
 
 /** The product a project is composing, as the server remembers it. */
+/** How a product configures its gears: gear crate name -> field -> value.
+ *  Written into product.gdl as the gear's or plugin's `config`. */
+export type GearConfig = Record<string, Record<string, unknown>>;
+
 export interface ProjectProduct {
   project_id?: string;
+  /** The product's configuration of its gears (see GearConfig). */
+  config?: GearConfig;
   product_id?: string;
   name?: string;
   /** Catalogue names (`cf-gears-api-gateway`), in the order they were picked. */
@@ -3137,7 +3143,7 @@ export const api = {
   saveProjectProduct: (
     token: string,
     projectId: string,
-    body: { product_id?: string; name?: string; gears?: string[]; profile?: string },
+    body: { product_id?: string; name?: string; gears?: string[]; profile?: string; config?: GearConfig },
   ) =>
     request<{ value: ProjectProduct }>(
       `/studio-components-catalog/v1/projects/${encodeURIComponent(projectId)}/product`,
@@ -3147,11 +3153,12 @@ export const api = {
   /** Complete picks into a set the engine can resolve: what the catalogue
    *  proves cannot run is taken out, a missing plugin or REST host is put in,
    *  each with its reason. Writes nothing. */
-  completeProduct: (token: string, gears: string[]) =>
-    request<{ gears: string[]; changes: ProductChange[] }>(`/studio-components-catalog/v1/gearbox/complete`, token, {
-      method: "POST",
-      body: JSON.stringify({ gears }),
-    }),
+  completeProduct: (token: string, gears: string[], config?: GearConfig) =>
+    request<{ gears: string[]; changes: ProductChange[]; config: GearConfig }>(
+      `/studio-components-catalog/v1/gearbox/complete`,
+      token,
+      { method: "POST", body: JSON.stringify({ gears, config: config ?? {} }) },
+    ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>
     request<GearboxStatus>(`/studio-components-catalog/v1/gearbox`, token),
@@ -3169,6 +3176,8 @@ export const api = {
       write?: boolean;
       open_pr?: boolean;
       /** Commit onto the base branch; only for a repository the product owns. */
+      /** The product's configuration of its gears (see GearConfig). */
+      config?: GearConfig;
       onto_base?: boolean;
     },
   ) =>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  type GearConfig,
   type GearboxStatus,
   type KitInstallation,
   type PlanRow,
@@ -562,6 +563,10 @@ type ProductState = {
   picks: string[];
   setPicks: (update: (current: string[]) => string[]) => void;
   toggle: (name: string) => void;
+  /** How the product configures its gears, kept and written with the picks. */
+  config: GearConfig;
+  /** Set one field of one gear; `undefined` removes it. */
+  setField: (gear: string, field: string, value: unknown) => void;
   profile: string;
   setProfile: (profile: string) => void;
   /** Re-read the record, after a preview wrote its verdict into it. */
@@ -585,6 +590,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
   const [record, setRecord] = useState<ProjectProduct | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [picks, setPicksState] = useState<string[]>([]);
+  const [config, setConfigState] = useState<GearConfig>({});
   const [profile, setProfileState] = useState("dev");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<ProductChange[]>([]);
@@ -604,6 +610,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
       setGearbox(engine);
       setRecord(saved);
       setPicksState(saved?.gears ?? []);
+      setConfigState(saved?.config ?? {});
       setProfileState(saved?.profile ?? "dev");
       setLoaded(true);
     });
@@ -622,6 +629,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
           name: projectName,
           gears: picks,
           profile,
+          config,
         })
         .then((saved) => {
           setRecord(saved.value);
@@ -630,7 +638,7 @@ function useProjectProduct(token: string, projectId: string, projectName: string
         .catch((cause) => setSaveError(errText(cause)));
     }, 400);
     return () => clearTimeout(timer);
-  }, [picks, profile, loaded, token, projectId, projectName]);
+  }, [picks, profile, config, loaded, token, projectId, projectName]);
 
   const setPicks = useCallback((update: (current: string[]) => string[]) => {
     dirty.current = true;
@@ -641,8 +649,10 @@ function useProjectProduct(token: string, projectId: string, projectName: string
   // its reasons on screen, and if the engine is unreachable the picks stand.
   const completeInto = async (start: string[]) => {
     try {
-      const done = await api.completeProduct(token, start);
+      const done = await api.completeProduct(token, start, config);
       setAdjustments(done.changes);
+      dirty.current = true;
+      setConfigState(done.config ?? {});
       setPicks(() => done.gears);
       setCompletedAt(Date.now());
     } catch (cause) {
@@ -658,8 +668,30 @@ function useProjectProduct(token: string, projectId: string, projectName: string
     record,
     picks,
     setPicks,
-    toggle: (name) =>
-      setPicks((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name])),
+    toggle: (name) => {
+      // A gear taken out takes its configuration with it.
+      if (picks.includes(name) && config[name]) {
+        setConfigState((current) => {
+          const next = { ...current };
+          delete next[name];
+          return next;
+        });
+      }
+      setPicks((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
+    },
+    config,
+    setField: (gear, field, value) => {
+      dirty.current = true;
+      setConfigState((current) => {
+        const fields = { ...(current[gear] ?? {}) };
+        if (value === undefined) delete fields[field];
+        else fields[field] = value;
+        const next = { ...current };
+        if (Object.keys(fields).length === 0) delete next[gear];
+        else next[gear] = fields;
+        return next;
+      });
+    },
     profile,
     setProfile: (next) => {
       dirty.current = true;
@@ -697,6 +729,84 @@ const chipToggleStyle = {
   font: "inherit",
   fontWeight: 700,
 } as const;
+
+/** What a person typed, as the JSON value it means: `true`/`false`, a
+ *  number, or else the text itself. */
+function configValue(text: string): unknown {
+  const t = text.trim();
+  if (t === "true") return true;
+  if (t === "false") return false;
+  if (t !== "" && !Number.isNaN(Number(t))) return Number(t);
+  return text;
+}
+
+/** The product's configuration of its gears: each field it sets, editable
+ *  and removable, and a way to set one more. What `Make it resolve` sets
+ *  (a plugin's vendor aligned with its host's) lands here too. */
+function GearConfigEditor({ product }: { product: ProductState }) {
+  const [gear, setGear] = useState("");
+  const [field, setField] = useState("");
+  const [value, setValue] = useState("");
+  const rows = Object.entries(product.config).flatMap(([g, fields]) =>
+    Object.entries(fields).map(([f, v]) => ({ g, f, v })),
+  );
+  if (product.picks.length === 0) return null;
+  return (
+    <div style={{ fontSize: 12, marginTop: 8 }} data-gear-config>
+      <div style={{ opacity: 0.7, marginBottom: 4 }}>Configuration</div>
+      {rows.length === 0 && (
+        <div style={{ opacity: 0.6 }}>No gear is configured; each runs with its defaults.</div>
+      )}
+      {rows.map(({ g, f, v }) => (
+        <div key={`${g}.${f}`} style={{ display: "flex", gap: 6, alignItems: "center", margin: "2px 0" }}>
+          <code>{gearLabel(g)}</code>
+          <span style={{ opacity: 0.6 }}>·</span>
+          <code>{f}</code>
+          <span>=</span>
+          <input
+            aria-label={`${g} ${f}`}
+            defaultValue={typeof v === "string" ? v : JSON.stringify(v)}
+            onBlur={(e) => product.setField(g, f, configValue(e.target.value))}
+            style={{ fontSize: 12, width: 180 }}
+          />
+          <button
+            type="button"
+            className="ghost"
+            title="Remove this setting"
+            aria-label={`Remove ${g} ${f}`}
+            onClick={() => product.setField(g, f, undefined)}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <form
+        style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!gear || !field.trim()) return;
+          product.setField(gear, field.trim(), configValue(value));
+          setField("");
+          setValue("");
+        }}
+      >
+        <select value={gear} onChange={(e) => setGear(e.target.value)} aria-label="Gear to configure" style={{ fontSize: 12 }}>
+          <option value="">gear…</option>
+          {product.picks.map((p) => (
+            <option key={p} value={p}>
+              {gearLabel(p)}
+            </option>
+          ))}
+        </select>
+        <input placeholder="field" value={field} onChange={(e) => setField(e.target.value)} style={{ fontSize: 12, width: 120 }} />
+        <input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} style={{ fontSize: 12, width: 160 }} />
+        <button type="submit" className="ghost" disabled={!gear || !field.trim()}>
+          Set
+        </button>
+      </form>
+    </div>
+  );
+}
 
 /** A component's name that opens its page in the platform catalogue. */
 function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: string; label?: string }) {
@@ -765,6 +875,7 @@ function ProductCard({
         name: projectName,
         gears: picks,
         profile,
+        config: product.config,
         ...(write ? { write: true, open_pr: asPr, onto_base: ownsRepo } : {}),
       });
       setPreview(result);
@@ -827,12 +938,13 @@ function ProductCard({
           ))
         )}
       </div>
+      <GearConfigEditor product={product} />
       {product.adjustments.length > 0 && (
         <div style={{ fontSize: 12, marginTop: 8 }}>
           <div style={{ opacity: 0.7 }}>Adjusted so the product can resolve — each can be undone:</div>
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {product.adjustments.map((c) => (
-              <li key={`${c.gear}-${c.added}`}>
+              <li key={`${c.gear}-${c.added}-${c.reason}`}>
                 <b>{c.added ? "+" : "−"}</b> <ComponentLink nav={nav} name={c.gear} />
                 <span style={{ opacity: 0.75 }}> — {c.reason}</span>
                 {!c.added && !picks.includes(c.gear) && (
