@@ -59,10 +59,16 @@ codebase = [
   { path = "src-app/mfe_packages/shared/src", extensions = [".ts", ".tsx"] },
 ]
 
-# Artifacts this repository owns live under docs/sdlc/. Deliberately narrow:
-# only FEATURE is registered, and only the projects MFE's code is in scope.
+# The feature specs live in the repository's `docs/feature/` (moved from
+# `studio-frontend/docs/sdlc/FEATURE/`), laid out the way Constructor Studio's
+# own document pipeline reads them: `type: feature` front matter and un-numbered
+# `Summary` / `Behaviour` / `Acceptance Criteria` sections. Their `cpt-` ids and
+# Definition-of-Done checkboxes are unchanged, so traceability still resolves;
+# the kit's numbered-outline checks are what no longer match.
+# Deliberately narrow: only FEATURE is registered, and only the projects MFE's
+# code is in scope.
 #
-# `docs/adr/` is NOT registered on purpose. Those five ADRs (and ADR-0010) use
+# `docs/adr/` is NOT registered on purpose. Those ADRs use
 # the repository's own lightweight format — `## Context` / `## Decision` /
 # `## Consequences` — while the sdlc kit's ADR constraints require the MADR
 # outline (`Context and Problem Statement`, `Decision Drivers`, `Considered
@@ -72,9 +78,9 @@ codebase = [
 [[systems.autodetect]]
 kit = "sdlc"
 system_root = "{project_root}"
-artifacts_root = "docs/sdlc"
+artifacts_root = "../docs"
 
 [systems.autodetect.artifacts.FEATURE]
-pattern = "FEATURE/*.md"
+pattern = "feature/*.md"
 traceability = "FULL"
 required = false
