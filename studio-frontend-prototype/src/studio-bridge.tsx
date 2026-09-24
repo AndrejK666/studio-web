@@ -66,7 +66,9 @@ export interface StudioBridge {
   /** Open a checkout-relative product.gdl in the IDE's Gearbox perspective,
    *  through Gearbox (resolved, with its graph, lock and conflicts). An IDE
    *  without Gearbox opens it as a file. */
-  openProduct(target: StudioTarget, path: string): Promise<void>;
+  /** `branch`: where the portal saved the description, when that is not the
+   *  branch a session checks out; the IDE brings it in beside the checkout. */
+  openProduct(target: StudioTarget, path: string, branch?: string): Promise<void>;
   /** Open the IDE's Artifact Graph view. */
   openGraph(target: StudioTarget): Promise<void>;
   /** The target currently being launched, if any — for button spinners. */

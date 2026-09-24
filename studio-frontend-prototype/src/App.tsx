@@ -1155,8 +1155,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         ),
       openFile: (target: StudioTarget, path: string) =>
         openInStudio(target, { type: "studio.openInEditor", path }),
-      openProduct: (target: StudioTarget, path: string) =>
-        openInStudio(target, { type: "studio.openProduct", path }),
+      openProduct: (target: StudioTarget, path: string, branch?: string) =>
+        openInStudio(target, { type: "studio.openProduct", path, ...(branch ? { branch } : {}) }),
       openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
       opening,
       isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
@@ -9402,14 +9402,23 @@ async function startStudioSession(
   // its session checks the gear corpus out beside the project's own sources —
   // the same corpus the portal's preview resolved against. A gear project gets
   // it too: a plugin's gear.gdl names its host's point by spec (`fills`), and
-  // the IDE joins that against the corpus. A checkout already named after the
-  // corpus is not doubled (`withCorpusSource`). Anything else, or a deployment
+  // the IDE joins that against the corpus. So does any project that HAS a
+  // product, whatever its kind: an `existing` project composes one on its
+  // Components tab. A checkout already named after the corpus is not doubled
+  // (`withCorpusSource`). Anything else, or a deployment
   // without the engine, is unchanged.
   const kind = await api
     .projectConfig(token, target.id)
     .then((c) => c?.kind)
     .catch(() => undefined);
-  if (kind === "product" || kind === "new_gears") {
+  const hasProduct =
+    kind !== "product" &&
+    kind !== "new_gears" &&
+    (await api
+      .projectProduct(token, target.id)
+      .then((p) => p !== null)
+      .catch(() => false));
+  if (kind === "product" || kind === "new_gears" || hasProduct) {
     repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
   }
   onResolved?.({ repos, root, kind });
