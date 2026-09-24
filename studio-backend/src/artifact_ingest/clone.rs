@@ -245,6 +245,123 @@ pub fn clone_or_update(
     Ok(CloneResult { dir, commit })
 }
 
+/// What a Re-sync did to the shared checkout before reading it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckoutUpdate {
+    /// Already at the remote's tip, or it tracks no branch of `origin`.
+    Current,
+    /// Fast-forwarded from one commit to the other.
+    Advanced { from: String, to: String },
+    /// Left where it is -- local edits, or history the remote does not have --
+    /// and read as it stands. The reason is for the sync's report.
+    Kept { reason: String },
+}
+
+/// A read-only git question about the checkout, answered or `None`.
+fn local(checkout: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .arg("-c")
+        .arg(format!("safe.directory={}", checkout.display()))
+        .arg("-C")
+        .arg(checkout)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// The branch of `origin` the checkout tracks: its upstream, else the
+/// remote's default branch. `None` when it tracks nothing, and the checkout is
+/// then read as it stands.
+fn tracked_branch(checkout: &Path) -> Option<String> {
+    let full = local(
+        checkout,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .or_else(|| {
+        local(
+            checkout,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )
+    })?;
+    full.strip_prefix("origin/").map(str::to_string)
+}
+
+/// **Re-sync pulls the project's checkout up to the remote, then reads it.**
+///
+/// The shared checkout is the one the IDE works in, cloned when a session
+/// first opened. Nothing advanced it but a person pulling in the IDE, so a sync
+/// that only walked it kept reporting the repository as it was that day: a
+/// merged PR's documents never arrived, however often Re-sync was pressed.
+///
+/// So the tracked branch is fetched and the checkout fast-forwarded -- what a
+/// pull does, and only when a pull would lose nothing: a clean working tree
+/// whose history the remote extends. Local edits or diverged history leave it
+/// alone (`Kept`); the sync reads it as it stands and says why, rather than
+/// overwriting somebody's work.
+pub fn update_shared_checkout(
+    checkout: &Path,
+    username: &str,
+    token: &str,
+) -> anyhow::Result<CheckoutUpdate> {
+    let Some(branch) = tracked_branch(checkout) else {
+        return Ok(CheckoutUpdate::Current);
+    };
+    let safe = format!("safe.directory={}", checkout.display());
+    let mut fetch = git(username, token);
+    fetch
+        .arg("-c")
+        .arg(&safe)
+        .arg("-C")
+        .arg(checkout)
+        .args(["fetch", "--quiet", "origin"])
+        .arg(format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"));
+    run(fetch, "fetch")?;
+
+    let head = local(checkout, &["rev-parse", "HEAD"]);
+    let remote = local(checkout, &["rev-parse", &format!("origin/{branch}")]);
+    let (Some(head), Some(remote)) = (head, remote) else {
+        return Ok(CheckoutUpdate::Current);
+    };
+    if head == remote {
+        return Ok(CheckoutUpdate::Current);
+    }
+    if local(checkout, &["status", "--porcelain"]).is_some_and(|s| !s.is_empty()) {
+        return Ok(CheckoutUpdate::Kept {
+            reason: format!(
+                "the checkout has local changes; origin/{branch} is ahead and was not merged"
+            ),
+        });
+    }
+    let fast_forward = Command::new("git")
+        .arg("-c")
+        .arg(&safe)
+        .arg("-C")
+        .arg(checkout)
+        .args(["merge-base", "--is-ancestor", &head, &remote])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !fast_forward {
+        return Ok(CheckoutUpdate::Kept {
+            reason: format!("the checkout has commits origin/{branch} does not; it was not moved"),
+        });
+    }
+    let mut merge = Command::new("git");
+    merge
+        .arg("-c")
+        .arg(&safe)
+        .arg("-C")
+        .arg(checkout)
+        .args(["merge", "--ff-only", "--quiet"])
+        .arg(format!("origin/{branch}"));
+    run(merge, "fast-forward")?;
+    Ok(CheckoutUpdate::Advanced {
+        from: head,
+        to: remote,
+    })
+}
+
 /// The HEAD commit of a checkout already on disk (no credentials needed —
 /// a local `rev-parse`). `None` if git is unavailable or the dir is not a repo.
 pub fn head_commit(dir: &Path) -> Option<String> {
@@ -340,5 +457,92 @@ mod tests {
             ".studio/comments/docs/prd.md/oidc-sub-1.jsonl"
         )));
         assert!(is_text_path(Path::new(".studio/comments/docs/prd.md.json")));
+    }
+
+    fn sh(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn init_pair(root: &Path) -> (PathBuf, PathBuf) {
+        let (bare, seed, ide) = (root.join("origin.git"), root.join("seed"), root.join("ide"));
+        std::fs::create_dir_all(root).expect("root");
+        sh(root, &["init", "--quiet", "--bare", "origin.git"]);
+        sh(
+            root,
+            &["clone", "--quiet", bare.to_str().expect("path"), "seed"],
+        );
+        std::fs::write(seed.join("README.md"), "one\n").expect("write");
+        sh(&seed, &["add", "."]);
+        sh(&seed, &["commit", "--quiet", "-m", "one"]);
+        sh(&seed, &["push", "--quiet", "origin", "HEAD:main"]);
+        sh(
+            root,
+            &["clone", "--quiet", bare.to_str().expect("path"), "ide"],
+        );
+        (seed, ide)
+    }
+
+    fn push_prd(seed: &Path) {
+        std::fs::create_dir_all(seed.join("docs/prd")).expect("dir");
+        std::fs::write(seed.join("docs/prd/p.md"), "---\ntype: prd\n---\n").expect("write");
+        sh(seed, &["add", "."]);
+        sh(seed, &["commit", "--quiet", "-m", "two"]);
+        sh(seed, &["push", "--quiet", "origin", "HEAD:main"]);
+    }
+
+    /// A merged PR reaches the project's checkout on Re-sync, the way a pull
+    /// would bring it.
+    #[test]
+    fn re_sync_fast_forwards_a_clean_checkout() {
+        let root = std::env::temp_dir().join(format!("resync-{}", uuid::Uuid::new_v4()));
+        let (seed, ide) = init_pair(&root);
+        assert_eq!(
+            update_shared_checkout(&ide, "", "").expect("update"),
+            CheckoutUpdate::Current
+        );
+        push_prd(&seed);
+        assert!(matches!(
+            update_shared_checkout(&ide, "", "").expect("update"),
+            CheckoutUpdate::Advanced { .. }
+        ));
+        assert!(ide.join("docs/prd/p.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Somebody's unsaved work is never overwritten to get there.
+    #[test]
+    fn re_sync_leaves_a_checkout_with_local_changes_alone() {
+        let root = std::env::temp_dir().join(format!("resync-{}", uuid::Uuid::new_v4()));
+        let (seed, ide) = init_pair(&root);
+        push_prd(&seed);
+        std::fs::write(ide.join("README.md"), "edited in the IDE\n").expect("write");
+        assert!(matches!(
+            update_shared_checkout(&ide, "", "").expect("update"),
+            CheckoutUpdate::Kept { .. }
+        ));
+        assert!(!ide.join("docs/prd/p.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(ide.join("README.md")).expect("read"),
+            "edited in the IDE\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

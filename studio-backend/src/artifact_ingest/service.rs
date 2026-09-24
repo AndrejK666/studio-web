@@ -476,7 +476,11 @@ impl IngestService {
             self.shared_checkout_dir(project_id.or(workspace_id), repo_dir)
         {
             progress.set("reading workspace files…");
-            match self.walk_checkout(dir).await {
+            let (username, password) = driver.clone_credentials(token);
+            match self
+                .walk_shared_checkout(dir, username.to_string(), password.to_string())
+                .await
+            {
                 Ok(v) => Some(v),
                 Err(e) => {
                     tracing::warn!(
@@ -993,6 +997,41 @@ impl IngestService {
         }
         let path = root.join(ws).join(dir);
         path.is_dir().then_some(path)
+    }
+
+    /// Re-sync: pull the shared checkout up to the remote
+    /// (`clone::update_shared_checkout`, a fast-forward only when nothing would
+    /// be lost), then read it. A failed fetch -- no network, no credential --
+    /// reads the checkout as it stands and says so, which is no worse than
+    /// before.
+    async fn walk_shared_checkout(
+        &self,
+        dir: PathBuf,
+        username: String,
+        password: String,
+    ) -> anyhow::Result<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> {
+        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            match clone::update_shared_checkout(&dir, &username, &password) {
+                Ok(clone::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
+                    dir = %dir.display(), %from, %to,
+                    "studio-artifact-ingest: pulled the shared checkout up to the remote"
+                ),
+                Ok(clone::CheckoutUpdate::Kept { reason }) => tracing::warn!(
+                    dir = %dir.display(), %reason,
+                    "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
+                ),
+                Ok(clone::CheckoutUpdate::Current) => {}
+                Err(e) => tracing::warn!(
+                    error = %e, dir = %dir.display(),
+                    "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
+                ),
+            }
+            let commit = clone::head_commit(&dir);
+            let walked = clone::walk(&dir)?;
+            Ok((dir, walked, commit))
+        })
+        .await
+        .map_err(|e| anyhow!("workspace read did not finish: {e}"))?
     }
 
     /// Walk an existing checkout on a blocking thread (no clone), reading text
