@@ -6,7 +6,7 @@ date: 2026-08-24
 
 # ADR-0022: Backend-to-backend bridge between studio-backend and the Theia IDE
 
-## Status
+**ID**: `cpt-studio-adr-theia-backend-bridge`
 
 Status: proposed · 2026-08-24
 
@@ -17,7 +17,19 @@ Status: proposed · 2026-08-24
 > ADR-0022; see [the ADR index](README.md). It supersedes nothing; it extends
 > **ADR-0003 (per-workspace Theia sessions)**.
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Today Studio runs two independent backends that never talk to each other
 directly:
@@ -70,12 +82,30 @@ workspace or duplicating its logic.
   Theia container itself is tenant-blind, so the tenant boundary has to be
   enforced on the studio-backend side before a call ever reaches the container.
 
-## Decision
+## Considered Options
+
+- **Reuse the browser RPC path (`/services/studio-runtime`) from
+  studio-backend.** Rejected: that path is designed for a single authenticated
+  browser behind the proxy; driving it server-side would mean either exposing it
+  off-proxy (breaks the ADR-0003 security model) or having studio-backend
+  impersonate a browser client over Theia's WebSocket RPC — fragile and
+  conflates the two consumers.
+- **Put the bridge logic in `studio-session`.** Rejected: studio-session is the
+  lifecycle/transport boundary; mixing a semantic control/event API into it
+  couples container management to editor semantics and makes both harder to
+  evolve. A dedicated `studio-theia` gear keeps each with one job.
+- **A standalone Node sidecar as the bridge.** Rejected for the same reason
+  ADR-0003 rejected a standalone session manager: it would re-implement the
+  authn/tenancy/event-broker wiring the gear gets from the platform for free.
+- **Shared database / shared `/workspace` files as the integration point.**
+  Rejected: the operation journal and sync state are the Theia backend's private
+  representation; reading them out-of-band would fork ownership and lose the
+  idempotency/audit guarantees the queue provides.
+
+## Decision Outcome
 
 Introduce a **backend-to-backend bridge** with two directions and a clean
 ownership split. Neither existing contract to the browser changes.
-
-The decision has 4 parts, each set out in its own subsection below: 1. Transport: an internal S2S control API on the Theia node; 2. Events: Theia → studio via the existing broadcast, forwarded out; 3. Ownership: a new `studio-theia` gear; 4. Contract: versioned, with `studio-protocol.ts` as source of truth.
 
 ### 1. Transport: an internal S2S control API on the Theia node
 
@@ -154,7 +184,7 @@ during migration. Optional methods on `StudioRuntimeService` stay optional on
 the bridge — a session that predates a method answers "unsupported", it does not
 error.
 
-## Consequences
+### Consequences
 
 - studio-backend gains first-class, tenant-safe access to editor state and
   operations without duplicating the Theia backend's workspace/git logic — the
@@ -175,27 +205,9 @@ error.
   container is `running`, and must degrade cleanly (portal shows "IDE not
   running") when studio-session reports no live session.
 
-## Alternatives Considered
+## More Information
 
-- **Reuse the browser RPC path (`/services/studio-runtime`) from
-  studio-backend.** Rejected: that path is designed for a single authenticated
-  browser behind the proxy; driving it server-side would mean either exposing it
-  off-proxy (breaks the ADR-0003 security model) or having studio-backend
-  impersonate a browser client over Theia's WebSocket RPC — fragile and
-  conflates the two consumers.
-- **Put the bridge logic in `studio-session`.** Rejected: studio-session is the
-  lifecycle/transport boundary; mixing a semantic control/event API into it
-  couples container management to editor semantics and makes both harder to
-  evolve. A dedicated `studio-theia` gear keeps each with one job.
-- **A standalone Node sidecar as the bridge.** Rejected for the same reason
-  ADR-0003 rejected a standalone session manager: it would re-implement the
-  authn/tenancy/event-broker wiring the gear gets from the platform for free.
-- **Shared database / shared `/workspace` files as the integration point.**
-  Rejected: the operation journal and sync state are the Theia backend's private
-  representation; reading them out-of-band would fork ownership and lose the
-  idempotency/audit guarantees the queue provides.
-
-## Phased plan
+### Phased plan
 
 1. **Contract v1 (design, no behaviour change).** Freeze the S2S method + event
    set as a subset of `StudioRuntimeService`/`StudioRuntimeClient`; register the
@@ -214,7 +226,7 @@ error.
    policy), token rotation, unsupported-method negotiation, portal UX for
    session-down, and versioning/back-compat tests.
 
-## Open questions
+### Open questions
 
 - Egress from the Theia container to studio-backend in k8s: NetworkPolicy shape
   and the stable in-cluster address for the ingress.
@@ -225,3 +237,14 @@ error.
   reconnect backfill.
 - S2S token lifetime vs. `session_token`: same lifetime and rotation, or an
   independent, shorter-lived control token.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-theia-bridge`
+* `cpt-studio-constraint-extension-not-patch`
+* `cpt-studio-fr-theia-bridge`

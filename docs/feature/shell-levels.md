@@ -4,17 +4,53 @@ status: accepted
 owner: studio-team
 ---
 
-# Feature — Levels in the shell
+# Feature: Levels in the shell
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-shell-levels`
 
-## Summary
+- [x] `p1` - `cpt-studio-feature-shell-levels`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [1. Feature Context](#1-feature-context)
+  - [1.1 Overview](#11-overview)
+  - [1.2 Purpose](#12-purpose)
+  - [1.3 Actors](#13-actors)
+  - [1.4 References](#14-references)
+- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
+  - [Go down a level](#go-down-a-level)
+  - [Move sideways within a level](#move-sideways-within-a-level)
+  - [Choose a section of the level](#choose-a-section-of-the-level)
+- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
+  - [Resolve the menu of the level](#resolve-the-menu-of-the-level)
+  - [Decide what a menu click does](#decide-what-a-menu-click-does)
+  - [Assemble the path](#assemble-the-path)
+- [4. States (CDSL)](#4-states-cdsl)
+  - [Context Ladder State Machine](#context-ladder-state-machine)
+- [5. Definitions of Done](#5-definitions-of-done)
+  - [The extension declares its level](#the-extension-declares-its-level)
+  - [The shell draws the navigation of every level](#the-shell-draws-the-navigation-of-every-level)
+  - [One entry, one mount: sections change by action](#one-entry-one-mount-sections-change-by-action)
+  - [The chain is a breadcrumb of three slots](#the-chain-is-a-breadcrumb-of-three-slots)
+  - [The workspace level has no menu](#the-workspace-level-has-no-menu)
+  - [The entry point is the first item of the level](#the-entry-point-is-the-first-item-of-the-level)
+  - [Counts arrive with the list that shows them](#counts-arrive-with-the-list-that-shows-them)
+  - [Nothing owns the address yet](#nothing-owns-the-address-yet)
+- [6. Acceptance Criteria](#6-acceptance-criteria)
+
+<!-- /toc -->
+
+## 1. Feature Context
+
+### 1.1 Overview
 
 The shell stops being one flat list of the MFEs it happens to have. The session
 is at a level — organization, workspace or project — the top bar names the path
 to it, and the navigation shows the sections of that level and nothing else.
 
-### Purpose
+### 1.2 Purpose
 
 Until now every screen extension appeared in one drawer, sorted by
 `presentation.order`, with a rule drawn at `order >= 100` to separate the
@@ -60,38 +96,42 @@ changes the code:
 Overview screen, the Workspaces screen, and the Gears MFE. This feature is the
 mechanism they will sit on.
 
-### Actors
+**Requirements**: `cpt-studio-fr-portal-levels`
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+**Principles**: `cpt-studio-principle-project-is-unit`
+
+### 1.3 Actors
+
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member. Moves between levels and chooses sections of the level they are in. |
-| **Shell** | The portal shell. Owns the level, the path to it, the rail, and which extension is mounted. |
-| **MFE** | A screenset. Declares the level of each of its screens, and receives the section to show when its entry is already mounted. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member. Moves between levels and chooses sections of the level they are in. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Owns the level, the path to it, the rail, and which extension is mounted. |
+| **MFE** (`cpt-studio-actor-mfe`) | A screenset. Declares the level of each of its screens, and receives the section to show when its entry is already mounted. |
 
-### References
+### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-shell-levels`
 - **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md)
 - **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the workspace slot this feature turns into a level
 - **Feature**: [Project artifacts](project-artifacts.md) — the sections whose rail moves into the shell
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
-## Behaviour
+## 2. Actor Flows (CDSL)
 
 Unchecked on purpose, for the reason stated in `project-create.md`: a checked
 flow obliges every instruction to carry a code marker, and these span the shell,
 the manifests of two MFEs and the extension plumbing between them. Their
-evidence is the Acceptance Criteria; the implementation claims they
+evidence is the acceptance criteria in section 6; the implementation claims they
 rest on are the Definitions of Done, which are traced.
 
 **Use case**: work at the level you are in.
 
-### Actor flows (CDSL)
-
-#### Go down a level
+### Go down a level
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-shell-levels-descend`
 
@@ -116,7 +156,7 @@ rest on are the Definitions of Done, which are traced.
 7. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-path` so the new level is named in the top bar - `inst-9`
 8. [ ] - `p1` - **RETURN** the new level, its rail and its first section - `inst-10`
 
-#### Move sideways within a level
+### Move sideways within a level
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-shell-levels-sideways`
 
@@ -138,7 +178,7 @@ rest on are the Definitions of Done, which are traced.
    1. [ ] - `p1` - **RETURN** the session is at the level of the chosen sibling, with that level's rail - `inst-6`
 5. [ ] - `p1` - **RETURN** the same section, now of the chosen sibling - `inst-7`
 
-#### Choose a section of the level
+### Choose a section of the level
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-shell-levels-section`
 
@@ -159,9 +199,9 @@ rest on are the Definitions of Done, which are traced.
    1. [ ] - `p1` - **RETURN** adopt the reported section as the active item - `inst-5`
 5. [ ] - `p1` - **RETURN** the section on screen with its item active - `inst-6`
 
-### Processes / business logic (CDSL)
+## 3. Processes / Business Logic (CDSL)
 
-#### Resolve the menu of the level
+### Resolve the menu of the level
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-menu`
 
@@ -178,7 +218,7 @@ rest on are the Definitions of Done, which are traced.
 5. [x] - `p1` - Drop the items marked hidden: they stay registered and mountable, reached by something other than the rail - `inst-7`
 6. [x] - `p1` - **RETURN** the ordered items - `inst-6`
 
-#### Decide what a menu click does
+### Decide what a menu click does
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-click`
 
@@ -223,7 +263,7 @@ writes what was asked for (`inst-3` there), and the MFE's own report is adopted
 when it arrives (`inst-4`/`inst-5` there). Neither races the other — one
 answers the click, the other answers the MFE.
 
-#### Assemble the path
+### Assemble the path
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-shell-levels-path`
 
@@ -241,9 +281,9 @@ the path is drawn at one width and every slot in scope is always shown. A
 breakpoint invented here would be a guess at a design nobody has made — see the
 same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
 
-### States (CDSL)
+## 4. States (CDSL)
 
-#### Context Ladder State Machine
+### Context Ladder State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-shell-levels-ladder`
 
@@ -261,32 +301,9 @@ same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
 7. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** the organization is switched, because neither the workspace nor the project survives it - `inst-7`
 8. [ ] - `p1` - **FROM** Organization **TO** Organization **WHEN** the session is reloaded, because no level is restored without an address - `inst-8`
 
-## Acceptance Criteria
+## 5. Definitions of Done
 
-- [ ] At the organization level the rail shows the organization's items only; Findings, Artifacts and the other project sections are absent from it.
-- [ ] Choosing a workspace in the path shows that workspace's projects, and the rail disappears for as long as the session is at the workspace level.
-- [ ] Projects is not an item of the organization's rail anywhere in the product.
-- [ ] Opening a project shows the project's rail — Overview, Artifacts, Findings, Activity, Timeline, Team, and settings last — and the path gains a third slot.
-- [ ] Switching between two sections of the same project does not remount the screen: a filter set on Artifacts is still set after visiting Findings and coming back.
-- [ ] Switching between two items of the same MFE at the organization level behaves the same way, with no remount.
-- [ ] Switching to an item of a different MFE mounts it, and the previous screen is unmounted.
-- [ ] After the projects MFE moves the section by itself, the rail highlights the section that is on screen, not the one last clicked.
-- [ ] Every slot of the path opens a menu of its siblings, the last slot included.
-- [ ] Choosing the sibling already in scope makes no request and changes nothing.
-- [ ] Switching the workspace while a project is open leaves the project and lands at the chosen workspace.
-- [ ] Switching the organization clears the workspace and the project, and the session is at the organization level.
-- [ ] Under the organization slot the menu shows how many workspaces each organization has, and under the workspace slot how many projects — without a request per row.
-- [ ] The project slot's menu shows names with no artifact count under them.
-- [ ] Every slot of the path is the same fixed width, a long name truncates inside its slot, and the top bar never wraps to a second line.
-- [ ] A screen reader announces each slot once, naming the level and the entity, and does not read the caps label separately.
-- [ ] Reloading the page returns the session to the organization level, with the level's first item mounted, and nothing in the console claims a route.
-- [ ] No MFE reads `location` or pushes browser history; the back button behaves exactly as it did before this feature.
-- [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.
-- [ ] A screen declared `placement: hidden` appears in no level's rail and is never the screen a level opens on, yet the shell still mounts it when asked by id.
-
-### Definitions of Done
-
-#### The extension declares its level
+### The extension declares its level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-declared`
 
@@ -316,7 +333,7 @@ in an MFE manifest no longer decides where a separator is drawn.
 **Touches**:
 - Entities: `mfe.json` (every MFE), `app/mfe/schemas`, `screenLevels`, `Rail`
 
-#### The shell draws the navigation of every level
+### The shell draws the navigation of every level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-shell-draws`
 
@@ -352,7 +369,7 @@ case, and neither will any later level that turns out to have one screen.
 **Touches**:
 - Entities: `Rail`, `Menu` (removed), `ProjectRail` (removed), `components/ui/sidebar` (removed), `mfe.json` (projects-mfe)
 
-#### One entry, one mount: sections change by action
+### One entry, one mount: sections change by action
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-one-mount`
 
@@ -387,7 +404,7 @@ moves back up as `kind: 'section'`. Neither direction is an event: an MFE's
 - Action: `constructor_studio.context.projects.publish.v1~` (`kind: section`)
 - Entities: `Rail`, `screenLevels`, `appContextSlice`, `sharedContext`, `contextActions`, `ProjectsRoot` (projects-mfe), `navSlice`, `ProjectRail` (removed)
 
-#### The chain is a breadcrumb of three slots
+### The chain is a breadcrumb of three slots
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-chain`
 
@@ -434,7 +451,7 @@ goes away.
 **Touches**:
 - Entities: `Header`, `ContextSwitcher` (removed), `WorkspaceSwitcher` (removed), `appContextSlice`
 
-#### The workspace level has no menu
+### The workspace level has no menu
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-workspace-level`
 
@@ -465,7 +482,7 @@ whatever section the MFE is showing.
 **Touches**:
 - Entities: `mfe.json` (projects-mfe), `Rail`, `ContextChain`
 
-#### The entry point is the first item of the level
+### The entry point is the first item of the level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-entry-point`
 
@@ -490,7 +507,7 @@ screen a session opens on is not the one screen reached by a second path.
 **Touches**:
 - Entities: `MfeScreenContainer`, `appContextEffects`
 
-#### Counts arrive with the list that shows them
+### Counts arrive with the list that shows them
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-dod-shell-levels-counts`
 
@@ -517,7 +534,7 @@ without a subtitle.
 - API: `GET /cf/account-management/v1/tenants/{id}/children`
 - Entities: `appContextSlice`, `appContextEffects`
 
-#### Nothing owns the address yet
+### Nothing owns the address yet
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-no-address`
 
@@ -542,3 +559,26 @@ configuration change rather than a rewrite.
 
 **Touches**:
 - Entities: `appContextSlice`, `sharedContext`, `contextActions`
+
+## 6. Acceptance Criteria
+
+- [ ] At the organization level the rail shows the organization's items only; Findings, Artifacts and the other project sections are absent from it.
+- [ ] Choosing a workspace in the path shows that workspace's projects, and the rail disappears for as long as the session is at the workspace level.
+- [ ] Projects is not an item of the organization's rail anywhere in the product.
+- [ ] Opening a project shows the project's rail — Overview, Artifacts, Findings, Activity, Timeline, Team, and settings last — and the path gains a third slot.
+- [ ] Switching between two sections of the same project does not remount the screen: a filter set on Artifacts is still set after visiting Findings and coming back.
+- [ ] Switching between two items of the same MFE at the organization level behaves the same way, with no remount.
+- [ ] Switching to an item of a different MFE mounts it, and the previous screen is unmounted.
+- [ ] After the projects MFE moves the section by itself, the rail highlights the section that is on screen, not the one last clicked.
+- [ ] Every slot of the path opens a menu of its siblings, the last slot included.
+- [ ] Choosing the sibling already in scope makes no request and changes nothing.
+- [ ] Switching the workspace while a project is open leaves the project and lands at the chosen workspace.
+- [ ] Switching the organization clears the workspace and the project, and the session is at the organization level.
+- [ ] Under the organization slot the menu shows how many workspaces each organization has, and under the workspace slot how many projects — without a request per row.
+- [ ] The project slot's menu shows names with no artifact count under them.
+- [ ] Every slot of the path is the same fixed width, a long name truncates inside its slot, and the top bar never wraps to a second line.
+- [ ] A screen reader announces each slot once, naming the level and the entity, and does not read the caps label separately.
+- [ ] Reloading the page returns the session to the organization level, with the level's first item mounted, and nothing in the console claims a route.
+- [ ] No MFE reads `location` or pushes browser history; the back button behaves exactly as it did before this feature.
+- [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.
+- [ ] A screen declared `placement: hidden` appears in no level's rail and is never the screen a level opens on, yet the shell still mounts it when asked by id.

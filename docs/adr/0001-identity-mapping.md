@@ -2,15 +2,28 @@
 type: adr
 status: proposed
 date: 2026-07-28
+decision-makers: Studio backend team
 ---
 
 # ADR-0001: Identity mapping for external systems — Studio domain gear, not an IdP plugin
 
-## Status
+**ID**: `cpt-studio-adr-identity-mapping`
 
 Status: **proposed** · Date: 2026-07-28 · Deciders: Studio backend team
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The Studio v2 model (STUDIO_REPRESENTATION_MODEL, vision) requires one tenant-wide
 identity per person: records pulled by connectors from Jira, GitLab, HRIS etc. must be
@@ -28,7 +41,7 @@ platform deliberately splits identity concerns:
 Nobody in the current platform owns the mapping `external identity (system, ref) →
 platform user`. Someone must.
 
-## Alternatives Considered
+## Considered Options
 
 **A. Extend the IdP plugin.** Teach the (future, OIDC-backed) IdP plugin to also
 answer "which platform user is jira:jsmith?".
@@ -53,7 +66,7 @@ REST/SDK surface, and SecureConn tenant isolation.
   earlier. Also mapping has write/review semantics (confirm/reject) that plain graph
   edges don't.
 
-## Decision
+## Decision Outcome
 
 **Option B: a dedicated `studio-identity` gear.** First Studio domain gear.
 
@@ -82,7 +95,7 @@ IdP; AM remains the door for user lifecycle; auto-matching rules run inside the 
 but ambiguous matches always land as `proposed` for human review (mirrors the
 "research result ≠ decision" principle used elsewhere in Studio).
 
-## Consequences
+### Consequences
 
 - (+) Connectors get a single resolve endpoint; graph attribution has one owner.
 - (+) Tenant isolation and audit inherited from the platform, not reimplemented.
@@ -91,9 +104,21 @@ but ambiguous matches always land as `proposed` for human review (mirrors the
 - (−) Until an OIDC IdP plugin exists, `platform_user_id` values come from the echo
   IdP (deterministic UUIDs) — fine for dev, revisit before production.
 
-## Follow-ups
+## More Information
+
+### Follow-ups
 
 1. Write PRD/DESIGN for `studio-identity` using the gears SDLC kit (UPSTREAM_REQS →
    PRD → ADR/DESIGN → DECOMPOSITION).
 2. Decide the `system` catalog shape (GTS instances vs. plain enum) with the gears team.
 3. Define the connector contract that feeds `proposed` links (bulk import + dedup).
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-canonical-user`

@@ -7,279 +7,941 @@ capabilities: domain, tenancy, auth, authz, storage, connectors, facade, deploy
 
 # PRD — Constructor Studio
 
-## Overview
+## Table of Contents
+
+<!-- toc -->
+
+- [1. Overview](#1-overview)
+  - [1.1 Purpose](#11-purpose)
+  - [1.2 Background / Problem Statement](#12-background--problem-statement)
+  - [1.3 Goals (Business Outcomes)](#13-goals-business-outcomes)
+  - [1.4 Glossary](#14-glossary)
+- [2. Actors](#2-actors)
+  - [2.1 Human Actors](#21-human-actors)
+  - [2.2 System Actors](#22-system-actors)
+- [3. Operational Concept & Environment](#3-operational-concept--environment)
+  - [3.1 Gear-Specific Environment Constraints](#31-gear-specific-environment-constraints)
+- [4. Scope](#4-scope)
+  - [4.1 In Scope](#41-in-scope)
+  - [4.2 Out of Scope](#42-out-of-scope)
+- [5. Functional Requirements](#5-functional-requirements)
+  - [5.1 Organizations, workspaces and navigation](#51-organizations-workspaces-and-navigation)
+  - [5.2 Identity and access](#52-identity-and-access)
+  - [5.3 Connections and credentials](#53-connections-and-credentials)
+  - [5.4 IDE sessions](#54-ide-sessions)
+  - [5.5 Documents](#55-documents)
+  - [5.6 Knowledge graph](#56-knowledge-graph)
+  - [5.7 Gears, products and kits](#57-gears-products-and-kits)
+  - [5.8 Background work and push](#58-background-work-and-push)
+  - [5.9 Files and settings](#59-files-and-settings)
+  - [5.10 Contract, registries and operation](#510-contract-registries-and-operation)
+- [6. Non-Functional Requirements](#6-non-functional-requirements)
+  - [6.1 Gear-Specific NFRs](#61-gear-specific-nfrs)
+  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+- [7. Public Library Interfaces](#7-public-library-interfaces)
+  - [7.1 Public API Surface](#71-public-api-surface)
+  - [7.2 External Integration Contracts](#72-external-integration-contracts)
+- [8. Use Cases](#8-use-cases)
+- [9. Acceptance Criteria](#9-acceptance-criteria)
+- [10. Dependencies](#10-dependencies)
+- [11. Assumptions](#11-assumptions)
+- [12. Risks](#12-risks)
+- [13. Open Questions](#13-open-questions)
+- [14. Traceability](#14-traceability)
+  - [14.1 Functional requirements to implementation](#141-functional-requirements-to-implementation)
+  - [14.2 Acceptance criteria to implementation](#142-acceptance-criteria-to-implementation)
+
+<!-- /toc -->
+
+## 1. Overview
+
+### 1.1 Purpose
 
 Constructor Studio, from Constructor Fabric, gives an engineering team a
 governed place to do project work. A project holds its people, sources, secrets
-and connectors, and launches a full Theia IDE session against those sources with
-AI agents already configured. This repository is the web runtime of the
-product: the Rust backend assembled from CF/Gears (`studio-backend/`), the FrontX
-portal (`studio-frontend/`), the pre-FrontX prototype portal
-(`studio-frontend-prototype/`), Keycloak-based login (`keycloak/`) and the
-per-workspace IDE sessions (`theia/`).
+and connections, and launches a Theia IDE session against those sources with AI
+agents already configured. This repository is the web runtime of the product:
+the Rust backend assembled from CF/Gears (`studio-backend/`), the FrontX portal
+(`studio-frontend/`), the prototype portal (`studio-frontend-prototype/`), the
+Keycloak image (`keycloak/`), the IDE session image (`theia/`) and the
+deployment definitions (`docker-compose.yml`, `deploy/`).
 
-The product brief this document is built from is [`PRODUCT.md`](../../PRODUCT.md);
-it stays the authority on positioning, principles and brand. The architecture is
-in [the design document](../design/constructor-studio.md) and the split into
-gears and features in [the decomposition](../decomposition/constructor-studio.md).
+The product brief is [`PRODUCT.md`](../../PRODUCT.md); it stays the authority on
+positioning, principles and brand. How the system is built is in
+[the design](../design/constructor-studio.md), and how it splits into
+implementable entries is in [the decomposition](../decomposition/constructor-studio.md).
 
-## Problem
+### 1.2 Background / Problem Statement
 
-An engineer who wants to work on a codebase with AI agents alongside has to
-assemble that environment locally: clone every repository, hold a personal
-access token for each source host, put an LLM provider key where the agent can
-read it, and configure quality and search tooling by hand. Each of those is
-repeated per person and per machine, and each leaves a credential somewhere the
-organization does not govern. A local IDE with an agent plugin cannot keep
-provider keys and Git credentials out of the place where the work happens, and a
-hosted IDE without a tenant model cannot say which organization, project and
-people a session belongs to. Nobody can answer "which repositories do we have"
-or "who is working in this project" from one place.
+An engineer who works on a codebase with AI agents alongside assembles that
+environment locally: clones every repository, holds a personal access token for
+each source host, puts an LLM provider key where the agent can read it, and
+configures quality and search tooling by hand. That is repeated per person and
+per machine, and each step leaves a credential somewhere the organization does
+not govern.
 
-## Goals
+A local IDE with an agent plugin cannot keep provider keys and Git credentials
+out of the place where the work happens, and a hosted IDE without a tenant model
+cannot say which organization, project and people a session belongs to. Nobody
+can answer "which repositories do we have" or "which specifications does this
+project have, and are they complete" from one place (`PRODUCT.md`,
+Positioning).
 
-- An engineer opens a project and is working — repositories cloned, agents
-  authenticated, quality and search surfaces present — without assembling any
-  of it locally.
-- Everything a person needs (sources, people, secrets, connectors, the IDE
-  session) belongs to a project and is reached from it: the project is the unit.
-- Credentials never travel to where the work happens: provider keys and Git
-  tokens stay server-side and reach the session by reference.
-- The product says only what the backend can prove: derived state is labelled
-  as derived, and a surface the model anticipates but does not have yet shows as
-  reserved, never as fake data.
+### 1.3 Goals (Business Outcomes)
 
-## Non-Goals
+- A member opens a project and reaches a working IDE session with its
+  repositories cloned and its agents authenticated, without a local checkout.
+- No provider key or Git token is readable in a session container or in a
+  browser.
+- Every surface the portal shows is backed by a backend read, or is labelled as
+  derived, local or reserved (`PRODUCT.md`, Product Principles 2 and 5).
 
-- Customers, pricing, licensing terms, usage numbers and public marketing copy:
-  none exist in this repository and none are to be fabricated.
-- Billing, metering and compliance certification: no gear in the assembly
-  provides them.
-- SSH cloning: the session container has no SSH key or agent, so cloning is
-  HTTPS-only even when a workspace manifest lists `git@…` remotes.
-- IDE sessions in every Kubernetes environment: the chart ships with
-  `backend.sessions.enabled: false`, the dev values turn the Kubernetes session
-  driver on and the test values keep it off, and while it is on the backend
-  stays single-replica (`deploy/helm/studio-web/values.yaml`). A portal surface
-  that assumes a session must degrade honestly where there is none.
-- A binding brand system: there is no committed Studio visual identity; the
-  FrontX marks in the tree are template scaffolding.
-- Deciding, in this document, what `PRODUCT.md` lists as undecided: whether
-  nested projects may nest further, whether root projects derive an owner, and
-  what the shared connector catalogue is called while organizations stay hidden.
+`PRODUCT.md` records that no usage numbers exist in this repository, so the
+goals are stated as observable outcomes rather than numeric targets.
 
-## Users & Use Cases
+### 1.4 Glossary
 
-**Primary: software engineers working on a codebase.** They arrive with
-repositories on GitHub, GitLab (including self-hosted), GitHub Enterprise,
-Bitbucket or a plain HTTPS Git URL, and want to read, edit, review and ship with
-AI agents alongside. Their working surface is a per-workspace Theia IDE session
-launched from the portal, not a local checkout.
+These terms are used with exactly this meaning in every document under `docs/`.
 
-- Open a project and launch its IDE session; the sources are cloned into the
-  workspace on first launch.
-- Work with the agents already present in the session — Theia AI with
-  @Universal/@Coder, Codex, Claude Code and the Orca agent panel — authenticated
-  through Studio rather than by a key in the container.
-- Read and edit the project's documents in the IDE's markdown editor, see them
-  classified and validated against their document type, and open a document,
-  file, artifact graph or Gearbox product from the portal straight into the IDE.
+| Term | Definition |
+|------|------------|
+| Organization | An account-management tenant that owns members, the shared connection catalogue and the access config. Hidden from navigation in concept v2, not removed. |
+| Workspace | An account-management tenant of type `workspace` under an organization. Concept v2 calls it a root project; the wire keeps `workspace` and `workspace_id` (ADR-0010). |
+| Project | A tenant nested under a workspace; its attributes are tenant metadata (ADR-0010). |
+| Member | A person with a membership in an organization, recorded by `studio-user` (ADR-0016). |
+| Gear | A CF/Gears module linked into the backend binary and registered at link time through `inventory`. A Studio gear lives in `studio-backend/src/`; a platform gear comes from gears-rust. |
+| Plugin | A gear that implements another gear's plugin contract, for example a connector plugin for `studio-connector` or an AuthZ resolver plugin. |
+| Connection | A configured credential for one provider (source host, model provider or chat platform), owned by a tenant; its secret is a credstore reference. |
+| Session | A running Theia IDE container or Pod for one workspace, managed by `studio-session`. |
+| Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
+| Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
+| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. |
+| Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
+| Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
+| Run | One unit of durable background work in `studio-tasks`. |
 
-**Secondary: project administrators.** They invite members, bind sources to a
-project, and manage connectors and secrets.
+## 2. Actors
 
-- Connect a source host or model provider once per organization and pick
-  repositories from it afterwards (see
-  [Connect a source](../feature/connection-create.md)).
-- Create a workspace and projects inside it, empty or from existing repositories
-  (see [Create a project](../feature/project-create.md) and
-  [Workspaces in scope](../feature/workspace-scope.md)).
+> **Note**: Stakeholder needs are managed outside this repository. The actors below are the users and systems that interact with Constructor Studio.
 
-**Secondary: platform and tenant administrators.** They place newly signed-in
-people into organizations, see who has signed in without belonging to one, and
-own the hidden organization level (ADR-0009, ADR-0010), which the portal shows
-only behind `localStorage.setItem("studio.platformAdmin", "on")`.
+### 2.1 Human Actors
 
-## Requirements
+#### Member
 
-What the product does today, grouped by area. Each item is implemented in this
-repository; the gear or package that implements it is named in brackets.
+**ID**: `cpt-studio-actor-member`
 
-**Organizations, workspaces and projects**
+- **Role**: A signed-in person with a membership in the organization in scope. The primary member is a software engineer working on a codebase: opens projects, launches the IDE session, connects sources, reads documents and artifacts.
+- **Needs**: A project that is ready to work in — sources cloned, agents authenticated, quality and search surfaces present — without holding credentials locally.
 
-- A person creates an organization and owns it; the tenant, the owner's
-  membership and the access grant are written by one resumable operation
-  (`studio-organizations`, ADR-0018).
-- A root project is an account-management tenant of type `workspace`, and
-  projects are tenants beneath it; the wire keeps the words `workspace` and
-  `workspace_id` (ADR-0010, `docs/concept-v2-project-is-the-unit.md`).
-- The portal shell navigates three levels — organization, workspace, project —
-  with a top bar, an overlay drawer and a context slot (ADR-0008,
-  [Levels in the shell](../feature/shell-levels.md)).
+#### Organization owner
 
-**People and identity**
+**ID**: `cpt-studio-actor-org-owner`
 
-- Sign-in is OIDC Authorization Code + PKCE against Keycloak; GitHub identities
-  arrive through Keycloak brokering; static dev tokens remain for scripts.
-- A canonical Studio user is separate from the ways a person signs in: `user`,
-  `login`, `membership` and `alias` records, with self-service attribution of
-  external identities that binds only on a proof of control (`studio-user`,
-  ADR-0023, ADR-0012, ADR-0015).
-- Authentication does not grant organization membership; a person with no
-  membership gets a valid no-access state, and a platform-admin view lists
-  identities that belong to no organization yet (`studio-identity-directory`,
-  ADR-0011, ADR-0018).
-- Presence: who is in Studio right now, and a direct message to someone who is
-  online, delivered on the push channel and never stored (`studio-presence`).
+- **Role**: A member who owns an organization. Administers its people, invitations and roles; the owner gate is answered in the gear from the access config (ADR-0019).
+- **Needs**: To place people into the organization and decide their roles without granting any other member that authority.
 
-**Sources, connectors and credentials**
+#### Platform administrator
 
-- A connection is configured once per tenant for a source host (GitHub, GitLab,
-  Bitbucket), a model provider (Anthropic, OpenAI) or a chat platform (Slack,
-  Zulip, Discord, each with a bot-token and an incoming-webhook variant); the
-  API returns the credstore reference, never the token (`studio-connector`).
-- Credential values survive a backend restart in a Postgres-backed credstore
-  value store (`studio-credstore-pg`), and config-seeded secrets heal themselves
-  at start (`studio-secrets-bootstrap`).
-- Git tokens reach a session as credstore secret references through an inline
-  credential helper and are never written into `.git/config`.
+**ID**: `cpt-studio-actor-platform-admin`
 
-**IDE sessions**
+- **Role**: Operates the installation. Sees identities that belong to no organization and assigns them, and sees the hidden organization level, which the portal shows behind `localStorage.setItem("studio.platformAdmin", "on")`.
+- **Needs**: A view of every identity Keycloak holds, including the ones no tenant-scoped list can show (ADR-0011).
 
-- Launch, list, reach and stop a per-workspace Theia IDE session; sessions live
-  four hours before a reaper collects them and survive backend restarts through
-  label adoption (`studio-session`, ADR-0003).
-- Two runtimes behind one contract: a container on the local Docker daemon, and
-  a Pod plus ClusterIP Service per session reached through the backend's
-  authenticated proxy.
-- The session's Theia node backend is reachable backend-to-backend for control
-  calls, and posts its events back through an authenticated ingress
-  (`studio-theia`, behind the `theia-bridge` Cargo feature, ADR-0022).
-- The IDE's AI calls an OpenAI-compatible endpoint under the Studio gateway with
-  the user's own Studio token; the provider key is attached server-side and
-  never enters the container (`studio-llm-proxy`, behind the `llm` feature).
+### 2.2 System Actors
 
-**Documents and knowledge**
+#### Portal shell
 
-- Document types carry a markdown template, a section checklist and structural
-  rules; types, stages and capabilities are defined at organization level and
-  overridden per workspace; a PRD can be composed from a questionnaire
-  (`studio-documents`, ADR-0014).
-- Documents already in a repository are classified — declared front matter
-  first, then inferred from sections, path, title and front-matter keys, then
-  the external `purpose` detector — and validated against the chosen type; the
-  result is recorded as a binding to the artifact-graph file node
-  (`docs/documents-from-a-repository.md`).
-- Specification quality is judged by the external spec-quality service's
-  `bloat`, `purpose`, `leak` and `traceability` detectors through an
-  authenticated passthrough (`studio-spec-quality`).
-- Issues, pull requests and files are ingested from a connector source into the
-  knowledge graph as typed GTS nodes with deterministic ids
-  (`studio-artifact-ingest`).
-- The Studio domain model is stored as GTS types in Graph Storage, extended with
-  new fields and read back by the portal (`studio-domain-model`, ADR-0024).
+**ID**: `cpt-studio-actor-shell`
 
-**Gears, kits and products**
+- **Role**: The FrontX host application in `studio-frontend/src-app/app/`. Owns the levels, the path, the rail, the overlay frame and which microfrontend is mounted, and publishes the organization and workspace in scope.
 
-- The catalogue of Constructor Fabric gears published on crates.io is synced into
-  the knowledge graph, and a gear skeleton can be scaffolded into a project's
-  repository on a branch, optionally with a pull request
-  (`studio-components-catalog`).
-- A `product.gdl` can be composed from picked gears and resolved with the
-  Gearbox engine, optionally committed; the session IDE carries the same engine
-  as the Gearbox views and the `.gdl` language (`theia/gearbox-studio`).
-- A catalogue of kits, and the per-project record of which kits are desired;
-  `cfs` materializes kit files into a checkout (`studio-kits`).
+#### Microfrontend
 
-**Background work and notifications**
+**ID**: `cpt-studio-actor-mfe`
 
-- Durable background runs with state, attempts, cancel and retry
-  (`studio-tasks`); cron and interval schedules that enqueue runs
-  (`studio-scheduler`); queued chat notifications with retries and a dead-letter
-  record (`studio-notify`).
-- One domain-neutral push channel to the portal, with replay after a reconnect
-  (`studio-events`, ADR-0026).
+- **Role**: A FrontX microfrontend package under `studio-frontend/src-app/mfe_packages/`. Declares the level of each screen it contributes, reads its data from the backend and announces what it wrote.
 
-**Contract**
+#### Provider
 
-- Every REST operation and published event follows one written contract,
-  enforced by a ratchet against a committed surface rather than by review
-  (ADR-0020, [`docs/api-conventions.md`](../api-conventions.md),
-  [`docs/errors-catalog.md`](../errors-catalog.md),
-  [`docs/events-catalog.md`](../events-catalog.md)).
+**ID**: `cpt-studio-actor-provider`
 
-## Authentication & Authorization
+- **Role**: An external service a connection talks to: a source host (GitHub, GitLab, Bitbucket), a model provider (Anthropic, OpenAI) or a chat platform (Slack, Zulip, Discord). Answers credential probes and serves repositories, models or message delivery.
 
-Authentication is Keycloak. The portal signs in with OIDC Authorization Code +
-PKCE and renews silently from a refresh token in `sessionStorage`; the backend
-validates tokens with `oidc-authn-plugin`, and `static-authn-plugin` keeps static
-tokens for scripts. User provisioning runs through the Keycloak IdP plugin of
-account-management (ADR-0004). An identity proves who the person is and decides
-nothing else (ADR-0018).
+#### Identity provider
 
-Authorization has two parts (ADR-0019). Row access is answered by the Studio PDP
-(`studio-authz-plugin`), whose tenant clamp keeps every request inside the
-caller's tenant subtree; roles are layered on top of the tenant model and can
-only narrow access (ADR-0009). No Studio resource type is role-mapped yet, so
-every request is answered by the tenant clamp. Administrative authority — who
-may manage an organization's people, invitations and roles — is answered in the
-gear from the organization's access config (`access_config.rs`). The portal
-labels roles it derives from server state as derived and must not present role
-controls as enforcement.
+**ID**: `cpt-studio-actor-keycloak`
 
-## Data & Storage
+- **Role**: Keycloak. Authenticates people with OIDC, brokers GitHub identities, and is provisioned through account-management's Keycloak IdP plugin.
 
-One PostgreSQL instance (`graph-postgres` in Compose) holds the application
-databases and `graph_storage`. Gears with their own relational tables include
-`studio-documents`, `studio-user`, `studio-tasks`, `studio-scheduler`,
-`studio-events` and `studio-credstore-pg`. The knowledge graph is
-`cf-gears-graph-storage` on PostgreSQL with pgvector, behind the `graph` Cargo
-feature, with an in-process ONNX or a remote embeddings provider. File storage is
-the `file-storage` gear, backed by Virtuozzo S3 in the Kubernetes environments
-(`deploy/FILE_STORAGE_S3.md`); Compose does not provision S3.
+#### IDE session
 
-## Integrations & External Systems
+**ID**: `cpt-studio-actor-session`
 
-- Source hosts: GitHub, GitLab, Bitbucket.
-- Model providers: Anthropic, OpenAI, and any OpenAI-compatible upstream behind
-  `studio-llm-proxy`.
-- Chat platforms: Slack, Zulip, Discord.
-- Keycloak, as identity provider and GitHub broker.
-- The external spec-quality service, wrapped by `studio-spec-quality`.
-- Constructor Insight, whose read-only SQL endpoint is reached only through
-  `studio-insight`.
-- crates.io, read by the gear catalogue sync.
-- The Gearbox engine, pinned by commit in the session image and in the backend
-  preview.
+- **Role**: The Theia node backend inside a session container. Serves the IDE to the browser, exposes an internal control API to the backend, and posts its events to the backend's ingress (ADR-0022).
 
-`studio-spec-quality`, `studio-insight` and `studio-llm-proxy` are facades: each
-exposes an existing external service under the Studio gateway, authenticates the
-caller with the normal Studio token and attaches the server-held credential, so
-that credential never reaches a browser or a session container.
+#### AI agent
 
-## Deployment
+**ID**: `cpt-studio-actor-agent`
 
-Two supported modes run the same logical stack. Docker Compose is for local
-development and functional checks on one machine: it starts Keycloak, the single
-Postgres, the backend and its bootstrap, both portals and the session image, and
-launches IDE containers through the host Docker daemon. Kubernetes is the shared
-deployment for the `studio-dev` and `studio-test` namespaces, installed from the
-Helm chart in `deploy/helm/studio-web` by the Studio Delivery GitHub Actions
-workflow with a namespace-scoped kubeconfig; images are published to GHCR under
-immutable `sha-` tags. The Kubernetes release is built without the `llm` feature
-and with `graph` and `theia-bridge` (`deploy/README.md`, `deploy/PIPELINES.md`).
+- **Role**: An agent running inside a session — Theia AI with @Universal/@Coder, Codex, Claude Code, the Orca panel and the `@Gearbox` chat agent. Calls the model through `studio-llm-proxy` with the member's Studio token.
 
-## Success Metrics
+## 3. Operational Concept & Environment
 
-No usage numbers exist in this repository, so success is stated as observable
-outcomes rather than targets:
+> **Note**: The foundational documents that exist in this repository are [`README.md`](../../README.md) (supported deployment modes), [`PRODUCT.md`](../../PRODUCT.md) (product brief), [`docs/api-conventions.md`](../api-conventions.md) (REST and event contract) and [`deploy/README.md`](../../deploy/README.md) (Kubernetes operation). There is no parent PRD. Only the constraints specific to Constructor Studio are listed here.
 
-- An engineer opens a project and reaches a working IDE session with its
-  repositories cloned and its agents authenticated, without a local checkout or
-  a credential in the browser.
-- No provider key or Git token is readable inside a session container or
-  returned by any API.
-- Every surface the portal shows is either backed by a backend read or labelled
-  as derived, local or reserved.
-- The REST contract ratchet and the backend gates pass on every pull
-  request.
+### 3.1 Gear-Specific Environment Constraints
+
+- The graph-storage gear runs only on PostgreSQL 19 with pgvector, and its migrations run at boot (`studio-backend/Cargo.toml`, feature `graph`).
+- The `llm` feature (mini-chat, `api_egress`, `studio-llm-proxy`) is left out of the Kubernetes release image because of a fresh-boot root-tenant deadlock (`studio-backend/Cargo.toml`, feature `llm`).
+- Cloning into a session is HTTPS-only; the session container has no SSH key or agent (`PRODUCT.md`, Capabilities and Constraints).
+- Docker Compose launches sessions through the host Docker daemon and requires the same host path `/srv/cf-studio-workspaces` on both sides of the mount (`README.md`).
+- While IDE sessions are enabled on Kubernetes, the Helm chart refuses more than one backend replica (`deploy/helm/studio-web/values.yaml`).
+
+## 4. Scope
+
+### 4.1 In Scope
+
+- Organizations, workspaces and projects as account-management tenants, and the portal's navigation over them.
+- Sign-in through Keycloak, the canonical user, memberships, invitations and the platform identity directory.
+- Tenant-scoped authorization through the Studio PDP, with administrative authority answered from the access config.
+- Connections to source hosts, model providers and chat platforms, with credentials kept in credstore.
+- Per-workspace IDE sessions, the backend-to-backend bridge into them, and the LLM proxy their agents use.
+- Document types, documents, repository document bindings and specification quality.
+- Ingest of repository artifacts and of the Studio domain model into the knowledge graph.
+- The gear catalogue, gear scaffolding, Gearbox products, kits and Constructor Insight delivery metrics.
+- Durable background runs, schedules, queued notifications, presence and the push channel to the portal.
+- The REST contract ratchet, the GTS registry consistency checks and database bootstrap.
+- Deployment with Docker Compose and on Kubernetes, the observability stack and the delivery pipeline.
+
+### 4.2 Out of Scope
+
+- Billing, metering and compliance certification: no gear in the assembly provides them.
+- Customers, pricing, licensing terms and public marketing copy: `PRODUCT.md` records that none exist.
+- SSH cloning into a session.
+- A committed Studio brand identity: the FrontX marks in the tree are template scaffolding (`PRODUCT.md`, Brand Commitments).
+- The `theia/electron-app` desktop build: it is present as a package but is not built into the session image or deployed.
+- The kustomize manifests in `deploy/k8s/*.yaml`: they belong to the earlier proposal in `docs/deploy-k8s-cicd.md`; the supported Kubernetes path is the Helm chart.
+
+## 5. Functional Requirements
+
+> **Testing strategy**: Verification is by the automated suites the Studio Delivery workflow runs (`.github/workflows/studio-delivery.yml`: backend, frontend, prototype, Theia session gate, API usage, infrastructure and deployment-config jobs). Where a requirement is checked another way, the method is named.
+
+Functional requirements define what the system does. Each is traced to the module, route or screen that implements it in [§14 Traceability](#14-traceability). A requirement marked `[ ]` is planned, with its source; every other requirement is implemented in this repository.
+
+### 5.1 Organizations, workspaces and navigation
+
+#### Create an organization with an owner
+
+- [x] `p1` - **ID**: `cpt-studio-fr-org-create`
+
+The system **MUST** create an organization as one resumable operation that writes the account-management tenant, the creator's owner membership and the access-config grant.
+
+- **Rationale**: A client that writes only the tenant produces an organization nobody owns and nobody sees (ADR-0018).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Administer an organization
+
+- [x] `p1` - **ID**: `cpt-studio-fr-org-administration`
+
+The system **MUST** let an organization owner manage the organization's invitations, memberships and non-owner roles, and **MUST** serve the organization's access catalogue, capabilities and rollups; only an owner may change who owns the organization.
+
+- **Rationale**: Administrative authority is one answer per organization, answered in the gear from the access config rather than by the PDP (ADR-0019 §3, §9).
+- **Actors**: `cpt-studio-actor-org-owner`
+
+#### Workspaces and projects are tenants
+
+- [x] `p1` - **ID**: `cpt-studio-fr-workspace-project-tenants`
+
+The system **MUST** create and list workspaces as account-management tenants of type `workspace` under an organization, and projects as tenants nested under a workspace, with project attributes stored as tenant metadata.
+
+- **Rationale**: The retired `studio-project` gear is replaced by tenancy the platform already enforces (ADR-0010).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-shell`
+
+#### Navigate by level
+
+- [x] `p1` - **ID**: `cpt-studio-fr-portal-levels`
+
+The portal **MUST** navigate three levels — organization, workspace, project — with a top bar, an overlay drawer and one context slot, draw the menu of the level it is on, and mount a microfrontend entry that is a Module Federation remote or an iframe whose address arrives at runtime.
+
+- **Rationale**: ADR-0008 fixes the shell's structure; ADR-0021 adds frame entries.
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-shell`, `cpt-studio-actor-mfe`
+
+#### Reserved areas say so
+
+- [x] `p2` - **ID**: `cpt-studio-fr-portal-reserved-areas`
+
+The portal **MUST** show an area whose backing does not exist yet as reserved, with no fabricated data.
+
+- **Rationale**: `PRODUCT.md`, Product Principle 5 ("Reserved is not empty").
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.2 Identity and access
+
+#### Sign in with Keycloak
+
+- [x] `p1` - **ID**: `cpt-studio-fr-sign-in`
+
+The system **MUST** authenticate people with OIDC Authorization Code + PKCE against Keycloak, renew the session silently from a refresh token, accept GitHub identities through Keycloak brokering, and keep static bearer tokens for scripts.
+
+- **Rationale**: Real sign-in replaces dev tokens for people; scripts keep working (`PRODUCT.md`, Operating Context).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-keycloak`
+
+#### One canonical user per person
+
+- [x] `p1` - **ID**: `cpt-studio-fr-canonical-user`
+
+The system **MUST** keep one canonical user per person, separate from the logins that resolve to it, with aliases a person attributes to themselves that bind only on a proof of control, and **MUST** support merging two users.
+
+- **Rationale**: Without it the same human becomes several users and their work is split (ADR-0023, ADR-0012, ADR-0015, ADR-0025).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-keycloak`
+
+#### Invitations and memberships
+
+- [x] `p1` - **ID**: `cpt-studio-fr-invitations-membership`
+
+The system **MUST** record a membership where assignment happens, invite people by e-mail with a token stored only as a digest, and give a person with no membership a valid no-access state instead of an error.
+
+- **Rationale**: Authentication does not grant organization membership (ADR-0011, ADR-0016, ADR-0018).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-org-owner`
+
+#### Identity directory
+
+- [x] `p2` - **ID**: `cpt-studio-fr-identity-directory`
+
+The system **MUST** give a platform administrator a read-only, root-scoped list of the identities Keycloak holds, including those in no organization, and let the administrator assign one.
+
+- **Rationale**: No tenant-scoped list can show a person who is in no tenant (ADR-0011).
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+#### Tenant-clamped authorization
+
+- [x] `p1` - **ID**: `cpt-studio-fr-authz-tenant-clamp`
+
+The system **MUST** answer every authorization request through the Studio PDP, which keeps the request inside the caller's tenant subtree, and **MUST** only narrow that bound with role grants.
+
+- **Rationale**: Roles are layered over the tenant model and can never widen it (ADR-0009, ADR-0019).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Row-level role mapping
+
+- [ ] `p2` - **ID**: `cpt-studio-fr-authz-row-roles`
+
+Planned. The Studio PDP **MUST** map a Studio resource type and action to a privilege when that resource's gear starts asking for row-level access; `privilege_for` in `studio_authz_plugin.rs` returns nothing today (ADR-0019, Follow-ups).
+
+- **Rationale**: Row access is the PDP's question; administration is not (ADR-0019 §3).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Presence and direct messages
+
+- [x] `p2` - **ID**: `cpt-studio-fr-presence`
+
+The system **MUST** report who is in Studio from portal heartbeats and deliver a direct message to an online person over the push channel without storing it.
+
+- **Rationale**: An administrator asked who is working now and how to reach them (`studio_presence` module documentation).
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.3 Connections and credentials
+
+#### Connections
+
+- [x] `p1` - **ID**: `cpt-studio-fr-connections`
+
+The system **MUST** let a tenant configure one connection per provider — source hosts GitHub, GitLab and Bitbucket; model providers Anthropic and OpenAI; chat platforms Slack, Zulip and Discord, each with a bot-token and an incoming-webhook variant — verify the credential when it is created, and list repositories, targets and files through it, returning the credstore reference and never the token.
+
+- **Rationale**: One connection replaces a clone URL and a token per repository per workspace (`studio-backend/src/connectors/README.md`).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-provider`
+
+#### Durable credentials
+
+- [x] `p1` - **ID**: `cpt-studio-fr-credentials-durable`
+
+The system **MUST** keep credential values across a backend restart, encrypted in a Postgres table, and **MUST** heal config-seeded secrets once at start.
+
+- **Rationale**: With the in-memory value store every restart lost the tokens people had entered (issue #66, `studio-backend/src/credstore_pg/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Queued chat notifications
+
+- [x] `p2` - **ID**: `cpt-studio-fr-chat-notifications`
+
+The system **MUST** validate a notification to a chat connection, queue it, deliver it with retries, and keep what cannot be delivered as a dead-letter record.
+
+- **Rationale**: A message dropped inside a request handler is dropped for good (`studio-backend/src/notify/README.md`).
+- **Actors**: `cpt-studio-actor-provider`
+
+#### Notifications that leave Studio
+
+- [ ] `p2` - **ID**: `cpt-studio-fr-notification-delivery-choice`
+
+Planned. The system **MUST** tell a person about comment threads waiting on them without the person opening the product, once the delivery channel is decided between a project channel, personal e-mail and a stored inbox (`TASKS.md`, 2026-09-17).
+
+- **Rationale**: Requirement §10 of the collaboration requirements cited in `TASKS.md`.
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.4 IDE sessions
+
+#### Per-workspace IDE session
+
+- [x] `p1` - **ID**: `cpt-studio-fr-ide-session`
+
+The system **MUST** launch, list, reach and stop one Theia IDE session per workspace, clone the workspace's sources into it on first launch, reap it four hours after launch, and adopt running sessions after a backend restart; it **MUST** run sessions through a Docker driver and a Kubernetes driver behind the same REST contract.
+
+- **Rationale**: The IDE is a running container with a checkout, credentials and an agent runtime, and somebody has to own its lifecycle (ADR-0003).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-session`
+
+#### Backend-to-backend bridge
+
+- [x] `p2` - **ID**: `cpt-studio-fr-theia-bridge`
+
+The system **MUST** let backend gears open a workspace, run and retry operations and read repositories and status in a running session over an authenticated internal control API, and **MUST** accept the session's events at an authenticated ingress; the bridge is built with the `theia-bridge` Cargo feature.
+
+- **Rationale**: The portal needs the session's state from outside the IDE without a browser in the loop (ADR-0022).
+- **Actors**: `cpt-studio-actor-session`
+
+#### IDE product surface
+
+- [x] `p1` - **ID**: `cpt-studio-fr-ide-product-surface`
+
+The session IDE **MUST** provide the Studio surfaces as Theia extensions: the portal bridge, repositories, Git operations, Analyze and Audit panels, workspace and artifact graphs and the Orca agents panel (`theia/studio`); the markdown editor, quality and flow rails, figure and table editors, search, comments, tracked changes and co-presence (`theia/product-ext`); and draw.io diagram editing (`theia/drawio-editor`).
+
+- **Rationale**: Every capability is hung on a published contribution point so Theia can be upgraded (`theia/studio/README.md`).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-session`
+
+#### LLM proxy for the IDE
+
+- [x] `p1` - **ID**: `cpt-studio-fr-ide-llm-proxy`
+
+The system **MUST** expose an OpenAI-compatible chat-completions, models and client-config endpoint that authenticates the caller with the member's Studio token and attaches the server-held provider key on the way upstream, streaming responses through.
+
+- **Rationale**: A provider key in the container is readable by anything in it (`studio-backend/src/llm_proxy/README.md`).
+- **Actors**: `cpt-studio-actor-agent`
+
+#### Workspace AI chat
+
+- [x] `p3` - **ID**: `cpt-studio-fr-workspace-ai-chat`
+
+The system **MUST** offer workspace AI chat through the mini-chat gear and its LLM egress when the `llm` feature is built; the prototype's Chats view is kept but hidden from navigation.
+
+- **Rationale**: `registered_gears.rs` links `mini_chat` and `api_egress` behind `llm`; `App.tsx` keeps the `chats` view reachable but unlisted.
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.5 Documents
+
+#### Document catalogue
+
+- [x] `p1` - **ID**: `cpt-studio-fr-document-catalogue`
+
+The system **MUST** hold document types (template, section checklist, rules, questionnaire), lifecycle stages and the capability vocabulary at organization level, overridable per workspace with a tombstone that hides an inherited entry.
+
+- **Rationale**: An organization's opinion of what a document contains becomes data (`studio-backend/src/documents/README.md`, ADR-0014).
+- **Actors**: `cpt-studio-actor-org-owner`
+
+#### Documents and validation
+
+- [x] `p1` - **ID**: `cpt-studio-fr-documents`
+
+The system **MUST** create, read, update and delete documents owned by a workspace and inherited by its projects, compose a PRD from a questionnaire, validate a document against its type's checklist and rules, and report each stage's status for a project.
+
+- **Rationale**: "Is this document complete" gets an answer that is not a person reading it (`studio-backend/src/documents/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Documents already in a repository
+
+- [x] `p1` - **ID**: `cpt-studio-fr-repository-documents`
+
+The system **MUST** classify each prose file of a project's repository — declared front matter first, then inference from sections, path, title and front-matter keys, then the external `purpose` detector — record the result as a binding to the file's graph node, validate it against the chosen type, and let a member confirm, change or mark it as not a document.
+
+- **Rationale**: Documents written before Studio saw them name no type (`docs/documents-from-a-repository.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Specification quality
+
+- [x] `p2` - **ID**: `cpt-studio-fr-spec-quality`
+
+The system **MUST** submit documents to the external spec-quality service's `bloat`, `purpose`, `leak` and `traceability` detectors through an authenticated passthrough, wait for the result as a background run, and record and interpret each verdict.
+
+- **Rationale**: The service's shared secret must not reach the browser (`studio-backend/src/spec_quality/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.6 Knowledge graph
+
+#### Repository artifacts in the graph
+
+- [x] `p1` - **ID**: `cpt-studio-fr-artifact-ingest`
+
+The system **MUST** pull issues, pull requests and files from a connection's repository into the knowledge graph as typed GTS nodes with deterministic ids, so a re-sync upserts, and **MUST** serve nodes, edges, files, activity, quality and search over them.
+
+- **Rationale**: A consumer traverses one graph instead of three provider APIs (`studio-backend/src/artifact_ingest/README.md`).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-provider`
+
+#### Domain model in the graph
+
+- [x] `p2` - **ID**: `cpt-studio-fr-domain-model`
+
+The system **MUST** store the Studio domain model as GTS types in graph storage, seeded from `ontology.core.json`, and let a member create objects and relations, extend a type with fields, and import, sync and revert the model.
+
+- **Rationale**: Graph storage is the model's system of record (ADR-0024).
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.7 Gears, products and kits
+
+#### Gear catalogue
+
+- [x] `p1` - **ID**: `cpt-studio-fr-gear-catalogue`
+
+The system **MUST** sync every crate published under the `constructorfabric` keyword on crates.io into the graph as `gear` and `crate_version` nodes, and serve the components, versions, field schemas, profiles and activity of that catalogue.
+
+- **Rationale**: "What gears are there, at what versions" had no answer inside Studio (`studio-backend/src/components_catalog/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Gear scaffolding
+
+- [x] `p2` - **ID**: `cpt-studio-fr-gear-scaffold`
+
+The system **MUST** record which repository a project's gears live in, create that repository through a connection, and write a gear skeleton into it on a branch, optionally opening a pull request.
+
+- **Rationale**: Once Studio knows what a gear looks like it can create one (`studio-backend/src/components_catalog/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Gearbox products
+
+- [x] `p2` - **ID**: `cpt-studio-fr-gearbox-product`
+
+The system **MUST** compose a `product.gdl` from picked gears, resolve it with the Gearbox engine against a pinned gear corpus, store and optionally commit it for a project, and open it in the IDE's Gearbox perspective with the native `.gdl` language.
+
+- **Rationale**: The portal and the IDE run the same engine at the same commit so they agree (`theia/gearbox-studio/README.md`).
+- **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-agent`
+
+#### Delivery metrics from Constructor Insight
+
+- [x] `p3` - **ID**: `cpt-studio-fr-delivery-insight`
+
+The system **MUST** read delivery metrics and pull requests per component from Constructor Insight's read-only SQL endpoint through one integration gear.
+
+- **Rationale**: One place of contact when Insight's contract moves (`studio-backend/src/insight/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Kits
+
+- [x] `p2` - **ID**: `cpt-studio-fr-kits`
+
+The system **MUST** serve a kit catalogue and record, per project, which kits are desired, and ask the session to materialize or reconcile an installation; the kit bytes stay in their Git repositories.
+
+- **Rationale**: A kit is versioned where it lives (`studio-backend/src/kit_registry/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.8 Background work and push
+
+#### Durable background runs
+
+- [x] `p1` - **ID**: `cpt-studio-fr-background-runs`
+
+The system **MUST** record every background job as a run whose state moves `queued → running → succeeded | failed | cancelled`, written with its queue entry in one transaction, and let a caller list, cancel and retry runs.
+
+- **Rationale**: Three gears had each kept an in-memory task map that lost everything on restart (`studio-backend/src/tasks/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Schedules
+
+- [x] `p2` - **ID**: `cpt-studio-fr-schedules`
+
+The system **MUST** keep cron and interval schedules with an IANA time zone, a concurrency policy (`allow | forbid | replace`) and a missed-schedule policy (`skip | catch_up | backfill`), enqueue a run when one is due, and run one on demand.
+
+- **Rationale**: Nothing in gears-rust schedules anything (`studio-backend/src/scheduler/README.md`).
+- **Actors**: `cpt-studio-actor-member`
+
+#### Push channel to the portal
+
+- [x] `p1` - **ID**: `cpt-studio-fr-push-channel`
+
+The system **MUST** publish every producer's events on one tenant-scoped SSE stream with at-least-once delivery and replay after a cursor.
+
+- **Rationale**: Consumers polled for state changes; one domain-neutral channel replaces the polling (ADR-0026).
+- **Actors**: `cpt-studio-actor-shell`, `cpt-studio-actor-mfe`
+
+### 5.9 Files and settings
+
+#### File storage
+
+- [x] `p3` - **ID**: `cpt-studio-fr-file-storage`
+
+The system **MUST** store files through the `file_storage` gear, with the S3 data-plane sidecar on Kubernetes; the prototype's Files view is kept but hidden from navigation.
+
+- **Rationale**: `registered_gears.rs` links `file_storage`; `deploy/FILE_STORAGE_S3.md` describes the Kubernetes data plane.
+- **Actors**: `cpt-studio-actor-member`
+
+#### User settings
+
+- [x] `p3` - **ID**: `cpt-studio-fr-user-settings`
+
+The system **MUST** keep a person's profile and UI preferences.
+
+- **Rationale**: `simple_user_settings` is linked and `studio-user` serves `/me/ui-preferences`.
+- **Actors**: `cpt-studio-actor-member`
+
+### 5.10 Contract, registries and operation
+
+#### One REST contract
+
+- [x] `p1` - **ID**: `cpt-studio-fr-api-contract`
+
+The backend **MUST** declare every REST operation under `/<gear>/v1`, page every list with `?offset=&limit=` and a total, and fail the build when a declaration breaks `docs/api-conventions.md` beyond the committed baseline.
+
+- **Rationale**: The contract is enforced by a ratchet rather than agreed in review (ADR-0020).
+- **Actors**: `cpt-studio-actor-mfe`
+- **Verification Method**: the `api_contract` drift test in `cargo test` and the `studio-backend api-contract` command.
+
+#### GTS registry consistency
+
+- [x] `p2` - **ID**: `cpt-studio-fr-gts-consistency`
+
+The backend **MUST** build the inventory of every GTS document it registers offline, drift-check it in `cargo test`, and audit a live deployment's types-registry and graph-storage ontology against it.
+
+- **Rationale**: A malformed type surfaced only as a crash at boot (ADR-0013 §6).
+- **Actors**: `cpt-studio-actor-platform-admin`
+- **Verification Method**: `studio-backend gts-types` and `studio-backend gts-audit`.
+
+#### Database bootstrap
+
+- [x] `p1` - **ID**: `cpt-studio-fr-database-bootstrap`
+
+The backend **MUST** discover the PostgreSQL databases its configured gears declare, create only the missing ones, and run migrations, from the same configuration the server uses.
+
+- **Rationale**: Database names are not copied into Helm or initdb scripts (`studio-backend/src/database_bootstrap.rs`).
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+#### Local stack with Docker Compose
+
+- [x] `p1` - **ID**: `cpt-studio-fr-deploy-compose`
+
+The system **MUST** run as one local stack with Docker Compose, from source or from the published images, with sessions launched through the host Docker daemon.
+
+- **Rationale**: Local development and functional checks on one machine (`README.md`).
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+#### Kubernetes deployment
+
+- [x] `p1` - **ID**: `cpt-studio-fr-deploy-kubernetes`
+
+The system **MUST** deploy to the `studio-dev` and `studio-test` namespaces from the Helm chart `deploy/helm/studio-web`, with graph PostgreSQL on CloudNativePG and the Keycloak image deployed as infrastructure, using immutable image tags.
+
+- **Rationale**: The shared environments (`README.md`, `deploy/README.md`).
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+#### Observability
+
+- [x] `p2` - **ID**: `cpt-studio-fr-observability`
+
+The system **MUST** provision metrics collection for the cluster as code: VictoriaMetrics, Alloy, kube-state-metrics and Grafana dashboards and alert rules.
+
+- **Rationale**: `deploy/observability/README.md`.
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+#### Delivery pipeline
+
+- [x] `p1` - **ID**: `cpt-studio-fr-delivery-pipeline`
+
+The system **MUST** test changed components on every pull request and push, publish a complete `sha-<commit>` image set after the tests pass on a push, and deploy only when an operator runs a deploy operation.
+
+- **Rationale**: `README.md`, CI/CD; `deploy/PIPELINES.md`.
+- **Actors**: `cpt-studio-actor-platform-admin`
+
+## 6. Non-Functional Requirements
+
+> **Global baselines**: No project-wide NFR baseline document exists in this repository, and there is no parent PRD. The NFRs below are specific to Constructor Studio.
+
+### 6.1 Gear-Specific NFRs
+
+#### Credentials never reach the session or the browser
+
+- [x] `p1` - **ID**: `cpt-studio-nfr-credential-isolation`
+
+The system **MUST NOT** place a provider key or Git token in a session container, a browser or an API response.
+
+- **Threshold**: zero secret values returned by any Studio REST operation; Git tokens reach a session only as credstore references through an inline credential helper and are never written into `.git/config`.
+- **Rationale**: `PRODUCT.md`, Product Principle 3.
+- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+
+#### Tenant isolation holds under every access model
+
+- [x] `p1` - **ID**: `cpt-studio-nfr-tenant-isolation`
+
+The system **MUST** keep every allowed request inside the caller's tenant subtree, under both the `tenant` and the `roles` access model.
+
+- **Threshold**: no allow outside the tenant clamp; a mis-entered grant can only deny (ADR-0009, Consequences).
+- **Rationale**: Tenancy is the platform invariant roles sit on.
+- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+
+#### Background work survives a restart
+
+- [x] `p1` - **ID**: `cpt-studio-nfr-durable-work`
+
+The system **MUST** keep runs, schedules, the event sequence and credential values across a backend restart.
+
+- **Threshold**: a run, schedule, event cursor or credential written before a restart is readable after it.
+- **Rationale**: In-memory registries lost work on every redeploy (`studio-backend/src/tasks/README.md`, `studio-backend/src/studio_events/mod.rs`).
+- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+
+#### Sessions are bounded
+
+- [x] `p2` - **ID**: `cpt-studio-nfr-session-bounds`
+
+The system **MUST** bound each IDE session in time and in port range.
+
+- **Threshold**: a session lives four hours before the reaper collects it; Docker sessions bind loopback ports 41000–41099 (`PRODUCT.md`, Operating Context).
+- **Rationale**: A running session costs a container.
+- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+
+#### Lists are paged the same way
+
+- [x] `p2` - **ID**: `cpt-studio-nfr-list-pagination`
+
+Every collection endpoint **MUST** take `offset` and `limit` and report `total`.
+
+- **Threshold**: `limit` between 1 and 200, default 50 (`studio-backend/src/pagination.rs`).
+- **Rationale**: A caller that can page one list can page all of them.
+- **Architecture Allocation**: See DESIGN.md § NFR Allocation for how this is realized
+
+### 6.2 NFR Exclusions
+
+- No project-default NFR set exists to exclude from; availability, latency and throughput targets are not stated anywhere in this repository and are not set here.
+
+## 7. Public Library Interfaces
+
+Constructor Studio is a product, not a library. Its public surfaces are the REST API, the push channel, the portal-to-IDE message bridge and the session control API, defined in the design as `cpt-studio-interface-rest-api`, `cpt-studio-interface-push-channel`, `cpt-studio-interface-portal-ide-bridge` and `cpt-studio-interface-session-control`.
+
+### 7.1 Public API Surface
+
+The REST API is served under `/cf/<gear>/v1`, documented at `/cf/docs` and committed as `studio-backend/docs/api-contract.json`; its rules are [`docs/api-conventions.md`](../api-conventions.md) and ADR-0020. Breaking changes land together with their consumers (ADR-0020 §8).
+
+### 7.2 External Integration Contracts
+
+The contracts with external systems are defined in the design's External Dependencies: `cpt-studio-contract-keycloak-oidc` (Keycloak), `cpt-studio-contract-provider-apis` (source hosts, model providers, chat platforms), `cpt-studio-contract-spec-quality-service`, `cpt-studio-contract-insight-sql` (Constructor Insight), `cpt-studio-contract-crates-io`, `cpt-studio-contract-gearbox-engine` and `cpt-studio-contract-s3`.
+
+## 8. Use Cases
+
+#### Open a project and work in its IDE session
+
+- [x] `p1` - **ID**: `cpt-studio-usecase-open-ide-session`
+
+**Actor**: `cpt-studio-actor-member`
+
+**Preconditions**:
+- The member belongs to the organization and the workspace has sources.
+- IDE sessions are enabled in the deployment.
+
+**Main Flow**:
+1. The member opens the project in the portal and launches its session.
+2. The backend starts a container or Pod for the workspace and clones its sources over HTTPS with credentials supplied by reference.
+3. The portal embeds the IDE and hands it the theme; the agents in it call the model through the LLM proxy.
+
+**Postconditions**:
+- A session exists for the workspace and is listed by the backend until it is stopped or reaped.
+
+**Alternative Flows**:
+- **Sessions disabled**: the portal surface that assumes a session says that none is available.
+
+#### Connect a source
+
+- [x] `p1` - **ID**: `cpt-studio-usecase-connect-source`
+
+**Actor**: `cpt-studio-actor-member`
+
+**Preconditions**:
+- An organization is in scope.
+
+**Main Flow**:
+1. The member chooses a provider, a label and a credential.
+2. The backend probes the provider with the credential and stores the connection at organization scope.
+
+**Postconditions**:
+- The connection is listed and offered by the New project wizard.
+
+**Alternative Flows**:
+- **Credential refused**: the form stays open and shows the provider's refusal on the credential field.
+
+#### Create a project from repositories
+
+- [x] `p1` - **ID**: `cpt-studio-usecase-create-project`
+
+**Actor**: `cpt-studio-actor-member`
+
+**Preconditions**:
+- A workspace is in scope.
+
+**Main Flow**:
+1. The member opens the New project wizard and picks repositories from a connection.
+2. The portal writes the project tenant and its metadata.
+3. The project's repositories are synced into the knowledge graph.
+
+**Postconditions**:
+- The project is listed under the workspace and its artifacts are readable.
+
+**Alternative Flows**:
+- **Empty project**: the member skips the repositories step.
+
+#### Recognise the documents in a repository
+
+- [x] `p2` - **ID**: `cpt-studio-usecase-classify-documents`
+
+**Actor**: `cpt-studio-actor-member`
+
+**Preconditions**:
+- The project's repository files are in the knowledge graph.
+
+**Main Flow**:
+1. The member asks for the project's documents to be classified.
+2. Each prose file gets a binding with a detected type, a confidence and a validation report.
+3. The member confirms or corrects the bindings the classifier could not settle.
+
+**Postconditions**:
+- The project's specifications are listed with their type and conformance.
+
+**Alternative Flows**:
+- **Not a specification**: the member marks the file as not a document.
+
+#### Compose a product from gears
+
+- [x] `p2` - **ID**: `cpt-studio-usecase-compose-product`
+
+**Actor**: `cpt-studio-actor-member`
+
+**Preconditions**:
+- The gear catalogue has been synced and product previews are enabled (`STUDIO_GEARBOX_WORKDIR`).
+
+**Main Flow**:
+1. The member picks gears for a project's product.
+2. The backend composes a `product.gdl`, resolves it with the Gearbox engine and returns the result.
+3. The member saves the product and opens it in the IDE's Gearbox perspective.
+
+**Postconditions**:
+- The project has a stored product, optionally committed to its repository.
+
+**Alternative Flows**:
+- **Resolution conflicts**: the engine's conflicts are shown in the product preview and in the IDE's Conflicts view.
+
+## 9. Acceptance Criteria
+
+Business-level acceptance criteria for the PRD as a whole. Each is observable on a running stack and traced to its implementation in [§14 Traceability](#14-traceability).
+
+- [ ] **AC1** — A member signed in through Keycloak who launches a session for a workspace with sources gets a running IDE whose repositories are cloned, and `GET /cf/studio-session/v1/sessions` lists that session.
+- [ ] **AC2** — Inside a running session, no environment variable, file or Git configuration holds a provider key or a source-host token.
+- [ ] **AC3** — No response of `GET /cf/studio-connector/v1/connections` contains a token; each connection carries only its credstore reference.
+- [ ] **AC4** — An organization created through `POST /cf/studio-organizations/v1/organizations` is listed for its creator with the creator as owner.
+- [ ] **AC5** — A person who signs in without any membership sees a no-access state, and the platform administrator's identity directory lists that person as unassigned.
+- [ ] **AC6** — A request on behalf of a member of one organization never returns rows owned by another organization's tenants.
+- [ ] **AC7** — After `docker compose restart backend`, a previously stored connection credential still resolves, a queued or finished run is still listed, and a reconnecting event subscriber replays the events after its cursor.
+- [ ] **AC8** — Classifying a project whose repository contains this `docs/` tree binds every file under `docs/prd`, `docs/design`, `docs/decomposition`, `docs/feature` and `docs/adr` to its declared type, and each binding conforms.
+- [ ] **AC9** — A `studio-events` subscriber receives the transitions of a run it did not start, without polling `studio-tasks`.
+- [ ] **AC10** — A change that adds a REST operation violating `docs/api-conventions.md` fails `cargo test` until the violation is fixed or baselined.
+
+## 10. Dependencies
+
+| Dependency | Description | Criticality |
+|------------|-------------|-------------|
+| gears-rust | Platform gears and SDKs, pinned in `studio-backend/Cargo.lock` | p1 |
+| PostgreSQL 19 with pgvector | Application databases and `graph_storage` (`graph-postgres`) | p1 |
+| Keycloak | Sign-in, GitHub brokering and user provisioning | p1 |
+| Docker daemon or Kubernetes API | Where sessions run (`studio-session` drivers) | p1 |
+| Source hosts, model providers, chat platforms | Repositories, models and message delivery through connections | p2 |
+| Spec-quality service | The four detectors behind `studio-spec-quality` | p2 |
+| Gearbox engine | Product resolution and the `.gdl` language, pinned by `STUDIO_GEARBOX_REF` | p2 |
+| crates.io | The public API the gear catalogue sync reads | p2 |
+| Constructor Insight | Read-only SQL endpoint behind `studio-insight` | p3 |
+| GHCR | Published images and the session image | p1 |
+| S3 (Virtuozzo) | File storage data plane on Kubernetes | p3 |
+
+Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity provider the backend does not serve; blank keys for the optional integrations leave them unavailable without preventing the stack from starting.
+
+## 11. Assumptions
+
+- Sources are reachable over HTTPS from where sessions run.
+- The session image is built or pulled before the first session (`README.md`, the `session-image` service).
+- A `GITHUB_TOKEN` is available when the session image is built, because the image resolves the skill engine through `api.github.com` (`README.md`).
+
+## 12. Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| `PRODUCT.md` describes authorization as allow-all and Kubernetes v1 as running without sessions, while the code clamps every request to the tenant and the dev values enable the session driver | Readers of the brief misjudge what is enforced and where sessions run | This PRD follows the code; the brief is to be reconciled |
+| Source-host tokens are stored in credstore, while the roadmap PRD decided Studio should not permanently hold host credentials (`docs/roadmap-alignment.md`) | The connection model may need to move to OAuth-app or installation tokens | Recorded as an open question |
+| `theia/gearbox-studio` is ported from a repository with no licence yet | It cannot ship beyond evaluation until its owner grants permission | Stated in `theia/gearbox-studio/README.md` |
+| Two backend replicas have never run with sessions against a real cluster | Scaling the backend with sessions on is unproven | The chart refuses more than one replica while sessions are on |
+
+## 13. Open Questions
+
+- Whether nested projects may nest further, whether root projects derive an owner, and what the shared connection catalogue is called while organizations stay hidden (`PRODUCT.md`).
+- Whether source-host access moves from stored tokens to OAuth-app or installation tokens (`docs/roadmap-alignment.md`).
+- Which channel a notification leaves Studio by (`TASKS.md`, 2026-09-17).
+
+## 14. Traceability
+
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **ADRs**: [ADR index](../adr/README.md)
+- **Features**: [DECOMPOSITION](../decomposition/constructor-studio.md) and [`docs/feature/`](../feature/)
+
+### 14.1 Functional requirements to implementation
+
+| Requirement | Implemented in |
+|---|---|
+| `cpt-studio-fr-org-create` | `studio-backend/src/organizations/`; `POST /studio-organizations/v1/organizations`; prototype admin `tenants` |
+| `cpt-studio-fr-org-administration` | `studio-backend/src/organizations/`, `studio-backend/src/access_config.rs`, `studio-backend/src/user_profile/`; `/studio-organizations/v1/{access-catalogue,capabilities,rollups}`, `/studio-user/v1/organizations/{org_id}/invitations`; prototype admin `access` and `people` |
+| `cpt-studio-fr-workspace-project-tenants` | platform `account_management`; `/cf/account-management/v1`; `projects-mfe` (Projects, New project, New workspace), `organization-mfe` (Workspaces); prototype `projects`, workspace tab `projects`, platform `workspaces`, project tab `automation` |
+| `cpt-studio-fr-portal-levels` | `studio-frontend/src-app/app/`, `studio-frontend/src-app/mfe_packages/_iframe-fixture/`; `organization-mfe` (Overview) |
+| `cpt-studio-fr-portal-reserved-areas` | `people-mfe`, `kits-mfe`, `search-mfe`, `organization-mfe` (Organization settings), `projects-mfe` placeholder sections (Overview, Findings, Activity, Timeline, Team, Project settings); prototype project tab `timeline` |
+| `cpt-studio-fr-sign-in` | platform `oidc_authn_plugin`, `static_authn_plugin`, `static_authz_plugin`; `keycloak/`; `studio-frontend/src-app/app/`; `studio-frontend-prototype/src/oidc.ts` |
+| `cpt-studio-fr-canonical-user` | `studio-backend/src/user_profile/`; `/studio-user/v1/{me,resolve,merge,users}`; prototype `profile` |
+| `cpt-studio-fr-invitations-membership` | `studio-backend/src/user_profile/`, platform `keycloak_idp_plugin`, `static_idp_plugin`; `/studio-user/v1/me/{invitations,memberships}`; prototype `people`, project tab `people` |
+| `cpt-studio-fr-identity-directory` | `studio-backend/src/identity_directory/`; `/studio-identity/v1`; prototype platform `identities` |
+| `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
+| `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin.rs`; ADR-0019 Follow-ups |
+| `cpt-studio-fr-presence` | `studio-backend/src/presence/`; `/studio-presence/v1`; `studio-frontend-prototype/src/presence.tsx` |
+| `cpt-studio-fr-connections` | `studio-backend/src/connectors/` and its eleven plugin gears; `/studio-connector/v1`; `connections-mfe` (Connections, Connect source); prototype `connectors`, admin `connectors`, project tab `sources` |
+| `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
+| `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
+| `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
+| `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
+| `cpt-studio-fr-theia-bridge` | `studio-backend/src/studio_theia/`; `/studio-theia/v1`; `theia/studio/src/node/studio-control-api.ts` |
+| `cpt-studio-fr-ide-product-surface` | `theia/studio/`, `theia/product-ext/`, `theia/drawio-editor/` |
+| `cpt-studio-fr-ide-llm-proxy` | `studio-backend/src/llm_proxy/`; `/studio-llm/v1` |
+| `cpt-studio-fr-workspace-ai-chat` | platform `mini_chat`, `api_egress`; prototype `chats` (hidden) |
+| `cpt-studio-fr-document-catalogue` | `studio-backend/src/documents/`; `/studio-documents/v1/{organizations,workspaces}/{id}/{types,stages,capabilities}`; prototype workspace tabs `types` and `process` |
+| `cpt-studio-fr-documents` | `studio-backend/src/documents/`; `/studio-documents/v1/workspaces/{workspace_id}/documents`, `…/projects/{project_id}/stage-status`; prototype project tabs `overview` and `specs` |
+| `cpt-studio-fr-repository-documents` | `studio-backend/src/documents/{classify,validate,intake}.rs`; `/studio-documents/v1/workspaces/{workspace_id}/document-bindings`, `/studio-documents/v1/{spec-rows,spec-pipeline,specs-per-source}`; prototype project tab `specs` |
+| `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/spec-quality/v1`, `/studio-spec-quality/v1`; `studio-frontend-prototype/src/spec-quality.tsx` |
+| `cpt-studio-fr-artifact-ingest` | `studio-backend/src/artifact_ingest/`, platform `graph_storage`; `/studio-artifact-ingest/v1`; `projects-mfe` project screen; prototype project tabs `artifacts` and `activity`, and the hidden `files` view's repository files |
+| `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
+| `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,types,field-schemas,profiles,activity}`; prototype `gears` |
+| `cpt-studio-fr-gear-scaffold` | `studio-backend/src/components_catalog/{scaffold,skeleton}.rs`; `/studio-components-catalog/v1/projects/{project_id}/{gear-repo,create-repo,scaffold}` |
+| `cpt-studio-fr-gearbox-product` | `studio-backend/src/components_catalog/gearbox.rs`; `/studio-components-catalog/v1/{gearbox,compose}`, `…/projects/{project_id}/product`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
+| `cpt-studio-fr-delivery-insight` | `studio-backend/src/insight/`; `/studio-insight/v1`; prototype `gears` component page |
+| `cpt-studio-fr-kits` | `studio-backend/src/kit_registry/`; `/studio-kits/v1`; `theia/studio/src/node/kit-installer.ts`; prototype project tab `components` |
+| `cpt-studio-fr-background-runs` | `studio-backend/src/tasks/`; `/studio-tasks/v1`; prototype `tasks` |
+| `cpt-studio-fr-schedules` | `studio-backend/src/scheduler/`; `/studio-scheduler/v1`; prototype `tasks` |
+| `cpt-studio-fr-push-channel` | `studio-backend/src/studio_events/`; `/studio-events/v1`; `studio-frontend/docs/studio-events.md` |
+| `cpt-studio-fr-file-storage` | platform `file_storage`; `deploy/FILE_STORAGE_S3.md`; prototype `files` (hidden) |
+| `cpt-studio-fr-user-settings` | platform `simple_user_settings`; `/studio-user/v1/me/ui-preferences`; prototype `profile` |
+| `cpt-studio-fr-api-contract` | `studio-backend/src/api_contract.rs`, `studio-backend/src/pagination.rs`; `studio-backend/docs/api-contract.json`; platform `api_gateway` |
+| `cpt-studio-fr-gts-consistency` | `studio-backend/src/gts_inventory.rs`, `studio-backend/src/gts_audit.rs`; platform `types_registry`; prototype `system` |
+| `cpt-studio-fr-database-bootstrap` | `studio-backend/src/database_bootstrap.rs`; `backend-bootstrap` service in `docker-compose.yml` |
+| `cpt-studio-fr-deploy-compose` | `docker-compose.yml`, `docker-compose.published.yml`, `scripts/dev-up.sh` |
+| `cpt-studio-fr-deploy-kubernetes` | `deploy/helm/studio-web/`, `deploy/k8s/cloudnative-pg/`, `keycloak/` |
+| `cpt-studio-fr-observability` | `deploy/observability/` |
+| `cpt-studio-fr-delivery-pipeline` | `.github/workflows/studio-delivery.yml`, `deploy/PIPELINES.md` |
+
+Platform gears that serve every requirement rather than one — `gear_orchestrator`, `grpc_hub`, `nodes_registry`, `authn_resolver` — are traced through `cpt-studio-fr-api-contract` and `cpt-studio-fr-sign-in` in the design's component model.
+
+### 14.2 Acceptance criteria to implementation
+
+| Criterion | Implemented in |
+|---|---|
+| AC1 | `studio-backend/src/studio_session/`; `theia/Dockerfile`; `cpt-studio-fr-ide-session`, `cpt-studio-fr-sign-in` |
+| AC2 | `studio-backend/src/llm_proxy/`, `studio-backend/src/studio_session/`; `cpt-studio-nfr-credential-isolation` |
+| AC3 | `studio-backend/src/connectors/rest.rs`; `cpt-studio-fr-connections` |
+| AC4 | `studio-backend/src/organizations/`; `cpt-studio-fr-org-create` |
+| AC5 | `studio-backend/src/user_profile/`, `studio-backend/src/identity_directory/`; `cpt-studio-fr-invitations-membership`, `cpt-studio-fr-identity-directory` |
+| AC6 | `studio-backend/src/studio_authz_plugin.rs`; `cpt-studio-nfr-tenant-isolation` |
+| AC7 | `studio-backend/src/credstore_pg/`, `studio-backend/src/tasks/`, `studio-backend/src/studio_events/`; `cpt-studio-nfr-durable-work` |
+| AC8 | `studio-backend/src/documents/classify.rs`, `studio-backend/src/documents/validate.rs`; `cpt-studio-fr-repository-documents` |
+| AC9 | `studio-backend/src/studio_events/`, `studio-backend/src/tasks/`; `cpt-studio-fr-push-channel` |
+| AC10 | `studio-backend/src/api_contract.rs`; `cpt-studio-fr-api-contract` |

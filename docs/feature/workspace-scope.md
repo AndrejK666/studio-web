@@ -4,18 +4,52 @@ status: accepted
 owner: studio-team
 ---
 
-# Feature — Workspaces in scope
+# Feature: Workspaces in scope
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspace-scope`
 
-## Summary
+- [x] `p1` - `cpt-studio-feature-workspace-scope`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [1. Feature Context](#1-feature-context)
+  - [1.1 Overview](#11-overview)
+  - [1.2 Purpose](#12-purpose)
+  - [1.3 Actors](#13-actors)
+  - [1.4 References](#14-references)
+- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
+  - [Create a workspace](#create-a-workspace)
+  - [Switch the workspace in scope](#switch-the-workspace-in-scope)
+- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
+  - [Resolve the organization's workspaces](#resolve-the-organizations-workspaces)
+  - [Write the workspace](#write-the-workspace)
+- [4. States (CDSL)](#4-states-cdsl)
+  - [Workspace Slot State Machine](#workspace-slot-state-machine)
+- [5. Definitions of Done](#5-definitions-of-done)
+  - [The shell owns the workspace list](#the-shell-owns-the-workspace-list)
+  - [Every announcement names the scope it was made in](#every-announcement-names-the-scope-it-was-made-in)
+  - [The workspace has its own slot next to the organization](#the-workspace-has-its-own-slot-next-to-the-organization)
+  - [Creation is an overlay extension with one field](#creation-is-an-overlay-extension-with-one-field)
+  - [A created workspace reaches the shell and becomes current](#a-created-workspace-reaches-the-shell-and-becomes-current)
+  - [The projects list is rooted at the workspace](#the-projects-list-is-rooted-at-the-workspace)
+  - [A project is created inside the current workspace](#a-project-is-created-inside-the-current-workspace)
+  - [Without a workspace there is nothing to create a project in](#without-a-workspace-there-is-nothing-to-create-a-project-in)
+- [6. Acceptance Criteria](#6-acceptance-criteria)
+
+<!-- /toc -->
+
+## 1. Feature Context
+
+### 1.1 Overview
 
 The workspace a session is working in: created from the Projects list, chosen in
 the shell's top bar next to the organization, and applied to everything below —
 the Projects list shows that workspace's projects, and a new project is created
 inside it.
 
-### Purpose
+### 1.2 Purpose
 
 A project is an account-management tenant, and the level it belongs in is the
 **workspace** (ADR-0010). Until now the portal had no workspace anywhere: the
@@ -47,36 +81,40 @@ changes the code:
   one becomes current immediately. The selection is not persisted between
   sessions; nothing in the portal persists per-user preferences yet.
 
-### Actors
+**Requirements**: `cpt-studio-fr-workspace-project-tenants`, `cpt-studio-fr-portal-levels`
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+**Principles**: `cpt-studio-principle-project-is-unit`
+
+### 1.3 Actors
+
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Creates workspaces and chooses the current one. |
-| **Shell** | The portal shell. Reads the organization's workspaces, draws the switcher next to the organization, and publishes the current one to every MFE. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Creates workspaces and chooses the current one. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Reads the organization's workspaces, draws the switcher next to the organization, and publishes the current one to every MFE. |
 
-### References
+### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-workspace-scope`
 - **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md)
 - **Feature**: [Create a project](project-create.md) — the parent it creates under is this feature's answer
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
-## Behaviour
+## 2. Actor Flows (CDSL)
 
 Unchecked on purpose, for the reason stated in `project-create.md`: a checked
 flow obliges every instruction to carry a code marker, and these span the shell,
 two MFE roots and the extension plumbing between them. Their evidence is the
-Acceptance Criteria; the implementation claims they rest on are the
+acceptance criteria in section 6; the implementation claims they rest on are the
 Definitions of Done, which are traced.
 
 **Use case**: work inside a workspace.
 
-### Actor flows (CDSL)
-
-#### Create a workspace
+### Create a workspace
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-workspace-scope-create`
 
@@ -103,7 +141,7 @@ Definitions of Done, which are traced.
    1. [ ] - `p1` - **RETURN** the overlay stays open, reports that the workspace exists but was not announced, and offers the announcement alone as the retry - `inst-10`
 9. [ ] - `p1` - **RETURN** unmount the overlay extension - `inst-11`
 
-#### Switch the workspace in scope
+### Switch the workspace in scope
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-workspace-scope-switch`
 
@@ -123,9 +161,9 @@ Definitions of Done, which are traced.
    1. [ ] - `p1` - Leave project scope: the open project belongs to the workspace being left - `inst-5`
 5. [ ] - `p1` - **RETURN** the Projects list re-roots on the workspace and reads its children - `inst-6`
 
-### Processes / business logic (CDSL)
+## 3. Processes / Business Logic (CDSL)
 
-#### Resolve the organization's workspaces
+### Resolve the organization's workspaces
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-workspace-scope-resolve`
 
@@ -142,7 +180,7 @@ Definitions of Done, which are traced.
 4. [x] - `p1` - Keep the current workspace if it is still in the list, otherwise take the first - `inst-6`
 5. [x] - `p1` - **RETURN** the list and the current workspace - `inst-7`
 
-#### Write the workspace
+### Write the workspace
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-workspace-scope-write`
 
@@ -157,9 +195,9 @@ Definitions of Done, which are traced.
    1. [x] - `p1` - **RETURN** the refusal; the name survives so the member can correct it - `inst-4`
 4. [x] - `p1` - **RETURN** the created tenant's id and name - `inst-5`
 
-### States (CDSL)
+## 4. States (CDSL)
 
-#### Workspace Slot State Machine
+### Workspace Slot State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-workspace-scope-slot`
 
@@ -175,31 +213,9 @@ Definitions of Done, which are traced.
 5. [ ] - `p1` - **FROM** Unresolved **TO** Unresolved **WHEN** the read fails; the next workspace-scoped screen retries it - `inst-5`
 6. [ ] - `p1` - **FROM** Selected **TO** Selected **WHEN** the read fails; the workspace in scope outlives a transient error - `inst-6`
 
-## Acceptance Criteria
+## 5. Definitions of Done
 
-- [ ] With no workspace in the organization, the top bar shows the organization alone, "New project" is disabled and "New workspace" is not; with no organization at all, both are disabled.
-- [ ] The workspace slot is in the top bar on the Projects screen and absent on Connections and People.
-- [ ] Leaving Projects for another screen and coming back shows the same workspace still current, and the Projects list unchanged.
-- [ ] Activating "New workspace" opens an overlay with a single name field; Escape, the scrim and Cancel all close it and write nothing.
-- [ ] Confirming a name creates a tenant of the workspace type whose parent is the organization in scope.
-- [ ] The created workspace appears in the top bar slot immediately and is the current one, without a page reload.
-- [ ] If the announcement to the shell fails, the overlay stays open and says the workspace was created; the button then retries the announcement and never creates a second workspace.
-- [ ] A name that duplicates an existing workspace leaves the overlay open, keeps the name, and shows what was refused.
-- [ ] With a workspace current, "New project" is enabled and a project created through the wizard is a child of that workspace.
-- [ ] Switching workspaces replaces the Projects list with the chosen workspace's projects, and an open project is left.
-- [ ] Switching organizations re-reads the workspaces and selects one of the new organization's, never one of the previous organization's.
-- [ ] Choosing the organization already in scope changes nothing: the workspace stays current, an open project stays open, and no request is made.
-- [ ] On a workspace-scoped screen the slot holds a placeholder while the list is being read, rather than disappearing and coming back.
-- [ ] Switching organizations while the previous organization's workspaces are still being read leaves the slot showing the new organization's, whatever order the two reads answer in.
-- [ ] A workspace picked on a screen of an organization since switched away from is not made current, and does not move the session to the workspace level either.
-- [ ] A project opened, or a sibling list published, from a workspace since left changes neither the top bar nor the project switcher.
-- [ ] A failed workspace read leaves the workspace in scope and the switcher's list untouched, and does not present the organization as having no workspace.
-- [ ] The Projects list shows an empty state, not workspace rows, for a workspace with no projects.
-- [ ] Every row in the list is a project: no expandable rows, no indentation and no container rows anywhere in it.
-
-### Definitions of Done
-
-#### The shell owns the workspace list
+### The shell owns the workspace list
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-shell-owns`
 
@@ -233,7 +249,7 @@ Two rules follow from the shell owning it, and neither is optional:
 - Property: `constructor_studio.context.workspace.selected.v1~`
 - Entities: `appContextSlice`, `appContextEffects`, `sharedContext`
 
-#### Every announcement names the scope it was made in
+### Every announcement names the scope it was made in
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-claim`
 
@@ -274,7 +290,7 @@ waves through.
 - Action: `constructor_studio.context.workspaces.publish.v1~`, `constructor_studio.context.publish.v1~`
 - Entities: `appContextEffects`, `contextActions`, `projectsActions`, `workspaceActions`
 
-#### The workspace has its own slot next to the organization
+### The workspace has its own slot next to the organization
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-slot`
 
@@ -309,7 +325,7 @@ the top bar and fill it again.
 - Action: `constructor_studio.context.workspaces.publish.v1~` (`kind: scoped`)
 - Entities: `WorkspaceSwitcher`, `Header`, `ProjectsRoot`, `Menu`, `appContextSlice`
 
-#### Creation is an overlay extension with one field
+### Creation is an overlay extension with one field
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-overlay`
 
@@ -323,7 +339,7 @@ lifecycle actions, and **MUST** offer exactly one field — the name.
 **Touches**:
 - Entities: `mfe.json`, `workspaceOverlayLifecycle`, `NewWorkspaceForm`, `workspaceActions`
 
-#### A created workspace reaches the shell and becomes current
+### A created workspace reaches the shell and becomes current
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-announce`
 
@@ -349,7 +365,7 @@ the creation, which would write a second workspace under the same name.
 - Action: `constructor_studio.context.workspaces.publish.v1~`
 - Entities: `contextActions`, `bootstrap`, `workspaceEffects`, `workspaceActions`, `NewWorkspaceForm`, `workspaceSlice`
 
-#### The projects list is rooted at the workspace
+### The projects list is rooted at the workspace
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-list-root`
 
@@ -378,7 +394,7 @@ into.
 - API: `GET /cf/account-management/v1/tenants/{workspace}/children?$filter=tenant_type eq '{project type}'`
 - Entities: `workspaceProjects`, `useProjectList`, `ProjectsTable`, `workspace` (shared)
 
-#### A project is created inside the current workspace
+### A project is created inside the current workspace
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-project-parent`
 
@@ -396,7 +412,7 @@ portal picks the workspace, and the list shows only what is in one.
 - API: `POST /cf/account-management/v1/tenants`
 - Entities: `wizardEffects`, `NewProjectWizard`
 
-#### Without a workspace there is nothing to create a project in
+### Without a workspace there is nothing to create a project in
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-no-workspace`
 
@@ -413,3 +429,25 @@ only button is already refused.
 
 **Touches**:
 - Entities: `ProjectsToolbar`
+
+## 6. Acceptance Criteria
+
+- [ ] With no workspace in the organization, the top bar shows the organization alone, "New project" is disabled and "New workspace" is not; with no organization at all, both are disabled.
+- [ ] The workspace slot is in the top bar on the Projects screen and absent on Connections and People.
+- [ ] Leaving Projects for another screen and coming back shows the same workspace still current, and the Projects list unchanged.
+- [ ] Activating "New workspace" opens an overlay with a single name field; Escape, the scrim and Cancel all close it and write nothing.
+- [ ] Confirming a name creates a tenant of the workspace type whose parent is the organization in scope.
+- [ ] The created workspace appears in the top bar slot immediately and is the current one, without a page reload.
+- [ ] If the announcement to the shell fails, the overlay stays open and says the workspace was created; the button then retries the announcement and never creates a second workspace.
+- [ ] A name that duplicates an existing workspace leaves the overlay open, keeps the name, and shows what was refused.
+- [ ] With a workspace current, "New project" is enabled and a project created through the wizard is a child of that workspace.
+- [ ] Switching workspaces replaces the Projects list with the chosen workspace's projects, and an open project is left.
+- [ ] Switching organizations re-reads the workspaces and selects one of the new organization's, never one of the previous organization's.
+- [ ] Choosing the organization already in scope changes nothing: the workspace stays current, an open project stays open, and no request is made.
+- [ ] On a workspace-scoped screen the slot holds a placeholder while the list is being read, rather than disappearing and coming back.
+- [ ] Switching organizations while the previous organization's workspaces are still being read leaves the slot showing the new organization's, whatever order the two reads answer in.
+- [ ] A workspace picked on a screen of an organization since switched away from is not made current, and does not move the session to the workspace level either.
+- [ ] A project opened, or a sibling list published, from a workspace since left changes neither the top bar nor the project switcher.
+- [ ] A failed workspace read leaves the workspace in scope and the switcher's list untouched, and does not present the organization as having no workspace.
+- [ ] The Projects list shows an empty state, not workspace rows, for a workspace with no projects.
+- [ ] Every row in the list is a project: no expandable rows, no indentation and no container rows anywhere in it.

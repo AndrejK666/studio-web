@@ -6,13 +6,23 @@ date: 2026-08-11
 
 # ADR-0006: Rebuild the portal frontend on FrontX
 
-## Status
+**ID**: `cpt-studio-adr-frontend-rebuild-on-frontx`
 
 Date: 2026-08-11
 Status: accepted
 Branch: `frontend-frontx`
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The current portal SPA — moved aside to `studio-frontend-prototype/` on
 `main` — is a deliberate walking skeleton grown from two runtime dependencies,
@@ -28,7 +38,7 @@ React 19 + Module Federation + the type-check/lint/test toolchain);
 `template-mfe` contributes the microfrontend workspace
 (`src-app/mfe_packages/`).
 
-## Decision
+## Decision Outcome
 
 Rebuild the portal on FrontX, incrementally, on the `frontend-frontx` branch.
 The target shape is a **shell + one microfrontend** to start.
@@ -58,7 +68,7 @@ The target shape is a **shell + one microfrontend** to start.
    `cyber-pilot-kit-frontx` kit registered in `.cf-studio/` — no
    superpowers-style spec/plan artifacts are kept in this repository.
 
-## Consequences
+### Consequences
 
 - On this branch, until the shell is applied: the new `frontx` CI job is a
   green no-op (it detects the missing `package.json`). The prototype is
@@ -68,3 +78,13 @@ The target shape is a **shell + one microfrontend** to start.
 - Expected stack once `template-shell`/`template-mfe` are applied: React
   19.2.x, Vite 6 + `@module-federation/vite`, Tailwind 3.4, Redux Toolkit +
   React Query, vitest; microfrontends live in `src-app/mfe_packages/`.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-portal-shell`
+* `cpt-studio-fr-portal-levels`

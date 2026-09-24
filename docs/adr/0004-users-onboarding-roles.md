@@ -6,11 +6,22 @@ date: 2026-08-03
 
 # ADR-0004: User onboarding, provisioning, and roles
 
-## Status
+**ID**: `cpt-studio-adr-users-onboarding-roles`
 
 Status: accepted · 2026-08-03
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The domain model (v0.9.25) wants Members as control-plane citizens
 provisioned through AM's pluggable IdP contract, Teams as grantees, and
@@ -20,7 +31,7 @@ static echo plugin — an "Invite" created an AM-side record and nobody in
 the IdP, so invited people could not actually sign in. Authorization is
 static allow-all; the Studio PDP is a parked milestone.
 
-## Decision
+## Decision Outcome
 
 1. **Invite-first onboarding.** Admins invite by username/email from the
    Members view. Self-registration with an approval queue (Keycloak
@@ -50,7 +61,18 @@ static allow-all; the Studio PDP is a parked milestone.
    control. The Members view keeps naming Role Grants as the coming
    model; grants storage lands together with the Studio PDP.
 
-## Phases
+### Consequences
+
+- An invite is now atomic across AM and the IdP via AM's provisioning
+  saga; duplicate usernames surface as canonical 409s.
+- The dev realm gains a service account able to manage users — dev-only
+  credentials, rotate for any shared deployment.
+- Deleting a member in the portal deprovisions the Keycloak user (their
+  sessions die with it).
+
+## More Information
+
+### Phases
 
 - **P1 (this ADR):** invite-first, Keycloak provisioning, no roles.
 - **P2:** self-registration + approval queue (pending users = realm users
@@ -60,11 +82,12 @@ static allow-all; the Studio PDP is a parked milestone.
   layered over the tenant model (roles narrow within tenant isolation, never
   across it — ADR-0009), Teams as grantees (RG user-group containers).
 
-## Consequences
+## Traceability
 
-- An invite is now atomic across AM and the IdP via AM's provisioning
-  saga; duplicate usernames surface as canonical 409s.
-- The dev realm gains a service account able to manage users — dev-only
-  credentials, rotate for any shared deployment.
-- Deleting a member in the portal deprovisions the Keycloak user (their
-  sessions die with it).
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-platform-auth-plugins`
+* `cpt-studio-fr-invitations-membership`

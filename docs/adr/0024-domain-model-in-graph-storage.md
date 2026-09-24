@@ -6,13 +6,24 @@ date: 2026-09-08
 
 # ADR-0024: The Studio domain model lives in Graph Storage and the type registry
 
-## Status
+**ID**: `cpt-studio-adr-domain-model-in-graph-storage`
 
 proposed · 2026-09-08 · Builds on ADR-0009 and ADR-0011
 
 Renumbered from ADR-0012 when the two ADR trees were unified; ADR-0012 is self-service identity resolution.
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Studio has a large, deliberately authored domain model — 11 buckets and roughly
 140 entities (`team`, `project`, `repository`, `requirement`, …) joined by typed
@@ -52,7 +63,34 @@ relations are first-class, and we want the model *with its relations* to be
 queryable in the same store, endpoint-typed so the graph and the registry both
 know which object types a relation is allowed to connect.
 
-## Decision
+## Considered Options
+
+- **Derive domain types from the tenant-metadata (AM) envelope.** Rejected: OP#12
+  narrowing closes that envelope (gears-rust issue #4), so a derived schema cannot
+  add payload fields. Extending a type would become a schema migration, defeating
+  goal (2). The graph-storage families are open, which is exactly the property we
+  need.
+- **Leave the model as the static `entities.json` in `domain-model-ui`.**
+  Rejected: the backend then cannot create, validate, extend, or serve domain
+  objects, and the model and product keep drifting because only a person keeps
+  them aligned. This is the status quo the ADR is replacing.
+- **Store the domain model in a relational (SeaORM) store**, as we did for
+  identity/user records. Rejected for the *model*: entities-and-relations that we
+  traverse and visualise are precisely "what we put in the graph". The relational
+  choice was made for user *instances* — operational, private, heavily mutated
+  records — and that reasoning does not transfer to an ontology of types and their
+  relations. Keeping the two in different stores is deliberate, not inconsistent.
+- **Ingest object instances but not the model's own structure.** Rejected: goal is
+  the model *with its relations* queryable (for validation, for the model-UI, for
+  future generation), and frontend regeneration needs the ontology read back from
+  the store — so the `object_type` / `inherits` / `declares` meta layer has to be
+  materialised too.
+- **Register everything only in the types-registry, skip Graph Storage.**
+  Rejected: the registry is a flat catalog with closed free-form schemas; it gives
+  neither the open extensible payload nor traversal/search over instances and
+  relations. The two-phase approach uses each registry for what it is good at.
+
+## Decision Outcome
 
 The domain model is materialised as **GTS types in Graph Storage**, mirroring the
 `artifact_ingest` producer, and cataloged in parallel in the platform
@@ -107,7 +145,7 @@ and object data, not an authorization surface. Tenant isolation and role
 enforcement continue to govern *access* to domain objects; storing the model in
 the graph does not widen any scope.
 
-## Consequences
+### Consequences
 
 - The domain model becomes **one source of truth** that the backend, the graph,
   the type-registry, and the frontend all derive from, instead of a static JSON
@@ -136,29 +174,12 @@ the graph does not widen any scope.
   weakens and the storage choice is worth revisiting — though the graph's
   traversal and search traits would still argue for the graph.
 
-## Alternatives Considered
+## Traceability
 
-- **Derive domain types from the tenant-metadata (AM) envelope.** Rejected: OP#12
-  narrowing closes that envelope (gears-rust issue #4), so a derived schema cannot
-  add payload fields. Extending a type would become a schema migration, defeating
-  goal (2). The graph-storage families are open, which is exactly the property we
-  need.
-- **Leave the model as the static `entities.json` in `domain-model-ui`.**
-  Rejected: the backend then cannot create, validate, extend, or serve domain
-  objects, and the model and product keep drifting because only a person keeps
-  them aligned. This is the status quo the ADR is replacing.
-- **Store the domain model in a relational (SeaORM) store**, as we did for
-  identity/user records. Rejected for the *model*: entities-and-relations that we
-  traverse and visualise are precisely "what we put in the graph". The relational
-  choice was made for user *instances* — operational, private, heavily mutated
-  records — and that reasoning does not transfer to an ontology of types and their
-  relations. Keeping the two in different stores is deliberate, not inconsistent.
-- **Ingest object instances but not the model's own structure.** Rejected: goal is
-  the model *with its relations* queryable (for validation, for the model-UI, for
-  future generation), and frontend regeneration needs the ontology read back from
-  the store — so the `object_type` / `inherits` / `declares` meta layer has to be
-  materialised too.
-- **Register everything only in the types-registry, skip Graph Storage.**
-  Rejected: the registry is a flat catalog with closed free-form schemas; it gives
-  neither the open extensible payload nor traversal/search over instances and
-  relations. The two-phase approach uses each registry for what it is good at.
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-domain-model`
+* `cpt-studio-fr-domain-model`

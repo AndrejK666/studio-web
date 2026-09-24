@@ -8,8 +8,14 @@ notes, contracts and runbooks that are not specifications.
 ## Specifications
 
 Each file starts with front matter that declares its type (`type: prd`,
-`design`, `decomposition`, `feature` or `adr`) and uses that type's section
-headings, so it is classified and validated without guessing.
+`design`, `decomposition`, `feature` or `adr`) and follows the section layout of
+that type's built-in template in `studio-backend/src/documents/templates/`, so it
+is classified and validated without guessing. The documents are tied together
+by `cpt-` ids: the PRD defines actors, requirements and use cases; the design
+defines principles, constraints, components, interfaces and tables and cites
+the requirements; the decomposition defines one entry per feature area and
+cites both; each feature spec cites its entry and requirements; each ADR
+defines its own id and cites what it bears on. Every id is defined once.
 
 | Directory | Type | What is in it |
 |---|---|---|

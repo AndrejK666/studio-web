@@ -4,17 +4,45 @@ status: draft
 owner: studio-team
 ---
 
-# Feature — The organization overview
+# Feature: The organization overview
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-organization-overview`
 
-## Summary
+- [ ] `p1` - `cpt-studio-feature-organization-overview`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [1. Feature Context](#1-feature-context)
+  - [1.1 Overview](#11-overview)
+  - [1.2 Purpose](#12-purpose)
+  - [1.3 Actors](#13-actors)
+  - [1.4 References](#14-references)
+- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
+  - [Read the organization at a glance](#read-the-organization-at-a-glance)
+- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
+  - [Assemble the tiles](#assemble-the-tiles)
+- [4. States (CDSL)](#4-states-cdsl)
+  - [Tile State Machine](#tile-state-machine)
+- [5. Definitions of Done](#5-definitions-of-done)
+  - [The item exists from the first day](#the-item-exists-from-the-first-day)
+  - [A tile answers or says who owes the answer](#a-tile-answers-or-says-who-owes-the-answer)
+  - [A tile leads to the screen that holds the detail](#a-tile-leads-to-the-screen-that-holds-the-detail)
+  - [No fan-out across gears](#no-fan-out-across-gears)
+- [6. Acceptance Criteria](#6-acceptance-criteria)
+
+<!-- /toc -->
+
+## 1. Feature Context
+
+### 1.1 Overview
 
 The first screen of the organization level: a few tiles saying what the
 organization holds and where to go next. Every tile either carries a real
 number or says plainly which answer does not exist yet.
 
-### Purpose
+### 1.2 Purpose
 
 `shell-levels` made the level's first item the screen a session opens with, and
 the design puts Overview there. Today that place is taken by whichever item
@@ -41,35 +69,36 @@ yet" is information; an absent item is a hole in the level.
 - A tile is **a way in, not a report**: activating one goes to the level's item
   that holds the detail, through the section channel the rail already uses.
 
-### Actors
+**Requirements**: `cpt-studio-fr-portal-levels`, `cpt-studio-fr-portal-reserved-areas`
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+**Principles**: `cpt-studio-principle-reserved-not-empty`
+
+### 1.3 Actors
+
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Reads the tiles and follows one. |
-| **MFE** | organization-mfe. Reads the workspaces, assembles the tiles, and announces the section a tile leads to. |
-| **Shell** | Relays that section back, which is what moves the rail's highlight and the screen together. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Reads the tiles and follows one. |
+| **MFE** (`cpt-studio-actor-mfe`) | organization-mfe. Reads the workspaces, assembles the tiles, and announces the section a tile leads to. |
+| **Shell** (`cpt-studio-actor-shell`) | Relays that section back, which is what moves the rail's highlight and the screen together. |
 
-### References
+### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-organization-overview`
 - **Feature**: [Levels in the shell](shell-levels.md) — the level, its rail and the section channel
 - **Feature**: [The organization's workspaces](workspaces-screen.md) — the read these tiles reuse, and the screen they lead to
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
-## Behaviour
+## 2. Actor Flows (CDSL)
 
-The flow, the tile-assembly process and the tile state machine below are
-written in CDSL. The flow is unchecked on purpose, for the reason stated in
-`project-create.md`: a checked flow obliges every CDSL instruction to carry a
-`@cpt-begin`/`@cpt-end` block.
+Unchecked on purpose, for the reason stated in `project-create.md`.
 
 **Use case**: see what the organization holds.
 
-### Actor flows (CDSL)
-
-#### Read the organization at a glance
+### Read the organization at a glance
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-organization-overview-read`
 
@@ -89,9 +118,9 @@ written in CDSL. The flow is unchecked on purpose, for the reason stated in
 4. [ ] - `p1` - Announce that tile's section, so the rail and the screen move together - `inst-4`
 5. [ ] - `p1` - **RETURN** the screen the tile leads to - `inst-5`
 
-### Processes / business logic (CDSL)
+## 3. Processes / Business Logic (CDSL)
 
-#### Assemble the tiles
+### Assemble the tiles
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-algo-organization-overview-tiles`
 
@@ -106,9 +135,9 @@ written in CDSL. The flow is unchecked on purpose, for the reason stated in
 3. [ ] - `p1` - Mark every tile whose data no endpoint serves as owed, naming what is missing - `inst-4`
 4. [ ] - `p1` - **RETURN** the tiles in the design's order, answered ones first - `inst-5`
 
-### States (CDSL)
+## 4. States (CDSL)
 
-#### Tile State Machine
+### Tile State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-organization-overview-tile`
 
@@ -123,20 +152,9 @@ written in CDSL. The flow is unchecked on purpose, for the reason stated in
 4. [ ] - `p1` - **FROM** Answered **TO** Unread **WHEN** a later read fails; the number already shown stays, marked stale - `inst-4`
 5. [ ] - `p1` - **FROM** Unread **TO** Answered **WHEN** the read is retried and succeeds - `inst-5`
 
-## Acceptance Criteria
+## 5. Definitions of Done
 
-- [ ] Overview is the first item of the organization's rail, and a fresh session opens on it.
-- [ ] The workspaces tile shows how many workspaces the organization has and how many projects across them, from one request.
-- [ ] The tiles nobody serves yet — gear health and what needs attention — say so in words, and show no number.
-- [ ] Activating the workspaces tile opens the Workspaces screen, and the rail's highlight moves with it.
-- [ ] Switching the organization re-reads the tiles, and never shows the previous organization's numbers.
-- [ ] A failed read leaves any number already shown in place, marked stale, with a way to try again.
-- [ ] With no organization in scope the screen says that, and makes no request.
-- [ ] Moving between Overview and Workspaces does not remount the screen: both are sections of one entry.
-
-### Definitions of Done
-
-#### The item exists from the first day
+### The item exists from the first day
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-organization-overview-item`
 
@@ -154,7 +172,7 @@ how a product ends up opening on People.
 **Touches**:
 - Entities: `mfe.json` (organization-mfe), `OrganizationRoot`, `OverviewScreen`
 
-#### A tile answers or says who owes the answer
+### A tile answers or says who owes the answer
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-organization-overview-owed`
 
@@ -176,7 +194,7 @@ the backlog: the tiles that say it are the aggregate this screen is waiting for.
 **Touches**:
 - Entities: `OverviewScreen`
 
-#### A tile leads to the screen that holds the detail
+### A tile leads to the screen that holds the detail
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-organization-overview-leads`
 
@@ -197,7 +215,7 @@ the content in step.
 - Action: `constructor_studio.context.projects.publish.v1~` (`kind: section`)
 - Entities: `OverviewScreen`, `sectionActions`
 
-#### No fan-out across gears
+### No fan-out across gears
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-organization-overview-no-fanout`
 
@@ -219,3 +237,14 @@ the backend; until it exists the tiles that need it stay owed.
 **Touches**:
 - API: `GET /cf/account-management/v1/tenants/{id}/children`
 - Entities: `OverviewScreen`
+
+## 6. Acceptance Criteria
+
+- [ ] Overview is the first item of the organization's rail, and a fresh session opens on it.
+- [ ] The workspaces tile shows how many workspaces the organization has and how many projects across them, from one request.
+- [ ] The tiles nobody serves yet — gear health and what needs attention — say so in words, and show no number.
+- [ ] Activating the workspaces tile opens the Workspaces screen, and the rail's highlight moves with it.
+- [ ] Switching the organization re-reads the tiles, and never shows the previous organization's numbers.
+- [ ] A failed read leaves any number already shown in place, marked stale, with a way to try again.
+- [ ] With no organization in scope the screen says that, and makes no request.
+- [ ] Moving between Overview and Workspaces does not remount the screen: both are sections of one entry.

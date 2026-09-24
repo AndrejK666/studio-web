@@ -6,11 +6,23 @@ date: 2026-09-07
 
 # ADR-0012: Attributing an external identity is self-service, and only a proof of control binds
 
-## Status
+**ID**: `cpt-studio-adr-self-service-identity-resolution`
 
 Status: **proposed** · Date: 2026-09-07 · Amends ADR-0023
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0023 gave Studio a canonical `user` and, with `alias`, an owner for
 `external (kind, id) → user`. It left attribution a **platform-admin** act:
@@ -37,9 +49,22 @@ account-takeover primitive the moment it is not. And `confidence` was coerced:
 anything that was not `"confirmed"` became `"suggested"`, so a typo'd `confirmd`
 turned into a hypothesis with nobody told.
 
-## Decision
+## Considered Options
 
-The decision has 4 parts, each set out in its own subsection below: 1. Three confidences, and only the strongest attributes anything; 2. The proof of control already existed and was being discarded; 3. Only a proof displaces somebody else; 4. Attribution flows to the graph from `confirmed` only.
+A separate `studio-identity` gear with its own append-only journal, tenant-scoped
+and keyed on the Keycloak subject. It was written first, before ADR-0023 was
+found, and it is not in this PR. Two gears owning the same mapping and two
+different person identifiers is worse than one, and ADR-0023's canonical
+`user_id` is the better anchor: it survives an IdP migration, which a Keycloak
+subject does not.
+
+Its journal did buy one thing this does not have: several people could hold a
+pending claim on one identity at once, and resolution decided between them. Under
+one row per identity the second claimant is refused instead, and told to prove
+control. Simpler, strictly safer, and it tells the person something actionable
+immediately.
+
+## Decision Outcome
 
 ### 1. Three confidences, and only the strongest attributes anything
 
@@ -106,7 +131,25 @@ The resolver handed to the graph returns confirmed rows *only*. A claim or a
 suggestion must not be readable as an attribution, and the narrow interface is
 what makes that true by construction rather than by remembering to filter.
 
-## What this changes in ADR-0023
+### Consequences
+
+- (+) The person with the knowledge and the interest does the work; no operator
+  queue on the main path.
+- (+) The strongest evidence available (provider-confirmed control) replaces the
+  weakest (an unauthenticated commit header).
+- (+) The knowledge graph gets one person node per human across providers.
+- (+) The unguarded repoint in `add_alias` is closed on both routes.
+- (−) Attribution is incomplete until people claim and prove. Historic commits
+  from unproven accounts stay unattributed rather than guessed at — the trade.
+- (−) Changing the graph person key orphans existing `person:{login}` nodes; they
+  are re-created under the new key on the next sync and the old ones need a
+  one-off sweep.
+- (−) A displaced proof is reported in the response and nowhere else. There is no
+  admin view for it yet.
+
+## More Information
+
+### What this changes in ADR-0023
 
 - alias attribution becomes self-service (`/me/aliases`); the admin route stays
   but goes through the same policy — an admin writing on somebody's behalf must
@@ -125,38 +168,7 @@ Everything else in ADR-0023 stands: the canonical `user` is the person, `login`
 is a way in, `membership` carries per-org role, storage is relational, merge is
 first-class.
 
-## What was rejected
-
-A separate `studio-identity` gear with its own append-only journal, tenant-scoped
-and keyed on the Keycloak subject. It was written first, before ADR-0023 was
-found, and it is not in this PR. Two gears owning the same mapping and two
-different person identifiers is worse than one, and ADR-0023's canonical
-`user_id` is the better anchor: it survives an IdP migration, which a Keycloak
-subject does not.
-
-Its journal did buy one thing this does not have: several people could hold a
-pending claim on one identity at once, and resolution decided between them. Under
-one row per identity the second claimant is refused instead, and told to prove
-control. Simpler, strictly safer, and it tells the person something actionable
-immediately.
-
-## Consequences
-
-- (+) The person with the knowledge and the interest does the work; no operator
-  queue on the main path.
-- (+) The strongest evidence available (provider-confirmed control) replaces the
-  weakest (an unauthenticated commit header).
-- (+) The knowledge graph gets one person node per human across providers.
-- (+) The unguarded repoint in `add_alias` is closed on both routes.
-- (−) Attribution is incomplete until people claim and prove. Historic commits
-  from unproven accounts stay unattributed rather than guessed at — the trade.
-- (−) Changing the graph person key orphans existing `person:{login}` nodes; they
-  are re-created under the new key on the next sync and the old ones need a
-  one-off sweep.
-- (−) A displaced proof is reported in the response and nowhere else. There is no
-  admin view for it yet.
-
-## Follow-ups
+### Follow-ups
 
 1. **Suggestion sources.** Nothing writes `suggested` yet: the value exists,
    resolves and renders, but the only ways onto a person's list are `claim` and
@@ -169,3 +181,13 @@ immediately.
    collapse onto one node, so their two `contributed_to` edges collide on
    `(src, dst)` and the commit count of whichever lands last wins. Needs an edge
    discriminator or a summed count.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-canonical-user`

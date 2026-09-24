@@ -6,11 +6,23 @@ date: 2026-09-08
 
 # ADR-0014: A document type is a component, not a GTS type
 
-## Status
+**ID**: `cpt-studio-adr-document-types-are-components`
 
 Status: **proposed** · Date: 2026-09-08 · Builds on ADR-0013 · Amends ADR-0010 (frontend)
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Studio is a constructor: an organization defines the document types its projects
 fill in, the stages a project passes through, and the capability vocabulary
@@ -85,9 +97,38 @@ not exist when they were written. An organization that tunes its PRD template
 silently invalidates every PRD already approved, so in practice nobody touches a
 type and the constructor freezes.
 
-## Decision
+## Considered Options
 
-The decision has 7 parts, each set out in its own subsection below: 1. Four layers, four rates of change; 2. Retire `type_gts_id(key)`; 3. A document type is distributed as a kit; 4. A local override sits on top of the installed component; 5. Two node types and four edges; 6. Storage; 7. Stages move to the backend; the frontend constants are deleted.
+**Registering each catalogue key as a GTS type properly.** The shape the code
+implies today. It fails three ways: the types-registry is not tenant-scoped
+(ADR-0013 §1), so two organizations collide; a registered schema is immutable
+(§5), so every template edit is a migration; and registration failures surface
+at boot, so a bad key from a UI form takes down a pod.
+
+**Letting organizations register types under a tenant vendor segment.** ADR-0013
+§4 permits it, and it is the right tool for a genuinely new *kind* of thing. A
+document type is not a new kind — it is another instance of a kind the platform
+already ships. Spending the escape hatch here hands every organization a
+registry namespace to maintain, for no gain.
+
+**Inventing a revision counter for catalogue entries.** The first draft of this
+ADR did exactly that, before noticing that kits already version, publish, scope
+and materialize. A second versioning mechanism beside an existing one is a cost
+with no return.
+
+**Distributing document types as crates.** No private publication, and a
+document type is a template plus a manifest, not a compiled crate.
+
+**Component only, no local override.** Cleaner — one source per effective type —
+but every organization ends up maintaining a fork repository to move one section,
+and the existing `POST /types` form flow would have to be deleted rather than
+re-pointed.
+
+**Making the graph the system of record.** Its per-tenant scoping fits, but a
+node's concrete type is immutable under upsert (ADR-0013 §5) and overrides need
+rows that supersede cheaply.
+
+## Decision Outcome
 
 ### 1. Four layers, four rates of change
 
@@ -237,38 +278,7 @@ This closes the client-side-invariant hole ADR-0010 opened for stages. The other
 three invariants that ADR records — the status ladder, the shape invariant and
 name uniqueness — are out of scope here.
 
-## What was rejected
-
-**Registering each catalogue key as a GTS type properly.** The shape the code
-implies today. It fails three ways: the types-registry is not tenant-scoped
-(ADR-0013 §1), so two organizations collide; a registered schema is immutable
-(§5), so every template edit is a migration; and registration failures surface
-at boot, so a bad key from a UI form takes down a pod.
-
-**Letting organizations register types under a tenant vendor segment.** ADR-0013
-§4 permits it, and it is the right tool for a genuinely new *kind* of thing. A
-document type is not a new kind — it is another instance of a kind the platform
-already ships. Spending the escape hatch here hands every organization a
-registry namespace to maintain, for no gain.
-
-**Inventing a revision counter for catalogue entries.** The first draft of this
-ADR did exactly that, before noticing that kits already version, publish, scope
-and materialize. A second versioning mechanism beside an existing one is a cost
-with no return.
-
-**Distributing document types as crates.** No private publication, and a
-document type is a template plus a manifest, not a compiled crate.
-
-**Component only, no local override.** Cleaner — one source per effective type —
-but every organization ends up maintaining a fork repository to move one section,
-and the existing `POST /types` form flow would have to be deleted rather than
-re-pointed.
-
-**Making the graph the system of record.** Its per-tenant scoping fits, but a
-node's concrete type is immutable under upsert (ADR-0013 §5) and overrides need
-rows that supersede cheaply.
-
-## Consequences
+### Consequences
 
 - **`docs/gts-types.json` changes shape**: seven per-key document types leave the
   snapshot, two node types and four edges enter it. The diff is the review, per
@@ -292,7 +302,9 @@ rows that supersede cheaply.
   `KitInstallation.materializations` already records what was written where, so
   "generate the docs and put them in the repo" stops being a separate subsystem.
 
-## What this change implements, and what it does not
+## More Information
+
+### What this change implements, and what it does not
 
 Sections 2, 4, 5 and 7 are implemented; sections 3 and 6 are not, and the gap is
 deliberate. Distribution and the graph projection are each larger than the whole
@@ -320,7 +332,7 @@ Two consequences of stopping here, recorded so they are not rediscovered:
   want to traverse them ("which types does this project still owe for stage X")
   have to read the catalogue and join in the caller until §6 lands.
 
-## Follow-ups
+### Follow-ups
 
 1. ~~The wizard's `stages: ['intent']` write becomes "the effective required
    stages for this workspace".~~ Done: `requiredStages` in `wizardEffects`,
@@ -398,3 +410,13 @@ Two consequences of stopping here, recorded so they are not rediscovered:
    trait, for the one method `authorize` calls -- which is why it has not been
    written. Worth it when a second gear starts depending on these endpoints, or
    the first time a route bug reaches a deployment.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-documents`
+* `cpt-studio-fr-document-catalogue`

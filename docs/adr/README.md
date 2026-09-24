@@ -1,11 +1,16 @@
 # Architecture decision records
 
-Every ADR of this repository, in one sequence. Each file starts with front
-matter (`type: adr`, `status`, `date`) and has `## Status`, `## Context`,
-`## Decision` and `## Consequences` sections, so Constructor Studio's document
-pipeline recognises it as an ADR. The status in the table is the one each record
-declares; a later ADR that retires or amends an earlier one says so in its own
-Status section.
+Every ADR of this repository, in one sequence. Each record follows the MADR
+shape of Studio's built-in ADR template (`studio-backend/src/documents/templates/adr.md`):
+front matter with `type: adr`, `status` and `date`; an `**ID**` built from the file
+name, e.g. `cpt-studio-adr-theia-sessions` for ADR-0003 (ADR-0010 keeps the id it already had,
+`cpt-studiofrontend-adr-projects-as-am-tenants`); then Context and Problem
+Statement, Considered Options where the record weighed any, Decision Outcome
+with its Consequences and, where the record has one, its Confirmation; More
+Information for the record's phases, follow-ups and notes; and Traceability to
+the [PRD](../prd/constructor-studio.md) and [DESIGN](../design/constructor-studio.md)
+ids it bears on. The status in the table is the one each record declares; a
+later ADR that retires or amends an earlier one says so under its title.
 
 | ADR | Title | Status | Date |
 |---|---|---|---|

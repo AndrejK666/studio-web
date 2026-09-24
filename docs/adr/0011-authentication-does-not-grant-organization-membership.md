@@ -6,11 +6,22 @@ date: 2026-08-27
 
 # ADR-0011: Authentication does not grant organization membership
 
-## Status
+**ID**: `cpt-studio-adr-authentication-does-not-grant-organization-membership`
 
 Status: accepted · 2026-08-27 · Amends ADR-0004
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Constructor Studio now accepts GitHub identities through Keycloak. The GitHub
 broker correctly answers **who the person is**, but its current
@@ -32,9 +43,7 @@ follows ADR-0009: tenant isolation is the outer boundary and roles only narrow
 access inside a tenant. A role or membership UI must not imply protection while
 the runtime authorization path is still allow-all.
 
-## Decision
-
-The decision has 7 parts, each set out in its own subsection below: 1. External login establishes identity only; 2. Organization access comes from explicit membership; 3. A user with no membership gets a valid no-access state; 4. The installation bootstraps a default organization; 5. Owners manage membership and non-owner roles; 6. Invitations and login are joined safely; 7. Enforcement precedes role-management UI.
+## Decision Outcome
 
 ### 1. External login establishes identity only
 
@@ -180,7 +189,24 @@ Deployment rights are separate from Studio product roles. Kubernetes and
 GitHub Actions deployment permissions remain controlled by GitHub Environments,
 repository permissions, and namespace-scoped Kubernetes credentials.
 
-## User experience
+### Consequences
+
+- A successful external login no longer implies product access. This is an
+  intentional separation of authentication and authorization.
+- The deleted-home-tenant failure disappears because unassigned identities are
+  a supported state, not identities carrying fabricated tenant ids.
+- Organization discovery and user administration become tenant-scoped and
+  auditable.
+- Multi-organization users become possible without encoding one mutable home
+  organization in the external IdP token.
+- The change requires backend identity/membership APIs and real PDP enforcement;
+  it cannot be completed safely as a Keycloak mapper or frontend-only patch.
+- Existing GitHub-created users require migration because their current
+  `tenant_id` attribute is not an authoritative membership.
+
+## More Information
+
+### User experience
 
 ```text
 GitHub / Keycloak login
@@ -215,9 +241,9 @@ only their organization's member and invitation views.
 Organization owners have a tenant-scoped People surface. They never receive
 the platform-wide identity directory.
 
-## Migration and implementation plan
+### Migration and implementation plan
 
-### Phase 0 — stop the incorrect grant
+#### Phase 0 — stop the incorrect grant
 
 1. Remove `github-tenant-id` from the realm and partial-import configuration.
 2. Stop treating a missing hard-coded tenant as an instruction to recreate it.
@@ -232,7 +258,7 @@ the platform-wide identity directory.
 6. Keep the local bootstrap administrator as the only platform administrator
    during this phase.
 
-### Phase 1 — identity and membership contracts
+#### Phase 1 — identity and membership contracts
 
 1. Define stable identity, invitation, membership, and role-grant persistence.
 2. Add identity-scoped `me`, invitation-list, and invitation-accept endpoints
@@ -244,7 +270,7 @@ the platform-wide identity directory.
 6. Add audit events for invitations, acceptance, role changes, suspension,
    owner replacement, and denied cross-tenant access.
 
-### Phase 2 — authorization
+#### Phase 2 — authorization
 
 1. Replace allow-all with the Studio PDP path for every organization resource.
 2. Resolve active membership before constructing tenant constraints.
@@ -252,14 +278,14 @@ the platform-wide identity directory.
 4. Add negative integration tests and concurrency tests for the invariants in
    this ADR.
 
-### Phase 3 — administration and onboarding UI
+#### Phase 3 — administration and onboarding UI
 
 1. Add the platform-admin organization/owner management surface.
 2. Add the no-access and pending-invitations screens.
 3. Add the owner People and role-management surface.
 4. Add organization switching for identities with multiple memberships.
 
-### Phase 4 — dev migration and promotion
+#### Phase 4 — dev migration and promotion
 
 1. Configure the bootstrapped organization as `Constructor Fabric Dev` (or
    create it idempotently when upgrading an installation that predates the
@@ -273,17 +299,13 @@ the platform-wide identity directory.
 5. Promote the same schema and behavior to test; create `Constructor Fabric
    Test` independently and appoint its owner explicitly.
 
-## Consequences
+## Traceability
 
-- A successful external login no longer implies product access. This is an
-  intentional separation of authentication and authorization.
-- The deleted-home-tenant failure disappears because unassigned identities are
-  a supported state, not identities carrying fabricated tenant ids.
-- Organization discovery and user administration become tenant-scoped and
-  auditable.
-- Multi-organization users become possible without encoding one mutable home
-  organization in the external IdP token.
-- The change requires backend identity/membership APIs and real PDP enforcement;
-  it cannot be completed safely as a Keycloak mapper or frontend-only patch.
-- Existing GitHub-created users require migration because their current
-  `tenant_id` attribute is not an authoritative membership.
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-identity-directory`
+* `cpt-studio-fr-invitations-membership`
+* `cpt-studio-fr-identity-directory`

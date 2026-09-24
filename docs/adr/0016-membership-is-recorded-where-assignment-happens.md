@@ -6,11 +6,22 @@ date: 2026-09-10
 
 # ADR-0016: Membership is recorded where assignment happens, and read where access is decided
 
-## Status
+**ID**: `cpt-studio-adr-membership-is-recorded-where-assignment-happens`
 
 Status: **proposed** · Date: 2026-09-10 · Implements ADR-0023 follow-up 1 · Phase 0 of ADR-0011 §2
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0011 §2 makes explicit membership the authority for organization access, and
 ADR-0023 gave it a table. Neither is what the product reads. Today the portal
@@ -34,9 +45,7 @@ So the order is: make the record exist, then read it — §1-§4 below and then
 That ordering turned out to matter more than expected: the backfill migrates what
 the old data *said*, and what it said is not what the portal needs (§5).
 
-## Decision
-
-The decision has 6 parts, each set out in its own subsection below: 1. `AssignmentRecorder` — one narrow write, in the direction that already exists; 2. Recorded last, and required; 3. A backfill, because history has no rows; 4. A platform admin may write a membership; 5. The portal reads membership — except for the platform administrator; 6. No organization is a state, not an empty screen.
+## Decision Outcome
 
 ### 1. `AssignmentRecorder` — one narrow write, in the direction that already exists
 
@@ -148,23 +157,7 @@ authenticate.
 A *failed* resolve deliberately does not enter that state: a timeout must not
 tell somebody with an organization that they have none.
 
-## What is deliberately not here
-
-- **The `tenant_id` attribute still exists and is still written**, and still
-  decides who the platform administrator is (§5). It stops being the authority
-  for *organization access* here; retiring it entirely needs a separate answer
-  for the administrator question.
-- **Nothing is enforced differently.** `privilege_for` still maps no resource, so
-  the PDP's grant branch is still unreachable and this changes no access
-  decision — the organization list is what the UI *offers*, not what the server
-  permits. ADR-0011 §7 is satisfied in the sense that matters: no membership
-  *management* UI ships here, and nothing new is granted.
-- **The prototype portal is untouched.** Its `me.subject_tenant_id` use is a
-  tenant-tree explorer rooted at the home tenant, not an organization selector,
-  and membership does not replace it. Its assignment flow needs no change: the
-  membership is recorded server-side by §1.
-
-## Consequences
+### Consequences
 
 - (+) The membership table has a real writer on the real assignment path, so the
   data the portal will need starts accumulating before anything depends on it.
@@ -182,7 +175,7 @@ tell somebody with an organization that they have none.
 - (−) The organization list costs one request per membership to resolve names.
   Fine at the present cardinality; a batch tenant read is the fix if it is not.
 
-## Verified
+### Confirmation
 
 On an isolated stand (own Postgres, own Keycloak 26.7 with the Studio realm; the
 shared dev stack untouched):
@@ -222,7 +215,25 @@ whole chain. Separately, `connections-mfe` fails 8 tests when its suite runs
 whole and passes them file-by-file, and `overlayContract.test.ts` needs a
 generated MFE manifest. None of these are touched by this change.
 
-## Follow-ups
+## More Information
+
+### What is deliberately not here
+
+- **The `tenant_id` attribute still exists and is still written**, and still
+  decides who the platform administrator is (§5). It stops being the authority
+  for *organization access* here; retiring it entirely needs a separate answer
+  for the administrator question.
+- **Nothing is enforced differently.** `privilege_for` still maps no resource, so
+  the PDP's grant branch is still unreachable and this changes no access
+  decision — the organization list is what the UI *offers*, not what the server
+  permits. ADR-0011 §7 is satisfied in the sense that matters: no membership
+  *management* UI ships here, and nothing new is granted.
+- **The prototype portal is untouched.** Its `me.subject_tenant_id` use is a
+  tenant-tree explorer rooted at the home tenant, not an organization selector,
+  and membership does not replace it. Its assignment flow needs no change: the
+  membership is recorded server-side by §1.
+
+### Follow-ups
 
 1. **Decide how a platform administrator is recognised without `tenant_id`**
    (§5). Until then the attribute cannot be retired, whatever else stops reading
@@ -233,3 +244,13 @@ generated MFE manifest. None of these are touched by this change.
    being role-mapped in `privilege_for`.
 4. **`assign` needs the tenant group to exist**; either provision it or stop
    requiring it.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-invitations-membership`

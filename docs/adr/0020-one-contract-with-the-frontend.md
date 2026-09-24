@@ -6,11 +6,21 @@ date: 2026-09-14
 
 # ADR-0020: One contract with the frontend, enforced rather than agreed
 
-## Status
+**ID**: `cpt-studio-adr-one-contract-with-the-frontend`
 
 Status: **proposed** · Date: 2026-09-14 · Builds on ADR-0026 · Relates to ADR-0006
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 This assembly exposes about 170 REST operations across 18 domains, and every one
 of them was designed inside the gear that owns it. That is the right way to
@@ -74,9 +84,7 @@ FrontX, screen by screen. Every screen written against a one-off shape is a
 screen that gets rewritten when the shape is unified, so the cheapest moment to
 fix the contract is before those screens exist.
 
-## Decision
-
-The decision has 8 parts, each set out in its own subsection below: 1. The contract is written down, in one place; 2. It is enforced by a ratchet, not by review; 3. The unit of the contract is the resource, not the gear; 4. Scope is said once; 5. One asynchrony; 6. Documentation is part of the declaration, not a follow-up; 7. The surface is committed, and the consumers are checked against it; 8. A wire change lands with its consumers.
+## Decision Outcome
 
 ### 1. The contract is written down, in one place
 
@@ -165,7 +173,7 @@ Hand-written stays what generation cannot express — plugins, `SseAuthPlugin`,
 mocks. Until that lands, a hand-written type carries a comment naming the DTO
 it mirrors.
 
-## Consequences
+### Consequences
 
 * The rules bind every operation written from today, including in branches now
   in flight. Adapting one is usually a `description` and an `operation_id`.
@@ -206,3 +214,14 @@ it mirrors.
   rather than from the resource produces.
 * Nothing here changes the gateway, the prefix, or the `v1` that is deployed. No
   operation moves in this ADR; it establishes what moving means.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-api-contract`
+* `cpt-studio-fr-api-contract`
+* `cpt-studio-nfr-list-pagination`

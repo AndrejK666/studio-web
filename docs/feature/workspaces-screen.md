@@ -4,17 +4,46 @@ status: accepted
 owner: studio-team
 ---
 
-# Feature — The organization's workspaces
+# Feature: The organization's workspaces
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspaces-screen`
 
-## Summary
+- [x] `p1` - `cpt-studio-feature-workspaces-screen`
+
+## Table of Contents
+
+<!-- toc -->
+
+- [1. Feature Context](#1-feature-context)
+  - [1.1 Overview](#11-overview)
+  - [1.2 Purpose](#12-purpose)
+  - [1.3 Actors](#13-actors)
+  - [1.4 References](#14-references)
+- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
+  - [Open a workspace's projects](#open-a-workspaces-projects)
+  - [Create a workspace from the list](#create-a-workspace-from-the-list)
+- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
+  - [List the organization's workspaces](#list-the-organizations-workspaces)
+- [4. States (CDSL)](#4-states-cdsl)
+  - [Workspaces Screen State Machine](#workspaces-screen-state-machine)
+- [5. Definitions of Done](#5-definitions-of-done)
+  - [The list is a screen of the organization level](#the-list-is-a-screen-of-the-organization-level)
+  - [A row is the way into the workspace level](#a-row-is-the-way-into-the-workspace-level)
+  - [Creation moves next to the list](#creation-moves-next-to-the-list)
+  - [The counts come from the tenant list](#the-counts-come-from-the-tenant-list)
+- [6. Acceptance Criteria](#6-acceptance-criteria)
+
+<!-- /toc -->
+
+## 1. Feature Context
+
+### 1.1 Overview
 
 The organization's workspaces, listed on a screen of the organization level:
 what each one holds, and the way into it. Creating one moves here too, from the
 projects list where it sat because there was nowhere else to put it.
 
-### Purpose
+### 1.2 Purpose
 
 `shell-levels` made the workspace a level of its own and took Projects out of
 the organization's rail: choosing a workspace is what opens its projects. That
@@ -43,25 +72,31 @@ code:
 - **Creation moves** out of the projects list's toolbar. A workspace is not a
   thing one makes from inside another workspace's projects.
 
-### Actors
+**Requirements**: `cpt-studio-fr-workspace-project-tenants`
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+**Principles**: `cpt-studio-principle-prove-before-show`
+
+### 1.3 Actors
+
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Reads the list, opens a workspace, creates one. |
-| **Shell** | Owns the levels: it mounts the workspace level's screen when a row asks for it. |
-| **MFE** | organization-mfe. Reads the workspaces, draws the list, and hands a created one to the shell. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Reads the list, opens a workspace, creates one. |
+| **Shell** (`cpt-studio-actor-shell`) | Owns the levels: it mounts the workspace level's screen when a row asks for it. |
+| **MFE** (`cpt-studio-actor-mfe`) | organization-mfe. Reads the workspaces, draws the list, and hands a created one to the shell. |
 
-### References
+### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-workspaces-screen`
 - **Feature**: [Levels in the shell](shell-levels.md) — the level this screen leads into
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the slot, the creation form, and the announcement this reuses
 - **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
-## Behaviour
+## 2. Actor Flows (CDSL)
 
 Unchecked on purpose, for the reason stated in `project-create.md`: a checked
 flow obliges every instruction to carry a code marker, and these span an MFE,
@@ -69,9 +104,7 @@ the shell's level request and the overlay in between.
 
 **Use case**: work with the organization's workspaces.
 
-### Actor flows (CDSL)
-
-#### Open a workspace's projects
+### Open a workspace's projects
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-workspaces-screen-open`
 
@@ -89,7 +122,7 @@ the shell's level request and the overlay in between.
 3. [ ] - `p1` - Ask the shell for the workspace level, the same request the path's slot makes - `inst-3`
 4. [ ] - `p1` - **RETURN** the workspace level's screen, mounted by the shell - `inst-4`
 
-#### Create a workspace from the list
+### Create a workspace from the list
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-workspaces-screen-create`
 
@@ -109,9 +142,9 @@ the shell's level request and the overlay in between.
 4. [ ] - `p1` - Re-read the list, so the new row is there with its own count - `inst-4`
 5. [ ] - `p1` - **RETURN** the list with the created workspace in it - `inst-5`
 
-### Processes / business logic (CDSL)
+## 3. Processes / Business Logic (CDSL)
 
-#### List the organization's workspaces
+### List the organization's workspaces
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-algo-workspaces-screen-list`
 
@@ -126,9 +159,9 @@ the shell's level request and the overlay in between.
 3. [ ] - `p1` - Take each row's `child_count` as its project count, which is what the caller can see and not the subtree - `inst-4`
 4. [ ] - `p1` - **RETURN** the rows in the order account-management gave them - `inst-5`
 
-### States (CDSL)
+## 4. States (CDSL)
 
-#### Workspaces Screen State Machine
+### Workspaces Screen State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-workspaces-screen-list`
 
@@ -144,21 +177,9 @@ the shell's level request and the overlay in between.
 5. [ ] - `p1` - **FROM** Failed **TO** Loading **WHEN** the member asks again - `inst-5`
 6. [ ] - `p1` - **FROM** Listed **TO** Loading **WHEN** the organization is switched, or a workspace is created - `inst-6`
 
-## Acceptance Criteria
+## 5. Definitions of Done
 
-- [ ] The organization's rail has a Workspaces item above Organization settings, and it mounts this screen.
-- [ ] The screen lists every workspace of the organization in scope, with a project count per row taken from one request.
-- [ ] An organization with no workspaces shows an empty state and the creation control, not a spinner.
-- [ ] Activating a row opens that workspace's projects, and the path in the top bar gains the workspace slot naming it.
-- [ ] Switching the organization re-reads the list, and never shows the previous organization's workspaces.
-- [ ] A failed read keeps whatever rows were shown and offers to try again.
-- [ ] "New workspace" beside the list opens the same overlay the projects list used to open; Escape and the scrim close it and write nothing.
-- [ ] A created workspace is in the list, is the one in scope, and its count reads zero projects.
-- [ ] The projects list no longer offers "New workspace".
-
-### Definitions of Done
-
-#### The list is a screen of the organization level
+### The list is a screen of the organization level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-level`
 
@@ -176,7 +197,7 @@ buy nothing but a second remote to load.
 **Touches**:
 - Entities: `mfe.json` (organization-mfe), `WorkspacesScreen`
 
-#### A row is the way into the workspace level
+### A row is the way into the workspace level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-row-opens`
 
@@ -203,7 +224,7 @@ still the MFE's, and deciding which screen that means is still the shell's.
 - Action: `constructor_studio.context.workspaces.publish.v1~`
 - Entities: `WorkspacesScreen`, `appContextEffects`
 
-#### Creation moves next to the list
+### Creation moves next to the list
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-create-moves`
 
@@ -221,7 +242,7 @@ the projects list is a screen of one workspace already.
 **Touches**:
 - Entities: `mfe.json` (organization-mfe, projects-mfe), `NewWorkspaceForm`, `ProjectsToolbar`
 
-#### The counts come from the tenant list
+### The counts come from the tenant list
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-counts`
 
@@ -237,3 +258,15 @@ children visible to the caller, which is exactly what the column should claim.
 **Touches**:
 - API: `GET /cf/account-management/v1/tenants/{id}/children`
 - Entities: `WorkspacesScreen`
+
+## 6. Acceptance Criteria
+
+- [ ] The organization's rail has a Workspaces item above Organization settings, and it mounts this screen.
+- [ ] The screen lists every workspace of the organization in scope, with a project count per row taken from one request.
+- [ ] An organization with no workspaces shows an empty state and the creation control, not a spinner.
+- [ ] Activating a row opens that workspace's projects, and the path in the top bar gains the workspace slot naming it.
+- [ ] Switching the organization re-reads the list, and never shows the previous organization's workspaces.
+- [ ] A failed read keeps whatever rows were shown and offers to try again.
+- [ ] "New workspace" beside the list opens the same overlay the projects list used to open; Escape and the scrim close it and write nothing.
+- [ ] A created workspace is in the list, is the one in scope, and its count reads zero projects.
+- [ ] The projects list no longer offers "New workspace".

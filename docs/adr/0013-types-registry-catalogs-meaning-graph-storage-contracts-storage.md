@@ -6,11 +6,23 @@ date: 2026-09-08
 
 # ADR-0013: The types-registry catalogs meaning, graph-storage contracts storage
 
-## Status
+**ID**: `cpt-studio-adr-types-registry-catalogs-meaning-graph-storage-contracts-storage`
 
 Status: **proposed** · Date: 2026-09-08
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Studio registers every GTS type twice — once in the platform **types-registry**
 and once in the **graph-storage** ontology — and until now nothing said which
@@ -55,9 +67,34 @@ semantics cannot be the place where a type's *meaning* is published. So the two
 are not redundant — they answer different questions — and the reason they
 drifted is that we never wrote down which question belongs to which.
 
-## Decision
+## Considered Options
 
-The decision has 6 parts, each set out in its own subsection below: 1. One sentence each; 2. The completeness invariant; 3. One declaration per type, both documents derived from it; 4. What may be registered where, by origin; 5. Evolution: three kinds of change, three different costs; 6. Consistency is checked in three places, not one.
+**Collapsing the two into one.** Neither can absorb the other: the catalog
+cannot hold per-tenant types (no tenant scoping), and graph-storage cannot hold
+the types that never reach the graph (document types, permissions, tenant
+metadata envelopes) nor be the discovery API for a console that must list every
+type in the deployment.
+
+**Registering only the types we currently query.** That is what produced the 21
+orphans. The cost of a catalog entry is one free-form document; the cost of a
+missing one is a type that exists in the data and not in the registry the rest
+of the platform reads.
+
+**Deriving UI labels from identifiers.** Six of the live domain types would
+render wrong (`new_content_knowledge_element` → "File"), and a generated
+frontend has no other place to look.
+
+**Changing the family of existing artifact types in this ADR.** Repositories,
+files and people mirrored from a provider are arguably `reference_node` (the
+system of record is GitHub, not us), and `rel.duplicates` / `rel.traces_to` /
+`rel.finding_on` are analysis results that belong on `analysis_edge` with a
+provenance attribute — as `static_edge` they carry no provenance and a scope
+re-sync would delete them. Both are real modelling errors, and both change the
+type id (the family is part of it), so they belong with the vocabulary decision
+below rather than as a silent side effect of writing down the division of
+labour.
+
+## Decision Outcome
 
 ### 1. One sentence each
 
@@ -155,34 +192,7 @@ or it does not go in the catalog at all.
    deployment which booted an older image or lost a config entry, and both
    registries already expose the reads it needs.
 
-## What was rejected
-
-**Collapsing the two into one.** Neither can absorb the other: the catalog
-cannot hold per-tenant types (no tenant scoping), and graph-storage cannot hold
-the types that never reach the graph (document types, permissions, tenant
-metadata envelopes) nor be the discovery API for a console that must list every
-type in the deployment.
-
-**Registering only the types we currently query.** That is what produced the 21
-orphans. The cost of a catalog entry is one free-form document; the cost of a
-missing one is a type that exists in the data and not in the registry the rest
-of the platform reads.
-
-**Deriving UI labels from identifiers.** Six of the live domain types would
-render wrong (`new_content_knowledge_element` → "File"), and a generated
-frontend has no other place to look.
-
-**Changing the family of existing artifact types in this ADR.** Repositories,
-files and people mirrored from a provider are arguably `reference_node` (the
-system of record is GitHub, not us), and `rel.duplicates` / `rel.traces_to` /
-`rel.finding_on` are analysis results that belong on `analysis_edge` with a
-provenance attribute — as `static_edge` they carry no provenance and a scope
-re-sync would delete them. Both are real modelling errors, and both change the
-type id (the family is part of it), so they belong with the vocabulary decision
-below rather than as a silent side effect of writing down the division of
-labour.
-
-## Consequences
+### Consequences
 
 - 21 previously graph-only types are now cataloged; the next boot registers
   them, bringing the deployment from 173 to 194 `cf.studio.*` entities. Only
@@ -199,7 +209,9 @@ labour.
 - The three-way audit is what makes "the registries agree" a checkable claim in
   a running cluster rather than a property of our CI only.
 
-## Follow-ups
+## More Information
+
+### Follow-ups
 
 1. `gts-audit` — the live three-way diff (§6.3).
 2. One registration-failure policy: `studio-documents` must abort like the rest,
@@ -216,3 +228,13 @@ labour.
 5. Payload validation against the ontology's field definitions. The graph type
    is open by design, so today nothing validates an instance against the model
    the frontend is generated from.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-gts-inventory`
+* `cpt-studio-fr-gts-consistency`

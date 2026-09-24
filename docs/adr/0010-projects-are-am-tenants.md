@@ -6,13 +6,22 @@ date: 2026-08-23
 
 # ADR-0010: A project is an AM tenant — the client mirrors the retired gear's rules
 
-## Status
+**ID**: `cpt-studiofrontend-adr-projects-as-am-tenants`
 
 Status: accepted · 2026-08-23 · Retires ADR-0005 for every client
 
-**ID**: `cpt-studiofrontend-adr-projects-as-am-tenants`
+## Table of Contents
 
-## Context
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0005 (then in `studio-backend/docs/adr/`) is still marked **accepted** and describes
 projects as a dedicated in-crate gear `studio-project`: its own database
@@ -37,7 +46,7 @@ against the real model by reading the code instead
 (`studio-frontend-prototype/src/api.ts` and `projects-mfe`), each rediscovering
 the same rules independently.
 
-## Decision
+## Decision Outcome
 
 The frontend treats a project as an **account-management tenant**. Concretely:
 
@@ -73,7 +82,7 @@ The frontend treats a project as an **account-management tenant**. Concretely:
 The canonical wire vocabulary is `projects-mfe/src/api/types.ts`
 (`TENANT_TYPES`, `PROJECT_CONFIG_TYPE`).
 
-## Consequences
+### Consequences
 
 - **Four invariants moved from the database to the client, which means they are
   advisory.** A second client, a curl, or a retried request can write a project
@@ -94,7 +103,7 @@ The canonical wire vocabulary is `projects-mfe/src/api/types.ts`
   out of tenant membership — `studio_authz_plugin::privilege_for` returns `None`
   and every request is handled by the caller's tenant-scoping branch.
 
-## Confirmation
+### Confirmation
 
 - `grep -rn "studio-project" studio-backend/src` returns only the retirement
   comment.
@@ -105,7 +114,9 @@ The canonical wire vocabulary is `projects-mfe/src/api/types.ts`
 - Any code path that writes `status` must be covered by a test asserting the
   forward-only transition. No such path exists yet.
 
-## Notes
+## More Information
+
+### Notes
 
 - **Local stacks:** the project tenant type and its metadata type are registered
   in `studio-backend/config/docker.yaml` only. `oidc.yaml` (line 452) carries a
@@ -116,3 +127,15 @@ The canonical wire vocabulary is `projects-mfe/src/api/types.ts`
   `superseded by ADR-0010`. That file is backend-owned; this ADR does not edit it.
 - `studio_projects` is still created by `docker/initdb/01-create-databases.sql`
   as a leftover of the retired gear.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-account-management`
+* `cpt-studio-principle-project-is-unit`
+* `cpt-studio-principle-visible-seams`
+* `cpt-studio-fr-workspace-project-tenants`

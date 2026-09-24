@@ -6,13 +6,23 @@ date: 2026-09-22
 
 # ADR-0021: An MFE entry may be a frame, and its address arrives at runtime
 
-## Status
+**ID**: `cpt-studio-adr-an-mfe-entry-may-be-a-frame`
 
 Date: 2026-09-22
 Status: accepted
 Branch: `feat/iframe-mfe-handler`
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Everything the portal mounts today is a Module Federation remote. `main.tsx`
 registers exactly one loader — `new MfeHandlerMF(FRONTX_MFE_ENTRY_MF)` — and
@@ -49,9 +59,7 @@ federation plugin leaves behind, reads `manifest.metaData.remoteEntry`, and
 throws when an entry carries no `exposeAssets`. A frame has none of these: it
 has an address, and the address is not known at build time.
 
-## Decision
-
-The decision has 9 parts, each set out in its own subsection below: 1. The frame is an entry subtype this repository owns; 2. The entry names a property, never an address; 3. The loader is built on `ChildMfeBridgeImpl`; 4. The lifecycle keeps teardown per container; 5. Redrawing is driven by the value, not by the notification; 6. Not every entry is federated, and the manifest generator learns it; 7. The fixture is a real package; 8. The address property is the one from the #310 contract, and the shell seeds it; 9. The fixture's screen is visible until #318.
+## Decision Outcome
 
 ### The frame is an entry subtype this repository owns
 
@@ -196,7 +204,7 @@ navigation — that is #318, and this change deliberately does not wait for it.
 Seeing the page in a running portal is worth a temporary rail item; the item
 goes away when `placement: hidden` exists.
 
-## Consequences
+### Consequences
 
 * A frame is a weaker tenant of a screen than a module is. The screen domain
   mounts exclusively, eviction removes the container, and a frame therefore
@@ -221,3 +229,13 @@ goes away when `placement: hidden` exists.
 * The generator's new branch is the price #321 does not pay. It is also the
   first time this repository has said in code that a micro-frontend need not be
   a module, which is the claim the platform will be asked to adopt later.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-portal-shell`
+* `cpt-studio-fr-portal-levels`
