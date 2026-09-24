@@ -288,6 +288,9 @@ pub struct ScaffoldRequest {
     /// For a `plugin`: the host whose extension point it fills, by crate
     /// name (`cf-gears-authn-resolver`), from `GET /gearbox/extension-points`.
     pub plugin_host: Option<String>,
+    /// For a `plugin` whose host declares more than one extension point: which
+    /// one, by its GTS spec id, from `GET /gearbox/extension-points`.
+    pub plugin_spec: Option<String>,
 }
 
 /// Whether product previews can run here, and against which gear corpus.
@@ -1477,9 +1480,11 @@ async fn describe_new_gear(
                     "a plugin needs `plugin_host`, the gear whose extension point it fills".into(),
                 )
             })?;
-        // The engine resolves `sdk = cargo(path = ...)` inside one source root,
-        // so a plugin of a corpus host has to be written into the corpus: in
-        // any other repository its description could never validate.
+        // Which repository the gear goes into decides how the SDK is reached
+        // from it: inside the corpus, a path within the repository; in the
+        // project's own, the `gears-rust` checkout beside it. The plugin's
+        // `gear.gdl` names its point by spec (`fills = "..."`), which the
+        // engine joins across sources, so either validates.
         let project_repo = catalog
             .service
             .get_project_repo(ctx, project_id)
@@ -1492,28 +1497,43 @@ async fn describe_new_gear(
                     .map(str::to_string)
             })
             .unwrap_or_default();
-        let corpus = gearbox.corpus_repo();
-        if super::gearbox::repo_key(&project_repo) != corpus {
-            return Err(invalid(format!(
-                "a plugin lives in the repository of the SDK it implements; the hosts here are                  in `{corpus}`, and this project's gears go to `{project_repo}`. Use `{corpus}`                  as the project's gear store, or scaffold a service"
-            )));
-        }
+        let in_corpus = super::gearbox::repo_key(&project_repo) == gearbox.corpus_repo();
         let points = gearbox
             .extension_points()
             .await
             .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-        let point = points
+        let wanted_spec = body
+            .plugin_spec
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let mut of_host: Vec<_> = points
             .into_iter()
-            .find(|p| p.host_crate == host || p.host_id == host)
-            .ok_or_else(|| {
-                invalid(format!(
-                    "`{host}` has no extension point the Gearbox engine knows of"
-                ))
-            })?;
+            .filter(|p| p.host_crate == host || p.host_id == host)
+            .filter(|p| wanted_spec.is_none_or(|s| p.spec == s))
+            .collect();
+        if of_host.len() > 1 {
+            let specs: Vec<&str> = of_host.iter().map(|p| p.spec.as_str()).collect();
+            return Err(invalid(format!(
+                "`{host}` declares several extension points; name one as `plugin_spec`: {}",
+                specs.join(", ")
+            )));
+        }
+        let point = of_host.pop().ok_or_else(|| {
+            invalid(format!(
+                "`{host}` has no such extension point the Gearbox engine knows of"
+            ))
+        })?;
         Some(super::gearbox::SdkLocator {
+            spec: super::gearbox::spec_segment(&point.spec).to_string(),
+            trait_ident: point.trait_ident,
             crate_name: point.sdk_crate,
             lib_ident: point.sdk_lib,
-            path: super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path),
+            path: if in_corpus {
+                super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path)
+            } else {
+                super::gearbox::sdk_path_beside(parent_dir, &point.sdk_path)
+            },
         })
     } else {
         None
@@ -1545,6 +1565,11 @@ pub struct ExtensionPointDto {
     pub host_id: String,
     /// The SDK crate its extension point is declared in.
     pub sdk: String,
+    /// The point's GTS spec id: its identity, and what a scaffold names as
+    /// `plugin_spec` when the host declares more than one.
+    pub spec: String,
+    /// The interface a plugin of this point implements.
+    pub trait_ident: String,
     /// Whether the host can run in a product from this corpus.
     pub runs: bool,
 }
@@ -1571,6 +1596,8 @@ async fn extension_points(
             host: p.host_crate,
             host_id: p.host_id,
             sdk: p.sdk_crate,
+            spec: p.spec,
+            trait_ident: p.trait_ident,
             runs: p.runs,
         })
         .collect();

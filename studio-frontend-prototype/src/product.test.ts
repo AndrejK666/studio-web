@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { GearboxStatus, RepoEntry } from "./api";
 import type { Candidate, PlanRow } from "./api";
 import {
+  corpusErrors,
   defaultPicks,
   groupDiagnostics,
   isPickable,
@@ -149,5 +150,27 @@ describe("defaultPicks and the engine's verdict", () => {
     expect(defaultPicks([row("tenancy", blocked, plain, runs)])).toEqual(["cf-gears-tenant-resolver"]);
     expect(defaultPicks([row("tenancy", blocked, plain)])).toEqual(["cf-gears-account-management"]);
     expect(defaultPicks([row("tenancy", blocked)])).toEqual([]);
+  });
+});
+
+// The 28 errors a two-gear product showed on 2026-09-24 were all in the
+// corpus's own gear.gdl files, which an older engine could not read.
+describe("corpusErrors", () => {
+  const d = (file: string | null, severity = "error") => ({ code: "GBX0102", severity, message: "m", file });
+
+  it("counts only errors in files that are not this product", () => {
+    const ds = [
+      d("gears/system/credstore/credstore/gear.gdl"),
+      d("gears/system/credstore/credstore/gear.gdl"),
+      d("gears/bss/ledger/ledger/gear.gdl"),
+      d("product.gdl"),
+      d(null),
+      d("gears/x/gear.gdl", "warning"),
+    ];
+    expect(corpusErrors(ds)).toEqual({ errors: 3, files: 2 });
+  });
+
+  it("is zero for a product whose problems are its own", () => {
+    expect(corpusErrors([d("product.gdl"), d(null)])).toEqual({ errors: 0, files: 0 });
   });
 });

@@ -121,6 +121,10 @@ export interface GearboxExtensionPoint {
   host_id: string;
   /** The SDK crate the extension point is declared in. */
   sdk: string;
+  /** The point's GTS spec id; a host may declare several. */
+  spec: string;
+  /** The interface a plugin of this point implements. */
+  trait_ident: string;
   runs: boolean;
 }
 
@@ -3082,6 +3086,8 @@ export const api = {
       gear_kind?: GearKind;
       /** For a plugin: the host crate whose extension point it fills. */
       plugin_host?: string;
+      /** Which of the host's points, by GTS spec id. */
+      plugin_spec?: string;
       files?: ScaffoldFile[];
       dry_run?: boolean;
       open_pr?: boolean;

@@ -165,6 +165,13 @@ pub struct EngineFills {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EnginePoint {
     pub sdk: EnginePackage,
+    /// The full GTS type id of the plugin spec — the point's identity. Two
+    /// points can share a trait; only their specs tell them apart.
+    #[serde(default)]
+    pub spec: Option<String>,
+    /// The interface plugins register under, as written in the SDK.
+    #[serde(default)]
+    pub trait_ident: Option<String>,
 }
 
 impl EngineCatalogue {
@@ -667,6 +674,12 @@ impl GearKind {
 /// Where the SDK a plugin implements lives, as its `gear.gdl` writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdkLocator {
+    /// The spec's own GTS segment (`cf.core.authn_resolver.plugin.v1~`), which
+    /// the engine writes as `fills = "..."`: the declaration that makes a
+    /// crate a plugin.
+    pub spec: String,
+    /// The trait the plugin implements.
+    pub trait_ident: String,
     pub crate_name: String,
     pub lib_ident: String,
     /// Relative to the new gear's own directory.
@@ -687,6 +700,9 @@ pub struct GearScaffold {
 pub struct HostPoint {
     pub host_id: String,
     pub host_crate: String,
+    /// The point's full GTS spec id; a host may declare several.
+    pub spec: String,
+    pub trait_ident: String,
     pub sdk_crate: String,
     pub sdk_lib: String,
     /// Relative to the corpus root.
@@ -706,6 +722,8 @@ pub fn host_points(catalogue: &EngineCatalogue) -> Vec<HostPoint> {
                 Some(HostPoint {
                     host_id: g.id.clone(),
                     host_crate: g.package.crate_name.clone(),
+                    spec: p.spec.clone()?,
+                    trait_ident: p.trait_ident.clone()?,
                     sdk_crate: p.sdk.crate_name.clone(),
                     sdk_lib: p.sdk.lib_ident.clone()?,
                     sdk_path: p.sdk.path.clone()?,
@@ -714,7 +732,7 @@ pub fn host_points(catalogue: &EngineCatalogue) -> Vec<HostPoint> {
             })
         })
         .collect();
-    out.sort_by(|a, b| (!a.runs, &a.host_crate).cmp(&(!b.runs, &b.host_crate)));
+    out.sort_by(|a, b| (!a.runs, &a.host_crate, &a.spec).cmp(&(!b.runs, &b.host_crate, &b.spec)));
     out
 }
 
@@ -737,6 +755,30 @@ pub fn sdk_path_in_repo(parent_dir: &str, sdk_path: &str) -> String {
         "../".repeat(depth),
         sdk_path.trim_start_matches('/')
     )
+}
+
+/// The SDK path from a gear in a project's own repository to the corpus
+/// checkout beside it in a Studio workspace: `<checkout>/<parent_dir>/<slug>`
+/// up to the workspace, then `gears-rust/`.
+pub fn sdk_path_beside(parent_dir: &str, sdk_path: &str) -> String {
+    let depth = parent_dir
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .count()
+        + 2;
+    format!(
+        "{}{CORPUS_SOURCE_ID}/{}",
+        "../".repeat(depth),
+        sdk_path.trim_start_matches('/')
+    )
+}
+
+/// A plugin spec's own GTS segment: `cf.toolkit.plugins.plugin.v1~cf.core.x.plugin.v1~`
+/// -> `cf.core.x.plugin.v1~`, the form a plugin's `fills = "..."` is written in.
+pub fn spec_segment(spec: &str) -> &str {
+    spec.strip_prefix("cf.toolkit.plugins.plugin.v1~")
+        .unwrap_or(spec)
 }
 
 /// `https://github.com/Owner/Repo.git`, `owner/repo` -> `owner/repo`: the form
@@ -1477,10 +1519,11 @@ impl Gearbox {
                 "version": "0.1.0",
                 "kind": spec.kind.as_str(),
                 "plugin": spec.plugin.as_ref().map(|p| serde_json::json!({
+                    "spec": p.spec,
+                    "trait_ident": p.trait_ident,
                     "crate_name": p.crate_name,
                     "lib_ident": p.lib_ident,
                     "path": p.path,
-                    "plugin_interface": serde_json::Value::Null,
                 })),
                 "destination_dir": scratch.join("gear").to_string_lossy(),
                 "dry_run": true,
@@ -2089,11 +2132,15 @@ mod tests {
                 "authn-resolver": {
                     "id": "authn-resolver",
                     "package": {"crate_name": "cf-gears-authn-resolver"},
-                    "extension_points": [{"sdk": {
-                        "crate_name": "cf-gears-authn-resolver-sdk",
-                        "lib_ident": "authn_resolver_sdk",
-                        "path": "gears/system/authn-resolver/authn-resolver-sdk"
-                    }}]
+                    "extension_points": [{
+                        "spec": "cf.toolkit.plugins.plugin.v1~cf.core.authn_resolver.plugin.v1~",
+                        "trait_ident": "AuthNResolverPluginClient",
+                        "sdk": {
+                            "crate_name": "cf-gears-authn-resolver-sdk",
+                            "lib_ident": "authn_resolver_sdk",
+                            "path": "gears/system/authn-resolver/authn-resolver-sdk"
+                        }
+                    }]
                 },
                 // Without a path a plugin's `gear.gdl` could not point at it.
                 "credstore": {
@@ -2108,6 +2155,11 @@ mod tests {
         assert_eq!(points.len(), 1, "{points:?}");
         assert_eq!(points[0].host_crate, "cf-gears-authn-resolver");
         assert_eq!(points[0].sdk_lib, "authn_resolver_sdk");
+        assert_eq!(
+            spec_segment(&points[0].spec),
+            "cf.core.authn_resolver.plugin.v1~"
+        );
+        assert_eq!(points[0].trait_ident, "AuthNResolverPluginClient");
     }
 
     #[test]
@@ -2123,6 +2175,15 @@ mod tests {
             "../../../gears/x-sdk"
         );
         assert_eq!(sdk_path_in_repo("", "x-sdk"), "../x-sdk");
+    }
+
+    #[test]
+    fn from_a_projects_own_repository_the_sdk_is_in_the_checkout_beside_it() {
+        assert_eq!(
+            sdk_path_beside("gears", "gears/system/x-sdk"),
+            "../../../gears-rust/gears/system/x-sdk"
+        );
+        assert_eq!(sdk_path_beside("", "x-sdk"), "../../gears-rust/x-sdk");
     }
 
     #[test]
