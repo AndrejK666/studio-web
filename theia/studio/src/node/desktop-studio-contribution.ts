@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as express from '@theia/core/shared/express';
 import { injectable } from '@theia/core/shared/inversify';
@@ -26,6 +27,8 @@ export interface DesktopStudioConfig {
     /** The workspace to open; its sources are cloned when absent. */
     readonly workspaceId?: string;
     readonly workspaceRoot: string;
+    /** Where a workspace opened from the Studio view is checked out, one folder each. */
+    readonly workspacesDir: string;
     /** A command to open the sign-in page with, instead of the system browser. */
     readonly browserCommand?: string;
 }
@@ -42,6 +45,7 @@ export function desktopConfigFrom(env: NodeJS.ProcessEnv, cwd: string): DesktopS
         clientId: env.STUDIO_DESKTOP_CLIENT_ID?.trim() || 'studio-desktop',
         workspaceId: env.STUDIO_DESKTOP_WORKSPACE_ID?.trim() || undefined,
         workspaceRoot: env.STUDIO_WORKSPACE_ROOT?.trim() || cwd,
+        workspacesDir: env.STUDIO_DESKTOP_WORKSPACES?.trim() || path.join(os.homedir(), 'ConstructorStudio', 'workspaces'),
         browserCommand: env.STUDIO_DESKTOP_BROWSER?.trim() || undefined,
     };
 }
@@ -56,7 +60,32 @@ function openInBrowser(url: string, command?: string): void {
     spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
-export const DESKTOP_GIT_HELPER = path.join(__dirname, '..', '..', 'scripts', 'desktop-git-credentials.mjs');
+/**
+ * The credential helper script. Resolved through the package, because in a
+ * bundled app `__dirname` is the bundle's directory, not this package's.
+ */
+export function desktopGitHelper(): string {
+    try {
+        return require.resolve('studio/scripts/desktop-git-credentials.mjs');
+    } catch {
+        return path.join(__dirname, '..', '..', 'scripts', 'desktop-git-credentials.mjs');
+    }
+}
+
+/**
+ * The `credential.helper` value: the helper run by this very executable. A
+ * member's machine need not have Node — the app is one, when asked to be.
+ */
+export function helperCommand(execPath: string, helper: string): string {
+    const slash = (p: string): string => p.split('\\').join('/');
+    return `!ELECTRON_RUN_AS_NODE=1 "${slash(execPath)}" "${slash(helper)}"`;
+}
+
+/** A folder name for a workspace: its name with what a file system refuses removed, or its id. */
+export function folderFor(name: string | undefined, id: string): string {
+    const safe = (name ?? '').replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '-').trim().replace(/^[.-]+|[.-]+$/g, '');
+    return safe || id;
+}
 
 /** What the IDE's Studio view shows; never a token. */
 export interface DesktopStatus {
@@ -96,6 +125,21 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             return;
         }
         app.get('/studio-desktop/status', (_req, res) => { res.json(this.status); });
+        // Open a workspace: clone what is not on disk yet, answer with the folder.
+        app.post('/studio-desktop/open', express.json(), async (req, res) => {
+            const { workspaceId, name } = (req.body ?? {}) as { workspaceId?: string; name?: string };
+            if (!workspaceId || !this.session) {
+                res.status(400).json({ error: this.session ? 'which workspace?' : 'not signed in' });
+                return;
+            }
+            try {
+                const dir = path.join(config.workspacesDir, folderFor(name, workspaceId));
+                const cloned = await this.cloneSources(config, workspaceId, dir);
+                res.json({ path: dir, cloned });
+            } catch (error) {
+                res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+            }
+        });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {
                 this.ready = this.start(config);
@@ -186,29 +230,39 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         };
         console.info(`[studio-desktop] signed in as ${this.status.user?.name ?? this.status.user?.sub}`);
         if (config.workspaceId) {
-            await this.cloneSources(config, config.workspaceId);
+            await this.cloneSources(config, config.workspaceId, config.workspaceRoot);
         }
     }
 
-    /** Clone every source of the workspace that is not on disk yet. */
-    protected async cloneSources(config: DesktopStudioConfig, workspaceId: string): Promise<void> {
+    /** Clone every source of the workspace that is not on disk yet; answer with what was cloned. */
+    protected async cloneSources(config: DesktopStudioConfig, workspaceId: string, root: string): Promise<string[]> {
         const answer = await fetch(
             `${config.studioUrl}${config.gatewayPrefix}/studio-git/v1/sources?project_id=${encodeURIComponent(workspaceId)}`,
             { headers: { Authorization: `Bearer ${await this.session!.accessToken()}` } }
         );
+        if (answer.status === 404) {
+            // Our own gear answers 404 as a problem that names the workspace; any
+            // other 404 is the gateway's, meaning this Studio has no studio-git.
+            const problem = await answer.json().catch(() => undefined) as { context?: { resource_name?: string } } | undefined;
+            throw new Error(problem?.context?.resource_name
+                ? 'you cannot see this workspace\'s settings'
+                : `${config.studioUrl} cannot clone for a desktop yet (it runs no studio-git)`);
+        }
         if (!answer.ok) {
             throw new Error(`the workspace's sources could not be listed (HTTP ${answer.status})`);
         }
         const { items } = await answer.json() as { items: SourceDto[] };
+        fs.mkdirSync(root, { recursive: true });
+        const cloned: string[] = [];
         for (const source of items) {
-            const dir = path.resolve(config.workspaceRoot, source.target ?? source.name);
+            const dir = path.resolve(root, source.target ?? source.name);
             if (fs.existsSync(path.join(dir, '.git'))) {
                 continue;
             }
             const url = `${config.studioUrl}${config.gatewayPrefix}${source.clone_path}`;
             // `-c` on clone is written into the new repository's config: what
             // lands there is the helper's path, never a token.
-            const helper = `!node "${DESKTOP_GIT_HELPER.replace(/\\/g, '/')}"`;
+            const helper = helperCommand(process.execPath, desktopGitHelper());
             const args = ['clone', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
             if (source.branch) {
                 args.push('--branch', source.branch);
@@ -218,6 +272,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 execFile('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, _out, stderr) =>
                     error ? reject(new Error(`cloning ${source.name} failed: ${stderr.trim()}`)) : resolve()));
             console.info(`[studio-desktop] cloned ${source.name} into ${dir}`);
+            cloned.push(source.name);
         }
+        return cloned;
     }
 }

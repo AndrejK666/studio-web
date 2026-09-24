@@ -4,7 +4,9 @@
 // reaches it — the IDE backend holds it and attaches it on the way to Studio.
 
 import * as React from '@theia/core/shared/react';
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable } from '@theia/core/shared/inversify';
+import URI from '@theia/core/lib/common/uri';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
@@ -47,7 +49,13 @@ const kind = (tenant: Tenant): string => tenant.tenant_type?.match(/cf\.studio\.
 
 @injectable()
 export class DesktopStudioWidget extends ReactWidget {
+    @inject(WorkspaceService)
+    protected readonly workspaceService: WorkspaceService;
+
     protected status: DesktopStatus | undefined;
+    /** The workspace being cloned and opened, and how that went. */
+    protected opening: string | undefined;
+    protected openError = '';
     protected organizations: Organization[] | undefined;
     protected loadError = '';
     protected poll: number | undefined;
@@ -90,6 +98,30 @@ export class DesktopStudioWidget extends ReactWidget {
     protected async signIn(): Promise<void> {
         await fetch(desktopUrl('sign-in'), { method: 'POST' });
         await this.refresh();
+    }
+
+    /** Clone the workspace's sources through Studio, then open the folder here. */
+    protected async openWorkspace(workspace: Tenant): Promise<void> {
+        this.opening = workspace.id;
+        this.openError = '';
+        this.update();
+        try {
+            const answer = await fetch(desktopUrl('open'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspaceId: workspace.id, name: workspace.name }),
+            });
+            const body = await answer.json() as { path?: string; error?: string };
+            if (!answer.ok || !body.path) {
+                throw new Error(body.error ?? `HTTP ${answer.status}`);
+            }
+            await this.workspaceService.open(URI.fromFilePath(body.path), { preserveWindow: true });
+        } catch (error) {
+            this.openError = `${workspace.name} could not be opened: ${error instanceof Error ? error.message : error}`;
+        } finally {
+            this.opening = undefined;
+            this.update();
+        }
     }
 
     /** The member's organizations and their workspaces, as the portal lists them. */
@@ -154,10 +186,14 @@ export class DesktopStudioWidget extends ReactWidget {
             {this.organizations?.map(org => <div key={org.id} style={{ marginTop: '12px' }}>
                 <div><span className='codicon codicon-organization' /> <b>{org.name}</b></div>
                 {org.workspaces.length === 0 && <div style={{ paddingLeft: '20px', opacity: 0.7 }}>No workspaces yet</div>}
-                {org.workspaces.map(ws => <div key={ws.id} style={{ paddingLeft: '20px' }} title={ws.id}>
-                    <span className='codicon codicon-folder' /> {ws.name}
+                {org.workspaces.map(ws => <div key={ws.id} style={{ paddingLeft: '20px', cursor: 'pointer' }}
+                    title={`Open ${ws.name} here — its sources are cloned through Studio`}
+                    onClick={() => this.opening || void this.openWorkspace(ws)}>
+                    <span className={this.opening === ws.id ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-folder'} />
+                    {' '}<a>{ws.name}</a>
                 </div>)}
             </div>)}
+            {this.openError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.openError}</p>}
         </div>;
     }
 }
