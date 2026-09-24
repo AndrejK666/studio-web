@@ -44,7 +44,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Pinned, not windows-latest: that image moved to Visual Studio 2026, which
+    # the node-gyp in this dependency tree (10.x) does not recognise, so every
+    # native module fails with "could not find Visual Studio". 2022 is what it
+    # knows. Move on when node-gyp in the tree does.
+    runs-on: windows-2022
     defaults:
       run:
         working-directory: theia
