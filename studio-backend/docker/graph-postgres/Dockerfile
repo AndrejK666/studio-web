@@ -23,11 +23,17 @@ FROM ${CNPG_POSTGRES_IMAGE} AS pgvector-build
 
 ARG PGVECTOR_REF=5219575
 
+# The headers must be the server's own version: apt.postgresql.org moves
+# postgresql-server-dev-19 on to the next beta while the base image stays on
+# its pinned one, and a pgvector built against another beta's structs fails at
+# run time ("index access method handler ... did not return an IndexAmRoutine").
 USER root
 RUN set -eux; \
+    server_version="$(dpkg-query -W -f='${Version}' postgresql-19)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        build-essential ca-certificates git postgresql-server-dev-19; \
+        build-essential ca-certificates git \
+        "postgresql-server-dev-19=${server_version}"; \
     git clone https://github.com/pgvector/pgvector.git /tmp/pgvector; \
     cd /tmp/pgvector; \
     git checkout "${PGVECTOR_REF}"; \
