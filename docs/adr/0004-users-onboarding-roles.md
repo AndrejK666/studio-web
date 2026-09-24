@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-03
+---
+
 # ADR-0004: User onboarding, provisioning, and roles
+
+## Status
 
 Status: accepted · 2026-08-03
 
@@ -12,7 +20,7 @@ static echo plugin — an "Invite" created an AM-side record and nobody in
 the IdP, so invited people could not actually sign in. Authorization is
 static allow-all; the Studio PDP is a parked milestone.
 
-## Decisions
+## Decision
 
 1. **Invite-first onboarding.** Admins invite by username/email from the
    Members view. Self-registration with an approval queue (Keycloak

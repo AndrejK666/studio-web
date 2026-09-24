@@ -33,7 +33,7 @@ to absorb someone else's account.
 Its own relational database (SeaORM). The records are looked up and
 constrained — unique logins, one membership per `(user, org)` — not traversed.
 A graph projection for visualization and path-finding is a later, derived
-concern; ADR-0006 says so explicitly.
+concern; ADR-0023 says so explicitly.
 
 **No database configured → the gear stands down**, and its routes answer 503
 rather than failing the boot. Same stance as
@@ -57,4 +57,4 @@ rather than failing the boot. Same stance as
 - Config section `gears.studio-user`.
 - The unassigned-identity view is [`../identity_directory`](../identity_directory);
   see `docs/adr/0001-identity-mapping.md` and
-  `docs/adr/0006-canonical-user-and-identity-mapper.md`.
+  `docs/adr/0023-canonical-user-and-identity-mapper.md`.

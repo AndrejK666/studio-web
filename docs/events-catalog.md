@@ -1,7 +1,7 @@
 # The studio-events vocabulary
 
 Everything published on the assembly's one push channel
-(`GET /cf/studio-events/v1/stream`, ADR-0013). This file is the registry rule E3
+(`GET /cf/studio-events/v1/stream`, ADR-0026). This file is the registry rule E3
 refers to: a new `subject_type` or a new `kind` lands here in the PR that starts
 publishing it, and a consumer may rely on nothing that is not on this page.
 
@@ -52,7 +52,7 @@ prototype's run list uses).
 
 Published by `studio-theia` (`source: "studio-theia"`) when a session's Theia
 container forwards an event. The bridge's own vocabulary stops at this
-boundary — ADR-0013 §3 exists so that one producer's protocol does not become
+boundary — ADR-0026 §3 exists so that one producer's protocol does not become
 the portal's contract.
 
 | `kind` | Meaning |

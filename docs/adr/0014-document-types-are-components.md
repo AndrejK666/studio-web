@@ -1,4 +1,12 @@
+---
+type: adr
+status: proposed
+date: 2026-09-08
+---
+
 # ADR-0014: A document type is a component, not a GTS type
+
+## Status
 
 Status: **proposed** · Date: 2026-09-08 · Builds on ADR-0013 · Amends ADR-0010 (frontend)
 
@@ -78,6 +86,8 @@ silently invalidates every PRD already approved, so in practice nobody touches a
 type and the constructor freezes.
 
 ## Decision
+
+The decision has 7 parts, each set out in its own subsection below: 1. Four layers, four rates of change; 2. Retire `type_gts_id(key)`; 3. A document type is distributed as a kit; 4. A local override sits on top of the installed component; 5. Two node types and four edges; 6. Storage; 7. Stages move to the backend; the frontend constants are deleted.
 
 ### 1. Four layers, four rates of change
 

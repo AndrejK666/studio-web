@@ -1,48 +1,20 @@
-# Feature: Create a project
+---
+type: feature
+status: accepted
+owner: studio-team
+---
 
-
-<!-- toc -->
-
-- [1. Feature Context](#1-feature-context)
-  - [1.1 Overview](#11-overview)
-  - [1.2 Purpose](#12-purpose)
-  - [1.3 Actors](#13-actors)
-  - [1.4 References](#14-references)
-- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
-  - [Create an empty project](#create-an-empty-project)
-  - [Create a project from an existing repository](#create-a-project-from-an-existing-repository)
-  - [Abandon the wizard](#abandon-the-wizard)
-- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
-  - [Resolve the applicable step sequence](#resolve-the-applicable-step-sequence)
-  - [Write the project](#write-the-project)
-  - [Read the repository catalogue](#read-the-repository-catalogue)
-- [4. States (CDSL)](#4-states-cdsl)
-  - [Wizard State Machine](#wizard-state-machine)
-  - [Project Status State Machine](#project-status-state-machine)
-- [5. Definitions of Done](#5-definitions-of-done)
-  - [The wizard is an overlay extension, not a dialog](#the-wizard-is-an-overlay-extension-not-a-dialog)
-  - [A project always has an owner](#a-project-always-has-an-owner)
-  - [Steps are declared data](#steps-are-declared-data)
-  - [The draft never survives a close](#the-draft-never-survives-a-close)
-  - [Creation is two writes and is not atomic](#creation-is-two-writes-and-is-not-atomic)
-  - [One or more sources, capped](#one-or-more-sources-capped)
-  - [Each root resolves the organization for itself](#each-root-resolves-the-organization-for-itself)
-  - [The list learns without polling](#the-list-learns-without-polling)
-- [6. Acceptance Criteria](#6-acceptance-criteria)
-
-<!-- /toc -->
+# Feature — Create a project
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-create`
 
-## 1. Feature Context
-
-### 1.1 Overview
+## Summary
 
 A two-step wizard, opened from the Projects list, that creates a project either
 empty or from existing repositories. It is rendered by the projects MFE into
 the shell's overlay domain, not as a dialog the MFE draws itself.
 
-### 1.2 Purpose
+### Purpose
 
 Projects are the unit the whole portal is organised around, and until now they
 could only be seeded by hand. The `studio-project` gear that was going to own
@@ -76,7 +48,7 @@ changes the code:
   invariants that became advisory when the `studio-project` gear was retired;
   this feature widens it and the ADR records the change.
 
-### 1.3 Actors
+### Actors
 
 Named, not identified. A FEATURE may only define `algo`, `dod`, `featstatus`,
 `flow` and `state` ids; `actor` and `usecase` belong to a PRD or DESIGN, and this
@@ -89,27 +61,29 @@ exists to own them.
 | **Member** | A signed-in member of the organization in scope. Opens the wizard from the Projects list, fills it in, and confirms creation. |
 | **Shell** | The portal shell. Owns the overlay frame: mounts and unmounts the wizard, draws the scrim, and handles Escape and click-outside without consulting the wizard. |
 
-### 1.4 References
+### References
 
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md)
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md) (no router; steps are state, not routes)
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) (no router; steps are state, not routes)
 - **Design**: Figma `Constructor Studio mockups`, nodes `40001737:12397` and `40001737:12442`
 - **Dependencies**: account-management (`/cf/account-management/v1`), studio-connector (`/studio-connector/v1`)
 
-## 2. Actor Flows (CDSL)
+## Behaviour
 
 The three flows below stay unchecked on purpose, and not because they are
 unimplemented. A checked flow obliges every one of its CDSL instructions to
 carry a `@cpt-begin`/`@cpt-end` block, and these span the toolbar, the overlay
 plumbing, both steps, the write effect and — for "Abandon the wizard" — the
 shell's own dismissal code, which is outside this system's codebase scope. Their
-evidence is the acceptance criteria in section 6, exercised against a running
+evidence is the Acceptance Criteria, exercised against a running
 stack; the implementation claims they rest on are the Definitions of Done, which
 are traced.
 
 **Use case**: create a project, empty or from existing repositories.
 
-### Create an empty project
+### Actor flows (CDSL)
+
+#### Create an empty project
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-greenfield`
 
@@ -133,7 +107,7 @@ are traced.
 7. [ ] - `p1` - Announce the created project on the MFE event bus so the list refetches - `inst-8`
 8. [ ] - `p1` - **RETURN** unmount the overlay extension - `inst-9`
 
-### Create a project from an existing repository
+#### Create a project from an existing repository
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-modernize`
 
@@ -155,7 +129,7 @@ are traced.
 6. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-create-write` - `inst-6`
 7. [ ] - `p1` - **RETURN** unmount the overlay extension and announce the created project - `inst-7`
 
-### Abandon the wizard
+#### Abandon the wizard
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-abandon`
 
@@ -175,9 +149,9 @@ are traced.
    1. [ ] - `p1` - The shell unmounts it without consulting the wizard; there is no confirmation and no veto - `inst-5`
 4. [ ] - `p1` - **RETURN** the draft is discarded with the React root - `inst-6`
 
-## 3. Processes / Business Logic (CDSL)
+### Processes / business logic (CDSL)
 
-### Resolve the applicable step sequence
+#### Resolve the applicable step sequence
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-create-steps`
 
@@ -192,7 +166,7 @@ are traced.
 3. [x] - `p1` - Derive previous and next by position in the applicable set, never by a stored index - `inst-4`
 4. [x] - `p1` - **RETURN** the resolved step, its neighbours, and whether next is absent - `inst-5`
 
-### Write the project
+#### Write the project
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-create-write`
 
@@ -211,7 +185,7 @@ are traced.
    1. [x] - `p1` - Report it but keep the tenant: a project without attributes is recoverable, a rollback is not - `inst-7`
 7. [x] - `p1` - **RETURN** the tenant id - `inst-8`
 
-### Read the repository catalogue
+#### Read the repository catalogue
 
 Two known gaps, both in the gear rather than here, recorded so the screen is not
 blamed for them:
@@ -239,9 +213,9 @@ blamed for them:
 3. [x] - `p1` - Render Updated empty: the connector API carries no timestamp for a repository - `inst-3`
 4. [x] - `p1` - **RETURN** the rows - `inst-4`
 
-## 4. States (CDSL)
+### States (CDSL)
 
-### Wizard State Machine
+#### Wizard State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-project-create-wizard`
 
@@ -254,7 +228,7 @@ blamed for them:
 2. [ ] - `p1` - **FROM** Repositories **TO** Details **WHEN** Back is used - `inst-2`
 3. [ ] - `p1` - **FROM** Repositories **TO** Details **WHEN** the mode is changed to greenfield, which strands the current step - `inst-3`
 
-### Project Status State Machine
+#### Project Status State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-project-create-status`
 
@@ -266,9 +240,29 @@ blamed for them:
 1. [ ] - `p1` - **FROM** Draft **TO** Active **WHEN** the project is started from the project screen - `inst-1`
 2. [ ] - `p1` - **FROM** Active **TO** Archived **WHEN** the project is archived; Archived is terminal - `inst-2`
 
-## 5. Definitions of Done
+## Acceptance Criteria
 
-### The wizard is an overlay extension, not a dialog
+- [ ] Activating "New project" opens the overlay; the projects list stays visible behind the scrim.
+- [ ] Escape, a click on the scrim, and Cancel all close the overlay and write nothing.
+- [ ] Reopening the wizard after abandoning a filled-in draft shows an empty first step.
+- [ ] With "Start from scratch" selected, the details step's primary action reads "Create project" and there is no second step.
+- [ ] With "Import existing work" selected, the primary action reads "Continue" and leads to the repositories step.
+- [ ] Switching back to "Start from scratch" while on the repositories step returns to the details step.
+- [ ] The primary action is disabled until the current step is complete: a non-empty name and a chosen starting point on the details step, at least one chosen repository on the repositories step.
+- [ ] Picking a second repository keeps the first; picking a selected one removes it; the footer counts what is selected.
+- [ ] The selection survives switching connection tabs, and a created project records every picked repository.
+- [ ] At 100 selected the unpicked checkboxes are inert and the footer states the maximum.
+- [ ] A connection to a model provider (an API key) is not offered as a tab on the repositories step.
+- [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, an `owner_id`, and the stages its workspace's catalogue marks required.
+- [ ] A workspace whose catalogue marks a different stage required seeds new projects with that one, and no code change is involved.
+- [ ] The owner field names the signed-in member and offers no way to change them; the created project carries their subject id as `owner_id`.
+- [ ] A refused creation leaves the wizard open with the draft intact and shows what was refused.
+- [ ] The created project appears in the list without a manual refresh.
+- [ ] The Updated column on the repositories step renders empty rather than a fabricated value.
+
+### Definitions of Done
+
+#### The wizard is an overlay extension, not a dialog
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-overlay`
 
@@ -283,7 +277,7 @@ lifecycle actions, with its own entry and lifecycle instance.
 **Touches**:
 - Entities: `mfe.json`, `overlayLifecycle`, `wizardActions`
 
-### A project always has an owner
+#### A project always has an owner
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-owner`
 
@@ -309,7 +303,7 @@ mounted.
 - Property: `constructor_studio.session.user.profile.v1~` (published by the shell)
 - Entities: `DetailsStep`, `NewProjectWizard`, `ProjectConfig`
 
-### Steps are declared data
+#### Steps are declared data
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-steps`
 
@@ -323,7 +317,7 @@ draft — not from a step index and not from per-screen markup.
 **Touches**:
 - Entities: `wizardSteps`, `NewProjectWizard`
 
-### The draft never survives a close
+#### The draft never survives a close
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-reset`
 
@@ -337,7 +331,7 @@ an abandoned attempt.
 **Touches**:
 - Entities: `createSlice`
 
-### Creation is two writes and is not atomic
+#### Creation is two writes and is not atomic
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-write`
 
@@ -351,7 +345,7 @@ The system **MUST** create the tenant first and write its attributes second, and
 - API: `POST /cf/account-management/v1/tenants`
 - API: `PUT /cf/account-management/v1/tenants/{id}/metadata/{type}`
 
-### One or more sources, capped
+#### One or more sources, capped
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-many-sources`
 
@@ -370,7 +364,7 @@ id: that id is unique only within one connection, and the selection spans them.
 **Touches**:
 - Entities: `createSlice`, `projectDraft`
 
-### Each root resolves the organization for itself
+#### Each root resolves the organization for itself
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-org-scope`
 
@@ -390,7 +384,7 @@ so resolving twice costs cache hits rather than requests.
 **Touches**:
 - Entities: `shared/organization`, `shared/workspace`, `projectTree`, `NewProjectWizard`
 
-### The list learns without polling
+#### The list learns without polling
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-announce`
 
@@ -408,23 +402,3 @@ row.
 
 **Touches**:
 - Entities: `wizardEffects`, `NewProjectWizard`
-
-## 6. Acceptance Criteria
-
-- [ ] Activating "New project" opens the overlay; the projects list stays visible behind the scrim.
-- [ ] Escape, a click on the scrim, and Cancel all close the overlay and write nothing.
-- [ ] Reopening the wizard after abandoning a filled-in draft shows an empty first step.
-- [ ] With "Start from scratch" selected, the details step's primary action reads "Create project" and there is no second step.
-- [ ] With "Import existing work" selected, the primary action reads "Continue" and leads to the repositories step.
-- [ ] Switching back to "Start from scratch" while on the repositories step returns to the details step.
-- [ ] The primary action is disabled until the current step is complete: a non-empty name and a chosen starting point on the details step, at least one chosen repository on the repositories step.
-- [ ] Picking a second repository keeps the first; picking a selected one removes it; the footer counts what is selected.
-- [ ] The selection survives switching connection tabs, and a created project records every picked repository.
-- [ ] At 100 selected the unpicked checkboxes are inert and the footer states the maximum.
-- [ ] A connection to a model provider (an API key) is not offered as a tab on the repositories step.
-- [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, an `owner_id`, and the stages its workspace's catalogue marks required.
-- [ ] A workspace whose catalogue marks a different stage required seeds new projects with that one, and no code change is involved.
-- [ ] The owner field names the signed-in member and offers no way to change them; the created project carries their subject id as `owner_id`.
-- [ ] A refused creation leaves the wizard open with the draft intact and shows what was refused.
-- [ ] The created project appears in the list without a manual refresh.
-- [ ] The Updated column on the repositories step renders empty rather than a fabricated value.

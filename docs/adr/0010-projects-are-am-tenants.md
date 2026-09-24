@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-23
+---
+
 # ADR-0010: A project is an AM tenant — the client mirrors the retired gear's rules
+
+## Status
 
 Status: accepted · 2026-08-23 · Retires ADR-0005 for every client
 
@@ -6,7 +14,7 @@ Status: accepted · 2026-08-23 · Retires ADR-0005 for every client
 
 ## Context
 
-ADR-0005 (`studio-backend/docs/adr/`) is still marked **accepted** and describes
+ADR-0005 (then in `studio-backend/docs/adr/`) is still marked **accepted** and describes
 projects as a dedicated in-crate gear `studio-project`: its own database
 `studio_projects`, a `CHECK` constraint for the shape invariant, a unique
 `(tenant_id, name)`, REST at `/studio-project/v1`, and `GET /stages` so the UI
@@ -56,7 +64,7 @@ The frontend treats a project as an **account-management tenant**. Concretely:
     2026-08-24:** the gear's rule was *exactly* one. With the constraint gone
     the count is a product choice, and the New project wizard now takes one or
     more, capped at 100 — see the `many-sources` DoD in
-    `studio-frontend/docs/sdlc/FEATURE/project-create.md`. The wire shape gained
+    `docs/feature/project-create.md`. The wire shape gained
     `sources[]` (`{connection_id, full_path, clone_url}`); `source_git_url` is
     still written when exactly one repository is picked, since the prototype and
     the project list read it;

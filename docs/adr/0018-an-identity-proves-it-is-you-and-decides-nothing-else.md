@@ -1,10 +1,18 @@
+---
+type: adr
+status: proposed
+date: 2026-09-11
+---
+
 # ADR-0018: An identity proves it is you; the person decides everything else
 
-Status: **proposed** · Date: 2026-09-11 · Supersedes ADR-0011 §3 and §4 · Extends ADR-0014
+## Status
+
+Status: **proposed** · Date: 2026-09-11 · Supersedes ADR-0011 §3 and §4 · Extends ADR-0025
 
 ## Context
 
-ADR-0006 gave Studio a canonical person, ADR-0014 made it reachable from any
+ADR-0023 gave Studio a canonical person, ADR-0025 made it reachable from any
 gear, ADR-0015 confirmed brokered logins onto it, ADR-0016 gave membership a
 writer and a reader. Each of those fixed one consumer that had been keyed on the
 sign-in method instead of the human.
@@ -38,6 +46,8 @@ every screen and every authorization path, and one of the two branches ends up
 being the untested one.
 
 ## Decision
+
+The decision has 6 parts, each set out in its own subsection below: 1. The rule; 2. Onboarding: a person arrives with no organization, and that is normal; 3. Administrative rights become a property of the person; 4. One product, two provisioning profiles; 5. An organization has a name, not an address; 6. Leaving removes access, and takes the leaver's credentials with it.
 
 ### 1. The rule
 

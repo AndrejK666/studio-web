@@ -1,6 +1,16 @@
-# ADR-0013: One push channel to the portal, and it is not anyone's protocol
+---
+type: adr
+status: accepted
+date: 2026-09-11
+---
 
-Status: accepted · 2026-09-11 · Relates to ADR-0010
+# ADR-0026: One push channel to the portal, and it is not anyone's protocol
+
+## Status
+
+Status: accepted · 2026-09-11 · Relates to ADR-0022
+
+Renumbered from ADR-0013 when the two ADR trees were unified; ADR-0013 is the types-registry / graph-storage split.
 
 ## Context
 
@@ -37,6 +47,8 @@ even run — the contract every other producer and the whole frontend then has t
 live with.
 
 ## Decision
+
+The decision has 6 parts, each set out in its own subsection below: 1. The assembly has exactly one push channel, and it is domain-neutral; 2. Producers publish through the ClientHub, and may be absent; 3. Theia is a producer, not the contract; 4. Delivery is at-least-once, and the cursor is how a client recovers; 5. The wire format is dictated by the frontend SDK; 6. This is built to be replaced.
 
 ### 1. The assembly has exactly one push channel, and it is domain-neutral
 

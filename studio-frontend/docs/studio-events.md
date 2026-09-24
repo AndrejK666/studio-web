@@ -5,8 +5,8 @@ the assembly announces its transitions on it. A screen that needs to know when
 work finished subscribes to that stream instead of re-reading
 `GET /studio-tasks/v1/runs/{id}` on a timer.
 
-The channel and its constraints are ADR-0013
-([`docs/adr/0013-studio-events-push-channel.md`](../../docs/adr/0013-studio-events-push-channel.md)).
+The channel and its constraints are ADR-0026
+([`docs/adr/0026-studio-events-push-channel.md`](../../docs/adr/0026-studio-events-push-channel.md)).
 This page is the client half: what to call, and what bites.
 
 - [The rule](#the-rule)

@@ -1,11 +1,19 @@
+---
+type: adr
+status: proposed
+date: 2026-09-10
+---
+
 # ADR-0016: Membership is recorded where assignment happens, and read where access is decided
 
-Status: **proposed** · Date: 2026-09-10 · Implements ADR-0006 follow-up 1 · Phase 0 of ADR-0011 §2
+## Status
+
+Status: **proposed** · Date: 2026-09-10 · Implements ADR-0023 follow-up 1 · Phase 0 of ADR-0011 §2
 
 ## Context
 
 ADR-0011 §2 makes explicit membership the authority for organization access, and
-ADR-0006 gave it a table. Neither is what the product reads. Today the portal
+ADR-0023 gave it a table. Neither is what the product reads. Today the portal
 derives the organizations a person can see from `me.subject_tenant_id` plus that
 tenant's children (`appContextEffects.ts:126-143`) — the single-home assumption
 ADR-0011 §1 ruled out — and the only thing that writes a Keycloak `tenant_id`
@@ -28,9 +36,11 @@ the old data *said*, and what it said is not what the portal needs (§5).
 
 ## Decision
 
+The decision has 6 parts, each set out in its own subsection below: 1. `AssignmentRecorder` — one narrow write, in the direction that already exists; 2. Recorded last, and required; 3. A backfill, because history has no rows; 4. A platform admin may write a membership; 5. The portal reads membership — except for the platform administrator; 6. No organization is a state, not an empty screen.
+
 ### 1. `AssignmentRecorder` — one narrow write, in the direction that already exists
 
-ADR-0006 follow-up 1 left the choice open between "the portal calls
+ADR-0023 follow-up 1 left the choice open between "the portal calls
 `PUT …/memberships/{org}` after assignment" and "`identity_directory` depends on a
 studio-user client". Neither quite fits: there is no People screen in the main
 portal to do the calling, and a full SDK dependency is more coupling than the one
@@ -53,7 +63,7 @@ This makes the two identity gears mutually dependent — `studio-user` reads
 this. That is safe here and not by luck: both publish in `init` and both consume
 in `register_rest`, and every gear's `init` runs before any gear's REST phase.
 The recorder is *borrowed* into `assign`, not stored on the service, for the same
-reason the connector guard borrows its resolver (ADR-0014): two services owning
+reason the connector guard borrows its resolver (ADR-0025): two services owning
 each other are constructible in neither order.
 
 ### 2. Recorded last, and required
@@ -219,7 +229,7 @@ generated MFE manifest. None of these are touched by this change.
    it.
 2. **Retire the `tenant_id` attribute** for organization access (ADR-0011 §1,
    Phase 0 item 1), gated on the above.
-3. **Enforcement** — ADR-0006 follow-up 2, gated on a Studio resource actually
+3. **Enforcement** — ADR-0023 follow-up 2, gated on a Studio resource actually
    being role-mapped in `privilege_for`.
 4. **`assign` needs the tenant group to exist**; either provision it or stop
    requiring it.

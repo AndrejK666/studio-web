@@ -1,6 +1,14 @@
+---
+type: adr
+status: proposed
+date: 2026-09-14
+---
+
 # ADR-0020: One contract with the frontend, enforced rather than agreed
 
-Status: **proposed** · Date: 2026-09-14 · Builds on ADR-0013 · Relates to ADR-0006
+## Status
+
+Status: **proposed** · Date: 2026-09-14 · Builds on ADR-0026 · Relates to ADR-0006
 
 ## Context
 
@@ -38,7 +46,7 @@ collections, and it is `u32` in six places and `u64` in one.
 endpoints predate it and none is obliged to follow it.
 
 **Waiting for work.** `studio-tasks` owns every background run in the assembly,
-with state, attempts, cancel and retry, and since ADR-0013 it announces every
+with state, attempts, cancel and retry, and since ADR-0026 it announces every
 transition on the one push channel. And yet four gears still expose a private
 status endpoint — `studio-artifact-ingest`, `studio-components-catalog`,
 `studio-connector` and `spec-quality` each have their own `/tasks/{id}` with
@@ -67,6 +75,8 @@ screen that gets rewritten when the shape is unified, so the cheapest moment to
 fix the contract is before those screens exist.
 
 ## Decision
+
+The decision has 8 parts, each set out in its own subsection below: 1. The contract is written down, in one place; 2. It is enforced by a ratchet, not by review; 3. The unit of the contract is the resource, not the gear; 4. Scope is said once; 5. One asynchrony; 6. Documentation is part of the declaration, not a follow-up; 7. The surface is committed, and the consumers are checked against it; 8. A wire change lands with its consumers.
 
 ### 1. The contract is written down, in one place
 
@@ -115,7 +125,7 @@ expensive rule: it is what removes the duplicated operations in
 Starting work answers `202` with `{ run_id }`. Observing it is `studio-tasks`
 plus `task.*` events, and nothing else. The four private `/tasks/{id}` endpoints
 are deprecated and removed. A new kind of announcement is a `publish` call, not
-an endpoint — which is what ADR-0013 §2 already decided and what this rule makes
+an endpoint — which is what ADR-0026 §2 already decided and what this rule makes
 checkable.
 
 ### 6. Documentation is part of the declaration, not a follow-up

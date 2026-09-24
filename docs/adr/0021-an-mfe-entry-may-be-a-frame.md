@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-09-22
+---
+
 # ADR-0021: An MFE entry may be a frame, and its address arrives at runtime
+
+## Status
 
 Date: 2026-09-22
 Status: accepted
@@ -42,6 +50,8 @@ throws when an entry carries no `exposeAssets`. A frame has none of these: it
 has an address, and the address is not known at build time.
 
 ## Decision
+
+The decision has 9 parts, each set out in its own subsection below: 1. The frame is an entry subtype this repository owns; 2. The entry names a property, never an address; 3. The loader is built on `ChildMfeBridgeImpl`; 4. The lifecycle keeps teardown per container; 5. Redrawing is driven by the value, not by the notification; 6. Not every entry is federated, and the manifest generator learns it; 7. The fixture is a real package; 8. The address property is the one from the #310 contract, and the shell seeds it; 9. The fixture's screen is visible until #318.
 
 ### The frame is an entry subtype this repository owns
 

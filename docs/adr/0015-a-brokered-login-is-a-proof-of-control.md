@@ -1,6 +1,14 @@
+---
+type: adr
+status: proposed
+date: 2026-09-10
+---
+
 # ADR-0015: A brokered login is a proof of control, and Keycloak only tells you if you ask
 
-Status: **proposed** · Date: 2026-09-10 · Implements ADR-0012 follow-up 2 · Extends ADR-0014
+## Status
+
+Status: **proposed** · Date: 2026-09-10 · Implements ADR-0012 follow-up 2 · Extends ADR-0025
 
 ## Context
 
@@ -35,6 +43,8 @@ credential; `identity_directory` holds the credential but owns no attribution.
 
 ## Decision
 
+The decision has 6 parts, each set out in its own subsection below: 1. A brokered login confirms an alias, through a narrow published read; 2. The ceremony has two channels, and needs either; 3. Every login the person holds is asked about, not the current one; 4. The alias is keyed on the handle, not the provider's id; 5. The directory column is fixed, at one request per listed user; 6. The alias write moves off the service and onto the store.
+
 ### 1. A brokered login confirms an alias, through a narrow published read
 
 `identity_directory` publishes `FederatedIdentityReader` on the ClientHub:
@@ -63,7 +73,7 @@ confirmed through both channels is written once and reported as
 The walk is over the person's Keycloak `login` rows, not `ctx.subject_id()`. A
 person who merged two accounts may have brokered a different provider onto each,
 and both are proofs they own — which is the whole point of one person holding
-several logins (ADR-0014). Non-Keycloak logins are skipped: only a realm subject
+several logins (ADR-0025). Non-Keycloak logins are skipped: only a realm subject
 has brokered accounts to read.
 
 ### 4. The alias is keyed on the handle, not the provider's id
@@ -92,7 +102,6 @@ unreachable branch. What replaces it pins that the projection invents no
 provider, and says why in the test itself, so the next reader does not restore
 the guess.
 
-
 `list()` now fills `identity_provider` from the endpoint that actually has it,
 with a bounded concurrency window (`FEDERATION_LOOKUP_WINDOW = 8`) over the
 listing's 200-user cap. A failure for one user leaves that label empty rather
@@ -105,7 +114,7 @@ delegates to it. The write policy needs the alias rows and nothing else about th
 service, and saying so in the signature is what lets the ceremony be tested
 without standing up Account Management or a connector catalogue.
 
-## Options considered
+## Alternatives Considered
 
 - **Read federated identities inside `studio-user` with its own Keycloak client.**
   A second Keycloak admin credential in a second gear, for data the directory
@@ -151,8 +160,8 @@ user and `null` for the two local ones.
 ## Follow-ups
 
 1. **Provision at the authentication edge** so a person who never calls a
-   `/me*` route still has a `user` row for this to attach to (ADR-0006
-   follow-up 4, restated in ADR-0014).
+   `/me*` route still has a `user` row for this to attach to (ADR-0023
+   follow-up 4, restated in ADR-0025).
 2. **Run the ceremony on sign-in** rather than only when the person asks. The
    proof exists the moment they authenticate; today something has to call the
    endpoint.

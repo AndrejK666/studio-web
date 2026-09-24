@@ -3,7 +3,7 @@
 The source hosts and model providers an organization holds credentials for, and
 the form that adds one.
 
-**Feature**: [`docs/sdlc/FEATURE/connection-create.md`](../../../docs/sdlc/FEATURE/connection-create.md)
+**Feature**: [`docs/feature/connection-create.md`](../../../../docs/feature/connection-create.md)
 **Design**: Figma `Constructor Studio mockups`, node `40001018:15055`
 
 ## Two roots, not one

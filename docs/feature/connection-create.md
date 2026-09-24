@@ -1,49 +1,21 @@
-# Feature: Connect a source
+---
+type: feature
+status: accepted
+owner: studio-team
+---
 
-<!-- toc -->
-
-- [1. Feature Context](#1-feature-context)
-  - [1.1 Overview](#11-overview)
-  - [1.2 Purpose](#12-purpose)
-  - [1.3 Actors](#13-actors)
-  - [1.4 References](#14-references)
-- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
-  - [Read the connections](#read-the-connections)
-  - [Connect a source](#connect-a-source)
-  - [Abandon the form](#abandon-the-form)
-- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
-  - [Read the connection catalogue](#read-the-connection-catalogue)
-  - [Check one connection's health](#check-one-connections-health)
-  - [Write the connection](#write-the-connection)
-- [4. States (CDSL)](#4-states-cdsl)
-  - [Connection Health State Machine](#connection-health-state-machine)
-- [5. Definitions of Done](#5-definitions-of-done)
-  - [The form is an overlay extension, not a dialog](#the-form-is-an-overlay-extension-not-a-dialog)
-  - [Scope and owner are decided, not asked](#scope-and-owner-are-decided-not-asked)
-  - [The credential is verified by the write, once](#the-credential-is-verified-by-the-write-once)
-  - [A rejected credential is answered on the credential field](#a-rejected-credential-is-answered-on-the-credential-field)
-  - [The credential never comes back and never persists](#the-credential-never-comes-back-and-never-persists)
-  - [The write outlives the form](#the-write-outlives-the-form)
-  - [One place knows what a provider looks like](#one-place-knows-what-a-provider-looks-like)
-  - [Health is per row and never blocks the table](#health-is-per-row-and-never-blocks-the-table)
-  - [Columns without a source are empty, not invented](#columns-without-a-source-are-empty-not-invented)
-  - [The list learns without polling](#the-list-learns-without-polling)
-- [6. Acceptance Criteria](#6-acceptance-criteria)
-
-<!-- /toc -->
+# Feature — Connect a source
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-connection-create`
 
-## 1. Feature Context
-
-### 1.1 Overview
+## Summary
 
 The Connections screen: a list of the source hosts and model providers the
 organization has credentials for, and a single-step overlay that adds one. It is
 the connections MFE's whole surface, and it is the second write path in the
 portal.
 
-### 1.2 Purpose
+### Purpose
 
 Connections already existed and could only be seeded by hand or by a gear
 operator. The New project wizard reads them — its repositories step draws one tab
@@ -70,7 +42,7 @@ changes the code:
   mockup's Healthy / Needs attention badges have no other source: nothing on a
   stored connection records whether its token still works.
 
-### 1.3 Actors
+### Actors
 
 Named, not identified, for the reason `project-create` gives: a FEATURE may only
 define `algo`, `dod`, `featstatus`, `flow` and `state` ids, and this repository
@@ -82,27 +54,29 @@ has no PRD or DESIGN to own an `actor`.
 | **Shell** | The portal shell. Owns the overlay frame — mounts and unmounts the form, draws the scrim, and handles Escape and click-outside without consulting it — and publishes which organization is in scope. |
 | **Provider** | GitHub, GitLab, Bitbucket, Anthropic, OpenAI. Answers the credential probe; its refusal is what the member reads. |
 
-### 1.4 References
+### References
 
 - **Design**: Figma `Constructor Studio mockups`, node `40001018:15055`
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md) (no router; the overlay is state, not a route)
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) (no router; the overlay is state, not a route)
 - **Feature**: [Create a project](project-create.md) — reads these connections on its repositories step
 - **Dependencies**: studio-connector (`/cf/studio-connector/v1`)
 
-## 2. Actor Flows (CDSL)
+## Behaviour
 
 The flows stay unchecked for the reason `project-create` records: a checked flow
 obliges every CDSL instruction to carry a `@cpt-begin`/`@cpt-end` block, and
 these span the toolbar, the overlay plumbing, the form, the write effect and —
 for "Abandon the form" — the shell's own dismissal code, which is outside this
-system's codebase scope. Their evidence is section 6, exercised against a running
+system's codebase scope. Their evidence is the Acceptance Criteria, exercised against a running
 stack; the implementation claims they rest on are the Definitions of Done, which
 are traced.
 
 **Use case**: connect a source, and see whether the connections already there
 still work.
 
-### Read the connections
+### Actor flows (CDSL)
+
+#### Read the connections
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-connection-list`
 
@@ -122,7 +96,7 @@ still work.
 4. [ ] - `p1` - Member narrows the list by typing in the toolbar's search - `inst-4`
 5. [ ] - `p1` - **RETURN** the matching rows - `inst-5`
 
-### Connect a source
+#### Connect a source
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-connection-create`
 
@@ -145,7 +119,7 @@ still work.
 7. [ ] - `p1` - Announce the created connection so the list refetches - `inst-7`
 8. [ ] - `p1` - **RETURN** unmount the overlay extension - `inst-8`
 
-### Abandon the form
+#### Abandon the form
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-connection-create-abandon`
 
@@ -165,9 +139,9 @@ still work.
    1. [ ] - `p1` - The shell unmounts it without consulting the form; there is no confirmation and no veto - `inst-5`
 4. [ ] - `p1` - **RETURN** the draft is discarded with the React root - `inst-6`
 
-## 3. Processes / Business Logic (CDSL)
+### Processes / business logic (CDSL)
 
-### Read the connection catalogue
+#### Read the connection catalogue
 
 Four of the mockup's six columns have no data source. They are recorded here
 rather than in the code so the screen is not blamed for them:
@@ -204,7 +178,7 @@ rather than in the code so the screen is not blamed for them:
 5. [x] - `p1` - Render Available data, Projects, Last sync and Actions empty rather than fabricating them - `inst-5`
 6. [x] - `p1` - **RETURN** the rows - `inst-6`
 
-### Check one connection's health
+#### Check one connection's health
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-connection-list-health`
 
@@ -223,7 +197,7 @@ rather than in the code so the screen is not blamed for them:
    1. [x] - `p1` - **RETURN** unusable, carrying the gear's `CONNECTOR_CREDENTIAL_UNUSABLE` reason for the title - `inst-8`
 6. [x] - `p1` - **RETURN** healthy - `inst-9`
 
-### Write the connection
+#### Write the connection
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-connection-create-write`
 
@@ -240,9 +214,9 @@ rather than in the code so the screen is not blamed for them:
    1. [x] - `p1` - **RETURN** the refusal in the provider's own words; the draft survives so the member can correct it - `inst-6`
 6. [x] - `p1` - **RETURN** the created connection; the response carries the account the provider reported, and never the token - `inst-7`
 
-## 4. States (CDSL)
+### States (CDSL)
 
-### Connection Health State Machine
+#### Connection Health State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-connection-health`
 
@@ -258,9 +232,30 @@ rather than in the code so the screen is not blamed for them:
 5. [ ] - `p1` - **FROM** Checking **TO** Unreadable **WHEN** the test fails without the gear naming its refusal - `inst-5`
 6. [ ] - `p1` - **FROM** Unreadable **TO** Checking **WHEN** the check is retried after its cached answer goes stale - `inst-6`
 
-## 5. Definitions of Done
+## Acceptance Criteria
 
-### The form is an overlay extension, not a dialog
+- [ ] Connections lists every connection the organization can use, one row each, with the provider's proper display name and the account its credential belongs to.
+- [ ] A connection inherited from an ancestor tenant is listed alongside the organization's own.
+- [ ] Each row's status resolves on its own: the table is drawn before any check has answered, and a provider that never answers leaves only its own row unresolved.
+- [ ] A connection whose credential was rotated at the provider reads Needs attention, and its reason is readable on the cell.
+- [ ] Typing in the toolbar's search narrows the rows by name, account and provider, without a request.
+- [ ] A search that matches nothing says so, rather than claiming the organization has no connections, and the row count never contradicts the rows on screen.
+- [ ] Available data, Projects, Last sync and Actions render a placeholder in every row; no cell shows the record's creation time.
+- [ ] Activating "Connect source" opens the overlay; the list stays visible behind the scrim.
+- [ ] Escape, a click on the scrim, and Cancel all close the overlay and write nothing.
+- [ ] Reopening the form after abandoning a filled-in attempt shows empty fields, including the credential.
+- [ ] The provider choices come from the gear, and choosing one relabels the credential field and offers that provider's default installation root as the placeholder.
+- [ ] The primary action is disabled until a provider is chosen and the label and credential are non-empty.
+- [ ] The form has no scope field, no owner field and no test button.
+- [ ] Creating with a valid credential adds the connection at organization scope, owned by the organization in scope, captioned with the account the provider reported.
+- [ ] Leaving the base URL empty stores the provider's default installation root, not an empty string.
+- [ ] A rejected credential leaves the overlay open with the draft intact and says what the gear said under the credential field, with the field marked invalid.
+- [ ] With no organization in scope the primary action refuses and says why.
+- [ ] The created connection appears in the list without a manual refresh, and is offered as a tab by the New project wizard's repositories step.
+
+### Definitions of Done
+
+#### The form is an overlay extension, not a dialog
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-overlay`
 
@@ -279,7 +274,7 @@ This is the same arrangement the New project wizard uses, for the same reason.
 **Touches**:
 - Entities: `mfe.json`, `overlayLifecycle`, `connectActions`
 
-### Scope and owner are decided, not asked
+#### Scope and owner are decided, not asked
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-scope`
 
@@ -301,7 +296,7 @@ explicitly rather than left out.
 - Property: `constructor_studio.context.organization.selected.v1~` (published by the shell)
 - Entities: `shared/organization`, `connectEffects`, `connectionDraft`
 
-### The credential is verified by the write, once
+#### The credential is verified by the write, once
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-verify`
 
@@ -320,7 +315,7 @@ credential a second time and could disagree with the write that follows it.
 - API: `POST /cf/studio-connector/v1/connections`
 - Entities: `ConnectSourceDialog`, `connectEffects`
 
-### A rejected credential is answered on the credential field
+#### A rejected credential is answered on the credential field
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-refusal`
 
@@ -344,7 +339,7 @@ promised, and would go on guessing wrong after the gear reworded it.
 **Touches**:
 - Entities: `ConnectSourceDialog`, `problemDetails`
 
-### The credential never comes back and never persists
+#### The credential never comes back and never persists
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-secret`
 
@@ -363,7 +358,7 @@ is opened again.
 **Touches**:
 - Entities: `connectSlice`, `ConnectSourceDialog`
 
-### The write outlives the form
+#### The write outlives the form
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-write`
 
@@ -381,7 +376,7 @@ stored.
 **Touches**:
 - Entities: `connectEffects`, `connectEvents`
 
-### One place knows what a provider looks like
+#### One place knows what a provider looks like
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-list-glyph`
 
@@ -399,7 +394,7 @@ list is where they would go to find out that it is there.
 **Touches**:
 - Entities: `model/connection`, `ProviderGlyph`
 
-### Health is per row and never blocks the table
+#### Health is per row and never blocks the table
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-list-health`
 
@@ -432,7 +427,7 @@ violation code there, the way `list_repositories` already has
 - API: `POST /cf/studio-connector/v1/connections/{id}/test`
 - Entities: `useConnectionHealth`, `HealthInline`, `LoadFailed`
 
-### Columns without a source are empty, not invented
+#### Columns without a source are empty, not invented
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-list-gaps`
 
@@ -450,7 +445,7 @@ the record was written is not when it last synchronised, and a member reading
 **Touches**:
 - Entities: `ConnectionsTable`
 
-### The list learns without polling
+#### The list learns without polling
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-connection-create-announce`
 
@@ -468,24 +463,3 @@ do share, because `queryCacheShared` retains the host's off `globalThis`.
 
 **Touches**:
 - Entities: `connectEffects`, `ConnectSourceDialog`
-
-## 6. Acceptance Criteria
-
-- [ ] Connections lists every connection the organization can use, one row each, with the provider's proper display name and the account its credential belongs to.
-- [ ] A connection inherited from an ancestor tenant is listed alongside the organization's own.
-- [ ] Each row's status resolves on its own: the table is drawn before any check has answered, and a provider that never answers leaves only its own row unresolved.
-- [ ] A connection whose credential was rotated at the provider reads Needs attention, and its reason is readable on the cell.
-- [ ] Typing in the toolbar's search narrows the rows by name, account and provider, without a request.
-- [ ] A search that matches nothing says so, rather than claiming the organization has no connections, and the row count never contradicts the rows on screen.
-- [ ] Available data, Projects, Last sync and Actions render a placeholder in every row; no cell shows the record's creation time.
-- [ ] Activating "Connect source" opens the overlay; the list stays visible behind the scrim.
-- [ ] Escape, a click on the scrim, and Cancel all close the overlay and write nothing.
-- [ ] Reopening the form after abandoning a filled-in attempt shows empty fields, including the credential.
-- [ ] The provider choices come from the gear, and choosing one relabels the credential field and offers that provider's default installation root as the placeholder.
-- [ ] The primary action is disabled until a provider is chosen and the label and credential are non-empty.
-- [ ] The form has no scope field, no owner field and no test button.
-- [ ] Creating with a valid credential adds the connection at organization scope, owned by the organization in scope, captioned with the account the provider reported.
-- [ ] Leaving the base URL empty stores the provider's default installation root, not an empty string.
-- [ ] A rejected credential leaves the overlay open with the draft intact and says what the gear said under the credential field, with the field marked invalid.
-- [ ] With no organization in scope the primary action refuses and says why.
-- [ ] The created connection appears in the list without a manual refresh, and is offered as a tab by the New project wizard's repositories step.

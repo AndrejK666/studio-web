@@ -1,10 +1,20 @@
-# ADR-0014: The person is the key on the request path, not the login
+---
+type: adr
+status: proposed
+date: 2026-09-10
+---
 
-Status: **proposed** · Date: 2026-09-10 · Amends ADR-0006, ADR-0012
+# ADR-0025: The person is the key on the request path, not the login
+
+## Status
+
+Status: **proposed** · Date: 2026-09-10 · Amends ADR-0023, ADR-0012
+
+Renumbered from ADR-0014 (`studio-backend/docs/adr/`) when the two ADR trees were unified; ADR-0014 is document types as components.
 
 ## Context
 
-ADR-0006 gave Studio a canonical person (`user`), the sign-in methods that reach
+ADR-0023 gave Studio a canonical person (`user`), the sign-in methods that reach
 it (`login`), the non-login identifiers attributed to it (`alias`) and per-org
 role (`membership`). ADR-0012 made attribution self-service and made a provider's
 proof of control the only thing that binds. Both are implemented.
@@ -48,6 +58,8 @@ for a global middleware that could attach a resolved person to a request.
 
 **One resolver, published as an interface, and person-to-person comparison
 wherever a person is what was meant.**
+
+The decision has 4 parts, each set out in its own subsection below: 1. `PersonResolver` is the only way to turn a caller into a person; 2. Ownership is compared between people; 3. Consumers migrate one at a time, and the fallback is the strict one; 4. `SecurityContext.person_id` is the end state, and an upstream ask.
 
 ### 1. `PersonResolver` is the only way to turn a caller into a person
 
@@ -113,7 +125,7 @@ contract), so it is named here as the target rather than blocked on: when it
 lands, `PersonResolver` becomes a lookup at the edge and the consumers already
 speak in `user_id`.
 
-## Options considered
+## Alternatives Considered
 
 - **A global axum middleware that attaches the person to every request.** The
   natural shape, and not available: `toolkit::bootstrap::run_server` owns the
@@ -144,7 +156,7 @@ speak in `user_id`.
   present call rate and wrong at scale: a request-scoped cache belongs with the
   `SecurityContext` change in §4, not in a per-consumer memo.
 - (−) A person still has no `user` row until something on their path resolves
-  them. Provisioning at the authentication edge (ADR-0006 follow-up 4) remains the
+  them. Provisioning at the authentication edge (ADR-0023 follow-up 4) remains the
   only complete fix.
 - (−) Three person-spaces still exist. This ADR makes the canonical one
   load-bearing; retiring the Keycloak `tenant_id` attribute in favour of
@@ -165,7 +177,7 @@ speak in `user_id`.
    `DirectoryIdentity.identity_provider` had always been `None`. The data is only
    behind a dedicated per-user endpoint. ADR-0015 wires it as a second proof
    channel for the alias ceremony and fixes the empty column.
-3. **PDP dual-key match** (ADR-0006 follow-up 2): a grant matches on the subject
+3. **PDP dual-key match** (ADR-0023 follow-up 2): a grant matches on the subject
    **or** the `user_id`, so grants migrate lane by lane.
 4. **`SecurityContext.person_id` upstream**, per §4.
 5. **Migrate the remaining actor columns** (`documents`, `kit_registry`,

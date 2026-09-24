@@ -1,7 +1,7 @@
 # studio-theia
 
 The backend-to-backend bridge between studio-backend and the Theia node backend
-running inside a session (ADR-0010).
+running inside a session (ADR-0022).
 
 ## Why it exists
 
@@ -55,5 +55,5 @@ Phase 3 is behind the `theia-event-broker` Cargo feature, which implies
 - Behind the **`theia-bridge`** Cargo feature; dormant unless
   `studio-theia.enabled = true`.
 - Read next: `studio-backend/docs/theia-bridge-architecture.md`, and in the
-  repository root `docs/adr/0010-theia-backend-bridge.md` plus
+  repository root `docs/adr/0022-theia-backend-bridge.md` plus
   `docs/theia-bridge-contract-v1.md`.

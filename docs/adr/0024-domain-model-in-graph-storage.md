@@ -1,11 +1,16 @@
 ---
+type: adr
 status: proposed
+date: 2026-09-08
 ---
-# ADR-0012 — The Studio domain model lives in Graph Storage and the type registry
+
+# ADR-0024: The Studio domain model lives in Graph Storage and the type registry
 
 ## Status
 
 proposed · 2026-09-08 · Builds on ADR-0009 and ADR-0011
+
+Renumbered from ADR-0012 when the two ADR trees were unified; ADR-0012 is self-service identity resolution.
 
 ## Context
 

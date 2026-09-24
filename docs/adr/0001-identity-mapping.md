@@ -1,4 +1,12 @@
+---
+type: adr
+status: proposed
+date: 2026-07-28
+---
+
 # ADR-0001: Identity mapping for external systems — Studio domain gear, not an IdP plugin
+
+## Status
 
 Status: **proposed** · Date: 2026-07-28 · Deciders: Studio backend team
 
@@ -20,7 +28,7 @@ platform deliberately splits identity concerns:
 Nobody in the current platform owns the mapping `external identity (system, ref) →
 platform user`. Someone must.
 
-## Options considered
+## Alternatives Considered
 
 **A. Extend the IdP plugin.** Teach the (future, OIDC-backed) IdP plugin to also
 answer "which platform user is jira:jsmith?".

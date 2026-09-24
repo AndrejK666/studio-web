@@ -1,41 +1,14 @@
-# Feature: Project artifacts
+---
+type: feature
+status: draft
+owner: studio-team
+---
 
-<!-- toc -->
-
-- [1. Feature Context](#1-feature-context)
-  - [1.1 Overview](#11-overview)
-  - [1.2 Purpose](#12-purpose)
-  - [1.3 Actors](#13-actors)
-  - [1.4 References](#14-references)
-- [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
-  - [Browse a project's artifacts](#browse-a-projects-artifacts)
-  - [Create a project from repositories and land on its artifacts](#create-a-project-from-repositories-and-land-on-its-artifacts)
-- [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
-  - [Build the artifact rows](#build-the-artifact-rows)
-  - [Decide whether this is a first import](#decide-whether-this-is-a-first-import)
-  - [Sync the project's repositories](#sync-the-projects-repositories)
-- [4. States (CDSL)](#4-states-cdsl)
-  - [Import State Machine](#import-state-machine)
-- [5. Definitions of Done](#5-definitions-of-done)
-  - [The project's rail lives inside the project frame](#the-projects-rail-lives-inside-the-project-frame)
-  - [The table is the prototype's five columns](#the-table-is-the-prototypes-five-columns)
-  - [Filtering, ordering and paging belong to the gear](#filtering-ordering-and-paging-belong-to-the-gear)
-  - [The header counts the project, not the filter](#the-header-counts-the-project-not-the-filter)
-  - [Updated shows a time or says where the row came from](#updated-shows-a-time-or-says-where-the-row-came-from)
-  - [Reads are scoped to the project](#reads-are-scoped-to-the-project)
-  - [A repository is the unit of sync and of retry](#a-repository-is-the-unit-of-sync-and-of-retry)
-  - [A first import is recognised from data](#a-first-import-is-recognised-from-data)
-  - [A created project opens](#a-created-project-opens)
-  - [Nothing is invented where the gear is silent](#nothing-is-invented-where-the-gear-is-silent)
-- [6. Acceptance Criteria](#6-acceptance-criteria)
-
-<!-- /toc -->
+# Feature — Project artifacts
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-artifacts`
 
-## 1. Feature Context
-
-### 1.1 Overview
+## Summary
 
 What a project works on, as one table: the repositories attached to it and the
 issues, pull requests and files pulled out of them by the artifact-ingest gear.
@@ -44,7 +17,7 @@ navigation rail — a 48px icon rail inside the project frame that widens into a
 labelled flyout on hover or keyboard focus. A project created from existing
 repositories lands here directly, and the table fills while the import runs.
 
-### 1.2 Purpose
+### Purpose
 
 `project-create.md` ends at a created tenant with its repositories written into
 `cf.studio.project.config.v1~`. Nothing then reads them: the project screen has
@@ -136,7 +109,7 @@ have and the choice changes the code:
   count in the header climbs from the same data, and one moving number is enough
   for the first cut.
 
-### 1.3 Actors
+### Actors
 
 Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
 `flow` and `state` ids. See the same note in `project-create.md`.
@@ -146,27 +119,29 @@ Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
 | **Member** | A signed-in member with the project in scope. Browses the artifacts, filters them, and re-runs a sync. |
 | **Artifact gear** | `studio-artifact-ingest`. Pulls repositories into the graph as typed GTS nodes and reports the progress of each pull. |
 
-### 1.4 References
+### References
 
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md) — the project's rail lives inside the project frame, not in the shell
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md) — what `scope` addresses
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) — the project's rail lives inside the project frame, not in the shell
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md) — what `scope` addresses
 - **Feature**: [Create a project](project-create.md) — writes the sources this feature syncs
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the parent tenant tagged onto every synced node
 - **Feature**: [Connect a source host](connection-create.md) — holds the `secret_ref` a sync needs
 - **Dependencies**: `studio-artifact-ingest` (`/cf/studio-artifact-ingest/v1`), account-management (`/cf/account-management/v1`), studio-connector (`/cf/studio-connector/v1`)
 - **Prerequisite**: `@gears-frontx/ui-kit` at `0.4.0-alpha.1` or later, for `DataTable` and `Sidebar`
 
-## 2. Actor Flows (CDSL)
+## Behaviour
 
 Unchecked on purpose, for the reason stated in `project-create.md`: a checked
 flow obliges every instruction to carry a code marker, and these span the
 wizard, the shell's context channel and the project frame. Their evidence is the
-acceptance criteria in section 6; the implementation claims they rest on are the
+Acceptance Criteria; the implementation claims they rest on are the
 Definitions of Done, which are traced.
 
 **Use case**: see what a project works on.
 
-### Browse a project's artifacts
+### Actor flows (CDSL)
+
+#### Browse a project's artifacts
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-artifacts-browse`
 
@@ -193,7 +168,7 @@ Definitions of Done, which are traced.
 8. [ ] - `p1` - Member narrows the rows by repository or by text, or asks for another page - `inst-10`
 9. [ ] - `p1` - **RETURN** the gear answers with that page of the narrowed set, and a narrowing starts again from the first page - `inst-11`
 
-### Create a project from repositories and land on its artifacts
+#### Create a project from repositories and land on its artifacts
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-artifacts-import`
 
@@ -219,9 +194,9 @@ Definitions of Done, which are traced.
 8. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-artifacts-sync` for the project's sources - `inst-9`
 9. [ ] - `p1` - **RETURN** the table fills as nodes reach the graph, and stops changing when every task has settled - `inst-10`
 
-## 3. Processes / Business Logic (CDSL)
+### Processes / business logic (CDSL)
 
-### Build the artifact rows
+#### Build the artifact rows
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-algo-project-artifacts-rows`
 
@@ -241,7 +216,7 @@ Definitions of Done, which are traced.
 8. [ ] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/nodes?scope={project}&limit=1` for the project's own total, which no filter may move - `inst-9`
 9. [ ] - `p1` - **RETURN** the page's rows, the filtered total the paginator counts against, and the project's total - `inst-10`
 
-### Decide whether this is a first import
+#### Decide whether this is a first import
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-artifacts-first-import`
 
@@ -260,7 +235,7 @@ Definitions of Done, which are traced.
    1. [x] - `p1` - **RETURN** no; an attempt that produced nothing is not repeated on its own - `inst-8`
 6. [x] - `p1` - **RETURN** yes - `inst-9`
 
-### Sync the project's repositories
+#### Sync the project's repositories
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-artifacts-sync`
 
@@ -282,9 +257,9 @@ Definitions of Done, which are traced.
    1. [x] - `p1` - Keep its reason against its repository, and do not resubmit it - `inst-11`
 8. [x] - `p1` - **RETURN** when no task is left unsettled, or when the watch window ends; a task still running then is left to the gear and shown as no longer watched - `inst-12`
 
-## 4. States (CDSL)
+### States (CDSL)
 
-### Import State Machine
+#### Import State Machine
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-project-artifacts-import`
 
@@ -301,9 +276,44 @@ Definitions of Done, which are traced.
 6. [ ] - `p1` - **FROM** Failed **TO** Running **WHEN** the member asks for a sync again - `inst-6`
 7. [ ] - `p1` - **FROM** Running **TO** Idle **WHEN** the project in scope changes; the tasks outlive the screen on the server and are simply no longer watched. The attempt stays recorded, so returning does not restart it - `inst-7`
 
-## 5. Definitions of Done
+## Acceptance Criteria
 
-### The project's rail lives inside the project frame
+- [ ] With a project open, the rail shows seven icons and no labels, and the content starts to its right.
+- [ ] Hovering the rail widens it to show the labels, over the content rather than pushing it, and it narrows again when the pointer leaves.
+- [ ] Tabbing into the rail widens it the same way, and every section can be reached and activated from the keyboard alone.
+- [ ] The widened rail never covers the top bar, and never extends below the project frame.
+- [ ] While the rail is narrow, hovering an icon names its section; while it is wide, no such tooltip appears.
+- [ ] Activating Artifacts shows the artifacts table; the open project does not change and the list behind it is not re-read.
+- [ ] The table has exactly the columns Name, Repository, Path, Sync and Updated, in that order.
+- [ ] Every row names the repository it came from by name, not by an identifier.
+- [ ] Rows for issues and pull requests show a relative time in Updated; every other row — files and repositories alike — names where it came from instead.
+- [ ] Updated is marked as newest-first, offers no way to reverse it, and rows without a time sit at the bottom.
+- [ ] The header states the number of artifacts and the number of repositories they came from, each in the singular when there is one.
+- [ ] Narrowing by text changes the table and the footer, and leaves the header's totals as they were.
+- [ ] Choosing a repository restates the header as that repository's own total, names it, and starts the table again from the first page.
+- [ ] Narrowing by text while on a later page shows the matching rows from the first page, not an empty page.
+- [ ] A project with more artifacts than one page holds lists them all across the paginator, and the footer's total is the gear's, not the page's.
+- [ ] The repository filter offers every repository in the project, including ones whose rows are not on the page in view.
+- [ ] Every row on every page names its repository; none is left blank.
+- [ ] The header states nothing about artifacts being complete or needing attention.
+- [ ] A project with no sources shows an empty state that says so and offers no sync.
+- [ ] A project with sources and nothing ingested shows an empty state that offers a sync.
+- [ ] Creating a project from selected repositories leaves the wizard closed, the project open, and the Artifacts section showing.
+- [ ] Rows appear in that table while the import is still running, without a reload and without the member acting.
+- [ ] The header's totals climb as the import proceeds and stop when it finishes.
+- [ ] Opening the same project by hand from the list, before its import has been run, reaches the same section and starts the same import.
+- [ ] Opening a project that already has artifacts lands on its first section and requests no sync.
+- [ ] Reloading the page during an import does not start a second import.
+- [ ] One repository failing to sync leaves the other repositories' rows in the table, and the failure is reported against that repository.
+- [ ] Every repository failing to sync is reported, and re-entering the section does not start the import again.
+- [ ] Leaving Artifacts for another section and returning shows the rows that arrived while it was away.
+- [ ] Pulling a repository into another project leaves this project's rows for it untouched, and no banner claims a repository was never pulled in.
+- [ ] No request for artifacts is made without the open project as its scope.
+- [ ] No row shows a document kind, a readiness percentage, or a per-file ingest status.
+
+### Definitions of Done
+
+#### The project's rail lives inside the project frame
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-rail`
 
@@ -362,7 +372,7 @@ anything.
 **Touches**:
 - Entities: `ProjectRail`, `ProjectScreen`, `navSlice`
 
-### The table is the prototype's five columns
+#### The table is the prototype's five columns
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-table`
 
@@ -401,7 +411,7 @@ Two columns carry a decision rather than a field:
 - API: `GET /cf/studio-artifact-ingest/v1/nodes`
 - Entities: `ArtifactsSection`, `artifactColumns`, `artifactRow`
 
-### Filtering, ordering and paging belong to the gear
+#### Filtering, ordering and paging belong to the gear
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-page`
 
@@ -445,7 +455,7 @@ under a member who is standing on its last page.
 - API: `GET /cf/studio-artifact-ingest/v1/nodes`
 - Entities: `ArtifactIngestApiService`, `useArtifacts`, `ArtifactsSection`, `ArtifactsTable`
 
-### The header counts the project, not the filter
+#### The header counts the project, not the filter
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-counters`
 
@@ -494,7 +504,7 @@ attention is not a missing number; it is a false assurance.
 - API: `GET /cf/studio-artifact-ingest/v1/nodes`
 - Entities: `ArtifactsSection`, `useArtifacts`, `useArtifactCount`
 
-### Updated shows a time or says where the row came from
+#### Updated shows a time or says where the row came from
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-updated`
 
@@ -530,7 +540,7 @@ until then the direction is not offered rather than being approximated.
 **Touches**:
 - Entities: `artifactColumns`, `artifactRow`, `UpdatedCell`
 
-### Reads are scoped to the project
+#### Reads are scoped to the project
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-scope`
 
@@ -560,7 +570,7 @@ reported, against its own repository, in the import state.
 - API: `GET /cf/studio-artifact-ingest/v1/nodes`
 - Entities: `ArtifactIngestApiService`, `useArtifacts`
 
-### A repository is the unit of sync and of retry
+#### A repository is the unit of sync and of retry
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-sync-unit`
 
@@ -598,7 +608,7 @@ the tasks run on. Every poll asks the gear, never the shared fetch cache.
 - API: `POST /cf/studio-artifact-ingest/v1/sync`, `GET /cf/studio-artifact-ingest/v1/tasks/{id}`
 - Entities: `artifactEffects`, `artifactSync`, `artifactSyncSlice`
 
-### A first import is recognised from data
+#### A first import is recognised from data
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-import-detect`
 
@@ -633,7 +643,7 @@ project frame and not announced to it.
 **Touches**:
 - Entities: `useArtifactImport`, `ProjectScreen`, `navSlice`
 
-### A created project opens
+#### A created project opens
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-open-after-create`
 
@@ -665,7 +675,7 @@ without asking.
 - Action: `constructor_studio.context.projects.publish.v1~` (`kind: opened`)
 - Entities: `NewProjectWizard`, `projectsActions`
 
-### Nothing is invented where the gear is silent
+#### Nothing is invented where the gear is silent
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-no-invented`
 
@@ -695,38 +705,3 @@ placeholder, a dash or a zero dressed as an answer.
 
 **Touches**:
 - Entities: `artifactRow`, `artifactColumns`, `ArtifactsControlStrip`
-
-## 6. Acceptance Criteria
-
-- [ ] With a project open, the rail shows seven icons and no labels, and the content starts to its right.
-- [ ] Hovering the rail widens it to show the labels, over the content rather than pushing it, and it narrows again when the pointer leaves.
-- [ ] Tabbing into the rail widens it the same way, and every section can be reached and activated from the keyboard alone.
-- [ ] The widened rail never covers the top bar, and never extends below the project frame.
-- [ ] While the rail is narrow, hovering an icon names its section; while it is wide, no such tooltip appears.
-- [ ] Activating Artifacts shows the artifacts table; the open project does not change and the list behind it is not re-read.
-- [ ] The table has exactly the columns Name, Repository, Path, Sync and Updated, in that order.
-- [ ] Every row names the repository it came from by name, not by an identifier.
-- [ ] Rows for issues and pull requests show a relative time in Updated; every other row — files and repositories alike — names where it came from instead.
-- [ ] Updated is marked as newest-first, offers no way to reverse it, and rows without a time sit at the bottom.
-- [ ] The header states the number of artifacts and the number of repositories they came from, each in the singular when there is one.
-- [ ] Narrowing by text changes the table and the footer, and leaves the header's totals as they were.
-- [ ] Choosing a repository restates the header as that repository's own total, names it, and starts the table again from the first page.
-- [ ] Narrowing by text while on a later page shows the matching rows from the first page, not an empty page.
-- [ ] A project with more artifacts than one page holds lists them all across the paginator, and the footer's total is the gear's, not the page's.
-- [ ] The repository filter offers every repository in the project, including ones whose rows are not on the page in view.
-- [ ] Every row on every page names its repository; none is left blank.
-- [ ] The header states nothing about artifacts being complete or needing attention.
-- [ ] A project with no sources shows an empty state that says so and offers no sync.
-- [ ] A project with sources and nothing ingested shows an empty state that offers a sync.
-- [ ] Creating a project from selected repositories leaves the wizard closed, the project open, and the Artifacts section showing.
-- [ ] Rows appear in that table while the import is still running, without a reload and without the member acting.
-- [ ] The header's totals climb as the import proceeds and stop when it finishes.
-- [ ] Opening the same project by hand from the list, before its import has been run, reaches the same section and starts the same import.
-- [ ] Opening a project that already has artifacts lands on its first section and requests no sync.
-- [ ] Reloading the page during an import does not start a second import.
-- [ ] One repository failing to sync leaves the other repositories' rows in the table, and the failure is reported against that repository.
-- [ ] Every repository failing to sync is reported, and re-entering the section does not start the import again.
-- [ ] Leaving Artifacts for another section and returning shows the rows that arrived while it was away.
-- [ ] Pulling a repository into another project leaves this project's rows for it untouched, and no banner claims a repository was never pulled in.
-- [ ] No request for artifacts is made without the open project as its scope.
-- [ ] No row shows a document kind, a readiness percentage, or a per-file ingest status.

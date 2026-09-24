@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-11
+---
+
 # ADR-0006: Rebuild the portal frontend on FrontX
+
+## Status
 
 Date: 2026-08-11
 Status: accepted

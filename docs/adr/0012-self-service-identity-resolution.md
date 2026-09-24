@@ -1,10 +1,18 @@
+---
+type: adr
+status: proposed
+date: 2026-09-07
+---
+
 # ADR-0012: Attributing an external identity is self-service, and only a proof of control binds
 
-Status: **proposed** · Date: 2026-09-07 · Amends ADR-0006
+## Status
+
+Status: **proposed** · Date: 2026-09-07 · Amends ADR-0023
 
 ## Context
 
-ADR-0006 gave Studio a canonical `user` and, with `alias`, an owner for
+ADR-0023 gave Studio a canonical `user` and, with `alias`, an owner for
 `external (kind, id) → user`. It left attribution a **platform-admin** act:
 `POST /studio-user/v1/users/{user_id}/aliases`, no self-service route.
 
@@ -15,7 +23,7 @@ do the guessing anyway.
 
 Two more things were missing, and they turn out to be the same problem:
 
-**Nothing proved control.** ADR-0006 committed to "verified-only auto-link" for
+**Nothing proved control.** ADR-0023 committed to "verified-only auto-link" for
 `login`, but said nothing about where a *verified* GitHub account comes from. A
 commit author address cannot supply it — that is whatever the committer put in
 `git config user.email`, unauthenticated and trivially spoofed. Under a rule that
@@ -31,6 +39,8 @@ turned into a hypothesis with nobody told.
 
 ## Decision
 
+The decision has 4 parts, each set out in its own subsection below: 1. Three confidences, and only the strongest attributes anything; 2. The proof of control already existed and was being discarded; 3. Only a proof displaces somebody else; 4. Attribution flows to the graph from `confirmed` only.
+
 ### 1. Three confidences, and only the strongest attributes anything
 
 | confidence | meaning | attributes? |
@@ -39,7 +49,7 @@ turned into a hypothesis with nobody told.
 | `claimed` | the person says it is theirs, unproven | no |
 | `suggested` | the system noticed a similarity | no |
 
-`claimed` is new. ADR-0006 had only `confirmed | suggested`, which left nowhere
+`claimed` is new. ADR-0023 had only `confirmed | suggested`, which left nowhere
 to put "this is mine, I cannot prove it yet" — the state a person is in before
 they add a credential. It records intent and grants nothing.
 
@@ -96,7 +106,7 @@ The resolver handed to the graph returns confirmed rows *only*. A claim or a
 suggestion must not be readable as an attribution, and the narrow interface is
 what makes that true by construction rather than by remembering to filter.
 
-## What this changes in ADR-0006
+## What this changes in ADR-0023
 
 - alias attribution becomes self-service (`/me/aliases`); the admin route stays
   but goes through the same policy — an admin writing on somebody's behalf must
@@ -111,16 +121,16 @@ what makes that true by construction rather than by remembering to filter.
   else's personal connection at an account of their choosing and have the
   confirmation recorded against that person.
 
-Everything else in ADR-0006 stands: the canonical `user` is the person, `login`
+Everything else in ADR-0023 stands: the canonical `user` is the person, `login`
 is a way in, `membership` carries per-org role, storage is relational, merge is
 first-class.
 
 ## What was rejected
 
 A separate `studio-identity` gear with its own append-only journal, tenant-scoped
-and keyed on the Keycloak subject. It was written first, before ADR-0006 was
+and keyed on the Keycloak subject. It was written first, before ADR-0023 was
 found, and it is not in this PR. Two gears owning the same mapping and two
-different person identifiers is worse than one, and ADR-0006's canonical
+different person identifiers is worse than one, and ADR-0023's canonical
 `user_id` is the better anchor: it survives an IdP migration, which a Keycloak
 subject does not.
 

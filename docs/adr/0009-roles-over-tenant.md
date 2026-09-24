@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-19
+---
+
 # ADR-0009: Role-based access is layered over the tenant model
+
+## Status
 
 Status: accepted · 2026-08-19
 
@@ -62,7 +70,7 @@ is *enforced*, not a third model.
 - Project-scoped narrowing currently intersects on `OWNER_TENANT_ID`, which is
   correct when a Project maps to a child (workspace) tenant in the subtree. Step
   4 refines this to key off the real Studio project GTS resource ids and to
-  resolve Team (RG group) grants; both are called out as TODOs in the plugin.
+  resolve Team (RG group) grants; both are called out as `TODO`s in the plugin.
 - `tenant_clamp` was refactored to expose `tenant_constraints() -> Vec<Constraint>`
   so the role path can fold narrowing predicates into each OR-branch of the
   clamp; `tenant_clamp` now wraps it. No behavioural change for the tenant model.

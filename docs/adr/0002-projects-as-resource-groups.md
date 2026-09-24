@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-07-28
+---
+
 # ADR-0002: Projects — Resource Group-backed in v0.1, domain gear later
+
+## Status
 
 Status: **accepted (v0.1 scope)** · Date: 2026-07-28
 
@@ -18,7 +26,7 @@ The platform already has a primitive for exactly this shape: **Resource Group** 
 typed, tenant-scoped group forests with memberships. account-management itself uses RG
 for user groups instead of building its own tables.
 
-## Decision (v0.1)
+## Decision
 
 A Project is an RG group of a Studio-owned GTS type:
 
@@ -31,7 +39,9 @@ A Project is an RG group of a Studio-owned GTS type:
 
 No Rust code required — the whole layer is data.
 
-## Known limitation (accepted for dev)
+## Consequences
+
+**Known limitation (accepted for dev).**
 
 RG scopes a group to the **caller's** tenant. With the dev static tokens (home tenant =
 root) projects land in the root tenant and workspace binding is by metadata only, not

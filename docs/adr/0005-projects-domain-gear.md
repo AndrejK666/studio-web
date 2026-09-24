@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-07
+---
+
 # ADR-0005: Projects — a domain gear (supersedes the v0.1 decision in ADR-0002)
+
+## Status
 
 Status: **accepted** · Date: 2026-08-07 · Supersedes: ADR-0002 (Decision, v0.1)
 
@@ -90,7 +98,7 @@ the P1 operations land upstream, nothing here changes.
   through RG; the new API does not see them. A migration is a follow-up, and
   cheap, since the payload is a superset of what the groups carry.
 
-## Alternatives considered
+## Alternatives Considered
 
 **Extend the RG type with a `metadata_schema` and stay at Step 1.** Cheapest by
 far — one script change, no new database, no new Rust — and it would have covered

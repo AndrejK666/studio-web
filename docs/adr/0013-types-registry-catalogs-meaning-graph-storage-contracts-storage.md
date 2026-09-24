@@ -1,4 +1,12 @@
+---
+type: adr
+status: proposed
+date: 2026-09-08
+---
+
 # ADR-0013: The types-registry catalogs meaning, graph-storage contracts storage
+
+## Status
 
 Status: **proposed** · Date: 2026-09-08
 
@@ -48,6 +56,8 @@ are not redundant — they answer different questions — and the reason they
 drifted is that we never wrote down which question belongs to which.
 
 ## Decision
+
+The decision has 6 parts, each set out in its own subsection below: 1. One sentence each; 2. The completeness invariant; 3. One declaration per type, both documents derived from it; 4. What may be registered where, by origin; 5. Evolution: three kinds of change, three different costs; 6. Consistency is checked in three places, not one.
 
 ### 1. One sentence each
 

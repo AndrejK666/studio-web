@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-18
+---
+
 # ADR-0007: Shell theme tokens hold whole colours
+
+## Status
 
 Date: 2026-08-18
 Status: accepted

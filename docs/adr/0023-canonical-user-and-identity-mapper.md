@@ -1,6 +1,16 @@
-# ADR-0006: A canonical Studio user, its sign-in methods, and the identity mapper
+---
+type: adr
+status: proposed
+date: 2026-09-04
+---
+
+# ADR-0023: A canonical Studio user, its sign-in methods, and the identity mapper
+
+## Status
 
 Status: **proposed** · Date: 2026-09-04 · Deciders: Studio backend team
+
+Renumbered from ADR-0006 (`studio-backend/docs/adr/`) when the two ADR trees were unified; ADR-0006 is the FrontX portal rebuild.
 
 ## Context
 
@@ -92,7 +102,7 @@ caller.
   projection for its own membership. Deletion (right-to-be-forgotten) erases the
   profile and anonymizes link/alias edges rather than breaking history.
 
-## Options considered
+## Alternatives Considered
 
 - **Lean only on Keycloak account linking.** Solves "many logins, one account"
   but cannot own a cross-tenant profile, a stable-across-IdP id, or non-login

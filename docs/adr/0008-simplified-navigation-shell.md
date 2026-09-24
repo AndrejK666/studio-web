@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-18
+---
+
 # ADR-0008: Simplified navigation shell — overlay drawer, top bar, context slot
+
+## Status
 
 Date: 2026-08-18
 Status: accepted
@@ -25,6 +33,8 @@ The mockups move all of that:
   navigation, not shell chrome.
 
 ## Decision
+
+The decision has 7 parts, each set out in its own subsection below: 1. The shell keeps only the top bar in the flow; 2. The drawer's open state reuses the framework's `collapsed` flag; 3. A separator is placed by an `order` band, not a new manifest field; 4. The context slot is one slot with two scopes; 5. Search and inbox are overlay extensions, found by route; 6. Chrome controls are the kit's Button, not raw `<button>`; 7. Identity moves to the top bar, keeping its colour contract.
 
 ### The shell keeps only the top bar in the flow
 

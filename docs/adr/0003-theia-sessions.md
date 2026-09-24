@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-07-30
+---
+
 # ADR-0003: Per-workspace Theia IDE sessions in containers
+
+## Status
 
 Status: accepted (MVP scope) · 2026-07-30
 Amended 2026-08-14: the image source moved into this repo — see
@@ -62,7 +70,7 @@ host directory, and the reaper deleting idle Deployments. The gear's REST
 surface and the portal flow do not change — only the driver behind
 `SessionService`.
 
-## Alternatives considered
+## Alternatives Considered
 
 - **theia-cloud (upstream operator)** — right long-term shape, but requires a
   cluster + operator today; our gear keeps the same session semantics locally.

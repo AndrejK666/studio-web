@@ -1,4 +1,12 @@
+---
+type: adr
+status: proposed
+date: 2026-09-14
+---
+
 # ADR-0019: A role narrows what a member may do, and nothing else
+
+## Status
 
 Status: **proposed** · Date: 2026-09-14 · Closes ADR-0018 follow-up 9 · Meets ADR-0011 §7
 
@@ -64,6 +72,8 @@ A catalogue that names things the product does not have is worse than a short
 one: every entry is a promise the PDP cannot keep.
 
 ## Decision
+
+The decision has 9 parts, each set out in its own subsection below: 1. The rule; 2. Privileges name what the product does; 3. Two questions, two places — and only one of them is the PDP's; 4. "No roles" and "cannot tell" are different answers; 5. Owner stops being a special case; 6. Nothing that works today stops working; 7. Switching to roles must not be able to lock an organization out; 8. The config read gets a cache; 9. Only an owner may say who owns an organization.
 
 ### 1. The rule
 

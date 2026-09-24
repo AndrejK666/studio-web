@@ -1,4 +1,12 @@
+---
+type: adr
+status: accepted
+date: 2026-08-27
+---
+
 # ADR-0011: Authentication does not grant organization membership
+
+## Status
 
 Status: accepted · 2026-08-27 · Amends ADR-0004
 
@@ -25,6 +33,8 @@ access inside a tenant. A role or membership UI must not imply protection while
 the runtime authorization path is still allow-all.
 
 ## Decision
+
+The decision has 7 parts, each set out in its own subsection below: 1. External login establishes identity only; 2. Organization access comes from explicit membership; 3. A user with no membership gets a valid no-access state; 4. The installation bootstraps a default organization; 5. Owners manage membership and non-owner roles; 6. Invitations and login are joined safely; 7. Enforcement precedes role-management UI.
 
 ### 1. External login establishes identity only
 

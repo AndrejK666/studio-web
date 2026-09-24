@@ -1,13 +1,21 @@
-# ADR-0010: Backend-to-backend bridge between studio-backend and the Theia IDE
+---
+type: adr
+status: proposed
+date: 2026-08-24
+---
+
+# ADR-0022: Backend-to-backend bridge between studio-backend and the Theia IDE
+
+## Status
 
 Status: proposed · 2026-08-24
 
-> ADR files are split across two trees for historical reasons:
-> `studio-backend/docs/adr/` holds 0001–0003 and 0005 (backend-domain
-> decisions); `docs/adr/` holds 0004 and 0006–0009 (product/shell decisions).
-> This one lives in `docs/adr/` because it spans both the backend gears and the
-> Theia extension. It supersedes nothing; it extends **ADR-0003 (per-workspace
-> Theia sessions)**.
+> Written as ADR-0010, when ADR files were split across two trees
+> (`studio-backend/docs/adr/` for backend-domain decisions, `docs/adr/` for
+> product/shell decisions) and the number collided with ADR-0010 (a project is
+> an AM tenant). The trees are now one, in `docs/adr/`, and this record is
+> ADR-0022; see [the ADR index](README.md). It supersedes nothing; it extends
+> **ADR-0003 (per-workspace Theia sessions)**.
 
 ## Context
 
@@ -66,6 +74,8 @@ workspace or duplicating its logic.
 
 Introduce a **backend-to-backend bridge** with two directions and a clean
 ownership split. Neither existing contract to the browser changes.
+
+The decision has 4 parts, each set out in its own subsection below: 1. Transport: an internal S2S control API on the Theia node; 2. Events: Theia → studio via the existing broadcast, forwarded out; 3. Ownership: a new `studio-theia` gear; 4. Contract: versioned, with `studio-protocol.ts` as source of truth.
 
 ### 1. Transport: an internal S2S control API on the Theia node
 
@@ -165,7 +175,7 @@ error.
   container is `running`, and must degrade cleanly (portal shows "IDE not
   running") when studio-session reports no live session.
 
-## Alternatives considered
+## Alternatives Considered
 
 - **Reuse the browser RPC path (`/services/studio-runtime`) from
   studio-backend.** Rejected: that path is designed for a single authenticated
