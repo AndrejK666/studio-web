@@ -44,6 +44,7 @@ import type { ValidateResult } from "../common/generated/ValidateResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
 import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
+import { materializeGitSource } from "./git-sources";
 import { enginePath, productFiles, sourceRoots, workspaceDir } from "./gearbox-environment";
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 
@@ -296,6 +297,19 @@ export class GearboxServiceImpl implements GearboxService {
   async listProducts(): Promise<ProductRef[]> {
     const root = workspaceDir();
     return productFiles(root).map((candidate) => ({ path: candidate, label: path.relative(root, candidate) }));
+  }
+
+  async materializeGitSource(
+    id: string,
+    url: string,
+    ref: { rev?: string | null; tag?: string | null; branch?: string | null },
+  ): Promise<string | undefined> {
+    try {
+      return await materializeGitSource(workspaceDir(), id, url, ref);
+    } catch (error) {
+      this.logger.warn(`gearbox: could not bring source ${id} (${url}) into the workspace: ${String(error)}`);
+      return undefined;
+    }
   }
 
   async loadProduct(path: string): Promise<ProductLoadResult> {
