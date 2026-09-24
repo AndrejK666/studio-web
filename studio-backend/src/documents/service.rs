@@ -673,7 +673,25 @@ impl DocumentsService {
     /// For the readiness computations that judge the set as a whole — a page
     /// of it would silently answer a different question. Nothing here reaches
     /// a response body, so the bound is the workspace rather than a page.
-    async fn all_documents(
+    /// Every effective binding in scope, unpaged.
+    ///
+    /// For the reads that judge the whole set -- the Specs rows, the specs per
+    /// repository. A `PageQuery` cannot stand in for this: its `limit()` clamps
+    /// any ask to `MAX_LIMIT` (200), so a project with more files than that saw
+    /// the first 200 bindings and called every other file "not scanned".
+    pub async fn all_bindings(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+    ) -> Result<Vec<DocumentBinding>> {
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        rows.into_iter().map(binding_from_row).collect()
+    }
+
+    pub async fn all_documents(
         &self,
         workspace_id: Uuid,
         project_id: Option<Uuid>,

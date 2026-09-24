@@ -1917,10 +1917,6 @@ async fn delete_binding(
 
 // ── the Specs list, folded here rather than in a page ────────────────────────
 
-/// How many rows one project's fold will read. Far above any real project, and
-/// present only so a runaway cannot pull an unbounded set into memory.
-const MAX_SPEC_ROWS: usize = 20_000;
-
 #[derive(Debug, serde::Deserialize)]
 pub struct SpecScopeQuery {
     /// The project whose specs these are. Its parent workspace is resolved
@@ -2204,16 +2200,15 @@ async fn read_both(
     Vec<super::spec_rows::Binding>,
     Vec<super::spec_rows::Authored>,
 )> {
-    let all = || PageQuery {
-        offset: None,
-        limit: Some(MAX_SPEC_ROWS),
-    };
-    let (bindings, _) = service
-        .list_bindings(workspace_id, Some(project_id), all())
+    // The whole set, not a page: `PageQuery::limit()` clamps to 200, so a
+    // paged read here showed a project with more files than that as mostly
+    // "not scanned" -- its bindings existed, the page just did not reach them.
+    let bindings = service
+        .all_bindings(workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
-    let (documents, _) = service
-        .list_documents(workspace_id, Some(project_id), all())
+    let documents = service
+        .all_documents(workspace_id, Some(project_id))
         .await
         .map_err(internal)?;
 
@@ -2348,15 +2343,8 @@ async fn specs_per_source(
         Ok(Some(parent)) => (parent, Some(scope_id)),
         _ => (scope_id, None),
     };
-    let (bindings, _) = service
-        .list_bindings(
-            workspace_id,
-            project_id,
-            PageQuery {
-                offset: None,
-                limit: Some(MAX_SPEC_ROWS),
-            },
-        )
+    let bindings = service
+        .all_bindings(workspace_id, project_id)
         .await
         .map_err(internal)?;
 
