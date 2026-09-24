@@ -93,6 +93,9 @@ interface PortalMessage {
     theme?: string;
     apiToken?: string;
     path?: string;
+    /** `studio.openProduct`: the branch the description was saved onto, when
+     *  that is not the branch the session has checked out. */
+    branch?: string;
     /** Who the portal has signed in; see {@link PortalViewer}. */
     viewer?: PortalViewer;
     /** Tenant that opened this session — a workspace tenant (shows every
@@ -270,7 +273,8 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // the description as a file, which is what the portal asked
                 // before this message existed.
                 const productPath = msg.path;
-                this.openWhenLayoutReady(() => void this.openProductInMode(productPath));
+                const productBranch = typeof msg.branch === 'string' && msg.branch ? msg.branch : undefined;
+                this.openWhenLayoutReady(() => void this.openProductInMode(productPath, productBranch));
             }
             if (msg.type === 'studio.openGear') {
                 // A gear project's "Open in IDE": its gear, in the Gearbox
@@ -397,9 +401,9 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
      * gearbox-studio is not in this build, which is what `studio.openInEditor`
      * did for it before.
      */
-    protected async openProductInMode(relativePath: string): Promise<void> {
+    protected async openProductInMode(relativePath: string, branch?: string): Promise<void> {
         try {
-            await this.commands.executeCommand(GEARBOX_OPEN_PRODUCT_COMMAND_ID, relativePath);
+            await this.commands.executeCommand(GEARBOX_OPEN_PRODUCT_COMMAND_ID, relativePath, branch);
         } catch {
             await this.openFileInMode(relativePath);
         }

@@ -243,6 +243,15 @@ export interface GearboxService {
   listProducts(): Promise<ProductRef[]>;
 
   /**
+   * Constructor Studio: the absolute path of `file` (relative to a checkout)
+   * as it is on `branch`, bringing the branch in beside its checkout as a git
+   * worktree when no checkout has it. `undefined` when no checkout's origin
+   * has the branch, or the file is not on it. For a product the portal saved
+   * onto its own branch of a shared repository.
+   */
+  fileOnBranch(branch: string, file: string): Promise<string | undefined>;
+
+  /**
    * Constructor Studio: a directory named `id` holding the git source `url` at
    * `ref`, brought into the workspace when no checkout already is that commit.
    * For a description that names its corpus as `git(url, rev)`. `undefined`

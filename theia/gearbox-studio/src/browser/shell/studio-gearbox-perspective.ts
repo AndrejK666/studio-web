@@ -26,6 +26,7 @@ import { GearAuthorViewContribution } from "../view-contributions";
 import { GearLocator } from "./gear-locator";
 import { GearSessionService } from "./gear-session-service";
 import { ProductSessionService } from "./product-session-service";
+import { GearboxService } from "../../common/protocol";
 import { PRODUCT_PERSPECTIVE } from "./studio-context-service";
 
 export const OpenProductHere: Command = {
@@ -57,6 +58,7 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   @inject(FileService) protected readonly files!: FileService;
   @inject(MessageService) protected readonly messages!: MessageService;
+  @inject(GearboxService) protected readonly gearbox!: GearboxService;
   @inject(GearSessionService) protected readonly gearSession!: GearSessionService;
   @inject(GearLocator) protected readonly locator!: GearLocator;
   @inject(GearAuthorViewContribution) protected readonly gearView!: GearAuthorViewContribution;
@@ -78,7 +80,7 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
 
   registerCommands(commands: CommandRegistry): void {
     commands.registerCommand(OpenProductHere, {
-      execute: (path?: string) => this.openHere(path),
+      execute: (path?: string, branch?: string) => this.openHere(path, branch),
     });
     commands.registerCommand(OpenGearHere, {
       execute: (path?: string) => this.openGearHere(path),
@@ -130,14 +132,23 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
   }
 
   /** Switch to the Gearbox perspective and open the product at `path`. */
-  async openHere(path?: string): Promise<boolean> {
+  async openHere(path?: string, branch?: string): Promise<boolean> {
     if (this.perspectives.getActivePerspectiveId() !== PRODUCT_PERSPECTIVE) {
       await this.perspectives.switchPerspective(PRODUCT_PERSPECTIVE).catch(() => undefined);
     }
     if (!path) return false;
-    const file = await this.resolve(path);
+    // The portal saves a product onto its own branch when the repository is
+    // shared; the session is on the base branch. The branch is then brought
+    // in beside the checkout (`fileOnBranch`), and the copy there is opened.
+    const onBranch =
+      branch === undefined ? undefined : await this.gearbox.fileOnBranch(branch, path).catch(() => undefined);
+    const file = onBranch !== undefined ? URI.fromFilePath(onBranch) : await this.resolve(path);
     if (file === undefined) {
-      this.messages.warn(`No ${path} in this workspace. Open the project's repository in Sources first.`);
+      this.messages.warn(
+        branch === undefined
+          ? `No ${path} in this workspace. Open the project's repository in Sources first.`
+          : `No ${path} in this workspace, and its branch ${branch} could not be fetched from the project's repository.`,
+      );
       return false;
     }
     const roots = this.workspace.tryGetRoots().map((r) => r.resource);

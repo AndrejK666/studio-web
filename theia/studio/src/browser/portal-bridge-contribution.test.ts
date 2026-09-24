@@ -56,8 +56,8 @@ class TestBridge extends PortalBridgeContribution {
         return this.openFileInMode(relativePath);
     }
 
-    openProduct(relativePath: string): Promise<void> {
-        return this.openProductInMode(relativePath);
+    openProduct(relativePath: string, branch?: string): Promise<void> {
+        return this.openProductInMode(relativePath, branch);
     }
 
     openComponent(name: string | undefined): boolean {
@@ -292,8 +292,23 @@ describe('PortalBridgeContribution product hand-off', () => {
 
         await bridge.openProduct('product.gdl');
 
-        expect(calls).toEqual([[GEARBOX_OPEN_PRODUCT_COMMAND_ID, ['product.gdl']]]);
+        expect(calls).toEqual([[GEARBOX_OPEN_PRODUCT_COMMAND_ID, ['product.gdl', undefined]]]);
         expect(onOpenInEditor).not.toHaveBeenCalled();
+    });
+
+    it('passes on the branch the portal saved the description onto', async () => {
+        const bridge = new TestBridge();
+        const calls: [string, unknown[]][] = [];
+        bridge.useCommands({
+            executeCommand: (id: string, ...args: unknown[]) => {
+                calls.push([id, args]);
+                return Promise.resolve(true);
+            }
+        } as unknown as CommandService);
+
+        await bridge.openProduct('product.gdl', 'product/studioweb-77a0da49');
+
+        expect(calls).toEqual([[GEARBOX_OPEN_PRODUCT_COMMAND_ID, ['product.gdl', 'product/studioweb-77a0da49']]]);
     });
 
     it('opens the description as a file when gearbox-studio is not in the build', async () => {
