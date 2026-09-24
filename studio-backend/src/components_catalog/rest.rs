@@ -817,6 +817,226 @@ mod profiles_by_gear_tests {
     }
 }
 
+/// Compare what a project's specs ask for with what its code is made of.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ConformanceRequest {
+    /// The project whose gear repository is read.
+    pub project_id: String,
+    /// The capabilities the project's documents declare
+    /// (`GET /studio-documents/v1/declared-capabilities`).
+    pub capabilities: Vec<String>,
+    /// The workspace's capability vocabulary, as for `/compose`.
+    #[serde(default)]
+    pub terms: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// A component the code depends on.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ImplementerDto {
+    pub name: String,
+    /// It declares the capability itself, rather than matching by words.
+    pub declared: bool,
+}
+
+/// One capability the specs declare, and whether the code has it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConformanceRowDto {
+    pub capability: String,
+    /// `implemented` -- the code depends on a component that fills it --
+    /// or `missing`.
+    pub status: String,
+    /// The components in the code that fill it.
+    pub implemented_by: Vec<ImplementerDto>,
+    /// When missing: the best catalogue candidates, as `/compose` ranks them.
+    pub candidates: Vec<String>,
+}
+
+/// A component the code uses that no declared capability accounts for.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct UnexplainedDto {
+    pub name: String,
+    /// The capabilities it declares itself, if any: what the specs may be
+    /// missing.
+    pub declares: Vec<String>,
+}
+
+/// Spec against code, for one project.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConformanceDto {
+    /// The repository read (`owner/name`).
+    pub repo: String,
+    /// Catalogue components the code depends on.
+    pub components_in_code: Vec<String>,
+    /// One row per declared capability.
+    pub items: Vec<ConformanceRowDto>,
+    pub total: u32,
+    /// Components the code uses that the specs do not account for.
+    pub unexplained: Vec<UnexplainedDto>,
+    /// What the Gearbox engine says about the code's own set of gears: what
+    /// it would have to add for them to resolve, and what cannot run. Empty
+    /// when the engine is not configured or has nothing to say.
+    pub gearbox: Vec<ProductChangeDto>,
+}
+
+async fn conformance(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Json(req): Json<ConformanceRequest>,
+) -> ApiResult<JsonBody<ConformanceDto>> {
+    let invalid = |msg: String| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(msg)
+            .create()
+    };
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let project_id = req.project_id.trim();
+    if Uuid::parse_str(project_id).is_err() {
+        return Err(invalid(format!("project_id `{project_id}` is not a uuid")));
+    }
+    let Some((repo, deps)) = catalog
+        .service
+        .project_dependencies(&ctx, project_id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(invalid(
+            "the project has no gear repository connected, so there is no code to compare".into(),
+        ));
+    };
+
+    let (nodes, _truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(internal)?;
+    let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
+    let mut profiles = serde_json::Map::new();
+    for node in catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(internal)?
+    {
+        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+
+    // The catalogue components the code is made of: gears and plugins its
+    // manifests depend on. SDK crates and libraries are how a gear is used,
+    // not what the product is made of.
+    let mut in_code: Vec<String> = components
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.get("kind").and_then(Value::as_str),
+                Some("gear" | "plugin")
+            )
+        })
+        .filter_map(|c| c.get("name").and_then(Value::as_str))
+        .filter(|name| deps.contains(*name))
+        .map(str::to_owned)
+        .collect();
+    in_code.sort();
+    in_code.dedup();
+
+    let all = super::compose::plan_all(&req.capabilities, &components, &profiles, &req.terms);
+    let mut explained: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let items: Vec<ConformanceRowDto> = all
+        .into_iter()
+        .map(|row| {
+            let implemented_by: Vec<ImplementerDto> = row
+                .candidates
+                .iter()
+                .filter(|c| in_code.contains(&c.name))
+                .map(|c| ImplementerDto {
+                    name: c.name.clone(),
+                    declared: c.declared,
+                })
+                .collect();
+            explained.extend(implemented_by.iter().map(|i| i.name.clone()));
+            let missing = implemented_by.is_empty();
+            ConformanceRowDto {
+                capability: row.capability,
+                status: if missing { "missing" } else { "implemented" }.to_string(),
+                candidates: if missing {
+                    row.candidates
+                        .iter()
+                        .take(3)
+                        .map(|c| c.name.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                implemented_by,
+            }
+        })
+        .collect();
+
+    let declares = |name: &str| -> Vec<String> {
+        let node = components
+            .iter()
+            .find(|c| c.get("name").and_then(Value::as_str) == Some(name));
+        let Some(node) = node else { return Vec::new() };
+        let values = super::values::resolve(node, profiles.get(name));
+        values
+            .get("capabilities")
+            .and_then(|f| f.get("v").and_then(Value::as_str).or_else(|| f.as_str()))
+            .unwrap_or_default()
+            .split(',')
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect()
+    };
+    let unexplained: Vec<UnexplainedDto> = in_code
+        .iter()
+        .filter(|name| !explained.contains(*name))
+        .map(|name| UnexplainedDto {
+            name: name.clone(),
+            declares: declares(name),
+        })
+        .collect();
+
+    // The engine's view of the code's own set: what it would add, and what it
+    // says cannot run. Best-effort -- the comparison stands without it.
+    let gearbox: Vec<ProductChangeDto> = match catalog.gearbox.as_ref() {
+        Some(gb) => match gb
+            .complete(&in_code, &super::gearbox::GearConfig::new())
+            .await
+        {
+            Ok(done) => done
+                .changes
+                .into_iter()
+                .map(|c| ProductChangeDto {
+                    gear: c.gear,
+                    added: c.added,
+                    reason: c.reason,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "conformance: the Gearbox engine did not answer");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(ConformanceDto {
+        repo,
+        components_in_code: in_code,
+        items,
+        total,
+        unexplained,
+        gearbox,
+    }))
+}
+
 async fn compose_plan(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -2029,6 +2249,27 @@ pub fn register_routes(
         )
         .error_401(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/conformance")
+        .operation_id("studio_components_catalog.create_conformance_report")
+        .summary("Compare what a project's specs ask for with what its code is made of")
+        .description(
+            "For each capability the project's documents declare: whether the code depends on a \
+             catalogue component that fills it, and which. Then the components the code uses that \
+             no declared capability accounts for -- what the specs may be missing -- and what the \
+             Gearbox engine says about the code's own set of gears. The code is the project's gear \
+             repository, read as the run-time dependencies of every Cargo.toml in it.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ConformanceRequest>(openapi, "The project and its declared capabilities")
+        .handler(conformance)
+        .json_response_with_schema::<ConformanceDto>(openapi, StatusCode::OK, "The comparison")
+        .error_400(openapi)
+        .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

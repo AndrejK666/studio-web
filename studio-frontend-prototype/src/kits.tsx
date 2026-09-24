@@ -224,6 +224,7 @@ export function ProjectKits({
         </p>
       )}
       <SuggestedComponents token={token} projectId={projectId} workspaceId={workspaceId} product={product} />
+      <SpecAgainstCode token={token} projectId={projectId} workspaceId={workspaceId} />
 
       <div className="card-head">
         <div>
@@ -381,6 +382,106 @@ export function ProjectKits({
  * design may legitimately name a component that is still only a design; what
  * would be wrong is answering "build it from these" with a directory of docs.
  */
+/** Do the specs and the code agree? Per declared capability, whether the
+ *  code depends on a component that fills it; the components the code uses
+ *  that no capability accounts for; and the Gearbox engine's view of the
+ *  code's own gears. */
+function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; projectId: string; workspaceId: string }) {
+  const [report, setReport] = useState<import("./api").Conformance | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const nav = usePortalNav();
+  const compare = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const [declared, vocab] = await Promise.all([
+        api.declaredCapabilities(token, projectId),
+        api.capabilities(token, workspaceId),
+      ]);
+      setReport(await api.conformance(token, projectId, declared.items.map((c) => c.key), vocab.items ?? []));
+    } catch (cause) {
+      setError(errText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const missing = report?.items.filter((r) => r.status === "missing").length ?? 0;
+  return (
+    <div className="card" style={{ marginTop: 12 }} data-spec-against-code>
+      <div className="card-head">
+        <div>
+          <h2>Specs ↔ code</h2>
+          <p className="subtitle">
+            What the project&apos;s documents declare, against what its code depends on — read from every
+            Cargo.toml in the gear repository.
+          </p>
+        </div>
+        <button className="ghost" disabled={busy} onClick={() => void compare()}>
+          {busy ? "Comparing…" : "Compare"}
+        </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+      {report && (
+        <div style={{ fontSize: 12 }}>
+          <p style={{ margin: "0 0 8px", opacity: 0.8 }}>
+            <code>{report.repo}</code> uses {report.components_in_code.length} catalogue components ·{" "}
+            {report.total - missing} of {report.total} declared capabilities implemented
+            {missing > 0 ? ` · ${missing} missing` : ""}
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {report.items.map((r) => (
+              <li key={r.capability} style={{ margin: "0 0 4px" }}>
+                <span className={`badge ${r.status === "implemented" ? "ok" : "failed"}`}>{r.capability}</span>{" "}
+                {r.status === "implemented" ? (
+                  r.implemented_by.map((i, n) => (
+                    <span key={i.name}>
+                      {n > 0 && ", "}
+                      <ComponentLink nav={nav} name={i.name} />
+                      {i.declared ? "" : <span style={{ opacity: 0.5 }} title="matched by words, not declared"> ~</span>}
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ opacity: 0.8 }}>
+                    nothing in the code fills it
+                    {r.candidates.length > 0 && <> · the catalogue has {r.candidates.map(gearLabel).join(", ")}</>}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {report.unexplained.length > 0 && (
+            <p style={{ margin: "8px 0 0" }}>
+              <b>In the code, not in the specs:</b>{" "}
+              {report.unexplained.map((u, n) => (
+                <span key={u.name}>
+                  {n > 0 && ", "}
+                  <ComponentLink nav={nav} name={u.name} />
+                  {u.declares.length > 0 && <span style={{ opacity: 0.6 }}> ({u.declares.join(", ")})</span>}
+                </span>
+              ))}
+              <span style={{ opacity: 0.7 }}> — a capability the specs do not declare, or a dependency to drop.</span>
+            </p>
+          )}
+          {report.gearbox.length > 0 && (
+            <div style={{ margin: "8px 0 0" }}>
+              <b>Gearbox on the code&apos;s own gears:</b>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                {report.gearbox.map((g) => (
+                  <li key={`${g.gear}-${g.reason}`}>
+                    {g.added ? "needs " : "cannot run: "}
+                    <ComponentLink nav={nav} name={g.gear} /> — {g.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SuggestedComponents({
   token,
   projectId,

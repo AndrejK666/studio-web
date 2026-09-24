@@ -257,6 +257,28 @@ pub fn plan(
     profiles: &serde_json::Map<String, Value>,
     terms: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<PlanRow> {
+    plan_with_limit(capabilities, components, profiles, terms, Some(SHORTLIST))
+}
+
+/// [`plan`] with every candidate kept: for a question about the whole set --
+/// "does the code use ANY component that fills this?" -- where a shortlist
+/// would answer a different one.
+pub fn plan_all(
+    capabilities: &[String],
+    components: &[Value],
+    profiles: &serde_json::Map<String, Value>,
+    terms: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Vec<PlanRow> {
+    plan_with_limit(capabilities, components, profiles, terms, None)
+}
+
+fn plan_with_limit(
+    capabilities: &[String],
+    components: &[Value],
+    profiles: &serde_json::Map<String, Value>,
+    terms: &std::collections::BTreeMap<String, Vec<String>>,
+    limit: Option<usize>,
+) -> Vec<PlanRow> {
     capabilities
         .iter()
         .map(|capability| {
@@ -326,7 +348,9 @@ pub fn plan(
             // one; before the cut, so the duplicate does not eat a slot.
             let mut seen = std::collections::HashSet::new();
             candidates.retain(|c| seen.insert(c.name.clone()));
-            candidates.truncate(SHORTLIST);
+            if let Some(n) = limit {
+                candidates.truncate(n);
+            }
             // Read off the list that is actually shown, and only when every one
             // of them is KNOWN to be docs-only. An `Unknown` among them is not
             // evidence of absence — saying "nothing here is built" over a
