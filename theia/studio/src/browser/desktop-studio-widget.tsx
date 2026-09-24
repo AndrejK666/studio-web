@@ -11,10 +11,11 @@ import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StudioApi } from './studio-api';
+import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
-interface DesktopStatus {
+interface DesktopStatus extends DesktopEnvironmentChoice {
     enabled: boolean;
     studioUrl?: string;
     state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
@@ -95,6 +96,63 @@ export class DesktopStudioWidget extends ReactWidget {
         this.update();
     }
 
+    /** Whether the "which Studio" picker is open while signed in. */
+    protected choosing = false;
+    protected customUrl = '';
+    protected switchError = '';
+
+    /** Connect to another Studio: the backend signs out of this one first. */
+    protected async switchTo(target: { id: string } | { studioUrl: string }): Promise<void> {
+        this.switchError = '';
+        const answer = await fetch(desktopUrl('environment'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(target),
+        });
+        if (!answer.ok) {
+            this.switchError = ((await answer.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${answer.status}`;
+            this.update();
+            return;
+        }
+        this.choosing = false;
+        this.organizations = undefined;
+        this.loadError = '';
+        this.openError = '';
+        await this.refresh();
+    }
+
+    protected async signOut(): Promise<void> {
+        await fetch(desktopUrl('sign-out'), { method: 'POST' });
+        this.organizations = undefined;
+        await this.refresh();
+    }
+
+    /** Which Studio this IDE connects to: the build's list, or an address. */
+    protected renderPicker(status: DesktopStatus): React.ReactNode {
+        if (!status.switchable) {
+            return undefined;
+        }
+        const current = status.current;
+        const value = current?.id === 'custom' ? 'custom' : current?.id ?? '';
+        return <div style={{ marginBottom: '12px' }}>
+            <label style={{ display: 'block', opacity: 0.8, marginBottom: '4px' }}>Studio</label>
+            <select className='theia-select' style={{ width: '100%' }} value={value}
+                onChange={e => e.target.value === 'custom'
+                    ? (this.customUrl = current?.id === 'custom' ? current.studioUrl : '', this.choosing = true, this.update())
+                    : void this.switchTo({ id: e.target.value })}>
+                {status.environments.map(env => <option key={env.id} value={env.id}>{env.label} — {env.studioUrl.replace(/^https?:\/\//, '')}</option>)}
+                <option value='custom'>{current?.id === 'custom' ? `Other — ${current.label}` : 'Other…'}</option>
+            </select>
+            {(this.choosing || current?.id === 'custom') && <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
+                <input className='theia-input' style={{ flex: 1 }} placeholder='https://studio.example.com'
+                    value={this.customUrl} onChange={e => { this.customUrl = e.target.value; this.update(); }}
+                    onKeyDown={e => e.key === 'Enter' && void this.switchTo({ studioUrl: this.customUrl })} />
+                <button className='theia-button secondary' onClick={() => void this.switchTo({ studioUrl: this.customUrl })}>Use</button>
+            </div>}
+            {this.switchError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.switchError}</p>}
+        </div>;
+    }
+
     protected async signIn(): Promise<void> {
         await fetch(desktopUrl('sign-in'), { method: 'POST' });
         await this.refresh();
@@ -167,7 +225,8 @@ export class DesktopStudioWidget extends ReactWidget {
             </div>;
         }
         if (status.state !== 'signed-in') {
-            return <div style={box}>{header}
+            return <div style={box}>
+                {status.switchable ? this.renderPicker(status) : header}
                 <h3 style={{ margin: '0 0 8px' }}>Sign in to Constructor Studio</h3>
                 <p>Your workspaces, their sources and the AI your organization provides are one sign-in away.
                     Nothing is stored on this computer but that sign-in.</p>
@@ -178,9 +237,20 @@ export class DesktopStudioWidget extends ReactWidget {
                 <p style={{ opacity: 0.7, marginTop: '8px' }}>Opens the sign-in page in your browser.</p>
             </div>;
         }
-        return <div style={box}>{header}
+        const link: React.CSSProperties = { cursor: 'pointer', marginRight: '12px' };
+        return <div style={box}>
+            {this.choosing ? this.renderPicker(status) : <div style={{ opacity: 0.7, fontSize: '0.9em', marginBottom: '12px' }}>
+                {status.current?.label && status.current.id !== 'custom' && status.current.id !== 'pinned' ? `${status.current.label} · ` : ''}
+                {status.studioUrl}
+            </div>}
             <p><span className='codicon codicon-pass-filled' style={{ color: 'var(--theia-testing-iconPassed)' }} /> Signed in
                 as <b>{status.user?.name ?? status.user?.sub}</b></p>
+            <div style={{ fontSize: '0.9em' }}>
+                {status.switchable && <a style={link} onClick={() => { this.choosing = !this.choosing; this.update(); }}>
+                    {this.choosing ? 'Keep this Studio' : 'Switch Studio'}
+                </a>}
+                <a style={link} onClick={() => void this.signOut()}>Sign out</a>
+            </div>
             {this.loadError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.loadError}</p>}
             {!this.organizations && !this.loadError && <p>Loading your workspaces…</p>}
             {this.organizations?.map(org => <div key={org.id} style={{ marginTop: '12px' }}>

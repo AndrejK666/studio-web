@@ -1,7 +1,59 @@
 /**
  * @jest-environment node
  */
-import { desktopConfigFrom, folderFor, helperCommand } from './desktop-studio-contribution';
+import { chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand } from './desktop-studio-contribution';
+import { customEnvironment, parseEnvironments } from '../common/desktop-environments';
+
+const OFFERED = JSON.stringify([
+    { id: 'dev', label: 'Dev', studioUrl: 'https://dev.example.com', issuer: 'https://dev.example.com/auth/realms/studio' },
+    { id: 'test', label: 'Test', studioUrl: 'https://test.example.com/' },
+    { id: 'local', label: 'Local', studioUrl: 'http://127.0.0.1:8090', issuer: 'http://127.0.0.1:8088/realms/studio' },
+]);
+
+describe('which Studio a desktop connects to', () => {
+    const { list, pinned, defaultId } = environmentsFrom({ STUDIO_DESKTOP_ENVIRONMENTS: OFFERED, STUDIO_DESKTOP_DEFAULT: 'test' });
+
+    it('reads the list the build carries, deriving a missing realm', () => {
+        expect(list.map(e => e.id)).toEqual(['dev', 'test', 'local']);
+        expect(list[1]).toEqual({ id: 'test', label: 'Test', studioUrl: 'https://test.example.com', issuer: 'https://test.example.com/auth/realms/studio' });
+        expect(pinned).toBeUndefined();
+    });
+
+    it('starts on the build default when the member chose nothing', () => {
+        expect(chooseEnvironment(list, pinned, {}, defaultId)?.id).toBe('test');
+    });
+
+    it('keeps the member\'s choice over the default', () => {
+        expect(chooseEnvironment(list, pinned, { environment: 'local' }, defaultId)?.studioUrl).toBe('http://127.0.0.1:8090');
+    });
+
+    it('takes an address the member typed', () => {
+        expect(chooseEnvironment(list, pinned, { custom: { studioUrl: 'https://mine.example.com/' } }, defaultId))
+            .toEqual(customEnvironment('https://mine.example.com'));
+        expect(customEnvironment('https://mine.example.com').issuer).toBe('https://mine.example.com/auth/realms/studio');
+    });
+
+    it('falls back to the default when a saved choice is no longer offered', () => {
+        expect(chooseEnvironment(list, pinned, { environment: 'gone' }, defaultId)?.id).toBe('test');
+    });
+
+    it('lets STUDIO_DESKTOP_URL pin one Studio over any choice', () => {
+        const env = environmentsFrom({ STUDIO_DESKTOP_ENVIRONMENTS: OFFERED, STUDIO_DESKTOP_URL: 'http://127.0.0.1:8090' });
+        expect(chooseEnvironment(env.list, env.pinned, { environment: 'dev' })?.id).toBe('pinned');
+    });
+
+    it('drops entries it cannot use', () => {
+        expect(parseEnvironments([{ id: 'x' }, { id: 'y', studioUrl: 'ftp://nope' }, 'junk', { studioUrl: 'https://a' }])).toEqual([]);
+        expect(parseEnvironments('not a list')).toEqual([]);
+        expect(environmentsFrom({ STUDIO_DESKTOP_ENVIRONMENTS: '{broken' }).list).toEqual([]);
+    });
+
+    it('builds a config from the chosen Studio', () => {
+        const config = desktopConfigFrom({ STUDIO_DESKTOP_ENVIRONMENTS: OFFERED }, '/here', { environment: 'local' })!;
+        expect(config.studioUrl).toBe('http://127.0.0.1:8090');
+        expect(config.issuer).toBe('http://127.0.0.1:8088/realms/studio');
+    });
+});
 
 describe('desktop studio contribution', () => {
     it('stays off unless a Studio is named', () => {

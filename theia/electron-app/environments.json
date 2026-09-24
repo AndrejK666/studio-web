@@ -1,0 +1,20 @@
+[
+  {
+    "id": "dev",
+    "label": "Dev",
+    "studioUrl": "https://studio-dev.cfabric.org",
+    "issuer": "https://studio-dev.cfabric.org/auth/realms/studio"
+  },
+  {
+    "id": "test",
+    "label": "Test",
+    "studioUrl": "https://studio-test.cfabric.org",
+    "issuer": "https://studio-test.cfabric.org/auth/realms/studio"
+  },
+  {
+    "id": "local",
+    "label": "Local",
+    "studioUrl": "http://127.0.0.1:8090",
+    "issuer": "http://127.0.0.1:8088/realms/studio"
+  }
+]

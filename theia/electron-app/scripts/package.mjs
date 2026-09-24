@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 // Package the built electron-app as an installable desktop Studio (ADR-0027).
 //
+//   npm --prefix electron-app run package -- [--environments environments.json] \
+//       [--default dev] [--version 0.1.0]
 //   npm --prefix electron-app run package -- --studio-url https://studio.example.com \
-//       [--issuer https://studio.example.com/auth/realms/studio] [--version 0.1.0]
+//       [--issuer https://studio.example.com/auth/realms/studio]
+//
+// The first form ships the Studios in environments.json (dev, test, local by
+// default) and lets the member switch between them in the Studio view; the
+// build starts on --default. The second ships exactly one Studio.
 //
 // Run it after `theia build`. The Theia bundle in lib/ is self-contained — its
 // only external is `electron` — so the app is staged without node_modules:
@@ -25,6 +31,8 @@ const require = createRequire(import.meta.url);
 const app = dirname(dirname(fileURLToPath(import.meta.url)));
 const { values } = parseArgs({
     options: {
+        environments: { type: 'string', default: join(app, 'environments.json') },
+        default: { type: 'string' },
         'studio-url': { type: 'string' },
         issuer: { type: 'string' },
         version: { type: 'string', default: '0.1.0' },
@@ -32,11 +40,19 @@ const { values } = parseArgs({
     },
 });
 const studioUrl = values['studio-url']?.replace(/\/+$/, '');
-if (!studioUrl) {
-    console.error('--studio-url is required: the Studio this build signs in to');
+const environments = studioUrl
+    ? [{ id: 'default', label: studioUrl.replace(/^https?:\/\//, ''), studioUrl, issuer: values.issuer ?? `${studioUrl}/auth/realms/studio` }]
+    : JSON.parse(readFileSync(values.environments, 'utf8'));
+if (!Array.isArray(environments) || environments.length === 0
+    || environments.some(e => typeof e?.id !== 'string' || !/^https?:\/\//.test(e?.studioUrl ?? ''))) {
+    console.error('no usable Studio: give --studio-url, or an --environments file of { id, label, studioUrl, issuer }');
     process.exit(2);
 }
-const issuer = values.issuer ?? `${studioUrl}/auth/realms/studio`;
+const defaultEnvironment = values.default ?? environments[0].id;
+if (!environments.some(e => e.id === defaultEnvironment)) {
+    console.error(`--default ${defaultEnvironment} is not one of ${environments.map(e => e.id).join(', ')}`);
+    process.exit(2);
+}
 
 for (const needed of ['lib/backend/electron-main.js', 'lib/frontend/index.html']) {
     if (!existsSync(join(app, needed))) {
@@ -65,7 +81,7 @@ writeFileSync(join(stage, 'package.json'), JSON.stringify({
 const resources = join(app, 'dist-resources');
 rmSync(resources, { recursive: true, force: true });
 mkdirSync(resources, { recursive: true });
-writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ studioUrl, issuer }, null, 2));
+writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ environments, defaultEnvironment }, null, 2));
 
 const electronPackage = require.resolve('electron/package.json');
 const { build } = require('electron-builder');
@@ -105,4 +121,4 @@ await build({
         linux: { target: ['AppImage', 'tar.gz'], category: 'Development' },
     },
 });
-console.log(`packaged into ${values.out}, signing in to ${studioUrl}`);
+console.log(`packaged into ${values.out}: ${environments.map(e => e.id).join(', ')} (starts on ${defaultEnvironment})`);

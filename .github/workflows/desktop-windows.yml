@@ -4,8 +4,9 @@ name: Desktop — Windows build
 # Windows runner, so its native modules (node-pty, keytar, drivelist,
 # native-keymap, the ffmpeg check) compile against the real toolchain, then
 # packaged by theia/electron-app/scripts/package.mjs into an NSIS installer and
-# a zip. The build signs in to the Studio it is given; the installer is an
-# artifact of the run.
+# a zip. The build offers the Studios in theia/electron-app/environments.json
+# (dev, test, local) and starts on the one given; the member switches in the
+# Studio view. The installer is an artifact of the run.
 #
 # Not on every pull request: a Windows runner costs several times a Linux one,
 # and the browser session image does not depend on this. It runs when the
@@ -14,12 +15,15 @@ name: Desktop — Windows build
 on:
   workflow_dispatch:
     inputs:
+      default_environment:
+        description: The Studio the build starts on (an id in environments.json)
+        default: dev
       studio_url:
-        description: The Studio this build signs in to
-        default: https://studio-dev.cfabric.org
+        description: Instead, ship exactly one Studio at this address
+        default: ''
       issuer:
-        description: Its Keycloak realm (the OIDC issuer)
-        default: https://studio-dev.cfabric.org/auth/realms/studio
+        description: That Studio's realm, when not <address>/auth/realms/studio
+        default: ''
       version:
         description: The version the installer carries
         default: 0.1.0
@@ -45,8 +49,9 @@ jobs:
       run:
         working-directory: theia
     env:
-      STUDIO_URL: ${{ inputs.studio_url || 'https://studio-dev.cfabric.org' }}
-      STUDIO_ISSUER: ${{ inputs.issuer || 'https://studio-dev.cfabric.org/auth/realms/studio' }}
+      STUDIO_DEFAULT: ${{ inputs.default_environment || 'dev' }}
+      STUDIO_URL: ${{ inputs.studio_url }}
+      STUDIO_ISSUER: ${{ inputs.issuer }}
       STUDIO_VERSION: ${{ inputs.version || '0.1.0' }}
     steps:
       - uses: actions/checkout@v6
@@ -76,8 +81,16 @@ jobs:
         run: npx theia build --mode production
       - name: Package
         working-directory: theia/electron-app
-        run: node scripts/package.mjs --studio-url "$env:STUDIO_URL" --issuer "$env:STUDIO_ISSUER" --version "$env:STUDIO_VERSION"
         shell: pwsh
+        run: |
+          $packArgs = @('--version', $env:STUDIO_VERSION)
+          if ($env:STUDIO_URL) {
+            $packArgs += @('--studio-url', $env:STUDIO_URL)
+            if ($env:STUDIO_ISSUER) { $packArgs += @('--issuer', $env:STUDIO_ISSUER) }
+          } else {
+            $packArgs += @('--default', $env:STUDIO_DEFAULT)
+          }
+          node scripts/package.mjs @packArgs
       - uses: actions/upload-artifact@v6
         with:
           name: constructor-studio-windows-${{ env.STUDIO_VERSION }}

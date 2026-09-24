@@ -12,7 +12,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-/** Written by the packaging script: which Studio this build signs in to. */
+/**
+ * Written by the packaging script: the Studios this build offers and the one
+ * it starts with. The member's own choice, made in the Studio view, is kept
+ * elsewhere (~/ConstructorStudio/settings.json) and wins over the default.
+ */
 function preset() {
     try {
         return JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'studio-desktop.json'), 'utf8'));
@@ -24,11 +28,13 @@ function preset() {
 const home = path.join(os.homedir(), 'ConstructorStudio');
 const workspace = path.join(home, 'workspace');
 const data = path.join(home, 'data');
-const { studioUrl, issuer } = preset();
+const { environments, defaultEnvironment } = preset();
 
 const defaults = {
-    STUDIO_DESKTOP_URL: studioUrl,
-    STUDIO_DESKTOP_ISSUER: issuer,
+    // A list, not STUDIO_DESKTOP_URL: that one pins a single Studio and hides
+    // the choice, which is for a developer's `theia start`.
+    STUDIO_DESKTOP_ENVIRONMENTS: environments ? JSON.stringify(environments) : undefined,
+    STUDIO_DESKTOP_DEFAULT: defaultEnvironment,
     // The runtime config of the studio extension requires these. On a desktop
     // the actor is the signed-in member, whom the sign-in names later; these
     // only let the IDE start.
