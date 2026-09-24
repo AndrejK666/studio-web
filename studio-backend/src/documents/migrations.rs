@@ -29,6 +29,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0008::Migration),
             Box::new(m0009::Migration),
             Box::new(m0010::Migration),
+            Box::new(m0011::Migration),
         ]
     }
 }
@@ -697,6 +698,58 @@ mod m0010 {
         }
 
         async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Ok(())
+        }
+    }
+}
+
+/// A bound repository file records the capabilities it declares.
+///
+/// The same index `m0005` gave an authored document, for the same reason: the
+/// Composer asks "what does this project need" of every document the project
+/// has, and until now a PRD kept in the repository -- the ordinary case for a
+/// team that writes its specs next to its code -- answered nothing, however
+/// clearly its front matter said `capabilities: auth, storage`.
+mod m0011 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0011_binding_capabilities"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_document_bindings
+    ADD COLUMN IF NOT EXISTS capabilities TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS capabilities;",
+                )
+                .await?;
             Ok(())
         }
     }

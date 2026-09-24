@@ -128,6 +128,12 @@ export interface GearboxExtensionPoint {
   runs: boolean;
 }
 
+/** A capability a project's documents declare, and the documents that do. */
+export interface DeclaredCapability {
+  key: string;
+  sources: { kind: "document" | "file"; id: string; label: string }[];
+}
+
 /** What the project is for, chosen at creation:
  *  - `new_gears`  — build new gears (repo: create new, or an existing gear store);
  *  - `product`    — assemble a product from gears (repo: always a new one);
@@ -2359,6 +2365,14 @@ export const api = {
       )}/quality/${encodeURIComponent(detector)}`,
       token,
       { method: "POST", body: JSON.stringify({ binding_ids: bindingIds }) },
+    ),
+
+  /** Every capability the project's documents declare -- the ones Studio holds
+   *  and the repository files bound to a type -- with what declares each. */
+  declaredCapabilities: (token: string, projectId: string) =>
+    request<{ items: DeclaredCapability[]; total: number }>(
+      `/studio-documents/v1/declared-capabilities?project_id=${encodeURIComponent(projectId)}`,
+      token,
     ),
 
   docBindings: (

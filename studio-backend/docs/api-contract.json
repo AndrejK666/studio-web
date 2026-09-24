@@ -709,6 +709,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/declared-capabilities",
+      "operation_id": "studio_documents.list_declared_capabilities",
+      "tag": "StudioDocuments",
+      "summary": "The capabilities a project's documents declare",
+      "authenticated": true,
+      "responses": [
+        "DeclaredCapabilityListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/organizations/{organization_id}/capabilities",
       "operation_id": "studio_documents.list_organization_capabilities",
       "tag": "StudioDocuments",

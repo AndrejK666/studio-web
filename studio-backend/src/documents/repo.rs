@@ -512,6 +512,7 @@ impl DocumentsRepo {
                 document_binding::Column::Candidates,
                 document_binding::Column::Conforms,
                 document_binding::Column::Validation,
+                document_binding::Column::Capabilities,
                 document_binding::Column::ContentSha,
                 document_binding::Column::UpdatedAt,
             ])?;
