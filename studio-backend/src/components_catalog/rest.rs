@@ -1553,6 +1553,8 @@ pub struct ExtensionPointDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ExtensionPointListDto {
     pub items: Vec<ExtensionPointDto>,
+    /// Every point is in `items`: the corpus is read whole, never paged.
+    pub total: u32,
 }
 
 async fn extension_points(
@@ -1563,17 +1565,17 @@ async fn extension_points(
         .extension_points()
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    Ok(Json(ExtensionPointListDto {
-        items: points
-            .into_iter()
-            .map(|p| ExtensionPointDto {
-                host: p.host_crate,
-                host_id: p.host_id,
-                sdk: p.sdk_crate,
-                runs: p.runs,
-            })
-            .collect(),
-    }))
+    let items: Vec<ExtensionPointDto> = points
+        .into_iter()
+        .map(|p| ExtensionPointDto {
+            host: p.host_crate,
+            host_id: p.host_id,
+            sdk: p.sdk_crate,
+            runs: p.runs,
+        })
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(ExtensionPointListDto { items, total }))
 }
 
 async fn complete_product(
@@ -2384,7 +2386,7 @@ pub fn register_routes(
             .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/extension-points")
-        .operation_id("studio_components_catalog.extension_points")
+        .operation_id("studio_components_catalog.list_extension_points")
         .summary("The hosts a new plugin gear can fill, from the Gearbox engine's catalogue")
         .description(
             "One entry per host extension point in the gear corpus: the host crate, \

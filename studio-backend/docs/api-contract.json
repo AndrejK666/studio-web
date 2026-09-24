@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 241,
+  "open_violations": 239,
   "operations": [
     {
       "method": "DELETE",
@@ -508,7 +508,7 @@
     {
       "method": "GET",
       "path": "/studio-components-catalog/v1/gearbox/extension-points",
-      "operation_id": "studio_components_catalog.extension_points",
+      "operation_id": "studio_components_catalog.list_extension_points",
       "tag": "StudioComponentsCatalog",
       "summary": "The hosts a new plugin gear can fill, from the Gearbox engine's catalogue",
       "authenticated": true,

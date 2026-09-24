@@ -3100,7 +3100,7 @@ export const api = {
   /** The hosts a new plugin gear can fill, from the Gearbox engine. Hosts that
    *  can run in a product come first. */
   gearboxExtensionPoints: (token: string) =>
-    request<{ items: GearboxExtensionPoint[] }>(
+    request<{ items: GearboxExtensionPoint[]; total: number }>(
       `/studio-components-catalog/v1/gearbox/extension-points`,
       token,
     ),
