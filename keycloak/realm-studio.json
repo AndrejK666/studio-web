@@ -87,6 +87,41 @@
       ]
     },
     {
+      "clientId": "studio-desktop",
+      "name": "Constructor Studio Desktop",
+      "description": "The desktop Studio (theia/electron-app, ADR-0027). Public client with PKCE, signing in through the system browser to a loopback redirect (RFC 8252): Keycloak ignores the port of a 127.0.0.1 redirect, so the app may listen on any free one.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1/*"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
       "clientId": "mini-chat",
       "name": "mini-chat S2S (OAGW provisioning)",
       "enabled": true,

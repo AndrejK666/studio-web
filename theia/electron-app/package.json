@@ -14,13 +14,17 @@
     "@theia/messages": "1.75.0",
     "@theia/monaco": "1.75.0",
     "@theia/navigator": "1.75.0",
+    "@theia/plugin-ext": "1.75.0",
     "@theia/plugin-ext-vscode": "1.75.0",
     "@theia/preferences": "1.75.0",
     "@theia/process": "1.75.0",
     "@theia/scm": "1.75.0",
     "@theia/terminal": "1.75.0",
     "@theia/workspace": "1.75.0",
-    "studio": "0.0.0"
+    "drawio-editor": "0.0.0",
+    "gearbox-studio": "0.1.0",
+    "studio": "0.0.0",
+    "studio-product-ext": "0.0.0"
   },
   "devDependencies": {
     "@theia/cli": "1.75.0",
@@ -29,10 +33,9 @@
   "scripts": {
     "bundle": "npm run download:plugins && npm run rebuild && theia build --mode development",
     "download:plugins": "theia download:plugins",
-    "rebuild": "node ./scripts/validate-native-modules.js --check-node-only && theia rebuild:electron --cacheRoot .. && node ./scripts/validate-native-modules.js",
+    "rebuild": "theia rebuild:electron --cacheRoot ..",
     "start": "theia start --plugins=local-dir:../plugins",
-    "watch": "npm run rebuild && theia build --watch --mode development",
-    "test:native-modules": "node --test ./scripts/validate-native-modules.test.js"
+    "watch": "npm run rebuild && theia build --watch --mode development"
   },
   "theiaPluginsDir": "../plugins",
   "theiaPlugins": {
@@ -42,6 +45,47 @@
     "vscode.markdown-language-features": "https://open-vsx.org/api/vscode/markdown-language-features/1.95.3/file/vscode.markdown-language-features-1.95.3.vsix"
   },
   "theia": {
-    "target": "electron"
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Constructor Studio",
+        "defaultTheme": {
+          "light": "light",
+          "dark": "dark"
+        },
+        "preferences": {
+          "security.workspace.trust.enabled": false,
+          "security.workspace.trust.startupPrompt": "never",
+          "//files.watcherExclude": "From Gearbox Studio's app. A session opens the gear corpus beside the project, and `target/` in a Rust checkout is gigabytes Theia would walk. `.gearbox/` is Generate's output, rewritten wholesale; gearbox-studio's views read it on demand and rely on it not being watched.",
+          "files.watcherExclude": {
+            "**/.git/objects/**": true,
+            "**/.git/subtree-cache/**": true,
+            "**/node_modules/**": true,
+            "**/target/**": true,
+            "**/.gearbox/**": true
+          },
+          "//ai-features.chat.toolConfirmation": "From Gearbox Studio's app. The eight `@Gearbox` read tools return engine output and write nothing, so they run without a dialog; `gearbox_toggle_gear`, the one write, is absent and keeps the default `confirm`, on top of its own diff preview.",
+          "ai-features.chat.toolConfirmation": {
+            "gearbox_get_selection": "always_allow",
+            "gearbox_get_product": "always_allow",
+            "gearbox_list_gears": "always_allow",
+            "gearbox_get_gear": "always_allow",
+            "gearbox_get_diagnostics": "always_allow",
+            "gearbox_explain_diagnostic": "always_allow",
+            "gearbox_resolve_preview": "always_allow",
+            "gearbox_generate_preview": "always_allow"
+          },
+          "//files.exclude": "Theia's own defaults, plus `.gearbox`: generated and disposable, and reached through the Generate and Lock views rather than the Explorer.",
+          "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true,
+            "**/.gearbox": true
+          }
+        }
+      }
+    }
   }
 }

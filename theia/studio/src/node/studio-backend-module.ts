@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as express from '@theia/core/shared/express';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { mountStudioControlApi } from './studio-control-api';
+import { DesktopStudioContribution } from './desktop-studio-contribution';
 import { StudioEventForwarder, resolveForwarderConfig } from './studio-event-forwarder';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { ConnectionHandler, Disposable, DisposableCollection, RpcConnectionHandler } from '@theia/core/lib/common';
@@ -727,6 +728,9 @@ export default new ContainerModule(bind => {
     bind(BackendApplicationContribution).toService(StudioRuntimeConfigService);
     bind(BackendApplicationContribution).toService(StudioRuntimeEndpoint);
     bind(BackendApplicationContribution).toService(WorkspaceGraphServiceImpl);
+    // ADR-0027: dormant unless STUDIO_DESKTOP_URL names a Studio.
+    bind(DesktopStudioContribution).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(DesktopStudioContribution);
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioRuntimeClient>(studioRuntimeServicePath, client => {
             const endpoint = ctx.container.get(StudioRuntimeEndpoint);

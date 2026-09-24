@@ -5,4 +5,7 @@ global.DragEvent = class DragEvent { };
 // calls it while loading, and jsdom dropped the (deprecated) API. Any suite that
 // reaches the @theia/core/lib/browser barrel — directly or through
 // @theia/workspace — dies on it before a single test runs.
-document.queryCommandSupported = () => false;
+// A suite that opts into `@jest-environment node` has no document to patch.
+if (typeof document !== 'undefined') {
+    document.queryCommandSupported = () => false;
+}
