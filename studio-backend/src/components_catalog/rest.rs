@@ -322,6 +322,9 @@ pub struct SaveProjectProductRequest {
     /// Crate names (`cf-gears-api-gateway`) or engine ids.
     pub gears: Option<Vec<String>>,
     pub profile: Option<String>,
+    /// How the product configures its gears: gear crate name -> {field: value},
+    /// written into `product.gdl` as the gear's or plugin's `config`.
+    pub config: Option<Value>,
 }
 
 /// Picks to complete into a set the engine can resolve.
@@ -329,6 +332,9 @@ pub struct SaveProjectProductRequest {
 #[toolkit_macros::api_dto(request)]
 pub struct CompleteProductRequest {
     pub gears: Vec<String>,
+    /// The product's configuration so far (gear crate name -> {field: value});
+    /// completion keeps it and adds what the result needs.
+    pub config: Option<Value>,
 }
 
 /// One change completion made, and why.
@@ -348,6 +354,9 @@ pub struct CompleteProductDto {
     /// The completed picks, by crate name.
     pub gears: Vec<String>,
     pub changes: Vec<ProductChangeDto>,
+    /// The configuration to keep with the picks: what was sent, plus what
+    /// completion set (a plugin's `vendor` aligned with its host's).
+    pub config: Value,
 }
 
 /// Compose a product from picked gears and ask the engine about it.
@@ -370,6 +379,9 @@ pub struct ProductPreviewRequest {
     /// branch instead of a `product/…` branch. For a repository the product
     /// owns outright; default false, because a connected repo can be shared.
     pub onto_base: Option<bool>,
+    /// How the product configures its gears: gear crate name -> {field: value}.
+    /// Written into `product.gdl` and kept with the project's product.
+    pub config: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -1461,6 +1473,14 @@ async fn save_project_product(
         }
         patch.insert("profile".into(), profile.into());
     }
+    if body.config.is_some() {
+        let config = super::gearbox::gear_config_from(body.config.as_ref())
+            .map_err(|e| invalid(format!("{e:#}")))?;
+        patch.insert(
+            "config".into(),
+            serde_json::to_value(&config).unwrap_or(Value::Null),
+        );
+    }
     let node = catalog
         .service
         .update_project_product(&ctx, &project_id.to_string(), patch)
@@ -1639,9 +1659,14 @@ async fn complete_product(
     Extension(catalog): Extension<Catalog>,
     Json(body): Json<CompleteProductRequest>,
 ) -> ApiResult<JsonBody<CompleteProductDto>> {
+    let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(|e| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    })?;
     let completion = catalog
         .gearbox()?
-        .complete(&body.gears)
+        .complete(&body.gears, &config)
         .await
         .map_err(|e| {
             StudioComponentsCatalogError::invalid_argument()
@@ -1659,6 +1684,7 @@ async fn complete_product(
                 reason: c.reason,
             })
             .collect(),
+        config: serde_json::to_value(&completion.config).unwrap_or(Value::Null),
     }))
 }
 
@@ -1714,12 +1740,14 @@ async fn preview_product(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| body.product_id.clone());
     let name_for_record = name.clone();
+    let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(invalid)?;
     let preview = gearbox
         .preview(PreviewInput {
             product_id: body.product_id.clone(),
             name,
             gears: body.gears.clone(),
             profile: profile.clone(),
+            config: config.clone(),
         })
         .await
         .map_err(invalid)?;
@@ -1784,6 +1812,10 @@ async fn preview_product(
     record.insert("product_id".into(), body.product_id.clone().into());
     record.insert("name".into(), name_for_record.into());
     record.insert("gears".into(), serde_json::json!(body.gears));
+    record.insert(
+        "config".into(),
+        serde_json::to_value(&config).unwrap_or(Value::Null),
+    );
     record.insert("profile".into(), profile.clone().into());
     record.insert(
         "last_preview".into(),
