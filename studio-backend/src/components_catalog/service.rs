@@ -1661,6 +1661,46 @@ impl CatalogService {
         Ok(nodes.into_iter().find(|n| n.instance_id == want))
     }
 
+    /// The project's gear repository and every crate its Cargo manifests
+    /// depend on. `None` when the project has no gear repository connected.
+    pub async fn project_dependencies(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
+        let Some(node) = self.get_project_repo(ctx, project_id).await? else {
+            return Ok(None);
+        };
+        let v = &node.value;
+        let text = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let repo = text("repo");
+        if repo.is_empty() {
+            return Ok(None);
+        }
+        let tenant = Uuid::parse_str(&text("tenant"))
+            .map_err(|_| anyhow!("the project's gear repo names no tenant"))?;
+        let connection_id = Uuid::parse_str(&text("connection_id")).ok();
+        let connectors = self
+            .connectors
+            .clone()
+            .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
+        let enricher = RepoEnricher::new(
+            connectors,
+            tenant,
+            connection_id,
+            repo.clone(),
+            text("branch"),
+            RepoMode::parse("gears"),
+        )
+        .ok_or_else(|| anyhow!("invalid gear repository for the project"))?;
+        Ok(Some((repo, enricher.cargo_dependencies(ctx).await?)))
+    }
+
     /// Connect (or update) the gear repository for a project. `repo` is an open
     /// JSON object — `{connection_id, repo, branch}` — and the service stamps in
     /// the `project_id` identity before persisting.
@@ -2437,7 +2477,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 72);
+        assert_eq!(gear.fields().count(), 73);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

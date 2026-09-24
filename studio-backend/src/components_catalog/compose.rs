@@ -103,6 +103,9 @@ impl Composability {
 pub struct Candidate {
     pub name: String,
     pub kind: String,
+    /// The gear itself declares this capability (`gear.toml`, or a person on
+    /// its catalogue page) -- a statement, not a guess from its words.
+    pub declared: bool,
     /// How many of the capability's terms this component mentions.
     pub score: usize,
     /// Which terms they were — the reason, so a suggestion can be argued with.
@@ -203,6 +206,25 @@ fn haystack(component: &Value, profile: Option<&Value>) -> String {
     .to_lowercase()
 }
 
+/// The capability keys a component declares: its `capabilities` field as the
+/// catalogue resolves it (`values::resolve` -- a person's entry over the
+/// repository scan over the registry), split on commas.
+fn declared_capabilities(component: &Value, profile: Option<&Value>) -> Vec<String> {
+    let values = super::values::resolve(component, profile);
+    let Some(field) = values.get("capabilities") else {
+        return Vec::new();
+    };
+    let text = field
+        .get("v")
+        .and_then(Value::as_str)
+        .or_else(|| field.as_str())
+        .unwrap_or_default();
+    text.split(',')
+        .map(|c| c.trim().to_ascii_lowercase())
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
 /// The description the repository scan wrote, wherever it put it.
 fn profile_text(profile: Option<&Value>) -> String {
     let Some(auto) = profile.and_then(|p| p.get("auto")) else {
@@ -235,6 +257,28 @@ pub fn plan(
     profiles: &serde_json::Map<String, Value>,
     terms: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Vec<PlanRow> {
+    plan_with_limit(capabilities, components, profiles, terms, Some(SHORTLIST))
+}
+
+/// [`plan`] with every candidate kept: for a question about the whole set --
+/// "does the code use ANY component that fills this?" -- where a shortlist
+/// would answer a different one.
+pub fn plan_all(
+    capabilities: &[String],
+    components: &[Value],
+    profiles: &serde_json::Map<String, Value>,
+    terms: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Vec<PlanRow> {
+    plan_with_limit(capabilities, components, profiles, terms, None)
+}
+
+fn plan_with_limit(
+    capabilities: &[String],
+    components: &[Value],
+    profiles: &serde_json::Map<String, Value>,
+    terms: &std::collections::BTreeMap<String, Vec<String>>,
+    limit: Option<usize>,
+) -> Vec<PlanRow> {
     capabilities
         .iter()
         .map(|capability| {
@@ -248,7 +292,13 @@ pub fn plan(
                 .filter_map(|component| {
                     let name = component.get("name").and_then(Value::as_str)?;
                     let hay = haystack(component, profiles.get(name));
+                    let declared = declared_capabilities(component, profiles.get(name))
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case(capability));
                     let mut why: Vec<String> = Vec::new();
+                    if declared {
+                        why.push("declared".to_owned());
+                    }
                     for word in words.iter().chain(std::iter::once(capability)) {
                         if mentions(&hay, word) && !why.iter().any(|w| w == word) {
                             why.push(word.clone());
@@ -259,6 +309,7 @@ pub fn plan(
                     }
                     Some(Candidate {
                         name: name.to_owned(),
+                        declared,
                         kind: component
                             .get("kind")
                             .and_then(Value::as_str)
@@ -278,10 +329,13 @@ pub fn plan(
             // then the score. The engine's verdict sits BETWEEN them on
             // purpose: a built component the engine cannot run is still built,
             // and a described component nobody has written is still unwritten.
+            // A gear that says it provides the capability comes before any
+            // that only mentions its words; the rest of the order applies
+            // within each.
             candidates.sort_by(|a, b| {
-                a.built
-                    .rank()
-                    .cmp(&b.built.rank())
+                b.declared
+                    .cmp(&a.declared)
+                    .then(a.built.rank().cmp(&b.built.rank()))
                     .then(a.composable.rank().cmp(&b.composable.rank()))
                     .then(b.score.cmp(&a.score))
                     .then(a.name.cmp(&b.name))
@@ -294,7 +348,9 @@ pub fn plan(
             // one; before the cut, so the duplicate does not eat a slot.
             let mut seen = std::collections::HashSet::new();
             candidates.retain(|c| seen.insert(c.name.clone()));
-            candidates.truncate(SHORTLIST);
+            if let Some(n) = limit {
+                candidates.truncate(n);
+            }
             // Read off the list that is actually shown, and only when every one
             // of them is KNOWN to be docs-only. An `Unknown` among them is not
             // evidence of absence — saying "nothing here is built" over a
@@ -795,5 +851,53 @@ mod tests {
             &vocabulary(&[]),
         );
         assert_eq!(rows[0].candidates[0].name, "shipped");
+    }
+
+    /// A gear that says it provides a capability is offered before one that
+    /// only has the right words in its description -- and is offered even
+    /// when its words say nothing.
+    #[test]
+    fn a_declared_capability_outranks_a_word_match() {
+        let components = vec![
+            component("cf-gears-pricing", "authentication-aware pricing"),
+            component("cf-gears-identity-gate", "fronts requests"),
+        ];
+        let profiles: serde_json::Map<String, Value> = [(
+            "cf-gears-identity-gate".to_owned(),
+            json!({ "auto": { "capabilities": { "v": "auth, authz", "b": "auth, authz" } } }),
+        )]
+        .into_iter()
+        .collect();
+        let vocab = vocabulary(&[("auth", &["authentication"])]);
+        let rows = plan(&["auth".to_owned()], &components, &profiles, &vocab);
+        let names: Vec<&str> = rows[0].candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["cf-gears-identity-gate", "cf-gears-pricing"]);
+        assert!(rows[0].candidates[0].declared);
+        assert_eq!(rows[0].candidates[0].why, ["declared"]);
+        assert!(!rows[0].candidates[1].declared);
+    }
+
+    /// A person's entry on the catalogue page wins over what gear.toml says,
+    /// including taking a capability away.
+    #[test]
+    fn a_person_corrects_what_a_gear_declares() {
+        let components = vec![component("cf-gears-x", "")];
+        let profiles: serde_json::Map<String, Value> = [(
+            "cf-gears-x".to_owned(),
+            json!({
+                "auto": { "capabilities": { "v": "billing" } },
+                "values": { "capabilities": { "v": "storage" } }
+            }),
+        )]
+        .into_iter()
+        .collect();
+        let vocab = vocabulary(&[]);
+        let billing = plan(&["billing".to_owned()], &components, &profiles, &vocab);
+        assert!(
+            billing[0].candidates.is_empty(),
+            "the person took billing away"
+        );
+        let storage = plan(&["storage".to_owned()], &components, &profiles, &vocab);
+        assert!(storage[0].candidates[0].declared);
     }
 }

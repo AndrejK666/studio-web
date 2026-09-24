@@ -1872,6 +1872,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/conformance",
+      "operation_id": "studio_components_catalog.create_conformance_report",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Compare what a project's specs ask for with what its code is made of",
+      "authenticated": true,
+      "request": "ConformanceRequest",
+      "responses": [
+        "ConformanceDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/gearbox/complete",
       "operation_id": "studio_components_catalog.resolve_product",
       "tag": "StudioComponentsCatalog",

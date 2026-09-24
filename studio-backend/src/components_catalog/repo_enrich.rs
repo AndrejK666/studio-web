@@ -489,6 +489,43 @@ impl RepoEnricher {
         Ok(resp.json::<GitTree>().await?)
     }
 
+    /// The crate names every `Cargo.toml` in the repository depends on at run
+    /// time: `[dependencies]`, `[workspace.dependencies]` and target-specific
+    /// dependency tables, a `package = "..."` rename resolved to the real name.
+    /// Dev- and build-dependencies are left out -- a test harness is not what
+    /// the product is made of. Vendored and built trees are skipped.
+    pub async fn cargo_dependencies(
+        &self,
+        ctx: &SecurityContext,
+    ) -> Result<std::collections::BTreeSet<String>> {
+        const MAX_MANIFESTS: usize = 300;
+        let auth = self.resolve_auth(ctx).await?;
+        let tree = self.tree(&auth).await?;
+        let manifests: Vec<String> = tree
+            .tree
+            .iter()
+            .filter(|e| e.kind == "blob")
+            .filter(|e| e.path == "Cargo.toml" || e.path.ends_with("/Cargo.toml"))
+            .filter(|e| {
+                !e.path.split('/').any(|seg| {
+                    matches!(
+                        seg,
+                        "target" | "node_modules" | "vendor" | ".git" | "fixtures"
+                    )
+                })
+            })
+            .take(MAX_MANIFESTS)
+            .map(|e| e.path.clone())
+            .collect();
+        let mut out = std::collections::BTreeSet::new();
+        for path in manifests {
+            if let Some(body) = self.read_file(&auth, &path).await {
+                out.extend(cargo_dependency_names(&body));
+            }
+        }
+        Ok(out)
+    }
+
     /// Fetch one text file's raw content, or `None` when it is absent.
     async fn read_file(&self, auth: &ConnectionAuth, path: &str) -> Option<String> {
         let url = self.api(
@@ -773,6 +810,9 @@ impl RepoEnricher {
             if let Some(cat) = parsed.category {
                 f.insert("category".into(), text(&cat, None, None));
             }
+            if let Some(caps) = parsed.capabilities {
+                f.insert("capabilities".into(), text(&caps.join(", "), None, None));
+            }
             if let Some(declared) = parsed.plugins {
                 let mut v = status(
                     if declared { "yes" } else { "no" },
@@ -990,6 +1030,10 @@ fn codeowners_match(codeowners: &str, dir: &str) -> Option<String> {
 struct GearToml {
     description: Option<String>,
     category: Option<String>,
+    /// `capabilities = ["auth", "authz"]`: the capability keys the gear says
+    /// it provides, in the workspace's vocabulary. What the Composer matches
+    /// on before it falls back to words in the name and description.
+    capabilities: Option<Vec<String>>,
     plugins: Option<bool>,
     /// The gear says it IS a plugin.
     ///
@@ -1018,6 +1062,7 @@ fn parse_gear_toml(body: &str) -> GearToml {
     let mut out = GearToml {
         description: None,
         category: None,
+        capabilities: None,
         plugins: None,
         is_plugin: None,
         extension_point: None,
@@ -1058,6 +1103,7 @@ fn parse_gear_toml(body: &str) -> GearToml {
         match k.trim() {
             "description" if out.description.is_none() => out.description = unquote(v),
             "category" | "domain" if out.category.is_none() => out.category = unquote(v),
+            "capabilities" if out.capabilities.is_none() => out.capabilities = string_list(v),
             "plugins" | "has_plugins" => {
                 let val = v.trim();
                 let declared =
@@ -1069,6 +1115,71 @@ fn parse_gear_toml(body: &str) -> GearToml {
             _ => {}
         }
     }
+    out
+}
+
+/// A one-line TOML array of strings, `["a", "b"]`, as its items. `None` for
+/// anything else (a multi-line array is written on one line by convention in
+/// gear.toml, and a value this cannot read is left unread, not guessed).
+fn string_list(v: &str) -> Option<Vec<String>> {
+    let v = v.split('#').next().unwrap_or("").trim();
+    let inner = v.strip_prefix('[')?.strip_suffix(']')?;
+    let items: Vec<String> = inner
+        .split(',')
+        .map(|i| {
+            i.trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .trim()
+                .to_string()
+        })
+        .filter(|i| !i.is_empty())
+        .collect();
+    (!items.is_empty()).then_some(items)
+}
+
+/// The run-time dependency names one `Cargo.toml` declares. A hand parser, as
+/// for gear.toml: table headers decide which lines count, and an entry's name
+/// is its key -- or its `package = "..."` when the key is a rename.
+pub(crate) fn cargo_dependency_names(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut counting = false;
+    for raw in body.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            let table = line.trim_matches(|c| c == '[' || c == ']').trim();
+            counting = table == "dependencies"
+                || table == "workspace.dependencies"
+                || (table.starts_with("target.") && table.ends_with(".dependencies"));
+            // `[dependencies.foo]` names one dependency in its header.
+            if let Some(name) = table.strip_prefix("dependencies.") {
+                out.push(name.trim_matches('"').to_string());
+            }
+            continue;
+        }
+        if !counting {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_matches('"');
+        // `foo.workspace = true` is the dependency `foo`.
+        let key = key.split('.').next().unwrap_or(key);
+        let renamed = value.split("package").nth(1).and_then(|rest| {
+            let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+            let rest = rest.strip_prefix('"')?;
+            rest.split('"').next().map(str::to_string)
+        });
+        let name = renamed.unwrap_or_else(|| key.to_string());
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out.sort();
+    out.dedup();
     out
 }
 
@@ -1749,5 +1860,66 @@ has_extension_point = true
         // `publisher = ""` is a field somebody left blank, not a publisher
         // whose name happens to be the empty string.
         assert_eq!(toml_string("publisher = \"\"\n", "publisher"), None);
+    }
+
+    #[test]
+    fn a_gear_toml_declares_its_capabilities() {
+        let parsed = parse_gear_toml(
+            "[gear]\nname = \"AuthN\"\ncapabilities = [\"auth\", 'authz'] # what it provides\n",
+        );
+        assert_eq!(
+            parsed.capabilities,
+            Some(vec!["auth".to_string(), "authz".to_string()])
+        );
+        assert_eq!(parse_gear_toml("[gear]\nname = \"x\"\n").capabilities, None);
+        // Only the [gear] table speaks for the gear.
+        assert_eq!(
+            parse_gear_toml("[gear]\nname = \"x\"\n[metadata]\ncapabilities = [\"billing\"]\n")
+                .capabilities,
+            None
+        );
+    }
+
+    /// What a product is made of is what it depends on at run time: renames
+    /// resolved, workspace inheritance read, dev and build tables left out.
+    #[test]
+    fn a_manifest_names_its_runtime_dependencies() {
+        let body = r#"
+[package]
+name = "studio-backend"
+
+[dependencies]
+cf-gears-api-gateway = { workspace = true }
+authn = { package = "cf-gears-authn-resolver", version = "0.1" }
+serde.workspace = true
+"cf-gears-credstore" = "0.2"   # quoted key
+
+[dependencies.cf-gears-file-storage]
+version = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+cf-gears-nodes-registry = "0.1"
+
+[dev-dependencies]
+cf-gears-test-support = "0.1"
+
+[build-dependencies]
+cc = "1"
+
+[workspace.dependencies]
+cf-gears-types-registry = { git = "https://github.com/x/y" }
+"#;
+        assert_eq!(
+            cargo_dependency_names(body),
+            [
+                "cf-gears-api-gateway",
+                "cf-gears-authn-resolver",
+                "cf-gears-credstore",
+                "cf-gears-file-storage",
+                "cf-gears-nodes-registry",
+                "cf-gears-types-registry",
+                "serde",
+            ]
+        );
     }
 }

@@ -128,6 +128,21 @@ export interface GearboxExtensionPoint {
   runs: boolean;
 }
 
+/** Spec against code for one project (`POST /conformance`). */
+export interface Conformance {
+  repo: string;
+  components_in_code: string[];
+  items: {
+    capability: string;
+    status: "implemented" | "missing";
+    implemented_by: { name: string; declared: boolean }[];
+    candidates: string[];
+  }[];
+  total: number;
+  unexplained: { name: string; declares: string[] }[];
+  gearbox: ProductChange[];
+}
+
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
   key: string;
@@ -204,6 +219,9 @@ export type Composability = "runs" | "blocked" | "undescribed";
 export interface Candidate {
   name: string;
   kind: string;
+  /** The gear declares this capability itself (gear.toml, or its catalogue
+   *  page) -- a statement, not a match on the words it uses. */
+  declared?: boolean;
   /** How many of the capability's terms this component mentions. */
   score: number;
   /** Which terms they were, so a suggestion can be argued with. */
@@ -2985,6 +3003,18 @@ export const api = {
    *
    *  A POST because the vocabulary travels with the question: a workspace's
    *  terms are a map, and a map does not belong in a query string. */
+  /** Compare what the project's specs declare with what its code depends on:
+   *  per capability, the components in the code that fill it; the components
+   *  the specs do not account for; and what the Gearbox engine says about the
+   *  code's own set of gears. */
+  conformance: (token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+    const terms: Record<string, string[]> = {};
+    for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
+    return request<Conformance>("/studio-components-catalog/v1/conformance", token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, capabilities, terms }),
+    });
+  },
   composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     // A capability with no terms is matched against its own name, which is what
     // it meant before vocabularies existed — so it is left out of the map
