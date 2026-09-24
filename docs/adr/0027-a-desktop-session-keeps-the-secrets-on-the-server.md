@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-09-24
 ---
 
@@ -8,7 +8,7 @@ date: 2026-09-24
 
 **ID**: `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server`
 
-Status: proposed · 2026-09-24 · Extends ADR-0003 and ADR-0022 · Relates to ADR-0026
+Status: accepted · 2026-09-24 · Extends ADR-0003 and ADR-0022 · Relates to ADR-0026
 
 ## Table of Contents
 
@@ -163,9 +163,9 @@ for. It carries no token; the desktop signs in itself.
 
 ### Consequences
 
-* This record amends the PRD when it is accepted: § 4.2 stops listing the
-  `theia/electron-app` build as out of scope, and the goal "without a local
-  checkout" becomes the default rather than the only way.
+* This record amends the PRD: § 4.2 no longer lists the `theia/electron-app`
+  build as out of scope, § 4.1 lists the desktop session, and the goal "without
+  a local checkout" is the default rather than the only way.
 * `/studio-git/v1` is a new hot path. Every clone and fetch of a desktop session
   crosses the backend, so the proxy streams and never buffers a pack, and its
   bandwidth appears in the observability stack like any other gear's.
