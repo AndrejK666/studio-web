@@ -1816,6 +1816,7 @@ mod tests {
                 sections: Vec::new(),
                 rules: Rules::default(),
                 questionnaire: Vec::new(),
+                review: None,
             })
             .expect("template serialises"),
             hidden,

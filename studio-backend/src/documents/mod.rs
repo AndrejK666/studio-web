@@ -26,6 +26,7 @@ mod repo;
 #[cfg(test)]
 mod repo_tests;
 mod rest;
+mod review_guide;
 mod service;
 mod spec_rows;
 mod validate;

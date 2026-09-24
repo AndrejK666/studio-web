@@ -471,6 +471,7 @@ mod tests {
                 ],
                 rules: Rules::default(),
                 questionnaire: Vec::new(),
+                review: None,
             },
             hidden: false,
         };

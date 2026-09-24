@@ -774,6 +774,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/review-criteria",
+      "operation_id": "studio_documents.list_review_criteria",
+      "tag": "StudioDocuments",
+      "summary": "The semantic review criteria a document type is judged by",
+      "authenticated": true,
+      "responses": [
+        "ReviewCriterionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-pipeline",
       "operation_id": "studio_documents.list_spec_pipeline",
       "tag": "StudioDocuments",

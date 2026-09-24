@@ -22,6 +22,7 @@ use super::model::{
     BindingState, Capability, DetectionSource, DocStatus, Document, DocumentBinding, DocumentType,
     Owner, Question, QuestionKind, Rules, Section, Stage, TemplateSpec,
 };
+use super::review_guide::{ReviewGuide, effective_guide, parse_checklist};
 use super::service::{BindingAction, BindingDecision, DocumentsService, IngestedFile};
 use super::validate::{SectionStatus, ValidationReport};
 use crate::pagination::{PageQuery, page_of};
@@ -315,6 +316,13 @@ pub struct UpsertTypeDto {
     /// Hide the key this entry overrides instead of replacing it. A tombstone
     /// still needs a `name` and a `body`; neither is ever rendered.
     pub hidden: Option<bool>,
+    /// This entry's own review checklist, markdown in the kit's shape (one
+    /// `### <ID>: <title>` heading per criterion). Omit both review fields to
+    /// review against the built-in guide for the key, if there is one; the
+    /// guide is replaced whole, never merged.
+    pub review_checklist: Option<String>,
+    /// This entry's own review rules, markdown, served as-is.
+    pub review_rules: Option<String>,
 }
 
 /// One questionnaire answer. Exactly one value field is meaningful per question
@@ -836,6 +844,13 @@ async fn upsert_type_at(
                 .into_iter()
                 .map(question_from_dto)
                 .collect(),
+            review: match (body.review_checklist, body.review_rules) {
+                (None, None) => None,
+                (checklist, rules) => Some(ReviewGuide {
+                    checklist: checklist.unwrap_or_default(),
+                    rules: rules.unwrap_or_default(),
+                }),
+            },
         },
     };
     let saved = service.upsert_type(owner, ty).await.map_err(invalid)?;
@@ -2267,6 +2282,120 @@ fn parse_project_id(raw: &str) -> ApiResult<Uuid> {
     })
 }
 
+// ── the review criteria a type is judged by ──────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ReviewCriteriaQuery {
+    /// The document type whose criteria to read (`prd`, `adr`, …).
+    pub type_key: String,
+    /// Read the criteria as this project's workspace sees them, overlays
+    /// included. Omitted, the platform's built-in guide is read.
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+/// One criterion of a type's review checklist.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewCriterionDto {
+    /// The id the checklist gives it (`BIZ-PRD-001`). Stable across refreshes
+    /// of the checklist; a review verdict cites it.
+    pub id: String,
+    pub title: String,
+    /// The enclosing top-level heading: `MUST HAVE`, `MUST NOT HAVE`, or a
+    /// group the checklist names without a requirement keyword.
+    pub group: String,
+    /// The enclosing second-level heading (`BUSINESS Expertise (BIZ)`);
+    /// absent when the criterion sits directly under its group.
+    pub section: Option<String>,
+    /// The RFC 2119 keyword its group or section states (`MUST`, `MUST NOT`,
+    /// `SHOULD`, …); absent when neither states one.
+    pub level: Option<String>,
+    /// `CRITICAL`, `HIGH`, `MEDIUM` or `LOW`, as the checklist states it.
+    pub severity: Option<String>,
+    /// The individual checks, one line each.
+    pub checks: Vec<String>,
+    /// The criterion's body as markdown, verbatim.
+    pub text: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewCriterionListDto {
+    pub items: Vec<ReviewCriterionDto>,
+    pub total: u32,
+    pub type_key: String,
+    /// Where the guide came from: "builtin", "organization" or "workspace".
+    pub owner: String,
+    pub owner_tenant_id: Option<Uuid>,
+    /// The guide's authoring and review rules, markdown, verbatim. Empty when
+    /// the type has no guide.
+    pub rules_markdown: String,
+}
+
+async fn list_review_criteria(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<ReviewCriteriaQuery>,
+) -> ApiResult<JsonBody<ReviewCriterionListDto>> {
+    let key = query.type_key.trim();
+    if key.is_empty() {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "type_key",
+                "must name a document type".to_owned(),
+                "REQUIRED",
+            )
+            .create());
+    }
+    let ty = match query.project_id.as_deref() {
+        Some(raw) => {
+            let project_id = parse_project_id(raw)?;
+            let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+            service
+                .get_type(&ctx, workspace_id, key)
+                .await
+                .map_err(internal)?
+        }
+        None => super::model::builtin_types()
+            .into_iter()
+            .find(|t| t.key == key),
+    };
+    let ty = ty.ok_or_else(|| {
+        DocumentsError::not_found("no document type with that key")
+            .with_resource(key.to_owned())
+            .create()
+    })?;
+    let (guide, owner) =
+        effective_guide(&ty).unwrap_or_else(|| (ReviewGuide::default(), ty.owner.clone()));
+    let (owner, owner_tenant_id) = match owner {
+        Owner::Builtin => ("builtin".to_string(), None),
+        Owner::Organization { tenant_id } => ("organization".to_string(), Some(tenant_id)),
+        Owner::Workspace { tenant_id } => ("workspace".to_string(), Some(tenant_id)),
+    };
+    let items: Vec<ReviewCriterionDto> = parse_checklist(&guide.checklist)
+        .into_iter()
+        .map(|c| ReviewCriterionDto {
+            id: c.id,
+            title: c.title,
+            group: c.group,
+            section: c.section,
+            level: c.level,
+            severity: c.severity,
+            checks: c.checks,
+            text: c.text,
+        })
+        .collect();
+    Ok(Json(ReviewCriterionListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        type_key: ty.key,
+        owner,
+        owner_tenant_id,
+        rules_markdown: guide.rules,
+    }))
+}
+
 // ── how many specs each repository holds ─────────────────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
@@ -2477,6 +2606,43 @@ pub fn register_routes(
         .query_param("project_id", true, "The project whose pipeline to read")
         .handler(list_spec_pipeline)
         .json_response_with_schema::<PipelineListDto>(openapi, StatusCode::OK, "The pipeline")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/review-criteria")
+        .operation_id("studio_documents.list_review_criteria")
+        .summary("The semantic review criteria a document type is judged by")
+        .description(
+            "Validation asks whether a document's sections are THERE; these criteria ask \
+             whether what is in them is any good. Each carries the id its checklist gives it \
+             (`BIZ-PRD-001`), which is stable across refreshes of the checklist, so a verdict — a \
+             reviewer's or a model's — can cite exactly what it failed.\n\n\
+             The five built-in types serve the SDLC kit's checklist and rules, vendored \
+             verbatim. With `project_id`, the type is resolved as that project's workspace sees \
+             it: an organization or workspace entry that states its own guide replaces the \
+             kit's WHOLE (never merged), and one that states none keeps the kit's guide for its \
+             key. `owner` says which of the two answered.\n\n\
+             A known type with no guide at all answers an empty list, not 404: `nothing to \
+             review against` is a fact about the type. An unknown `type_key` is 404.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("type_key", true, "The document type whose criteria to read")
+        .query_param(
+            "project_id",
+            false,
+            "Resolve the type as this project's workspace sees it; omitted, the built-in guide",
+        )
+        .handler(list_review_criteria)
+        .json_response_with_schema::<ReviewCriterionListDto>(
+            openapi,
+            StatusCode::OK,
+            "The criteria",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
