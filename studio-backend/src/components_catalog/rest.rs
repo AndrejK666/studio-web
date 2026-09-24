@@ -767,6 +767,41 @@ pub struct ComposeRequest {
 ///
 /// A POST because the vocabulary travels with the question: a workspace's terms
 /// are a map, and a map does not belong in a query string.
+/// Gear profiles keyed by the gear they describe.
+///
+/// A profile names its gear `gear_name` (`gts::gear_profile_node`); keying by
+/// `name` -- which no profile has -- left the map empty, so the Composer never
+/// saw a gear's build state or what the Gearbox engine knows about it, and
+/// every suggestion read `undescribed`.
+fn profiles_by_gear(
+    values: impl IntoIterator<Item = serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut profiles = serde_json::Map::new();
+    for value in values {
+        if let Some(name) = value.get("gear_name").and_then(serde_json::Value::as_str) {
+            profiles.insert(name.to_owned(), value);
+        }
+    }
+    profiles
+}
+
+#[cfg(test)]
+mod profiles_by_gear_tests {
+    use super::profiles_by_gear;
+    use serde_json::json;
+
+    /// The shape the sync writes, read back the way the Composer needs it.
+    #[test]
+    fn a_profile_is_found_by_the_gear_it_describes() {
+        let map = profiles_by_gear([
+            json!({ "gear_name": "cf-gears-api-gateway", "auto": { "gdl_runs": { "s": "good" } } }),
+            json!({ "auto": {} }),
+        ]);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["cf-gears-api-gateway"]["auto"]["gdl_runs"]["s"], "good");
+    }
+}
+
 async fn compose_plan(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
@@ -784,12 +819,7 @@ async fn compose_plan(
         .list_profiles(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let mut profiles = serde_json::Map::new();
-    for node in profile_nodes {
-        if let Some(name) = node.value.get("name").and_then(serde_json::Value::as_str) {
-            profiles.insert(name.to_owned(), node.value);
-        }
-    }
+    let profiles = profiles_by_gear(profile_nodes.into_iter().map(|n| n.value));
 
     let rows = super::compose::plan(&req.capabilities, &components, &profiles, &req.terms);
     let items: Vec<PlanRowDto> = rows
