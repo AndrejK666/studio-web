@@ -181,6 +181,9 @@ impl DocumentsService {
         ty.key = normalize_key(&ty.key)?;
         ty.owner = owner;
         ty.gts_type_id = TYPE_GTS_ID.to_string();
+        ty.template.review = self
+            .settle_review(owner_tenant_id, &ty.key, ty.template.review.take())
+            .await?;
         let now = OffsetDateTime::now_utc();
         let model = doc_type::Model {
             id: type_row_id(owner_tenant_id, &ty.key),
@@ -196,6 +199,33 @@ impl DocumentsService {
         };
         self.repo.upsert_type(model).await?;
         Ok(ty)
+    }
+
+    /// What an upsert leaves as the entry's own review guide. An upsert that
+    /// says nothing about review keeps the one the entry has -- an editor that
+    /// only knows the template must not wipe it -- and one that sends both
+    /// parts empty clears it, so the key's built-in guide applies again.
+    async fn settle_review(
+        &self,
+        owner_tenant_id: Uuid,
+        key: &str,
+        sent: Option<super::review_guide::ReviewGuide>,
+    ) -> Result<Option<super::review_guide::ReviewGuide>> {
+        Ok(match sent {
+            Some(g) if g.checklist.trim().is_empty() && g.rules.trim().is_empty() => None,
+            Some(g) => Some(g),
+            None => {
+                let rows = self.repo.list_types(&[owner_tenant_id]).await?;
+                match rows.into_iter().find(|r| r.key == key) {
+                    Some(row) => {
+                        serde_json::from_str::<TemplateSpec>(&row.template)
+                            .context("document type template is malformed")?
+                            .review
+                    }
+                    None => None,
+                }
+            }
+        })
     }
 
     /// Drop this level's own entry for `key`, reverting to whatever the level

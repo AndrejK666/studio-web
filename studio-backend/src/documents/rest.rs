@@ -318,8 +318,9 @@ pub struct UpsertTypeDto {
     pub hidden: Option<bool>,
     /// This entry's own review checklist, markdown in the kit's shape (one
     /// `### <ID>: <title>` heading per criterion). Omit both review fields to
-    /// review against the built-in guide for the key, if there is one; the
-    /// guide is replaced whole, never merged.
+    /// keep the entry's current guide; send both empty to clear it, so the
+    /// built-in guide for the key applies again. A guide is replaced whole,
+    /// never merged.
     pub review_checklist: Option<String>,
     /// This entry's own review rules, markdown, served as-is.
     pub review_rules: Option<String>,
