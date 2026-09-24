@@ -547,6 +547,10 @@ npm run build:electron
 npm run start:electron
 ```
 
+The Electron build is the desktop Studio (ADR-0027). How it signs in, which
+Studios it offers and how to package an installer are in
+[`docs/desktop-studio.md`](../docs/desktop-studio.md).
+
 ### The two extensions, and their opposite layouts
 
 `studio/` and `drawio-editor/` are TypeScript: source in `src/`, `tsc` output in

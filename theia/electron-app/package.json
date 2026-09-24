@@ -28,14 +28,16 @@
   },
   "devDependencies": {
     "@theia/cli": "1.75.0",
-    "electron": "42.8.1"
+    "electron": "42.8.1",
+    "electron-builder": "26.15.3"
   },
   "scripts": {
     "bundle": "npm run download:plugins && npm run rebuild && theia build --mode development",
     "download:plugins": "theia download:plugins",
     "rebuild": "theia rebuild:electron --cacheRoot ..",
     "start": "theia start --plugins=local-dir:../plugins",
-    "watch": "npm run rebuild && theia build --watch --mode development"
+    "watch": "npm run rebuild && theia build --watch --mode development",
+    "package": "node ./scripts/package.mjs"
   },
   "theiaPluginsDir": "../plugins",
   "theiaPlugins": {

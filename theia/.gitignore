@@ -17,6 +17,13 @@ lib
 browser-app/scripts/*
 !browser-app/scripts/start-browser.js
 !browser-app/scripts/start-browser.test.js
+# The desktop packaging (ADR-0027) is source too. dist/, dist-stage/ and
+# dist-resources/ are its output and stay ignored by `*-app/*`.
+!electron-app/desktop-main.js
+!electron-app/environments.json
+!electron-app/scripts/
+electron-app/scripts/*
+!electron-app/scripts/package.mjs
 
 # Generated plugin download and test output.
 /plugins/openai.chatgpt/

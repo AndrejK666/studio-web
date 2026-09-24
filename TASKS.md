@@ -1,3 +1,74 @@
+# 2026-09-24 — the desktop Studio (ADR-0027)
+
+Phase 1 is #391 and the installer is its follow-up (`docs/desktop-studio.md`).
+What was left out on purpose, or worked around to get a binary on one machine:
+
+- [ ] Code-sign the Windows installer @andrejk666
+
+  The installer is unsigned, so SmartScreen stops the first run ("More info" →
+  "Run anyway"). Signing needs a code-signing certificate and a secret for
+  `desktop-windows.yml`; electron-builder signs when `CSC_LINK` /
+  `CSC_KEY_PASSWORD` are set. macOS additionally needs notarization.
+
+- [ ] Hand out installers from CI only @andrejk666
+
+  The first binary was built on a developer machine without MSVC:
+  `node-pty` and `keytar` from their N-API prebuilds, `native-keymap` and
+  `windows-ca-certs` copied from a VS Code install, and `drivelist` — which has
+  no win32 prebuild anywhere — replaced by a stub, so file dialogs list no
+  drives. None of that is in the repository; the `windows-2022` job compiles all
+  of them. Publish its artifact (a GitHub Release per tag) and stop passing
+  local builds around.
+
+- [ ] Keep the sign-in across restarts @andrejk666
+
+  The token lives in the IDE backend's memory, so every start signs in again.
+  ADR-0027 §2 keeps the refresh token in the OS keychain through Electron's
+  `safeStorage`; that part is not built.
+
+- [ ] Automatic updates @andrejk666
+
+  An installed build never learns there is a newer one. electron-updater
+  against the releases above; decide the channel (one per stand, or one
+  build that offers every stand, which is what `environments.json` already
+  does).
+
+- [ ] Add the `studio-desktop` client to every running realm @andrejk666
+
+  A realm file is imported only when the realm is created, so an existing stand
+  needs the client imported by hand (`docs/desktop-studio.md` → "What a Studio
+  deployment needs"). Done on dev; **test still answers "Client not found"**.
+  Better: make the realm bootstrap reconcile clients instead of importing once.
+
+- [ ] Deploy `studio-git`, so a workspace opens from the desktop @andrejk666
+
+  Until #391 is deployed, dev and test sign in and list workspaces but answer
+  "cannot clone for a desktop yet". A merge to `main` does not build by itself —
+  dispatch "Studio Delivery" afterwards.
+
+- [ ] Build and try macOS and Linux @andrejk666
+
+  `package.mjs` names dmg and AppImage targets; neither has been built. Needs a
+  macOS runner (and notarization) and a Linux job.
+
+- [ ] Unpin `windows-2022` @andrejk666
+
+  `windows-latest` moved to Visual Studio 2026, which the node-gyp 10.x in
+  theia's tree cannot find. Move the job back when the tree's node-gyp knows it.
+
+- [ ] Make the desktop look like a desktop @andrejk666
+
+  The window still carries session furniture: `product-ext`'s welcome page and
+  an Orca panel that reports a runtime this machine may not have, and the
+  Studio view is narrow enough to wrap every line.
+
+- [ ] ADR-0027 phases 3–5: leases, events, commands @andrejk666
+
+  The portal does not know a workspace is open on a desktop, the desktop's
+  events do not reach the ingress, and the portal cannot send it a command.
+  `runtime: desktop` leases in `studio-session`, the ingress's desktop
+  authentication path, and commands over `studio-events`.
+
 # 2026-09-17
 
 - [ ] Decide how a notification leaves Studio, then build it @andrejk666

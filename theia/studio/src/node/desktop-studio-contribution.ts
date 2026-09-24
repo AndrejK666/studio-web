@@ -5,17 +5,25 @@ import * as path from 'path';
 import * as express from '@theia/core/shared/express';
 import { injectable } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
+import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
 /**
  * The desktop Studio (ADR-0027): what turns `electron-app` from an editor into
- * a session of the Studio it was pointed at.
+ * a session of the Studio it is connected to.
  *
- * Off unless `STUDIO_DESKTOP_URL` names a Studio. With it, the backend signs the
- * member in, keeps their token in memory, and serves it three ways without
- * writing it down: to `git` through the token broker, to the IDE's own widgets
- * through a `/studio-api` proxy that attaches it here, and to nothing else.
+ * Which Studio: the one the member chose in the Studio view (kept in
+ * `~/ConstructorStudio/settings.json`), from the list the build carries
+ * (STUDIO_DESKTOP_ENVIRONMENTS, set by the packaged app's entry point), or the
+ * build's default. STUDIO_DESKTOP_URL pins one Studio and hides the choice —
+ * that is a developer's `theia start`. With none of these the IDE is an
+ * ordinary editor and none of this runs.
+ *
+ * Signed in, the backend keeps the member's token in memory and serves it three
+ * ways without writing it down: to `git` through the token broker, to the
+ * IDE's own widgets through a `/studio-api` proxy that attaches it here, and to
+ * nothing else.
  */
 export interface DesktopStudioConfig {
     /** The Studio's public address, e.g. `https://studio.example.com`. */
@@ -33,15 +41,55 @@ export interface DesktopStudioConfig {
     readonly browserCommand?: string;
 }
 
-export function desktopConfigFrom(env: NodeJS.ProcessEnv, cwd: string): DesktopStudioConfig | undefined {
-    const studioUrl = env.STUDIO_DESKTOP_URL?.trim().replace(/\/+$/, '');
-    if (!studioUrl) {
+/** What the member chose, as `settings.json` keeps it. */
+export interface DesktopSettings {
+    readonly environment?: string;
+    readonly custom?: { readonly studioUrl: string; readonly issuer?: string };
+}
+
+/** The Studios on offer, and the one a developer pinned, from the environment. */
+export function environmentsFrom(env: NodeJS.ProcessEnv): { list: DesktopEnvironment[]; pinned?: DesktopEnvironment; defaultId?: string } {
+    const url = env.STUDIO_DESKTOP_URL?.trim().replace(/\/+$/, '');
+    const pinned = url ? {
+        id: 'pinned',
+        label: url.replace(/^https?:\/\//, ''),
+        studioUrl: url,
+        issuer: env.STUDIO_DESKTOP_ISSUER?.trim() || `${url}/realms/studio`,
+    } : undefined;
+    let list: DesktopEnvironment[] = [];
+    try {
+        list = parseEnvironments(JSON.parse(env.STUDIO_DESKTOP_ENVIRONMENTS ?? '[]'));
+    } catch {
+        list = [];
+    }
+    return { list, pinned, defaultId: env.STUDIO_DESKTOP_DEFAULT?.trim() || undefined };
+}
+
+/** The Studio to connect to: pinned, else chosen, else the build's default, else the first. */
+export function chooseEnvironment(
+    list: readonly DesktopEnvironment[], pinned: DesktopEnvironment | undefined, settings: DesktopSettings, defaultId?: string
+): DesktopEnvironment | undefined {
+    if (pinned) {
+        return pinned;
+    }
+    if (settings.custom?.studioUrl) {
+        return customEnvironment(settings.custom.studioUrl, settings.custom.issuer);
+    }
+    return list.find(e => e.id === settings.environment) ?? list.find(e => e.id === defaultId) ?? list[0];
+}
+
+export function desktopConfigFrom(
+    env: NodeJS.ProcessEnv, cwd: string, settings: DesktopSettings = {}
+): DesktopStudioConfig | undefined {
+    const { list, pinned, defaultId } = environmentsFrom(env);
+    const environment = chooseEnvironment(list, pinned, settings, defaultId);
+    if (!environment) {
         return undefined;
     }
     return {
-        studioUrl,
+        studioUrl: environment.studioUrl,
         gatewayPrefix: (env.STUDIO_DESKTOP_GATEWAY_PREFIX ?? '/cf').replace(/\/+$/, ''),
-        issuer: env.STUDIO_DESKTOP_ISSUER?.trim() || `${studioUrl}/realms/studio`,
+        issuer: environment.issuer,
         clientId: env.STUDIO_DESKTOP_CLIENT_ID?.trim() || 'studio-desktop',
         workspaceId: env.STUDIO_DESKTOP_WORKSPACE_ID?.trim() || undefined,
         workspaceRoot: env.STUDIO_WORKSPACE_ROOT?.trim() || cwd,
@@ -88,7 +136,7 @@ export function folderFor(name: string | undefined, id: string): string {
 }
 
 /** What the IDE's Studio view shows; never a token. */
-export interface DesktopStatus {
+export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly enabled: boolean;
     readonly studioUrl?: string;
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
@@ -104,6 +152,14 @@ function claimsOf(accessToken: string): Record<string, unknown> {
     }
 }
 
+function readSettings(file: string): DesktopSettings {
+    try {
+        return JSON.parse(fs.readFileSync(file, 'utf8')) as DesktopSettings;
+    } catch {
+        return {};
+    }
+}
+
 interface SourceDto {
     readonly name: string;
     readonly clone_path: string;
@@ -113,20 +169,74 @@ interface SourceDto {
 
 @injectable()
 export class DesktopStudioContribution implements BackendApplicationContribution {
-    protected readonly config = desktopConfigFrom(process.env, process.cwd());
+    protected readonly settingsFile = process.env.STUDIO_DESKTOP_SETTINGS?.trim()
+        || path.join(os.homedir(), 'ConstructorStudio', 'settings.json');
+    protected readonly offered = environmentsFrom(process.env);
+    protected settings = readSettings(this.settingsFile);
+    protected config = desktopConfigFrom(process.env, process.cwd(), this.settings);
     protected session: DesktopSession | undefined;
     protected broker: TokenBroker | undefined;
     protected ready: Promise<void> | undefined;
-    protected status: DesktopStatus = { enabled: !!this.config, studioUrl: this.config?.studioUrl, state: 'signed-out' };
+    protected status: DesktopStatus = this.describe('signed-out');
+
+    /** The status for the current Studio, in the given state and signed out of any other. */
+    protected describe(state: DesktopStatus['state'], extra: Partial<DesktopStatus> = {}): DesktopStatus {
+        const current = chooseEnvironment(this.offered.list, this.offered.pinned, this.settings, this.offered.defaultId);
+        return {
+            enabled: !!this.config,
+            studioUrl: this.config?.studioUrl,
+            environments: this.offered.pinned ? [this.offered.pinned] : this.offered.list,
+            current,
+            switchable: !this.offered.pinned,
+            state,
+            ...extra,
+        };
+    }
 
     configure(app: express.Application): void {
-        const config = this.config;
-        if (!config) {
+        if (!this.config) {
             return;
         }
         app.get('/studio-desktop/status', (_req, res) => { res.json(this.status); });
+        // Connect to another Studio: sign out of this one, remember the choice.
+        app.post('/studio-desktop/environment', express.json(), async (req, res) => {
+            if (this.offered.pinned) {
+                res.status(409).json({ error: 'this run is pinned to one Studio by STUDIO_DESKTOP_URL' });
+                return;
+            }
+            const { id, studioUrl, issuer } = (req.body ?? {}) as { id?: string; studioUrl?: string; issuer?: string };
+            let settings: DesktopSettings;
+            if (studioUrl) {
+                if (!/^https?:\/\/[^/\s]+/.test(studioUrl.trim())) {
+                    res.status(400).json({ error: 'a Studio address starts with https:// (or http:// on this machine)' });
+                    return;
+                }
+                settings = { custom: { studioUrl: studioUrl.trim(), issuer: issuer?.trim() || undefined } };
+            } else if (id && this.offered.list.some(e => e.id === id)) {
+                settings = { environment: id };
+            } else {
+                res.status(400).json({ error: `no Studio "${id ?? ''}" in this build` });
+                return;
+            }
+            await this.signOut();
+            this.settings = settings;
+            try {
+                fs.mkdirSync(path.dirname(this.settingsFile), { recursive: true });
+                fs.writeFileSync(this.settingsFile, JSON.stringify(settings, null, 2));
+            } catch (error) {
+                console.warn(`[studio-desktop] the choice of Studio could not be saved: ${error}`);
+            }
+            this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
+            this.status = this.describe('signed-out');
+            res.json(this.status);
+        });
+        app.post('/studio-desktop/sign-out', async (_req, res) => {
+            await this.signOut();
+            res.json(this.status);
+        });
         // Open a workspace: clone what is not on disk yet, answer with the folder.
         app.post('/studio-desktop/open', express.json(), async (req, res) => {
+            const config = this.config!;
             const { workspaceId, name } = (req.body ?? {}) as { workspaceId?: string; name?: string };
             if (!workspaceId || !this.session) {
                 res.status(400).json({ error: this.session ? 'which workspace?' : 'not signed in' });
@@ -142,7 +252,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {
-                this.ready = this.start(config);
+                this.ready = this.start(this.config!);
             }
             res.status(202).json(this.status);
         });
@@ -151,6 +261,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         app.use('/studio-api', async (req, res) => {
             try {
                 await this.ready;
+                const config = this.config!;
                 if (!this.session) {
                     res.status(503).json({ error: 'not signed in to Constructor Studio' });
                     return;
@@ -192,14 +303,25 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         this.broker?.close();
     }
 
+    /** Forget the token and stop handing it to git. */
+    protected async signOut(): Promise<void> {
+        this.session = undefined;
+        await this.broker?.close();
+        this.broker = undefined;
+        delete process.env[CREDENTIALS_ENV];
+        this.status = this.describe('signed-out');
+    }
+
     protected async start(config: DesktopStudioConfig): Promise<void> {
-        this.status = { ...this.status, state: 'signing-in', error: undefined };
+        this.status = this.describe('signing-in');
         try {
             await this.signInAndPrepare(config);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             console.error(`[studio-desktop] ${message}`);
-            this.status = { ...this.status, state: this.session ? 'signed-in' : 'failed', error: message };
+            this.status = this.session
+                ? { ...this.status, error: message }
+                : this.describe('failed', { error: message });
         }
     }
 
@@ -212,23 +334,25 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 openInBrowser(url, config.browserCommand);
             },
         });
+        if (config !== this.config) {
+            // The member switched Studios while the browser was open.
+            return;
+        }
         this.session = new DesktopSession(config.issuer, config.clientId, tokens);
         const session = this.session;
         this.broker = await startTokenBroker(new URL(config.studioUrl).host, () => session.accessToken());
         // Inherited by the plugin host, vscode.git, terminals and agents.
         process.env[CREDENTIALS_ENV] = this.broker.address;
         const claims = claimsOf(tokens.accessToken);
-        this.status = {
-            ...this.status,
-            state: 'signed-in',
+        this.status = this.describe('signed-in', {
             user: {
                 sub: String(claims.sub ?? ''),
                 name: typeof claims.name === 'string' ? claims.name
                     : typeof claims.preferred_username === 'string' ? claims.preferred_username : undefined,
                 tenantId: typeof claims.tenant_id === 'string' ? claims.tenant_id : undefined,
             },
-        };
-        console.info(`[studio-desktop] signed in as ${this.status.user?.name ?? this.status.user?.sub}`);
+        });
+        console.info(`[studio-desktop] signed in to ${config.studioUrl} as ${this.status.user?.name ?? this.status.user?.sub}`);
         if (config.workspaceId) {
             await this.cloneSources(config, config.workspaceId, config.workspaceRoot);
         }
