@@ -47,6 +47,8 @@ pub struct SectionDto {
     pub required: bool,
     pub min_words: Option<i64>,
     pub description: Option<String>,
+    /// Other headings that count as this section; omitted when there are none.
+    pub aliases: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -461,6 +463,7 @@ impl From<Section> for SectionDto {
             required: s.required,
             min_words: s.min_words.map(|w| w as i64),
             description: s.description,
+            aliases: (!s.aliases.is_empty()).then_some(s.aliases),
         }
     }
 }
@@ -670,6 +673,7 @@ fn section_from_dto(s: SectionDto) -> Section {
             .min_words
             .and_then(|w| if w > 0 { Some(w as usize) } else { None }),
         description: s.description,
+        aliases: s.aliases.unwrap_or_default(),
     }
 }
 

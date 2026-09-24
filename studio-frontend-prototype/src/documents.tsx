@@ -3438,7 +3438,9 @@ function Checklist({ report }: { report: DocValidation | null }) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type SectionRow = { title: string; required: boolean; minWords: number };
+// `aliases` is not edited here, only carried, so overriding a built-in type keeps
+// the older headings it still recognizes.
+type SectionRow = { title: string; required: boolean; minWords: number; aliases?: string[] };
 
 function TypesView({
   token,
@@ -3476,7 +3478,12 @@ function TypesView({
     setDesc(t.description);
     setBody(t.body);
     setSections(
-      t.sections.map((s) => ({ title: s.title, required: s.required, minWords: s.min_words ?? 0 })),
+      t.sections.map((s) => ({
+        title: s.title,
+        required: s.required,
+        minWords: s.min_words ?? 0,
+        aliases: s.aliases ?? undefined,
+      })),
     );
     setFrontMatter(t.rules.front_matter.join(", "));
     setMinTitle(t.rules.min_title_words);
@@ -3517,6 +3524,7 @@ function TypesView({
           title: s.title.trim(),
           required: s.required,
           min_words: s.minWords > 0 ? s.minWords : null,
+          aliases: s.aliases?.length ? s.aliases : null,
         }));
       const rules: DocRules = {
         warn_unknown_sections: warn,

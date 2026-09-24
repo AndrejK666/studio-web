@@ -86,43 +86,106 @@ pub(super) fn split_front_matter(content: &str) -> (HashMap<String, String>, &st
     (fm, body)
 }
 
+/// A heading title reduced to what a template names it by: lowercased, with a
+/// leading section number dropped. The SDLC templates number their headings
+/// (`## 5. Functional Requirements`, `### 1.1 Purpose`) and a checklist naming
+/// "Functional Requirements" must still find them.
+pub(super) fn normalize_heading(s: &str) -> String {
+    let t = s.trim();
+    let numbered = t
+        .split_once(char::is_whitespace)
+        .filter(|(num, _)| {
+            num.chars().next().is_some_and(|c| c.is_ascii_digit())
+                && num.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+        .map(|(_, rest)| rest);
+    normalize(numbered.unwrap_or(t))
+}
+
 /// Parse all ATX headings and the word count of each one's body.
+///
+/// A heading's body runs to the next heading at the same or a higher level, so
+/// `## 1. Overview` counts the prose of its `### 1.1 Purpose`. HTML comments are
+/// template guidance, not content: they are neither counted nor searched for
+/// headings. A `#` line inside a fenced block is a shell comment, not a heading.
 pub(super) fn headings(body: &str) -> Vec<Heading> {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut heads: Vec<Heading> = Vec::new();
-    let mut pending_body = 0usize;
-    let mut have_head = false;
-    let mut cur_level = 0usize;
-    let mut cur_title = String::new();
+    // (level, title, words directly under this heading)
+    let mut own: Vec<(usize, String, usize)> = Vec::new();
+    let mut in_fence = false;
+    let mut in_comment = false;
 
-    let flush = |heads: &mut Vec<Heading>, level: usize, title: &str, words: usize| {
-        heads.push(Heading {
-            level,
-            title_norm: normalize(title),
-            body_words: words,
-        });
-    };
-
-    for line in lines {
-        let trimmed = line.trim_start();
+    for line in body.lines() {
+        if !in_comment && is_fence(line) {
+            in_fence = !in_fence;
+            continue;
+        }
+        let visible = if in_fence {
+            line.to_string()
+        } else {
+            strip_comments(line, &mut in_comment)
+        };
+        let trimmed = visible.trim_start();
         let hashes = trimmed.chars().take_while(|c| *c == '#').count();
-        let is_heading = (1..=6).contains(&hashes) && trimmed.chars().nth(hashes) == Some(' ');
+        let is_heading =
+            !in_fence && (1..=6).contains(&hashes) && trimmed.chars().nth(hashes) == Some(' ');
         if is_heading {
-            if have_head {
-                flush(&mut heads, cur_level, &cur_title, pending_body);
-            }
-            have_head = true;
-            cur_level = hashes;
-            cur_title = trimmed[hashes..].trim().to_string();
-            pending_body = 0;
-        } else if have_head {
-            pending_body += line.split_whitespace().count();
+            own.push((hashes, trimmed[hashes..].trim().to_string(), 0));
+        } else if let Some(last) = own.last_mut() {
+            last.2 += visible.split_whitespace().count();
         }
     }
-    if have_head {
-        flush(&mut heads, cur_level, &cur_title, pending_body);
+
+    (0..own.len())
+        .map(|i| {
+            let (level, title, words) = &own[i];
+            let nested: usize = own[i + 1..]
+                .iter()
+                .take_while(|(l, _, _)| l > level)
+                .map(|(_, _, w)| w)
+                .sum();
+            Heading {
+                level: *level,
+                title_norm: normalize_heading(title),
+                body_words: words + nested,
+            }
+        })
+        .collect()
+}
+
+/// A line that opens or closes a fenced code block.
+fn is_fence(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
+/// The part of `line` outside HTML comments, carrying an open `<!--` across
+/// lines in `in_comment`.
+fn strip_comments(line: &str, in_comment: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    loop {
+        if *in_comment {
+            match rest.find("-->") {
+                Some(end) => {
+                    *in_comment = false;
+                    rest = &rest[end + 3..];
+                }
+                None => return out,
+            }
+        } else {
+            match rest.find("<!--") {
+                Some(start) => {
+                    out.push_str(&rest[..start]);
+                    *in_comment = true;
+                    rest = &rest[start + 4..];
+                }
+                None => {
+                    out.push_str(rest);
+                    return out;
+                }
+            }
+        }
     }
-    heads
 }
 
 /// First `# ` (level-1) heading title, if any.
@@ -143,8 +206,8 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
 
     // Sections.
     for s in &spec.sections {
-        let want = normalize(&s.title);
-        let found = heads.iter().find(|h| h.title_norm == want);
+        let wanted: Vec<String> = s.titles().map(normalize_heading).collect();
+        let found = heads.iter().find(|h| wanted.contains(&h.title_norm));
         let present = found.is_some();
         let word_count = found.map(|h| h.body_words).unwrap_or(0);
         let meets_min = match s.min_words {
@@ -240,6 +303,10 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
             conforms = false;
             issues.push("Leftover placeholder: <…> template marker".to_string());
         }
+        if has_brace_placeholder(&prose) {
+            conforms = false;
+            issues.push("Leftover placeholder: {…} template marker".to_string());
+        }
     }
 
     ValidationReport {
@@ -249,7 +316,8 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
     }
 }
 
-/// The document with its code removed — fenced blocks and inline spans.
+/// The document with its code removed — fenced blocks and inline spans, and
+/// its HTML comments.
 ///
 /// Only the placeholder scan uses this. A document written against a template
 /// leaves its markers in the prose; a document *about* software quotes angle-
@@ -258,15 +326,18 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
 fn strip_code(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut in_fence = false;
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+    let mut in_comment = false;
+    for raw in content.lines() {
+        if !in_comment && is_fence(raw) {
             in_fence = !in_fence;
             continue;
         }
         if in_fence {
             continue;
         }
+        // A template explains itself in comments, and a document that keeps
+        // that guidance has not left anything unfilled.
+        let line = strip_comments(raw, &mut in_comment);
         // Inline spans, backticks included. The flag resets each line, so one
         // stray backtick costs the rest of that line and nothing more.
         let mut in_span = false;
@@ -309,6 +380,36 @@ fn has_angle_placeholder(content: &str) -> bool {
     false
 }
 
+/// Detect `{Gear Name}`-style placeholders — the SDLC templates' marker for
+/// "write this". A single brace pair on one line whose contents start with a
+/// letter or digit; `{{…}}` is reported on its own, and JSON (`{"a": 1}`)
+/// starts with a quote.
+fn has_brace_placeholder(content: &str) -> bool {
+    content.lines().any(|line| {
+        let mut rest = line;
+        while let Some(open) = rest.find('{') {
+            let after = &rest[open + 1..];
+            if after.starts_with('{') {
+                rest = after.trim_start_matches('{');
+                continue;
+            }
+            let Some(close) = after.find(['{', '}']) else {
+                return false;
+            };
+            let inner = &after[..close];
+            if after[close..].starts_with('}')
+                && inner.len() <= 200
+                && inner.chars().next().is_some_and(|c| c.is_alphanumeric())
+                && inner.chars().any(|c| c.is_alphabetic())
+            {
+                return true;
+            }
+            rest = &after[close..];
+        }
+        false
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -334,6 +435,7 @@ mod tests {
             required,
             min_words,
             description: None,
+            aliases: Vec::new(),
         }
     }
 
@@ -465,5 +567,106 @@ Too short.
             "{:?}",
             report.issues
         );
+    }
+
+    /// The SDLC templates number their headings and put the prose one level
+    /// down. `## 1. Overview` followed by `### 1.1 Purpose` is a filled
+    /// Overview, not a missing or empty one.
+    #[test]
+    fn numbered_headings_match_and_count_their_subsections() {
+        let spec = spec(vec![sec("overview", "Overview", true, Some(5))]);
+        let body = format!(
+            "{FRONT}## 1. Overview\n\n### 1.1 Purpose\n\nThe gear keeps every tenant's files apart.\n\n## 2. Actors\n\nNobody.\n"
+        );
+        let report = validate(&body, &spec);
+        assert!(report.conforms, "{:?}", report.issues);
+        let overview = &report.sections[0];
+        assert!(overview.present);
+        assert_eq!(overview.word_count, 7, "Purpose's words, not Actors'");
+    }
+
+    #[test]
+    fn an_alias_stands_in_for_the_title() {
+        let mut context = sec("context", "Context and Problem Statement", true, None);
+        context.aliases = vec!["Context".to_string()];
+        let body = format!("{FRONT}## Context\n\nWe keep losing uploads.\n");
+        let report = validate(&body, &spec(vec![context]));
+        assert!(report.conforms, "{:?}", report.issues);
+    }
+
+    /// Guidance left in comments is not content: it neither fills a section
+    /// nor counts as a leftover marker. A `#` inside a fence is not a heading.
+    #[test]
+    fn comments_are_ignored_and_fenced_hashes_are_not_headings() {
+        let spec = spec(vec![sec("context", "Context", true, None)]);
+        let body =
+            format!("{FRONT}## Context\n\n<!--\n{{Describe the context}} <the problem>\n-->\n");
+        let report = validate(&body, &spec);
+        assert!(
+            report.issues.iter().any(|i| i.contains("Section is empty")),
+            "{:?}",
+            report.issues
+        );
+        assert!(
+            report.issues.iter().all(|i| !i.contains("placeholder")),
+            "{:?}",
+            report.issues
+        );
+
+        let fenced = format!("{FRONT}## Context\n\nSee below.\n\n```sh\n# Context\n```\n");
+        assert_eq!(
+            headings(split_front_matter(&fenced).1)
+                .iter()
+                .filter(|h| h.title_norm == "context")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_brace_placeholder_in_prose_is_caught() {
+        let spec = spec(vec![sec("context", "Context", true, None)]);
+        let body = format!("{FRONT}## Context\n\n{{2-3 paragraphs: why this is needed now.}}\n");
+        let report = validate(&body, &spec);
+        assert!(!report.conforms);
+        assert!(
+            report.issues.iter().any(|i| i.contains("{…}")),
+            "{:?}",
+            report.issues
+        );
+
+        // JSON and code are not placeholders.
+        let body = format!(
+            "{FRONT}## Context\n\nThe body is {{\"id\": 1}} and `cpt-{{system}}` is an id.\n"
+        );
+        assert!(validate(&body, &spec).conforms);
+    }
+
+    /// Every built-in template carries each heading its own checklist asks for,
+    /// and a document seeded from it and left alone is reported as unfilled —
+    /// the template and its checklist cannot drift apart unnoticed.
+    #[test]
+    fn every_builtin_template_has_its_sections_and_is_unfilled_as_seeded() {
+        for ty in crate::documents::model::builtin_types() {
+            let report = validate(&ty.template.body, &ty.template);
+            let missing: Vec<&str> = report
+                .sections
+                .iter()
+                .filter(|s| !s.present)
+                .map(|s| s.title.as_str())
+                .collect();
+            assert!(missing.is_empty(), "{}: template lacks {missing:?}", ty.key);
+            assert!(
+                !report.conforms,
+                "{}: an untouched template conforms",
+                ty.key
+            );
+            assert!(
+                report.issues.iter().any(|i| i.contains("placeholder")),
+                "{}: {:?}",
+                ty.key,
+                report.issues
+            );
+        }
     }
 }
