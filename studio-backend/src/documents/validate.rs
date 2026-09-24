@@ -425,6 +425,7 @@ mod tests {
                 ..Rules::default()
             },
             questionnaire: Vec::new(),
+            review: None,
         }
     }
 

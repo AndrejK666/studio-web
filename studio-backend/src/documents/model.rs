@@ -420,6 +420,12 @@ pub struct TemplateSpec {
     /// produced by answering it rather than editing the skeleton by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub questionnaire: Vec<Question>,
+    /// Semantic review criteria this entry states for itself. `None` means the
+    /// built-in guide for the key, if there is one
+    /// ([`super::review_guide::effective_guide`]); the built-ins leave it
+    /// `None` and are served from the vendored kit files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<super::review_guide::ReviewGuide>,
 }
 
 /// The four detectors `studio-spec-quality` exposes.
@@ -798,6 +804,7 @@ fn builtin(
             sections,
             rules,
             questionnaire: Vec::new(),
+            review: None,
         },
     }
 }
@@ -964,6 +971,7 @@ fn prd_type() -> DocumentType {
                 q("compliance", "Any compliance requirements?", QuestionKind::Multi, &["GDPR", "SOC 2", "HIPAA", "None"], false, Some("compliance"), "non_functional_requirements", None),
                 q("deploy", "Target deployment?", QuestionKind::Single, &["Docker Compose", "Kubernetes", "Managed cloud"], true, Some("deploy"), "operational_concept", None),
             ],
+            review: None,
         },
     }
 }

@@ -45,6 +45,7 @@ screen.
 | `GET`/`POST /workspaces/{id}/documents` | list and create |
 | `GET`/`PUT`/`DELETE /workspaces/{id}/documents/{doc}` | one document |
 | `POST /workspaces/{id}/documents/{doc}/validate` | check it against its type's checklist and rules |
+| `GET /review-criteria?type_key=&project_id=` | the semantic review criteria a type is judged by, with ids a verdict can cite ([`review/`](review/README.md)) |
 | `GET /workspaces/{id}/projects/{project}/documents` | the effective set for a project: its own plus inherited |
 | `GET /workspaces/{id}/projects/{project}/analyses` | quality verdicts recorded against them |
 
