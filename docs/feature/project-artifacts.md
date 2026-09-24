@@ -1,4 +1,16 @@
+---
+type: feature
+status: draft
+owner: studio-team
+---
+
 # Feature: Project artifacts
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-artifacts`
+
+- [ ] `p1` - `cpt-studio-feature-project-artifacts`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -30,8 +42,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-artifacts`
 
 ## 1. Feature Context
 
@@ -136,20 +146,26 @@ have and the choice changes the code:
   count in the header climbs from the same data, and one moving number is enough
   for the first cut.
 
+**Requirements**: `cpt-studio-fr-artifact-ingest`
+
+**Principles**: `cpt-studio-principle-prove-before-show`
+
 ### 1.3 Actors
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member with the project in scope. Browses the artifacts, filters them, and re-runs a sync. |
-| **Artifact gear** | `studio-artifact-ingest`. Pulls repositories into the graph as typed GTS nodes and reports the progress of each pull. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member with the project in scope. Browses the artifacts, filters them, and re-runs a sync. |
+| **Artifact gear** (`cpt-studio-component-artifact-ingest`) | `studio-artifact-ingest`. Pulls repositories into the graph as typed GTS nodes and reports the progress of each pull. |
 
 ### 1.4 References
 
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md) — the project's rail lives inside the project frame, not in the shell
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md) — what `scope` addresses
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-project-artifacts`
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) — the project's rail lives inside the project frame, not in the shell
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md) — what `scope` addresses
 - **Feature**: [Create a project](project-create.md) — writes the sources this feature syncs
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the parent tenant tagged onto every synced node
 - **Feature**: [Connect a source host](connection-create.md) — holds the `secret_ref` a sync needs

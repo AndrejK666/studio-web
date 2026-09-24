@@ -1,10 +1,32 @@
-# ADR-0014: The person is the key on the request path, not the login
+---
+type: adr
+status: proposed
+date: 2026-09-10
+---
 
-Status: **proposed** · Date: 2026-09-10 · Amends ADR-0006, ADR-0012
+# ADR-0025: The person is the key on the request path, not the login
 
-## Context
+**ID**: `cpt-studio-adr-the-person-is-the-key-not-the-login`
 
-ADR-0006 gave Studio a canonical person (`user`), the sign-in methods that reach
+Status: **proposed** · Date: 2026-09-10 · Amends ADR-0023, ADR-0012
+
+Renumbered from ADR-0014 (`studio-backend/docs/adr/`) when the two ADR trees were unified; ADR-0014 is document types as components.
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+ADR-0023 gave Studio a canonical person (`user`), the sign-in methods that reach
 it (`login`), the non-login identifiers attributed to it (`alias`) and per-org
 role (`membership`). ADR-0012 made attribution self-service and made a provider's
 proof of control the only thing that binds. Both are implemented.
@@ -44,7 +66,27 @@ It carries `subject_id`, `subject_type`, `subject_tenant_id`, `token_scopes` and
 axum `Router` — `toolkit::bootstrap::run_server` composes it, so there is no seam
 for a global middleware that could attach a resolved person to a request.
 
-## Decision
+## Considered Options
+
+- **A global axum middleware that attaches the person to every request.** The
+  natural shape, and not available: `toolkit::bootstrap::run_server` owns the
+  router, and gears only contribute sub-routers in `register_rest`.
+- **Extend `SecurityContext` now.** The correct end state (§4), but it forks a
+  fast-moving `gears-rust main` and blocks in-repo progress on an upstream review
+  cycle. The resolver reaches the same behaviour without the fork.
+- **Re-key every subject-holding column to `user_id` in one migration.** Cleaner
+  end state, but it rewrites four gears' storage at once for a change whose value
+  is provable one call site at a time — and `resolve_recorded_subject` makes those
+  columns readable as people without touching them.
+- **Have each gear resolve the person itself from the `login` table.** Four copies
+  of one rule is how a human ends up keyed four different ways; that is the defect
+  being fixed, not a way to fix it.
+- **Hold the resolver on `ConnectorService`.** `IdentityService` already holds a
+  view of the connection catalogue for its confirmation ceremony, so owning each
+  other makes the pair unconstructible in either order. The resolver is therefore
+  *borrowed* into `update` (`Option<&dyn PersonResolver>`) rather than stored.
+
+## Decision Outcome
 
 **One resolver, published as an interface, and person-to-person comparison
 wherever a person is what was meant.**
@@ -113,27 +155,7 @@ contract), so it is named here as the target rather than blocked on: when it
 lands, `PersonResolver` becomes a lookup at the edge and the consumers already
 speak in `user_id`.
 
-## Options considered
-
-- **A global axum middleware that attaches the person to every request.** The
-  natural shape, and not available: `toolkit::bootstrap::run_server` owns the
-  router, and gears only contribute sub-routers in `register_rest`.
-- **Extend `SecurityContext` now.** The correct end state (§4), but it forks a
-  fast-moving `gears-rust main` and blocks in-repo progress on an upstream review
-  cycle. The resolver reaches the same behaviour without the fork.
-- **Re-key every subject-holding column to `user_id` in one migration.** Cleaner
-  end state, but it rewrites four gears' storage at once for a change whose value
-  is provable one call site at a time — and `resolve_recorded_subject` makes those
-  columns readable as people without touching them.
-- **Have each gear resolve the person itself from the `login` table.** Four copies
-  of one rule is how a human ends up keyed four different ways; that is the defect
-  being fixed, not a way to fix it.
-- **Hold the resolver on `ConnectorService`.** `IdentityService` already holds a
-  view of the connection catalogue for its confirmation ceremony, so owning each
-  other makes the pair unconstructible in either order. The resolver is therefore
-  *borrowed* into `update` (`Option<&dyn PersonResolver>`) rather than stored.
-
-## Consequences
+### Consequences
 
 - (+) A proof of control, and the right to edit the connection that carries it,
   follow the human rather than the sign-in method. This is the first behaviour in
@@ -144,13 +166,15 @@ speak in `user_id`.
   present call rate and wrong at scale: a request-scoped cache belongs with the
   `SecurityContext` change in §4, not in a per-consumer memo.
 - (−) A person still has no `user` row until something on their path resolves
-  them. Provisioning at the authentication edge (ADR-0006 follow-up 4) remains the
+  them. Provisioning at the authentication edge (ADR-0023 follow-up 4) remains the
   only complete fix.
 - (−) Three person-spaces still exist. This ADR makes the canonical one
   load-bearing; retiring the Keycloak `tenant_id` attribute in favour of
   `membership` is the next step and is not done here.
 
-## Follow-ups
+## More Information
+
+### Follow-ups
 
 1. **`membership` becomes the organization authority.** Half done — **ADR-0016**
    gives the table a writer on the real assignment path plus a backfill for
@@ -165,7 +189,7 @@ speak in `user_id`.
    `DirectoryIdentity.identity_provider` had always been `None`. The data is only
    behind a dedicated per-user endpoint. ADR-0015 wires it as a second proof
    channel for the alias ceremony and fixes the empty column.
-3. **PDP dual-key match** (ADR-0006 follow-up 2): a grant matches on the subject
+3. **PDP dual-key match** (ADR-0023 follow-up 2): a grant matches on the subject
    **or** the `user_id`, so grants migrate lane by lane.
 4. **`SecurityContext.person_id` upstream**, per §4.
 5. **Migrate the remaining actor columns** (`documents`, `kit_registry`,
@@ -175,3 +199,13 @@ speak in `user_id`.
    gear sits at `/studio-user/v1`. Rename to `studio_user` and
    `/studio-idp-directory/v1` — cheap, and the current pair makes the system hard
    to discuss.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-canonical-user`

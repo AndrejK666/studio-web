@@ -1,4 +1,4 @@
-# Running the studio-backend ↔ Theia bridge locally in Docker (ADR-0010)
+# Running the studio-backend ↔ Theia bridge locally in Docker (ADR-0022)
 
 Goal: bring the bridge up end-to-end on Docker Desktop (WSL2) and **observe the
 event loop** — a Theia session forwards its events to studio-backend, which logs

@@ -140,7 +140,7 @@ first, then start, then resume from that `latest_seq`. See
 ## E. Events
 
 **E1 *(by review)* — one channel.** `studio-events` is the assembly's only push
-surface (ADR-0013). A new kind of announcement is a `publish` call, never a new
+surface (ADR-0026). A new kind of announcement is a `publish` call, never a new
 endpoint and never a second stream.
 
 **E2 *(by review)* — `kind` is `<subject>.<past-tense verb>`, lower-snake.**

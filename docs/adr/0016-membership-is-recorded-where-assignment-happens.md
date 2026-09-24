@@ -1,11 +1,30 @@
+---
+type: adr
+status: proposed
+date: 2026-09-10
+---
+
 # ADR-0016: Membership is recorded where assignment happens, and read where access is decided
 
-Status: **proposed** · Date: 2026-09-10 · Implements ADR-0006 follow-up 1 · Phase 0 of ADR-0011 §2
+**ID**: `cpt-studio-adr-membership-is-recorded-where-assignment-happens`
 
-## Context
+Status: **proposed** · Date: 2026-09-10 · Implements ADR-0023 follow-up 1 · Phase 0 of ADR-0011 §2
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0011 §2 makes explicit membership the authority for organization access, and
-ADR-0006 gave it a table. Neither is what the product reads. Today the portal
+ADR-0023 gave it a table. Neither is what the product reads. Today the portal
 derives the organizations a person can see from `me.subject_tenant_id` plus that
 tenant's children (`appContextEffects.ts:126-143`) — the single-home assumption
 ADR-0011 §1 ruled out — and the only thing that writes a Keycloak `tenant_id`
@@ -26,11 +45,11 @@ So the order is: make the record exist, then read it — §1-§4 below and then
 That ordering turned out to matter more than expected: the backfill migrates what
 the old data *said*, and what it said is not what the portal needs (§5).
 
-## Decision
+## Decision Outcome
 
 ### 1. `AssignmentRecorder` — one narrow write, in the direction that already exists
 
-ADR-0006 follow-up 1 left the choice open between "the portal calls
+ADR-0023 follow-up 1 left the choice open between "the portal calls
 `PUT …/memberships/{org}` after assignment" and "`identity_directory` depends on a
 studio-user client". Neither quite fits: there is no People screen in the main
 portal to do the calling, and a full SDK dependency is more coupling than the one
@@ -53,7 +72,7 @@ This makes the two identity gears mutually dependent — `studio-user` reads
 this. That is safe here and not by luck: both publish in `init` and both consume
 in `register_rest`, and every gear's `init` runs before any gear's REST phase.
 The recorder is *borrowed* into `assign`, not stored on the service, for the same
-reason the connector guard borrows its resolver (ADR-0014): two services owning
+reason the connector guard borrows its resolver (ADR-0025): two services owning
 each other are constructible in neither order.
 
 ### 2. Recorded last, and required
@@ -138,23 +157,7 @@ authenticate.
 A *failed* resolve deliberately does not enter that state: a timeout must not
 tell somebody with an organization that they have none.
 
-## What is deliberately not here
-
-- **The `tenant_id` attribute still exists and is still written**, and still
-  decides who the platform administrator is (§5). It stops being the authority
-  for *organization access* here; retiring it entirely needs a separate answer
-  for the administrator question.
-- **Nothing is enforced differently.** `privilege_for` still maps no resource, so
-  the PDP's grant branch is still unreachable and this changes no access
-  decision — the organization list is what the UI *offers*, not what the server
-  permits. ADR-0011 §7 is satisfied in the sense that matters: no membership
-  *management* UI ships here, and nothing new is granted.
-- **The prototype portal is untouched.** Its `me.subject_tenant_id` use is a
-  tenant-tree explorer rooted at the home tenant, not an organization selector,
-  and membership does not replace it. Its assignment flow needs no change: the
-  membership is recorded server-side by §1.
-
-## Consequences
+### Consequences
 
 - (+) The membership table has a real writer on the real assignment path, so the
   data the portal will need starts accumulating before anything depends on it.
@@ -172,7 +175,7 @@ tell somebody with an organization that they have none.
 - (−) The organization list costs one request per membership to resolve names.
   Fine at the present cardinality; a batch tenant read is the fix if it is not.
 
-## Verified
+### Confirmation
 
 On an isolated stand (own Postgres, own Keycloak 26.7 with the Studio realm; the
 shared dev stack untouched):
@@ -212,14 +215,42 @@ whole chain. Separately, `connections-mfe` fails 8 tests when its suite runs
 whole and passes them file-by-file, and `overlayContract.test.ts` needs a
 generated MFE manifest. None of these are touched by this change.
 
-## Follow-ups
+## More Information
+
+### What is deliberately not here
+
+- **The `tenant_id` attribute still exists and is still written**, and still
+  decides who the platform administrator is (§5). It stops being the authority
+  for *organization access* here; retiring it entirely needs a separate answer
+  for the administrator question.
+- **Nothing is enforced differently.** `privilege_for` still maps no resource, so
+  the PDP's grant branch is still unreachable and this changes no access
+  decision — the organization list is what the UI *offers*, not what the server
+  permits. ADR-0011 §7 is satisfied in the sense that matters: no membership
+  *management* UI ships here, and nothing new is granted.
+- **The prototype portal is untouched.** Its `me.subject_tenant_id` use is a
+  tenant-tree explorer rooted at the home tenant, not an organization selector,
+  and membership does not replace it. Its assignment flow needs no change: the
+  membership is recorded server-side by §1.
+
+### Follow-ups
 
 1. **Decide how a platform administrator is recognised without `tenant_id`**
    (§5). Until then the attribute cannot be retired, whatever else stops reading
    it.
 2. **Retire the `tenant_id` attribute** for organization access (ADR-0011 §1,
    Phase 0 item 1), gated on the above.
-3. **Enforcement** — ADR-0006 follow-up 2, gated on a Studio resource actually
+3. **Enforcement** — ADR-0023 follow-up 2, gated on a Studio resource actually
    being role-mapped in `privilege_for`.
 4. **`assign` needs the tenant group to exist**; either provision it or stop
    requiring it.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-invitations-membership`

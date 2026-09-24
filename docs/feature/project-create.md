@@ -1,5 +1,17 @@
+---
+type: feature
+status: accepted
+owner: studio-team
+---
+
 # Feature: Create a project
 
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-create`
+
+- [x] `p1` - `cpt-studio-feature-project-create`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -31,8 +43,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-project-create`
 
 ## 1. Feature Context
 
@@ -76,24 +86,27 @@ changes the code:
   invariants that became advisory when the `studio-project` gear was retired;
   this feature widens it and the ADR records the change.
 
+**Requirements**: `cpt-studio-fr-workspace-project-tenants`, `cpt-studio-fr-connections`
+
+**Principles**: `cpt-studio-principle-project-is-unit`
+
 ### 1.3 Actors
 
-Named, not identified. A FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids; `actor` and `usecase` belong to a PRD or DESIGN, and this
-repository has neither yet. Giving them ids here would either fail validation or
-invent a definition in the wrong artifact, so they stay prose until a DESIGN
-exists to own them.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Opens the wizard from the Projects list, fills it in, and confirms creation. |
-| **Shell** | The portal shell. Owns the overlay frame: mounts and unmounts the wizard, draws the scrim, and handles Escape and click-outside without consulting the wizard. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Opens the wizard from the Projects list, fills it in, and confirms creation. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Owns the overlay frame: mounts and unmounts the wizard, draws the scrim, and handles Escape and click-outside without consulting the wizard. |
 
 ### 1.4 References
 
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md)
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md) (no router; steps are state, not routes)
-- **Design**: Figma `Constructor Studio mockups`, nodes `40001737:12397` and `40001737:12442`
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-project-create`
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) (no router; steps are state, not routes)
+- **Mockups**: Figma `Constructor Studio mockups`, nodes `40001737:12397` and `40001737:12442`
 - **Dependencies**: account-management (`/cf/account-management/v1`), studio-connector (`/studio-connector/v1`)
 
 ## 2. Actor Flows (CDSL)

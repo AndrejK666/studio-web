@@ -30,7 +30,7 @@ list.
 - `src/common` — RPC contracts shared by both sides.
 - `src/browser` — widgets, contributions, the portal bridge.
 - `src/node` — the filesystem, git and backend integration, plus the S2S
-  control API the backend calls (ADR-0010).
+  control API the backend calls (ADR-0022).
 
 ## Tests
 

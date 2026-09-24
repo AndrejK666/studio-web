@@ -1,10 +1,28 @@
+---
+type: adr
+status: accepted
+date: 2026-08-18
+---
+
 # ADR-0007: Shell theme tokens hold whole colours
+
+**ID**: `cpt-studio-adr-shell-tokens-as-whole-colours`
 
 Date: 2026-08-18
 Status: accepted
 Branch: `frontend-adjust-shell-to-mocup`
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The shell and the microfrontends run two different UI systems, and this is on
 purpose while the shared kit is incomplete: the shell composes app-owned
@@ -46,7 +64,7 @@ rows depend on the shell's scale) and `--font-sans` (the kit names `'Inter'`,
 while the only registered family is `'Inter Variable'`; see
 `globals.css`).
 
-## Decision
+## Decision Outcome
 
 Keep the shell as the source of its own palette, and change the **notation** so
 that both Tailwind and ui-kit components can read the same tokens.
@@ -111,7 +129,7 @@ when a dependency injects global utilities at runtime, and the check that would
 have caught it is reading a computed colour in a real browser, which is what
 finally did.
 
-## Consequences
+### Consequences
 
 - Any ui-kit component can now be used in shell chrome without glue. This commit
   uses `DropdownMenu` (context switcher, user menu) and `Separator` (top bar and
@@ -132,3 +150,13 @@ finally did.
 - Unrelated but found while measuring: `npm run lint` fails in this repository
   independently of this change — `eslint.config.js` imports `typescript-eslint`,
   which no `package.json` declares (true in `HEAD` as well).
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-portal-shell`
+* `cpt-studio-fr-portal-levels`

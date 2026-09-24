@@ -1,10 +1,29 @@
+---
+type: adr
+status: proposed
+date: 2026-09-11
+---
+
 # ADR-0018: An identity proves it is you; the person decides everything else
 
-Status: **proposed** · Date: 2026-09-11 · Supersedes ADR-0011 §3 and §4 · Extends ADR-0014
+**ID**: `cpt-studio-adr-an-identity-proves-it-is-you-and-decides-nothing-else`
 
-## Context
+Status: **proposed** · Date: 2026-09-11 · Supersedes ADR-0011 §3 and §4 · Extends ADR-0025
 
-ADR-0006 gave Studio a canonical person, ADR-0014 made it reachable from any
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+ADR-0023 gave Studio a canonical person, ADR-0025 made it reachable from any
 gear, ADR-0015 confirmed brokered logins onto it, ADR-0016 gave membership a
 writer and a reader. Each of those fixed one consumer that had been keyed on the
 sign-in method instead of the human.
@@ -37,7 +56,7 @@ branches behind it, and the obvious move is wrong: it doubles the state space of
 every screen and every authorization path, and one of the two branches ends up
 being the untested one.
 
-## Decision
+## Decision Outcome
 
 ### 1. The rule
 
@@ -237,36 +256,7 @@ no `status` column today, though ADR-0011 §2 described one
 implementation of *leaving*; suspension needs the status and is a separate
 piece of work, gated with the rest of membership management by §7.
 
-## What this changes in ADR-0011
-
-**Superseded:**
-
-- **§3** — "It must not expose … organization creation controls." The
-  no-organization screen now offers exactly that.
-- **§4** — "A platform administrator … may also create additional organizations
-  and appoint an owner for each one", and "Only a platform administrator can
-  appoint, replace, or revoke an organization owner." Ownership arises from
-  creating an organization, and an owner may appoint another owner in their own
-  organization — without which no owner could ever hand over and leave (§6).
-- **§4's bootstrapped default organization** goes with them. The bootstrap seeds
-  the platform root and the first administrator; people create their own. (A
-  consequence of the model rather than a separate decision — flagged as such
-  because it removes something a deployment may be relying on.)
-
-**Unchanged, and load-bearing:**
-
-- **§1** — authentication does not grant organization membership. Self-service
-  creation does not make anybody a member of anybody else's organization, and
-  §4's sentence "Authentication alone can never produce ownership or membership"
-  survives in substance: it is the *act of creating* that produces ownership.
-- **§2** — explicit membership is the authority for organization access.
-- **§6** — invitations.
-- **§7** — membership and roles are enforced server-side before a
-  membership-management UI ships. Still the gate, and still not met:
-  `privilege_for` returns `None` unconditionally, so the PDP's grant branch
-  remains unreachable.
-
-## Consequences
+### Consequences
 
 - (+) One rule replaces a pattern of individual defects, and says where the next
   piece of state belongs without another argument.
@@ -296,7 +286,38 @@ piece of work, gated with the rest of membership management by §7.
   members of the `constructorfabric` GitHub organization). If sign-up ever
   opens, a per-person quota becomes a precondition, not an improvement.
 
-## Follow-ups
+## More Information
+
+### What this changes in ADR-0011
+
+**Superseded:**
+
+- **§3** — "It must not expose … organization creation controls." The
+  no-organization screen now offers exactly that.
+- **§4** — "A platform administrator … may also create additional organizations
+  and appoint an owner for each one", and "Only a platform administrator can
+  appoint, replace, or revoke an organization owner." Ownership arises from
+  creating an organization, and an owner may appoint another owner in their own
+  organization — without which no owner could ever hand over and leave (§6).
+- **§4's bootstrapped default organization** goes with them. The bootstrap seeds
+  the platform root and the first administrator; people create their own. (A
+  consequence of the model rather than a separate decision — flagged as such
+  because it removes something a deployment may be relying on.)
+
+**Unchanged, and load-bearing:**
+
+- **§1** — authentication does not grant organization membership. Self-service
+  creation does not make anybody a member of anybody else's organization, and
+  §4's sentence "Authentication alone can never produce ownership or membership"
+  survives in substance: it is the *act of creating* that produces ownership.
+- **§2** — explicit membership is the authority for organization access.
+- **§6** — invitations.
+- **§7** — membership and roles are enforced server-side before a
+  membership-management UI ships. Still the gate, and still not met:
+  `privilege_for` returns `None` unconditionally, so the PDP's grant branch
+  remains unreachable.
+
+### Follow-ups
 
 Numbered in the order they were built, which is the order each one unblocked the
 next. Eight of the nine have shipped; what each note says is what it turned out
@@ -366,7 +387,7 @@ like from here.
    requests that work today. It is a piece of work with its own risk and its own
    ADR, not a coda to this one.
 
-## What is left after all of this
+### What is left after all of this
 
 Two things, both named above and neither blocking what shipped:
 
@@ -379,3 +400,14 @@ Two things, both named above and neither blocking what shipped:
   still *see* the tenant tree. Closing it means telling a person from a service
   apart, which is a question about the platform's subject model rather than
   about Studio's.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-organizations`
+* `cpt-studio-fr-org-create`
+* `cpt-studio-fr-invitations-membership`

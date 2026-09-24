@@ -1,4 +1,16 @@
+---
+type: feature
+status: accepted
+owner: studio-team
+---
+
 # Feature: The organization's workspaces
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspaces-screen`
+
+- [x] `p1` - `cpt-studio-feature-workspaces-screen`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -22,8 +34,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspaces-screen`
 
 ## 1. Feature Context
 
@@ -62,22 +72,28 @@ code:
 - **Creation moves** out of the projects list's toolbar. A workspace is not a
   thing one makes from inside another workspace's projects.
 
+**Requirements**: `cpt-studio-fr-workspace-project-tenants`
+
+**Principles**: `cpt-studio-principle-prove-before-show`
+
 ### 1.3 Actors
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Reads the list, opens a workspace, creates one. |
-| **Shell** | Owns the levels: it mounts the workspace level's screen when a row asks for it. |
-| **MFE** | organization-mfe. Reads the workspaces, draws the list, and hands a created one to the shell. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Reads the list, opens a workspace, creates one. |
+| **Shell** (`cpt-studio-actor-shell`) | Owns the levels: it mounts the workspace level's screen when a row asks for it. |
+| **MFE** (`cpt-studio-actor-mfe`) | organization-mfe. Reads the workspaces, draws the list, and hands a created one to the shell. |
 
 ### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-workspaces-screen`
 - **Feature**: [Levels in the shell](shell-levels.md) — the level this screen leads into
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the slot, the creation form, and the announcement this reuses
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md)
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
 ## 2. Actor Flows (CDSL)

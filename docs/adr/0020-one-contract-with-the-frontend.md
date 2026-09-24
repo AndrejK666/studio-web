@@ -1,8 +1,26 @@
+---
+type: adr
+status: proposed
+date: 2026-09-14
+---
+
 # ADR-0020: One contract with the frontend, enforced rather than agreed
 
-Status: **proposed** · Date: 2026-09-14 · Builds on ADR-0013 · Relates to ADR-0006
+**ID**: `cpt-studio-adr-one-contract-with-the-frontend`
 
-## Context
+Status: **proposed** · Date: 2026-09-14 · Builds on ADR-0026 · Relates to ADR-0006
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 This assembly exposes about 170 REST operations across 18 domains, and every one
 of them was designed inside the gear that owns it. That is the right way to
@@ -38,7 +56,7 @@ collections, and it is `u32` in six places and `u64` in one.
 endpoints predate it and none is obliged to follow it.
 
 **Waiting for work.** `studio-tasks` owns every background run in the assembly,
-with state, attempts, cancel and retry, and since ADR-0013 it announces every
+with state, attempts, cancel and retry, and since ADR-0026 it announces every
 transition on the one push channel. And yet four gears still expose a private
 status endpoint — `studio-artifact-ingest`, `studio-components-catalog`,
 `studio-connector` and `spec-quality` each have their own `/tasks/{id}` with
@@ -66,7 +84,7 @@ FrontX, screen by screen. Every screen written against a one-off shape is a
 screen that gets rewritten when the shape is unified, so the cheapest moment to
 fix the contract is before those screens exist.
 
-## Decision
+## Decision Outcome
 
 ### 1. The contract is written down, in one place
 
@@ -115,7 +133,7 @@ expensive rule: it is what removes the duplicated operations in
 Starting work answers `202` with `{ run_id }`. Observing it is `studio-tasks`
 plus `task.*` events, and nothing else. The four private `/tasks/{id}` endpoints
 are deprecated and removed. A new kind of announcement is a `publish` call, not
-an endpoint — which is what ADR-0013 §2 already decided and what this rule makes
+an endpoint — which is what ADR-0026 §2 already decided and what this rule makes
 checkable.
 
 ### 6. Documentation is part of the declaration, not a follow-up
@@ -155,7 +173,7 @@ Hand-written stays what generation cannot express — plugins, `SseAuthPlugin`,
 mocks. Until that lands, a hand-written type carries a comment naming the DTO
 it mirrors.
 
-## Consequences
+### Consequences
 
 * The rules bind every operation written from today, including in branches now
   in flight. Adapting one is usually a `description` and an `operation_id`.
@@ -196,3 +214,14 @@ it mirrors.
   rather than from the resource produces.
 * Nothing here changes the gateway, the prefix, or the `v1` that is deployed. No
   operation moves in this ADR; it establishes what moving means.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-api-contract`
+* `cpt-studio-fr-api-contract`
+* `cpt-studio-nfr-list-pagination`

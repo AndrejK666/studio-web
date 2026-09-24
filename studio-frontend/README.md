@@ -137,7 +137,7 @@ files the CLI manages.
 - **[`docs/studio-events.md`](docs/studio-events.md)** — the backend's push
   channel: how a screen is told that background work finished instead of
   polling for it, with worked examples and the traps.
-- [`docs/sdlc/FEATURE/`](docs/sdlc/FEATURE) — per-feature notes.
+- [`../docs/feature/`](../docs/feature) — per-feature specs (moved from `docs/sdlc/FEATURE/`).
 
 The short version of the first one: `StudioEventsApiService` is already
 registered on the shell, so a screen only subscribes.

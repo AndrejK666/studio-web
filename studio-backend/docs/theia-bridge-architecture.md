@@ -1,4 +1,4 @@
-# studio-backend ↔ Theia bridge — architecture (ADR-0010)
+# studio-backend ↔ Theia bridge — architecture (ADR-0022)
 
 Status: phase 3. Rust side compile-verified under `--features theia-bridge` and
 `--features theia-event-broker` (build + `clippy -D warnings`). Theia (node) side

@@ -1,8 +1,28 @@
-# ADR-0013: One push channel to the portal, and it is not anyone's protocol
+---
+type: adr
+status: accepted
+date: 2026-09-11
+---
 
-Status: accepted · 2026-09-11 · Relates to ADR-0010
+# ADR-0026: One push channel to the portal, and it is not anyone's protocol
 
-## Context
+**ID**: `cpt-studio-adr-studio-events-push-channel`
+
+Status: accepted · 2026-09-11 · Relates to ADR-0022
+
+Renumbered from ADR-0013 when the two ADR trees were unified; ADR-0013 is the types-registry / graph-storage split.
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Background work in this assembly is durable and centralised: `studio-tasks`
 owns a run per job, `studio-scheduler` enqueues into it, and everything from a
@@ -36,7 +56,7 @@ producer's protocol — a bridge to an IDE container that most deployments do no
 even run — the contract every other producer and the whole frontend then has to
 live with.
 
-## Decision
+## Decision Outcome
 
 ### 1. The assembly has exactly one push channel, and it is domain-neutral
 
@@ -115,7 +135,7 @@ change. The broker's own `/v1/events:sse` is not exposed to browsers even
 then — JOIN, SEEK, re-JOIN and topology frames are an SDK protocol, not a UI
 one.
 
-## Consequences
+### Consequences
 
 * The portal stops polling for task progress; reaction time goes from ~1.2 s to
   the publish itself.
@@ -134,3 +154,14 @@ one.
   stream (it is `tower::timeout`, which covers only producing the response).
   Verified on a running stack: the connection stayed open for minutes with
   keep-alives every 15 s.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-events`
+* `cpt-studio-principle-one-push-channel`
+* `cpt-studio-fr-push-channel`

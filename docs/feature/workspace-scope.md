@@ -1,4 +1,16 @@
+---
+type: feature
+status: accepted
+owner: studio-team
+---
+
 # Feature: Workspaces in scope
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspace-scope`
+
+- [x] `p1` - `cpt-studio-feature-workspace-scope`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -27,8 +39,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-workspace-scope`
 
 ## 1. Feature Context
 
@@ -71,20 +81,26 @@ changes the code:
   one becomes current immediately. The selection is not persisted between
   sessions; nothing in the portal persists per-user preferences yet.
 
+**Requirements**: `cpt-studio-fr-workspace-project-tenants`, `cpt-studio-fr-portal-levels`
+
+**Principles**: `cpt-studio-principle-project-is-unit`
+
 ### 1.3 Actors
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Creates workspaces and chooses the current one. |
-| **Shell** | The portal shell. Reads the organization's workspaces, draws the switcher next to the organization, and publishes the current one to every MFE. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Creates workspaces and chooses the current one. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Reads the organization's workspaces, draws the switcher next to the organization, and publishes the current one to every MFE. |
 
 ### 1.4 References
 
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md)
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md)
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-workspace-scope`
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md)
 - **Feature**: [Create a project](project-create.md) — the parent it creates under is this feature's answer
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 

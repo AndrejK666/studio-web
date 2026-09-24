@@ -1,6 +1,6 @@
 # Theia backend bridge — Contract v1
 
-Companion to **ADR-0010**. Defines the concrete v1 wire surface between
+Companion to **ADR-0022**. Defines the concrete v1 wire surface between
 studio-backend (`studio-theia` gear, `TheiaControlClientV1`) and the Theia node
 backend (`StudioRuntimeEndpoint`). GTS type: `gts.cf.studio.theia.control.v1~`.
 
@@ -38,7 +38,7 @@ genuinely new shapes, and they are added to `studio-protocol.ts` first.
   for a loopback session. In the MVP the Theia node serves this control API on
   the session's own port under the internal `/internal/theia/v1/` path, gated by
   the S2S token (the browser never holds it); a dedicated internal port /
-  in-cluster Service is the production hardening (ADR-0010 phase 4). Everything
+  in-cluster Service is the production hardening (ADR-0022 phase 4). Everything
   is dormant unless `studio-session.theia_control_enabled = true`.
 - **Idempotency:** write methods already carry an `idempotencyKey`
   (`EnqueueStudioOperationRequest`) — reused verbatim; the operation queue
@@ -142,7 +142,7 @@ methods use — no new path-trust surface. `notifyEditor` is display-only (no
 workspace mutation). All five are S2S-token gated and tenant-clamped on the
 studio-theia side like every other bridge call.
 
-## 5. First vertical slice (aligns with ADR-0010 phase 2–3)
+## 5. First vertical slice (aligns with ADR-0022 phase 2–3)
 
 1. `getRuntimeStatus()` + `getRepositories()` end-to-end (read-only, proves
    transport + discovery + auth).

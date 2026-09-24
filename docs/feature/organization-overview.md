@@ -1,4 +1,16 @@
+---
+type: feature
+status: draft
+owner: studio-team
+---
+
 # Feature: The organization overview
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-organization-overview`
+
+- [ ] `p1` - `cpt-studio-feature-organization-overview`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -21,8 +33,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-organization-overview`
 
 ## 1. Feature Context
 
@@ -59,19 +69,25 @@ yet" is information; an absent item is a hole in the level.
 - A tile is **a way in, not a report**: activating one goes to the level's item
   that holds the detail, through the section channel the rail already uses.
 
+**Requirements**: `cpt-studio-fr-portal-levels`, `cpt-studio-fr-portal-reserved-areas`
+
+**Principles**: `cpt-studio-principle-reserved-not-empty`
+
 ### 1.3 Actors
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member of the organization in scope. Reads the tiles and follows one. |
-| **MFE** | organization-mfe. Reads the workspaces, assembles the tiles, and announces the section a tile leads to. |
-| **Shell** | Relays that section back, which is what moves the rail's highlight and the screen together. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Reads the tiles and follows one. |
+| **MFE** (`cpt-studio-actor-mfe`) | organization-mfe. Reads the workspaces, assembles the tiles, and announces the section a tile leads to. |
+| **Shell** (`cpt-studio-actor-shell`) | Relays that section back, which is what moves the rail's highlight and the screen together. |
 
 ### 1.4 References
 
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-organization-overview`
 - **Feature**: [Levels in the shell](shell-levels.md) — the level, its rail and the section channel
 - **Feature**: [The organization's workspaces](workspaces-screen.md) — the read these tiles reuse, and the screen they lead to
 - **Dependencies**: account-management (`/cf/account-management/v1`)

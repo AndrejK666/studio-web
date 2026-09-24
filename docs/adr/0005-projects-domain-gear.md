@@ -1,8 +1,27 @@
+---
+type: adr
+status: accepted
+date: 2026-08-07
+---
+
 # ADR-0005: Projects — a domain gear (supersedes the v0.1 decision in ADR-0002)
+
+**ID**: `cpt-studio-adr-projects-domain-gear`
 
 Status: **accepted** · Date: 2026-08-07 · Supersedes: ADR-0002 (Decision, v0.1)
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0002 put Projects on Resource Group groups, with the whole layer as data and
 no Rust, and laid out a graduation path: **Step 2** move to
@@ -45,7 +64,22 @@ and the workspace binding was metadata-only. Real OIDC login now exists, which
 the ADR names as the fix — so that particular limitation is no longer the
 blocker it was, and it is not the reason for this decision.
 
-## Decision
+## Considered Options
+
+**Extend the RG type with a `metadata_schema` and stay at Step 1.** Cheapest by
+far — one script change, no new database, no new Rust — and it would have covered
+the two shapes and the mandatory stage. Rejected for the three things above
+(name uniqueness, transition rules, events), each of which would otherwise have
+to be enforced client-side, which is to say not enforced.
+
+**Wait for `simple-resource-registry`.** No code exists and no date does either.
+
+**Put the payload in `cf.studio.workspace.settings.v1~` tenant metadata.**
+Rejected: AM metadata is one row per tenant with whole-row inheritance, so a
+list of projects would fight the inheritance policy the connector catalogue
+already relies on.
+
+## Decision Outcome
 
 A Project is a record in a new in-crate gear, **`studio-project`**.
 
@@ -73,7 +107,7 @@ reference. This is also forced: `FileStorageClientV1` is still a stub with a
 single `module_name()` method, so there is no in-process path to storage. When
 the P1 operations land upstream, nothing here changes.
 
-## Consequences
+### Consequences
 
 - A project lives in two places (our table, RG's group). The link is
   `rg_group_id`, and it is nullable on purpose: if RG is unreachable at creation
@@ -90,17 +124,12 @@ the P1 operations land upstream, nothing here changes.
   through RG; the new API does not see them. A migration is a follow-up, and
   cheap, since the payload is a superset of what the groups carry.
 
-## Alternatives considered
+## Traceability
 
-**Extend the RG type with a `metadata_schema` and stay at Step 1.** Cheapest by
-far — one script change, no new database, no new Rust — and it would have covered
-the two shapes and the mandatory stage. Rejected for the three things above
-(name uniqueness, transition rules, events), each of which would otherwise have
-to be enforced client-side, which is to say not enforced.
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
 
-**Wait for `simple-resource-registry`.** No code exists and no date does either.
+This decision directly addresses the following requirements or design elements:
 
-**Put the payload in `cf.studio.workspace.settings.v1~` tenant metadata.**
-Rejected: AM metadata is one row per tenant with whole-row inheritance, so a
-list of projects would fight the inheritance policy the connector catalogue
-already relies on.
+* `cpt-studio-component-account-management`
+* `cpt-studio-fr-workspace-project-tenants`

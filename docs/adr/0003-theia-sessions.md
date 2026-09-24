@@ -1,12 +1,32 @@
+---
+type: adr
+status: accepted
+date: 2026-07-30
+---
+
 # ADR-0003: Per-workspace Theia IDE sessions in containers
+
+**ID**: `cpt-studio-adr-theia-sessions`
 
 Status: accepted (MVP scope) · 2026-07-30
 Amended 2026-08-14: the image source moved into this repo — see
 [Amendment: the image lives here now](#amendment-2026-08-14--the-image-lives-here-now).
-The Context and Decision below are left as written on 2026-07-30, so every
+The Context and Problem Statement and the Decision Outcome below are left as written on 2026-07-30, so every
 `fabric-poc/poc/theia` in them means "where the image was built at the time".
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The portal's "Open Studio" hands off to the Theia-based IDE
 (fabric-poc/poc/theia). That PoC is deliberately single-user: one process, one
@@ -15,7 +35,17 @@ authenticated proxy in front and one instance per user/workspace. To serve
 many workspaces we therefore need a session manager that launches one IDE
 container per (tenant, workspace) and hands the browser its address.
 
-## Decision
+## Considered Options
+
+- **theia-cloud (upstream operator)** — right long-term shape, but requires a
+  cluster + operator today; our gear keeps the same session semantics locally.
+- **One shared multi-root Theia** — contradicts the PoC's single-user security
+  model and mixes tenants in one process. Rejected.
+- **Session manager as a standalone Node service** — faster to write, but
+  duplicates authn/tenancy the gear gets from the platform for free, and we
+  want the first-own-gear experience on a real feature.
+
+## Decision Outcome
 
 1. **Theia image** (`cf-studio-theia:latest`, built from fabric-poc/poc/theia):
    bundles browser-app; env contract `STUDIO_*` (workspace id, actor, git mode,
@@ -41,7 +71,7 @@ container per (tenant, workspace) and hands the browser its address.
    browser and backend share a host. Anything multi-host needs an
    authenticated WebSocket-capable proxy in front (see k8s path).
 
-## Consequences
+### Consequences
 
 - Registry is in-memory; restart loses `repo_url` provenance but re-adopts
   containers from labels. A DB capability can follow if session metadata
@@ -53,7 +83,9 @@ container per (tenant, workspace) and hands the browser its address.
 - `git_mode` defaults to `disabled`; `push` requires credentials inside the
   session container — deliberately out of MVP scope (public repos clone fine).
 
-## k8s path (successor, same REST contract)
+## More Information
+
+### k8s path (successor, same REST contract)
 
 Replace the Docker driver with a Kubernetes one: one Deployment+Service per
 session (the theia-cloud model), Ingress path `/studio/{session}` with
@@ -62,17 +94,7 @@ host directory, and the reaper deleting idle Deployments. The gear's REST
 surface and the portal flow do not change — only the driver behind
 `SessionService`.
 
-## Alternatives considered
-
-- **theia-cloud (upstream operator)** — right long-term shape, but requires a
-  cluster + operator today; our gear keeps the same session semantics locally.
-- **One shared multi-root Theia** — contradicts the PoC's single-user security
-  model and mixes tenants in one process. Rejected.
-- **Session manager as a standalone Node service** — faster to write, but
-  duplicates authn/tenancy the gear gets from the platform for free, and we
-  want the first-own-gear experience on a real feature.
-
-## Amendment 2026-08-14 — the image lives here now
+### Amendment 2026-08-14 — the image lives here now
 
 Decision 1 above named `fabric-poc/poc/theia` as the image source. It is not
 that any more, and this section is the record of where it went.
@@ -110,3 +132,14 @@ one container per (tenant, workspace), ports bound to `bind_host`
 `subject_tenant_id()`, the reaper, and label adoption across restarts. This
 amendment moved a build context and repointed an image reference — it did not
 touch the session contract.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-session`
+* `cpt-studio-component-session-image`
+* `cpt-studio-fr-ide-session`

@@ -1,10 +1,30 @@
+---
+type: adr
+status: proposed
+date: 2026-09-07
+---
+
 # ADR-0012: Attributing an external identity is self-service, and only a proof of control binds
 
-Status: **proposed** · Date: 2026-09-07 · Amends ADR-0006
+**ID**: `cpt-studio-adr-self-service-identity-resolution`
 
-## Context
+Status: **proposed** · Date: 2026-09-07 · Amends ADR-0023
 
-ADR-0006 gave Studio a canonical `user` and, with `alias`, an owner for
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+ADR-0023 gave Studio a canonical `user` and, with `alias`, an owner for
 `external (kind, id) → user`. It left attribution a **platform-admin** act:
 `POST /studio-user/v1/users/{user_id}/aliases`, no self-service route.
 
@@ -15,7 +35,7 @@ do the guessing anyway.
 
 Two more things were missing, and they turn out to be the same problem:
 
-**Nothing proved control.** ADR-0006 committed to "verified-only auto-link" for
+**Nothing proved control.** ADR-0023 committed to "verified-only auto-link" for
 `login`, but said nothing about where a *verified* GitHub account comes from. A
 commit author address cannot supply it — that is whatever the committer put in
 `git config user.email`, unauthenticated and trivially spoofed. Under a rule that
@@ -29,7 +49,22 @@ account-takeover primitive the moment it is not. And `confidence` was coerced:
 anything that was not `"confirmed"` became `"suggested"`, so a typo'd `confirmd`
 turned into a hypothesis with nobody told.
 
-## Decision
+## Considered Options
+
+A separate `studio-identity` gear with its own append-only journal, tenant-scoped
+and keyed on the Keycloak subject. It was written first, before ADR-0023 was
+found, and it is not in this PR. Two gears owning the same mapping and two
+different person identifiers is worse than one, and ADR-0023's canonical
+`user_id` is the better anchor: it survives an IdP migration, which a Keycloak
+subject does not.
+
+Its journal did buy one thing this does not have: several people could hold a
+pending claim on one identity at once, and resolution decided between them. Under
+one row per identity the second claimant is refused instead, and told to prove
+control. Simpler, strictly safer, and it tells the person something actionable
+immediately.
+
+## Decision Outcome
 
 ### 1. Three confidences, and only the strongest attributes anything
 
@@ -39,7 +74,7 @@ turned into a hypothesis with nobody told.
 | `claimed` | the person says it is theirs, unproven | no |
 | `suggested` | the system noticed a similarity | no |
 
-`claimed` is new. ADR-0006 had only `confirmed | suggested`, which left nowhere
+`claimed` is new. ADR-0023 had only `confirmed | suggested`, which left nowhere
 to put "this is mine, I cannot prove it yet" — the state a person is in before
 they add a credential. It records intent and grants nothing.
 
@@ -96,41 +131,7 @@ The resolver handed to the graph returns confirmed rows *only*. A claim or a
 suggestion must not be readable as an attribution, and the narrow interface is
 what makes that true by construction rather than by remembering to filter.
 
-## What this changes in ADR-0006
-
-- alias attribution becomes self-service (`/me/aliases`); the admin route stays
-  but goes through the same policy — an admin writing on somebody's behalf must
-  not be able to take a proven identity either;
-- `confidence` gains `claimed`;
-- `IdentityStore` gains `find_alias` / `find_aliases` / `delete_alias`. There was
-  no way to ask who holds an external identity at all — only what a given user
-  holds — so neither the policy nor graph attribution was expressible;
-- editing a `personal` connection is restricted to its creator. The record is now
-  evidence, and rotating a token re-stamps `Connection.account` while
-  `created_by` stays put; without that guard a tenant member could point somebody
-  else's personal connection at an account of their choosing and have the
-  confirmation recorded against that person.
-
-Everything else in ADR-0006 stands: the canonical `user` is the person, `login`
-is a way in, `membership` carries per-org role, storage is relational, merge is
-first-class.
-
-## What was rejected
-
-A separate `studio-identity` gear with its own append-only journal, tenant-scoped
-and keyed on the Keycloak subject. It was written first, before ADR-0006 was
-found, and it is not in this PR. Two gears owning the same mapping and two
-different person identifiers is worse than one, and ADR-0006's canonical
-`user_id` is the better anchor: it survives an IdP migration, which a Keycloak
-subject does not.
-
-Its journal did buy one thing this does not have: several people could hold a
-pending claim on one identity at once, and resolution decided between them. Under
-one row per identity the second claimant is refused instead, and told to prove
-control. Simpler, strictly safer, and it tells the person something actionable
-immediately.
-
-## Consequences
+### Consequences
 
 - (+) The person with the knowledge and the interest does the work; no operator
   queue on the main path.
@@ -146,7 +147,28 @@ immediately.
 - (−) A displaced proof is reported in the response and nowhere else. There is no
   admin view for it yet.
 
-## Follow-ups
+## More Information
+
+### What this changes in ADR-0023
+
+- alias attribution becomes self-service (`/me/aliases`); the admin route stays
+  but goes through the same policy — an admin writing on somebody's behalf must
+  not be able to take a proven identity either;
+- `confidence` gains `claimed`;
+- `IdentityStore` gains `find_alias` / `find_aliases` / `delete_alias`. There was
+  no way to ask who holds an external identity at all — only what a given user
+  holds — so neither the policy nor graph attribution was expressible;
+- editing a `personal` connection is restricted to its creator. The record is now
+  evidence, and rotating a token re-stamps `Connection.account` while
+  `created_by` stays put; without that guard a tenant member could point somebody
+  else's personal connection at an account of their choosing and have the
+  confirmation recorded against that person.
+
+Everything else in ADR-0023 stands: the canonical `user` is the person, `login`
+is a way in, `membership` carries per-org role, storage is relational, merge is
+first-class.
+
+### Follow-ups
 
 1. **Suggestion sources.** Nothing writes `suggested` yet: the value exists,
    resolves and renders, but the only ways onto a person's list are `claim` and
@@ -159,3 +181,13 @@ immediately.
    collapse onto one node, so their two `contributed_to` edges collide on
    `(src, dst)` and the commit count of whichever lands last wins. Needs an edge
    discriminator or a summed count.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-canonical-user`

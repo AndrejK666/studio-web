@@ -1,10 +1,28 @@
+---
+type: adr
+status: accepted
+date: 2026-08-18
+---
+
 # ADR-0008: Simplified navigation shell — overlay drawer, top bar, context slot
+
+**ID**: `cpt-studio-adr-simplified-navigation-shell`
 
 Date: 2026-08-18
 Status: accepted
 Branch: `frontend-adjust-shell-to-mocup`
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 A new mockup set ("Scenario group / Simplified navigation", node `40000817:2519`
 of the Constructor Studio mockups file) reshapes the shell. Until now the shell
@@ -24,7 +42,7 @@ The mockups move all of that:
   frames sits **inside** the project frame, i.e. it is a project MFE's own
   navigation, not shell chrome.
 
-## Decision
+## Decision Outcome
 
 ### The shell keeps only the top bar in the flow
 
@@ -170,7 +188,7 @@ brand fill the mockup happens to draw: the hue is a contract shared with
 `people-mfe`'s copy of the avatar component, and one person must not read as two
 colours on two screens.
 
-## Consequences
+### Consequences
 
 - MFE count goes from 6 directories to 7: `_blank-mfe` (reference), four screens
   in the drawer, the new `organization-mfe` (port 3060, `order: 100`), and
@@ -206,3 +224,13 @@ colours on two screens.
   ADR is where the divergence is recorded. (It is also already stale on a
   separate point: it describes the menu re-reading the registry on a 500 ms
   interval, which `Menu.tsx` replaced with a store subscription.)
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-portal-shell`
+* `cpt-studio-fr-portal-levels`

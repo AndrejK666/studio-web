@@ -1,4 +1,16 @@
+---
+type: feature
+status: accepted
+owner: studio-team
+---
+
 # Feature: Levels in the shell
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-shell-levels`
+
+- [x] `p1` - `cpt-studio-feature-shell-levels`
+
+## Table of Contents
 
 <!-- toc -->
 
@@ -29,8 +41,6 @@
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
 <!-- /toc -->
-
-- [ ] `p1` - **ID**: `cpt-studiofrontend-featstatus-shell-levels`
 
 ## 1. Feature Context
 
@@ -86,21 +96,27 @@ changes the code:
 Overview screen, the Workspaces screen, and the Gears MFE. This feature is the
 mechanism they will sit on.
 
+**Requirements**: `cpt-studio-fr-portal-levels`
+
+**Principles**: `cpt-studio-principle-project-is-unit`
+
 ### 1.3 Actors
 
-Named, not identified — a FEATURE may only define `algo`, `dod`, `featstatus`,
-`flow` and `state` ids. See the same note in `project-create.md`.
+Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking part is cited by its design component id.
 
 | Actor | Role in Feature |
 |-------|-----------------|
-| **Member** | A signed-in member. Moves between levels and chooses sections of the level they are in. |
-| **Shell** | The portal shell. Owns the level, the path to it, the rail, and which extension is mounted. |
-| **MFE** | A screenset. Declares the level of each of its screens, and receives the section to show when its entry is already mounted. |
+| **Member** (`cpt-studio-actor-member`) | A signed-in member. Moves between levels and chooses sections of the level they are in. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Owns the level, the path to it, the rail, and which extension is mounted. |
+| **MFE** (`cpt-studio-actor-mfe`) | A screenset. Declares the level of each of its screens, and receives the section to show when its entry is already mounted. |
 
 ### 1.4 References
 
-- **ADR**: [ADR-0008 — simplified navigation shell](../../../../docs/adr/0008-simplified-navigation-shell.md)
-- **ADR**: [ADR-0010 — a project is an AM tenant](../../../../docs/adr/0010-projects-are-am-tenants.md)
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **Design**: [DESIGN](../design/constructor-studio.md)
+- **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-shell-levels`
+- **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md)
+- **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the workspace slot this feature turns into a level
 - **Feature**: [Project artifacts](project-artifacts.md) — the sections whose rail moves into the shell
 - **Dependencies**: account-management (`/cf/account-management/v1`)

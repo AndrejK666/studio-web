@@ -1,8 +1,27 @@
+---
+type: adr
+status: accepted
+date: 2026-07-28
+---
+
 # ADR-0002: Projects — Resource Group-backed in v0.1, domain gear later
+
+**ID**: `cpt-studio-adr-projects-as-resource-groups`
 
 Status: **accepted (v0.1 scope)** · Date: 2026-07-28
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 The Studio v2 model chains Organization → Workspace → **Project** (an effort inside a
 workspace, with its own members). Our stack covers organizations and workspaces (tenant
@@ -18,7 +37,7 @@ The platform already has a primitive for exactly this shape: **Resource Group** 
 typed, tenant-scoped group forests with memberships. account-management itself uses RG
 for user groups instead of building its own tables.
 
-## Decision (v0.1)
+## Decision Outcome
 
 A Project is an RG group of a Studio-owned GTS type:
 
@@ -31,7 +50,9 @@ A Project is an RG group of a Studio-owned GTS type:
 
 No Rust code required — the whole layer is data.
 
-## Known limitation (accepted for dev)
+### Consequences
+
+**Known limitation (accepted for dev).**
 
 RG scopes a group to the **caller's** tenant. With the dev static tokens (home tenant =
 root) projects land in the root tenant and workspace binding is by metadata only, not
@@ -39,7 +60,9 @@ by tenancy. Proper scoping arrives with either per-workspace identities (OIDC) o
 context-tenant mechanism. This is acceptable for the portal walking skeleton and is
 the main trigger for graduating to a domain gear.
 
-## Graduation path
+## More Information
+
+### Graduation path
 
 **Step 2 — `simple-resource-registry` (when it ships).** gears-rust contains a
 spec-stage gear (`gears/simple-resource-registry/docs/`, PRD/DESIGN only, no code yet)
@@ -57,3 +80,13 @@ is a member"). The portal's REST shape is kept swap-friendly either way.
 
 Related spec-stage gear worth watching: `approval-service` (docs only) — generic
 approval flows that project lifecycle transitions could delegate to.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-account-management`
+* `cpt-studio-fr-workspace-project-tenants`

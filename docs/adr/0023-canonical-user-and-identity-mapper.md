@@ -1,8 +1,31 @@
-# ADR-0006: A canonical Studio user, its sign-in methods, and the identity mapper
+---
+type: adr
+status: proposed
+date: 2026-09-04
+decision-makers: Studio backend team
+---
+
+# ADR-0023: A canonical Studio user, its sign-in methods, and the identity mapper
+
+**ID**: `cpt-studio-adr-canonical-user-and-identity-mapper`
 
 Status: **proposed** · Date: 2026-09-04 · Deciders: Studio backend team
 
-## Context
+Renumbered from ADR-0006 (`studio-backend/docs/adr/`) when the two ADR trees were unified; ADR-0006 is the FrontX portal rebuild.
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 Studio is a cloud, multi-tenant product. Two facts drive this decision:
 
@@ -32,7 +55,19 @@ Today, empirically (see `identity_directory` and `studio_authz_plugin`):
 - A single `tenant_id` attribute on the identity encodes one *home* org — a
   single-home assumption a multi-org product must outgrow.
 
-## Decision
+## Considered Options
+
+- **Lean only on Keycloak account linking.** Solves "many logins, one account"
+  but cannot own a cross-tenant profile, a stable-across-IdP id, or non-login
+  attribution. Insufficient for the product need.
+- **Extend `identity_directory`.** That gear is a read-only admin projection over
+  Keycloak plus an assign-to-org writer; it assumes identity == actor. Wrong
+  shape for owning a person.
+- **Re-key the whole PDP to `user_id` now (big-bang).** Cleaner end state but
+  rewrites the grant model, AM's group/attribute conventions, and every existing
+  grant at once. Rejected in favor of the incremental path.
+
+## Decision Outcome
 
 Introduce a Studio domain gear **`studio-user`** that owns the canonical person
 and maps identities onto it. The records below are relational (see *Storage*);
@@ -92,31 +127,7 @@ caller.
   projection for its own membership. Deletion (right-to-be-forgotten) erases the
   profile and anonymizes link/alias edges rather than breaking history.
 
-## Options considered
-
-- **Lean only on Keycloak account linking.** Solves "many logins, one account"
-  but cannot own a cross-tenant profile, a stable-across-IdP id, or non-login
-  attribution. Insufficient for the product need.
-- **Extend `identity_directory`.** That gear is a read-only admin projection over
-  Keycloak plus an assign-to-org writer; it assumes identity == actor. Wrong
-  shape for owning a person.
-- **Re-key the whole PDP to `user_id` now (big-bang).** Cleaner end state but
-  rewrites the grant model, AM's group/attribute conventions, and every existing
-  grant at once. Rejected in favor of the incremental path.
-
-## Consequences
-
-- (+) One owner for the person; connectors and graph attribution resolve to a
-  single, stable Studio id; ADR-0001's mapping need is met by `alias`.
-- (+) Profile and attribution work immediately without touching the PDP or the
-  token.
-- (−) One more gear to operate. Provisioning has a first-touch race (two
-  simultaneous first logins could mint two users) that merge repairs; acceptable
-  for now, to be hardened.
-- (−) The single-home `tenant_id` assumption and the PDP grant keys still stand;
-  they are addressed in Phase 2, not here.
-
-## Storage: relational is the system of record, graph is a projection
+### Storage: relational is the system of record, graph is a projection
 
 Decision (revised): the canonical records — `user`, `login`, `membership`,
 `alias` — are **relational tables owned by the gear**, not generic graph nodes.
@@ -137,7 +148,7 @@ So:
   attribution use case is real. It references the relational `user_id`; it is
   never the source of truth.
 
-### Schema (v0.1)
+#### Schema (v0.1)
 
 ```text
 identity_user
@@ -185,7 +196,21 @@ the storage trait behind it moves from `IdentitySink` (node/edge) to a typed
 graph-less/test path. Resolve becomes an indexed `SELECT … WHERE provider=? AND
 subject=?`; the full scans disappear; uniqueness and FK integrity become real.
 
-## Implementation status
+### Consequences
+
+- (+) One owner for the person; connectors and graph attribution resolve to a
+  single, stable Studio id; ADR-0001's mapping need is met by `alias`.
+- (+) Profile and attribution work immediately without touching the PDP or the
+  token.
+- (−) One more gear to operate. Provisioning has a first-touch race (two
+  simultaneous first logins could mint two users) that merge repairs; acceptable
+  for now, to be hardened.
+- (−) The single-home `tenant_id` assumption and the PDP grant keys still stand;
+  they are addressed in Phase 2, not here.
+
+## More Information
+
+### Implementation status
 
 - **Phase 1 (done):** `user` / `login` / `alias`, the mapper (`resolve` + JIT
   provisioning), self-service profile, and admin alias + merge.
@@ -196,7 +221,7 @@ subject=?`; the full scans disappear; uniqueness and FK integrity become real.
 - **Not yet wired (needs a compiler in the loop):** automatic population of
   memberships from the real assignment path, and the PDP change — see below.
 
-## Follow-ups (remaining)
+### Follow-ups (remaining)
 
 1. **Populate memberships from the real assignment path.** When an identity is
    assigned to an org (`identity_directory.assign`, or the portal's People
@@ -223,3 +248,13 @@ subject=?`; the full scans disappear; uniqueness and FK integrity become real.
 4. **Provisioning at the authn edge** (authn-resolver plugin) so `/me` is not the
    only path that mints a user; feed `identity_directory`'s unassigned view from
    unmapped identities. The `resolve` endpoint is the seam for this.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-user`
+* `cpt-studio-fr-canonical-user`

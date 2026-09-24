@@ -1,8 +1,27 @@
+---
+type: adr
+status: proposed
+date: 2026-09-14
+---
+
 # ADR-0019: A role narrows what a member may do, and nothing else
+
+**ID**: `cpt-studio-adr-a-role-narrows-what-a-member-may-do`
 
 Status: **proposed** · Date: 2026-09-14 · Closes ADR-0018 follow-up 9 · Meets ADR-0011 §7
 
-## Context
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Decision Outcome](#decision-outcome)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
 
 ADR-0018 shipped eight of its nine follow-ups and left the ninth open on
 purpose. This is that ninth one, and the first thing worth recording is that the
@@ -63,7 +82,7 @@ One row. The rest of §7 was met by the work ADR-0018 already landed.
 A catalogue that names things the product does not have is worse than a short
 one: every entry is a promise the PDP cannot keep.
 
-## Decision
+## Decision Outcome
 
 ### 1. The rule
 
@@ -261,7 +280,7 @@ the first place. That is written up for the platform in
 smaller ask: a schema that names its owning gear, so a document with one writer
 is not reachable through a generic route at all.
 
-## Consequences
+### Consequences
 
 - The member-management UI ADR-0011 §7 gates becomes releasable, for
   organizations on the roles model.
@@ -278,7 +297,9 @@ is not reachable through a generic route at all.
   backend wrote rather than a default the browser supplied — which also means
   the two implementations of "the default ladder" have to stop being two.
 
-## Follow-ups
+## More Information
+
+### Follow-ups
 
 1. **The people surface. Shipped**, and it is what found §3: `people.manage` on
    the membership write and delete, `people.invite` on inviting and revoking,
@@ -298,3 +319,16 @@ is not reachable through a generic route at all.
    this: a token naming the root still reaches the tenant tree, and telling a
    person from a service account apart is a question about the platform's
    subject model rather than Studio's.
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-component-authz-plugin`
+* `cpt-studio-component-access-config`
+* `cpt-studio-principle-tenant-clamp-first`
+* `cpt-studio-fr-org-administration`
+* `cpt-studio-fr-authz-row-roles`
