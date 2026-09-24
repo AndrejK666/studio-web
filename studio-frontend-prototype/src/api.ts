@@ -204,6 +204,9 @@ export type Composability = "runs" | "blocked" | "undescribed";
 export interface Candidate {
   name: string;
   kind: string;
+  /** The gear declares this capability itself (gear.toml, or its catalogue
+   *  page) -- a statement, not a match on the words it uses. */
+  declared?: boolean;
   /** How many of the capability's terms this component mentions. */
   score: number;
   /** Which terms they were, so a suggestion can be argued with. */

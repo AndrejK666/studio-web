@@ -2437,7 +2437,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 72);
+        assert_eq!(gear.fields().count(), 73);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

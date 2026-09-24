@@ -738,6 +738,9 @@ pub struct PlanRowDto {
 pub struct CandidateDto {
     pub name: String,
     pub kind: String,
+    /// The gear declares this capability itself, rather than being found by
+    /// the words in its name and description.
+    pub declared: bool,
     /// How many of the capability's terms it mentions.
     pub score: u32,
     /// Which terms they were, so a suggestion can be argued with rather than
@@ -846,6 +849,7 @@ async fn compose_plan(
                 .map(|c| CandidateDto {
                     name: c.name,
                     kind: c.kind,
+                    declared: c.declared,
                     score: u32::try_from(c.score).unwrap_or(u32::MAX),
                     why: c.why,
                     built: c.built.as_str().to_owned(),

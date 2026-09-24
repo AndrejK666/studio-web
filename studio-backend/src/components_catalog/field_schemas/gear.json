@@ -52,6 +52,17 @@
      "lamp": false
     },
     {
+     "key": "capabilities",
+     "label": "Capabilities",
+     "source": {
+      "class": "repo",
+      "ref": "gear.toml [gear] capabilities"
+     },
+     "example": "auth, authz",
+     "kind": "text",
+     "lamp": false
+    },
+    {
      "key": "path",
      "label": "Repository path",
      "source": {

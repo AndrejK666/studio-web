@@ -500,7 +500,9 @@ function SuggestedComponents({
                           <span
                             key={c.name}
                             title={
-                              `matched: ${c.why.join(", ")}` +
+                              (c.declared
+                                ? "the gear declares this capability"
+                                : `matched by words: ${c.why.join(", ")}`) +
                               (c.built === "docs-only"
                                 ? " · the catalogue found no crate under this component — docs and a manifest only"
                                 : "")
@@ -523,6 +525,15 @@ function SuggestedComponents({
                             )}
                             <ComponentLink nav={nav} name={c.name} />
                             <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                            {c.declared ? (
+                              <span title="The gear declares this capability itself" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>
+                                DECLARED
+                              </span>
+                            ) : (
+                              <span title={`Found by the words in its name and description: ${c.why.join(", ")}`} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
+                                by words
+                              </span>
+                            )}
                             {c.composable === "runs" && (
                               <span title="Described for composition: the Gearbox engine can put it into a product" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
                                 GDL

@@ -773,6 +773,9 @@ impl RepoEnricher {
             if let Some(cat) = parsed.category {
                 f.insert("category".into(), text(&cat, None, None));
             }
+            if let Some(caps) = parsed.capabilities {
+                f.insert("capabilities".into(), text(&caps.join(", "), None, None));
+            }
             if let Some(declared) = parsed.plugins {
                 let mut v = status(
                     if declared { "yes" } else { "no" },
@@ -990,6 +993,10 @@ fn codeowners_match(codeowners: &str, dir: &str) -> Option<String> {
 struct GearToml {
     description: Option<String>,
     category: Option<String>,
+    /// `capabilities = ["auth", "authz"]`: the capability keys the gear says
+    /// it provides, in the workspace's vocabulary. What the Composer matches
+    /// on before it falls back to words in the name and description.
+    capabilities: Option<Vec<String>>,
     plugins: Option<bool>,
     /// The gear says it IS a plugin.
     ///
@@ -1018,6 +1025,7 @@ fn parse_gear_toml(body: &str) -> GearToml {
     let mut out = GearToml {
         description: None,
         category: None,
+        capabilities: None,
         plugins: None,
         is_plugin: None,
         extension_point: None,
@@ -1058,6 +1066,7 @@ fn parse_gear_toml(body: &str) -> GearToml {
         match k.trim() {
             "description" if out.description.is_none() => out.description = unquote(v),
             "category" | "domain" if out.category.is_none() => out.category = unquote(v),
+            "capabilities" if out.capabilities.is_none() => out.capabilities = string_list(v),
             "plugins" | "has_plugins" => {
                 let val = v.trim();
                 let declared =
@@ -1070,6 +1079,25 @@ fn parse_gear_toml(body: &str) -> GearToml {
         }
     }
     out
+}
+
+/// A one-line TOML array of strings, `["a", "b"]`, as its items. `None` for
+/// anything else (a multi-line array is written on one line by convention in
+/// gear.toml, and a value this cannot read is left unread, not guessed).
+fn string_list(v: &str) -> Option<Vec<String>> {
+    let v = v.split('#').next().unwrap_or("").trim();
+    let inner = v.strip_prefix('[')?.strip_suffix(']')?;
+    let items: Vec<String> = inner
+        .split(',')
+        .map(|i| {
+            i.trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .trim()
+                .to_string()
+        })
+        .filter(|i| !i.is_empty())
+        .collect();
+    (!items.is_empty()).then_some(items)
 }
 
 /// Strip surrounding quotes and any trailing inline comment from a TOML scalar.
@@ -1749,5 +1777,23 @@ has_extension_point = true
         // `publisher = ""` is a field somebody left blank, not a publisher
         // whose name happens to be the empty string.
         assert_eq!(toml_string("publisher = \"\"\n", "publisher"), None);
+    }
+
+    #[test]
+    fn a_gear_toml_declares_its_capabilities() {
+        let parsed = parse_gear_toml(
+            "[gear]\nname = \"AuthN\"\ncapabilities = [\"auth\", 'authz'] # what it provides\n",
+        );
+        assert_eq!(
+            parsed.capabilities,
+            Some(vec!["auth".to_string(), "authz".to_string()])
+        );
+        assert_eq!(parse_gear_toml("[gear]\nname = \"x\"\n").capabilities, None);
+        // Only the [gear] table speaks for the gear.
+        assert_eq!(
+            parse_gear_toml("[gear]\nname = \"x\"\n[metadata]\ncapabilities = [\"billing\"]\n")
+                .capabilities,
+            None
+        );
     }
 }
