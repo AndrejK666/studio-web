@@ -114,6 +114,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 | `cpt-studio-adr-domain-model-in-graph-storage` | The domain model lives in graph storage (ADR-0024). |
 | `cpt-studio-adr-the-person-is-the-key-not-the-login` | The person is the key on the request path (ADR-0025). |
 | `cpt-studio-adr-studio-events-push-channel` | One push channel to the portal (ADR-0026). |
+| `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio is a session on the member's machine; Git and the LLM are proxied, secrets stay on the server (ADR-0027, proposed). |
 
 ### 1.3 Architecture Layers
 
