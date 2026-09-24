@@ -608,6 +608,66 @@ impl DocumentsService {
         Ok((documents, u32::try_from(total).unwrap_or(u32::MAX)))
     }
 
+    /// Every capability the project's documents declare, with what declares it.
+    ///
+    /// Two kinds of document speak here: the ones Studio holds, and the
+    /// repository files bound to a type -- confirmed by a person, set by hand,
+    /// or declared in their own front matter and found to conform. A proposal
+    /// still in review does not: "what this project needs" is not a guess the
+    /// classifier made about a file nobody has looked at. In the order first
+    /// met, Studio's documents before the repository's.
+    pub async fn declared_capabilities(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<DeclaredCapability>> {
+        let mut out: Vec<DeclaredCapability> = Vec::new();
+        let mut add =
+            |key: &str, source: CapabilitySource| match out.iter_mut().find(|c| c.key == key) {
+                Some(c) => c.sources.push(source),
+                None => out.push(DeclaredCapability {
+                    key: key.to_string(),
+                    sources: vec![source],
+                }),
+            };
+        for doc in self.all_documents(workspace_id, Some(project_id)).await? {
+            for key in &doc.capabilities {
+                add(
+                    key,
+                    CapabilitySource {
+                        kind: "document".to_string(),
+                        id: doc.id,
+                        label: doc.title.clone(),
+                    },
+                );
+            }
+        }
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, binding_scope(Some(project_id)), 0, None)
+            .await?;
+        for binding in rows.into_iter().map(binding_from_row) {
+            let binding = binding?;
+            if !matches!(
+                binding.state,
+                BindingState::Confirmed | BindingState::Manual
+            ) {
+                continue;
+            }
+            for key in &binding.capabilities {
+                add(
+                    key,
+                    CapabilitySource {
+                        kind: "file".to_string(),
+                        id: binding.id,
+                        label: binding.path.clone(),
+                    },
+                );
+            }
+        }
+        Ok(out)
+    }
+
     /// Every effective document in scope.
     ///
     /// For the readiness computations that judge the set as a whole — a page
@@ -1309,6 +1369,40 @@ fn parse_candidates(raw: &str) -> Vec<TypeCandidate> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
+/// The state a fresh classification ends in: a declared type that the file's
+/// content conforms to is the author's ruling, and binds; anything else stays
+/// what the classifier made of it.
+fn settle(
+    state: BindingState,
+    source: Option<DetectionSource>,
+    conforms: Option<bool>,
+) -> BindingState {
+    if state == BindingState::Detected
+        && source == Some(DetectionSource::FrontMatter)
+        && conforms == Some(true)
+    {
+        BindingState::Confirmed
+    } else {
+        state
+    }
+}
+
+/// One capability a project's documents declare, and every document that does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeclaredCapability {
+    pub key: String,
+    pub sources: Vec<CapabilitySource>,
+}
+
+/// A document declaring a capability: one Studio holds (`document`, by title)
+/// or a bound repository file (`file`, by path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilitySource {
+    pub kind: String,
+    pub id: Uuid,
+    pub label: String,
+}
+
 fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
     Ok(DocumentBinding {
         id: row.id,
@@ -1324,6 +1418,7 @@ fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
         candidates: parse_candidates(&row.candidates),
         conforms: row.conforms,
         validation: serde_json::from_str(&row.validation).ok(),
+        capabilities: serde_json::from_str(&row.capabilities).unwrap_or_default(),
         content_sha: row.content_sha,
         created_at: rfc3339(row.created_at),
         updated_at: rfc3339(row.updated_at),
@@ -1407,6 +1502,9 @@ impl DocumentsService {
                         validation: prior
                             .map(|p| p.validation.clone())
                             .unwrap_or_else(|| "{}".to_string()),
+                        capabilities: prior
+                            .map(|p| p.capabilities.clone())
+                            .unwrap_or_else(|| "[]".to_string()),
                         content_sha: prior
                             .map(|p| p.content_sha.clone())
                             .unwrap_or_else(|| sha.clone()),
@@ -1432,6 +1530,7 @@ impl DocumentsService {
                     candidates: "[]".to_string(),
                     conforms: None,
                     validation: "{}".to_string(),
+                    capabilities: "[]".to_string(),
                     content_sha: sha,
                     created_at: prior.map(|p| p.created_at).unwrap_or(now),
                     updated_at: now,
@@ -1463,6 +1562,14 @@ impl DocumentsService {
             };
 
             let report = report_for(&types, type_key.as_deref(), &file.content);
+            // **A file that says what it is, and is what it says, is bound.**
+            // A type declared in the front matter used to land in "Needs
+            // review" like any guess, so a repository written to Studio's
+            // own conventions still needed a person to confirm every file.
+            // The declaration is the author's ruling; the template check is
+            // the evidence it holds. Either one missing, it stays a proposal.
+            let state = settle(state, source, report.as_ref().map(|r| r.conforms));
+            let capabilities = super::intake::declared_capabilities(&file.content);
             written.push(document_binding::Model {
                 id,
                 tenant_id: workspace_id,
@@ -1479,6 +1586,7 @@ impl DocumentsService {
                     Some(r) => serde_json::to_string(r)?,
                     None => "{}".to_string(),
                 },
+                capabilities: serde_json::to_string(&capabilities)?,
                 content_sha: sha,
                 created_at: prior.map(|p| p.created_at).unwrap_or(now),
                 updated_at: now,
@@ -2201,6 +2309,19 @@ mod tests {
         assert_eq!(status.requirements[0].analyses_outstanding, vec!["bloat"]);
     }
 
+    #[test]
+    fn a_declared_type_that_conforms_binds_and_nothing_else_does() {
+        use BindingState::{Confirmed, Detected, Unknown};
+        let fm = Some(DetectionSource::FrontMatter);
+        let guess = Some(DetectionSource::Heuristic);
+        assert_eq!(settle(Detected, fm, Some(true)), Confirmed);
+        // Declared, but the content does not hold the template up.
+        assert_eq!(settle(Detected, fm, Some(false)), Detected);
+        // Conforms, but only because the classifier guessed so.
+        assert_eq!(settle(Detected, guess, Some(true)), Detected);
+        assert_eq!(settle(Unknown, None, None), Unknown);
+    }
+
     fn bound(type_key: &str, state: BindingState, conforms: Option<bool>) -> DocumentBinding {
         DocumentBinding {
             id: BINDING,
@@ -2215,6 +2336,7 @@ mod tests {
             candidates: Vec::new(),
             conforms,
             validation: None,
+            capabilities: Vec::new(),
             content_sha: String::new(),
             created_at: String::new(),
             updated_at: String::new(),
@@ -2424,6 +2546,7 @@ mod reclassification_tests {
             candidates: "[]".into(),
             conforms: Some(false),
             validation: "{}".into(),
+            capabilities: "[]".to_string(),
             content_sha: "sha".into(),
             created_at: now,
             updated_at: now,

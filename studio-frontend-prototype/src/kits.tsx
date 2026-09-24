@@ -404,21 +404,15 @@ function SuggestedComponents({
       // The catalogue and the profiles are read by the server now, which is
       // also where the matching rules live. What still travels from here is the
       // workspace's own capability vocabulary.
-      const [docs, vocab] = await Promise.all([
-        api.projectDocuments(token, workspaceId, projectId),
+      const [declared, vocab] = await Promise.all([
+        api.declaredCapabilities(token, projectId),
         api.capabilities(token, workspaceId),
       ]);
-      // Every capability the project's documents declare, deduplicated and in
-      // the order they were first met. The server indexes these from front
-      // matter on every write, so this is a read, not a parse.
-      const caps: string[] = [];
-      let seen = 0;
-      for (const doc of docs.items) {
-        if (!doc.capabilities?.length) continue;
-        seen += 1;
-        for (const cap of doc.capabilities) if (!caps.includes(cap)) caps.push(cap);
-      }
-      setDocCount(seen);
+      // Every capability the project's documents declare, in the order first
+      // met -- Studio's own documents and the repository files bound to a type
+      // alike. The server indexes these from front matter, so this is a read.
+      const caps = declared.items.map((c) => c.key);
+      setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
       const next = (await api.composePlan(token, caps, vocab.items ?? [])).items;
       setPlan(next);
       // A product nobody has picked for yet starts from the best built gear
@@ -461,7 +455,7 @@ function SuggestedComponents({
         (plan.length === 0 ? (
           <p className="empty" style={{ fontSize: 13 }}>
             {docCount === 0
-              ? "No document in this project declares a capability yet. Fill a spec's questionnaire and the capabilities land in its front matter — this reads them from there."
+              ? "No document in this project declares a capability yet. Fill a PRD's questionnaire, or put `capabilities: auth, storage` in the front matter of a PRD in the repository and confirm it on the Specs tab — this reads them from there."
               : "The documents declare no capabilities to match."}
           </p>
         ) : (

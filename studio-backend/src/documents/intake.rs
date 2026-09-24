@@ -145,7 +145,13 @@ pub fn generate(ty: &DocumentType, title: &str, answers: &[Answer]) -> String {
 /// an index rather than a second source of truth: a hand-edited document is
 /// re-indexed from its own text on the next write.
 pub fn declared_capabilities(content: &str) -> Vec<String> {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    // A file checked out on Windows, or written by an editor that says so,
+    // arrives with CRLF; it declares what it declares all the same.
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
         return Vec::new();
     };
     let Some(end) = rest.find("\n---") else {
@@ -155,8 +161,13 @@ pub fn declared_capabilities(content: &str) -> Vec<String> {
         .lines()
         .find_map(|line| line.trim().strip_prefix("capabilities:"))
         .map(|list| {
-            list.split(',')
-                .map(str::trim)
+            // `a, b` is what Studio writes; `[a, b]` and quoted items are what a
+            // person writing YAML by hand writes, and mean the same.
+            list.trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
                 .collect()
@@ -386,5 +397,26 @@ status: draft
         let seeded =
             seeded_capabilities(&ty, &[text(&first.id, "yes"), text(&second.id, "also yes")]);
         assert_eq!(seeded.len(), 1, "got {seeded:?}");
+    }
+
+    #[test]
+    fn capabilities_read_the_way_people_write_them() {
+        // What Studio writes.
+        assert_eq!(
+            declared_capabilities("---\ntype: prd\ncapabilities: auth, storage\n---\n# X\n"),
+            vec!["auth", "storage"]
+        );
+        // A checkout on Windows.
+        assert_eq!(
+            declared_capabilities(
+                "---\r\ntype: prd\r\ncapabilities: auth, storage\r\n---\r\n# X\r\n"
+            ),
+            vec!["auth", "storage"]
+        );
+        // YAML by hand: a flow list, quoted items.
+        assert_eq!(
+            declared_capabilities("---\ncapabilities: [auth, \"storage\", 'deploy']\n---\n"),
+            vec!["auth", "storage", "deploy"]
+        );
     }
 }

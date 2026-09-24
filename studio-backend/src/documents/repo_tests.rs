@@ -451,6 +451,7 @@ fn binding(
         candidates: "[]".to_string(),
         conforms: type_key.map(|_| false),
         validation: "{}".to_string(),
+        capabilities: "[]".to_string(),
         content_sha: "sha".to_string(),
         created_at: now,
         updated_at: now,

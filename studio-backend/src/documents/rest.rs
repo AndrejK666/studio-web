@@ -402,6 +402,9 @@ pub struct DocumentBindingDto {
     pub conforms: Option<bool>,
     /// The last validation in full — which sections are missing or thin.
     pub validation: Option<ValidationReportDto>,
+    /// The capability keys the file's front matter declares (`capabilities:
+    /// a, b`). What the Composer reads from a bound file.
+    pub capabilities: Vec<String>,
     /// Digest of the content these verdicts were computed from, so a caller can
     /// tell a current verdict from one that predates a re-sync.
     pub content_sha: String,
@@ -1277,6 +1280,62 @@ async fn list_workspace_documents(
     }))
 }
 
+/// A document that declares a capability.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CapabilitySourceDto {
+    /// `document` (held by Studio) or `file` (a bound repository file).
+    pub kind: String,
+    pub id: Uuid,
+    /// The document's title, or the file's repository path.
+    pub label: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredCapabilityDto {
+    /// The capability key, as the vocabulary names it (`auth`, `storage`, …).
+    pub key: String,
+    pub sources: Vec<CapabilitySourceDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredCapabilityListDto {
+    pub items: Vec<DeclaredCapabilityDto>,
+    /// Every capability is in `items`: the set is small and read whole.
+    pub total: u32,
+}
+
+async fn list_declared_capabilities(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<DeclaredCapabilityListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<DeclaredCapabilityDto> = service
+        .declared_capabilities(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|c| DeclaredCapabilityDto {
+            key: c.key,
+            sources: c
+                .sources
+                .into_iter()
+                .map(|s| CapabilitySourceDto {
+                    kind: s.kind,
+                    id: s.id,
+                    label: s.label,
+                })
+                .collect(),
+        })
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(DeclaredCapabilityListDto { items, total }))
+}
+
 async fn list_project_documents(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -1466,6 +1525,7 @@ fn binding_dto(b: DocumentBinding, inherited: bool) -> DocumentBindingDto {
             .collect(),
         conforms: b.conforms,
         validation: b.validation.map(Into::into),
+        capabilities: b.capabilities,
         content_sha: b.content_sha,
         created_at: b.created_at,
         updated_at: b.updated_at,
@@ -2907,6 +2967,31 @@ pub fn register_routes(
         .json_response_with_schema::<DocumentListDto>(openapi, StatusCode::OK, "Documents")
         .error_401(openapi)
         .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/declared-capabilities")
+        .operation_id("studio_documents.list_declared_capabilities")
+        .summary("The capabilities a project's documents declare")
+        .description(
+            "Every capability key declared in the front matter of the project's \
+             documents -- the ones Studio holds and the repository files bound to a \
+             type -- with the documents declaring each. What the Composer composes \
+             from. A repository file still awaiting review does not count.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose capabilities to read")
+        .handler(list_declared_capabilities)
+        .json_response_with_schema::<DeclaredCapabilityListDto>(
+            openapi,
+            StatusCode::OK,
+            "Declared capabilities",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

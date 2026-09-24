@@ -194,6 +194,9 @@ fn haystack(component: &Value, profile: Option<&Value>) -> String {
         text("kind"),
         list("keywords"),
         list("categories"),
+        // `gear.toml`'s `category`, which the repository scan stores in the
+        // singular -- beside crates.io's `categories`, never in it.
+        text("category"),
         profile_text(profile),
     ]
     .join(" ")
@@ -208,10 +211,12 @@ fn profile_text(profile: Option<&Value>) -> String {
     let Some(description) = auto.get("description") else {
         return String::new();
     };
-    // The scan has written both a bare string and `{ s: "…" }`.
+    // The scan has written a bare string, `{ s: "…" }`, and -- what it writes
+    // today (`repo_enrich`) -- `{ v: "…", b: "…" }`, where `v` is the text.
     description
         .get("s")
         .and_then(Value::as_str)
+        .or_else(|| description.get("v").and_then(Value::as_str))
         .or_else(|| description.as_str())
         .unwrap_or_default()
         .to_owned()
@@ -439,6 +444,19 @@ mod tests {
     fn punctuation_starts_a_word() {
         assert!(mentions("cf-gears-file-storage", "storage"));
         assert!(mentions("@gears-frontx/state", "state"));
+    }
+
+    #[test]
+    fn what_the_repository_scan_writes_is_searched() {
+        // `gear.toml`'s `category`, stored in the singular.
+        let by_category = json!({ "name": "cf-gears-x", "kind": "gear", "category": "billing" });
+        assert!(mentions(&haystack(&by_category, None), "billing"));
+        // The scan's description shape, `{ v, b }`.
+        let profile = json!({ "auto": { "description": { "v": "Tenant resolution for requests", "b": "Tenant resolution" } } });
+        assert!(mentions(
+            &haystack(&component("cf-gears-y", ""), Some(&profile)),
+            "tenant"
+        ));
     }
 
     #[test]

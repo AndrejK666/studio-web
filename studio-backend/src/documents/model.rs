@@ -734,6 +734,10 @@ pub struct DocumentBinding {
     /// anything is. `None` alongside `conforms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validation: Option<ValidationReport>,
+    /// The capability keys the file's front matter declares. Read by the
+    /// Composer for a bound file the same way it reads an authored document's.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     /// Digest of the content last classified/validated, so the caller can tell
     /// a stale verdict from a current one after a re-sync.
     pub content_sha: String,
