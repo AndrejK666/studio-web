@@ -976,13 +976,27 @@ fn gdl_string(s: &str) -> String {
     out
 }
 
+/// Which corpus a description names, and at which commit.
+#[derive(Debug, Clone, Copy)]
+pub struct CorpusPin<'a> {
+    pub url: &'a str,
+    pub rev: &'a str,
+}
+
 /// The `product.gdl` for a composition. `default_profile` must be one of
 /// [`PROFILES`].
+///
+/// With a `pin`, the corpus is a git source at the commit the composition was
+/// checked against, so the description says by itself what it was built from
+/// and needs no `../gears-rust` beside it; the IDE brings that commit in when
+/// it opens the product. Without one (a corpus whose commit is unknown), the
+/// sibling checkout, as before.
 pub fn render_product_gdl(
     product_id: &str,
     name: &str,
     composition: &Composition,
     default_profile: &str,
+    pin: Option<CorpusPin<'_>>,
 ) -> String {
     let mut gears = String::new();
     for g in &composition.gears {
@@ -1007,12 +1021,32 @@ pub fn render_product_gdl(
         }
     }
     let id = gdl_string(product_id);
+    let (from, at) = match pin {
+        Some(p) => (
+            format!(
+                "# gears come from `{CORPUS_SOURCE_ID}` at the commit this was checked against;\n\
+                 # the Studio IDE brings that commit in when it opens the product. From a\n\
+                 # checkout of `{CORPUS_SOURCE_ID}` at that commit, resolve it with"
+            ),
+            format!(
+                "git(url = {}, rev = {})",
+                gdl_string(p.url),
+                gdl_string(p.rev)
+            ),
+        ),
+        None => (
+            format!(
+                "# gears come from the `{CORPUS_SOURCE_ID}` checkout beside this repository in a\n\
+                 # Studio workspace. Resolve it with"
+            ),
+            format!("path({})", gdl_string(&format!("../{CORPUS_SOURCE_ID}"))),
+        ),
+    };
     format!(
         "# The product this project ships, as Gearbox composes it.\n\
          #\n\
          # Written by Constructor Studio from the gears picked for the project. The\n\
-         # gears come from the `{src}` checkout beside this repository in a Studio\n\
-         # workspace. Resolve it with\n\
+         {from}\n\
          #\n\
          #   gearbox resolve --root ../{src} --product product.gdl --profile dev\n\
          #\n\
@@ -1022,7 +1056,7 @@ pub fn render_product_gdl(
          \x20   id = {id},\n\
          \x20   name = {name},\n\
          \x20   version = \"0.1.0\",\n\
-         \x20   sources = [source(id = {src_s}, at = path(\"../{src}\"))],\n\
+         \x20   sources = [source(id = {src_s}, at = {at})],\n\
          \x20   profiles = [\n\
          \x20       embedded(id = \"dev\"),\n\
          \x20       self_hosted(id = \"local\", host = {id}, worker_discovery = \"directory\",\n\
@@ -1507,12 +1541,20 @@ impl Gearbox {
     /// scaffold, so a gear Studio creates is described the way Gearbox Studio
     /// describes one. Dry run: nothing is written; the text is returned.
     pub async fn scaffold_gdl(&self, spec: GearScaffold) -> anyhow::Result<String> {
-        let (corpus, _, _) = self.ensure_corpus().await?;
         let bin = self.cfg.bin.clone();
         let scratch =
             std::env::temp_dir().join(format!("studio-gearbox-scaffold-{}", uuid::Uuid::new_v4()));
         let result = tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(&scratch)?;
+            // **An empty root, named for the corpus, not the corpus checkout.**
+            // The RPC takes a root's source id from its directory's name, and
+            // the checkout lives at `gearbox__gears_rust` (`clone_or_update`'s
+            // layout), which is not a valid id -- the engine refused every
+            // scaffold with "no source root is open". The CLI calls pass
+            // `--source-id`; the RPC has no such parameter. Nor does the
+            // scaffold read the corpus: the host's spec, trait and SDK arrive
+            // in the params, taken from the catalogue.
+            let root = scratch.join(CORPUS_SOURCE_ID);
+            std::fs::create_dir_all(&root)?;
             let params = serde_json::json!({
                 "id": spec.crate_name,
                 "name": spec.name,
@@ -1528,7 +1570,7 @@ impl Gearbox {
                 "destination_dir": scratch.join("gear").to_string_lossy(),
                 "dry_run": true,
             });
-            let answer = rpc_once(&bin, &corpus, &scratch, "gearbox/gear/scaffold", params);
+            let answer = rpc_once(&bin, &root, &scratch, "gearbox/gear/scaffold", params);
             let _ = std::fs::remove_dir_all(&scratch);
             answer
         })
@@ -1553,8 +1595,15 @@ impl Gearbox {
         }
         let (corpus, commit, catalogue) = self.ensure_corpus().await?;
         let composition = compose(&catalogue, &input.gears);
-        let product_gdl =
-            render_product_gdl(&input.product_id, &input.name, &composition, &input.profile);
+        let url = self.current_source().url;
+        let pin = commit.as_deref().map(|rev| CorpusPin { url: &url, rev });
+        let product_gdl = render_product_gdl(
+            &input.product_id,
+            &input.name,
+            &composition,
+            &input.profile,
+            pin,
+        );
 
         let bin = self.cfg.bin.clone();
         let gdl = product_gdl.clone();
@@ -2036,12 +2085,34 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_description_names_its_corpus_commit_and_no_sibling_path() {
+        let c = compose(&catalogue(), &names(&["api-gateway"]));
+        let gdl = render_product_gdl(
+            "my-shop",
+            "My Shop",
+            &c,
+            "dev",
+            Some(CorpusPin {
+                url: "https://github.com/MikeFalcon77/gears-rust.git",
+                rev: "a0a42cec5e68b313c31e3ceb00254b0df89cd8b8",
+            }),
+        );
+        assert!(
+            gdl.contains(
+                r#"source(id = "gears-rust", at = git(url = "https://github.com/MikeFalcon77/gears-rust.git", rev = "a0a42cec5e68b313c31e3ceb00254b0df89cd8b8"))"#
+            ),
+            "{gdl}"
+        );
+        assert!(!gdl.contains(r#"path("../gears-rust")"#));
+    }
+
+    #[test]
     fn the_description_names_every_profile_and_nests_plugins() {
         let c = compose(
             &catalogue(),
             &names(&["api-gateway", "static-authn-plugin"]),
         );
-        let gdl = render_product_gdl("my-shop", "My \"Shop\"", &c, "local");
+        let gdl = render_product_gdl("my-shop", "My \"Shop\"", &c, "local", None);
         assert!(gdl.contains("id = \"my-shop\""));
         assert!(gdl.contains("name = \"My \\\"Shop\\\"\""));
         assert!(gdl.contains("source(id = \"gears-rust\", at = path(\"../gears-rust\"))"));

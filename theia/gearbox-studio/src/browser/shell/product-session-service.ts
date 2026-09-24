@@ -33,6 +33,7 @@ import { StorageService } from "@theia/core/lib/browser/storage-service";
 
 import { hasUnsavedEdits } from "./unsaved";
 import { Emitter, Event } from "@theia/core/lib/common/event";
+import type { SourceDecl } from "../../common/generated/SourceDecl";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import { MonacoTextModelService } from "@theia/monaco/lib/browser/monaco-text-model-service";
 import { inject, injectable } from "@theia/core/shared/inversify";
@@ -496,7 +497,18 @@ export class ProductSessionService {
     }
     if (!this.current(generation)) return false;
 
-    const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at));
+    // Constructor Studio: a description Studio writes names its corpus as a
+    // git source at a commit; that commit is brought into the workspace first.
+    const gitRoots: Record<string, string> = {};
+    for (const [id, source] of Object.entries(intent.sources ?? {}) as [string, SourceDecl][]) {
+      if (source.kind !== "git") continue;
+      const dir = await this.service
+        .materializeGitSource(id, source.url, { rev: source.rev, tag: source.tag, branch: source.branch })
+        .catch(() => undefined);
+      if (dir !== undefined) gitRoots[id] = dir;
+    }
+    if (!this.current(generation)) return false;
+    const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at), gitRoots);
     const usable = sourcesUsable(ref.label, sources);
     if (!usable.ok) return this.failStage("describe", usable.reason, generation);
     const roots = [...sources.roots];

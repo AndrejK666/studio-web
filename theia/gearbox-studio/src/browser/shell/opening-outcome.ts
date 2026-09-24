@@ -53,6 +53,8 @@ export const GO: Outcome = { ok: true };
 export function sourceRootsOf(
   intent: Pick<ProductIntent, "sources">,
   resolve: (at: string) => string,
+  /** Constructor Studio: git sources already brought in, by source id. */
+  gitRoots: Readonly<Record<string, string>> = {},
 ): { readonly roots: readonly string[]; readonly refused: readonly string[] } {
   const roots: string[] = [];
   const refused: string[] = [];
@@ -62,6 +64,8 @@ export function sourceRootsOf(
   for (const [id, source] of declared) {
     if (source.kind === "path") {
       roots.push(resolve(source.at));
+    } else if (source.kind === "git" && gitRoots[id] !== undefined) {
+      roots.push(gitRoots[id] as string);
     } else {
       refused.push(id);
     }

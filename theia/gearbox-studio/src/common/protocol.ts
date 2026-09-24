@@ -242,6 +242,18 @@ export interface GearboxService {
    */
   listProducts(): Promise<ProductRef[]>;
 
+  /**
+   * Constructor Studio: a directory named `id` holding the git source `url` at
+   * `ref`, brought into the workspace when no checkout already is that commit.
+   * For a description that names its corpus as `git(url, rev)`. `undefined`
+   * when it cannot be had.
+   */
+  materializeGitSource(
+    id: string,
+    url: string,
+    ref: { rev?: string | null; tag?: string | null; branch?: string | null },
+  ): Promise<string | undefined>;
+
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */
   loadProduct(path: string): Promise<ProductLoadResult>;
