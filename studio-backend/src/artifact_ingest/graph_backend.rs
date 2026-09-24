@@ -364,12 +364,44 @@ fn excerpt(s: &str, max_chars: usize) -> String {
     s[..end].to_string()
 }
 
+/// `value` with every U+0000 removed from its strings and object keys.
+///
+/// graph-storage keeps the payload in a `jsonb` column and the name and search
+/// text in `text` columns, and PostgreSQL can hold a NUL in neither: the
+/// insert fails with `unsupported Unicode escape sequence`, which the gear
+/// reports as `unknown`, and the whole batch is lost. A NUL is valid UTF-8, so
+/// a source file can carry one — `scripts/check-api-usage.mjs` in this very
+/// repository does — and one such file dead-lettered every repository sync.
+/// Dropping the character changes nothing a reader can see; refusing the file
+/// would lose the rest of it.
+pub(crate) fn without_nul(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(str_without_nul(s)),
+        Value::Array(items) => Value::Array(items.into_iter().map(without_nul).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (str_without_nul(k), without_nul(v)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// `s` without U+0000 — see [`without_nul`]. Allocates only when there is one.
+pub(crate) fn str_without_nul(s: String) -> String {
+    if s.contains('\0') {
+        s.replace('\0', "")
+    } else {
+        s
+    }
+}
+
 /// The payload to store: the node value minus file content, plus a bounded
 /// `text_excerpt` of that content, all under the gear's per-node ceiling
 /// (drop the free-text `body` if it pushes us over).
 fn bounded_payload(value: &Value) -> Value {
-    let mut obj = match value {
-        Value::Object(m) => m.clone(),
+    let mut obj = match without_nul(value.clone()) {
+        Value::Object(m) => m,
         _ => serde_json::Map::new(),
     };
     // File content is referenced by has_text, never stored whole in the graph.
@@ -407,7 +439,7 @@ fn to_node_spec(n: &GtsNode) -> NodeSpec {
     NodeSpec {
         node_key: n.instance_id.clone(),
         type_id: gts::graph_type_id(n.type_id),
-        name: Some(node_name(&n.value)).filter(|s| !s.is_empty()),
+        name: Some(str_without_nul(node_name(&n.value))).filter(|s| !s.is_empty()),
         payload: Some(bounded_payload(&n.value)),
         expected_version: None,
     }
@@ -982,5 +1014,36 @@ mod tests {
     fn an_empty_text_leaves_no_excerpt() {
         let payload = bounded_payload(&json!({ "path": "a.bin", "text": "  " }));
         assert!(payload.get("text_excerpt").is_none());
+    }
+
+    /// PostgreSQL stores no NUL in `jsonb` or `text`; one in a source file
+    /// used to fail the whole batch as `unknown`.
+    #[test]
+    fn a_nul_in_file_text_never_reaches_the_gear() {
+        let node = GtsNode {
+            type_id: gts::ALL_NODE_TYPES[0],
+            instance_id: "k".into(),
+            value: json!({
+                "title": "wild\u{0}card.mjs",
+                "path": "scripts/wild\u{0}card.mjs",
+                "text": "const WILDCARD = '\u{0}';",
+                "labels": ["a\u{0}b"],
+                "nested": { "k\u{0}ey": "v\u{0}" },
+            }),
+        };
+        let spec = to_node_spec(&node);
+        assert_eq!(spec.name.as_deref(), Some("wildcard.mjs"));
+        let payload = spec.payload.expect("a payload");
+        assert!(!serde_json::to_string(&payload).unwrap().contains("\\u0000"));
+        assert_eq!(payload["text_excerpt"], "const WILDCARD = '';");
+        assert_eq!(payload["path"], "scripts/wildcard.mjs");
+        assert_eq!(payload["labels"][0], "ab");
+        assert_eq!(payload["nested"]["key"], "v");
+    }
+
+    #[test]
+    fn a_payload_without_nul_is_left_as_it_is() {
+        let value = json!({ "a": "plain", "n": 3, "b": [true, null, "x"] });
+        assert_eq!(without_nul(value.clone()), value);
     }
 }

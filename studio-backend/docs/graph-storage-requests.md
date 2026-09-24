@@ -169,6 +169,24 @@ list of entity ids on the model node, so the dropped ones are simply not read
 back. An entity that returns is adopted again for free. This works, and it
 means the graph accumulates rows nothing will ever collect.
 
+The components catalogue learned the same lesson the hard way. Its sync pruned
+a component that left its source with `delete_node`; the keys are a uuid5 of
+the name, so when the component came back every later sync aborted on
+`node key … is tombstoned and cannot be re-ingested before purge`, and nothing
+else in that run was stored either. The catalogue now retires instead of
+deleting: it overwrites the payload with a `studio_catalog_retired` marker and
+its reads skip it, and the next ingest of the key brings the component back.
+Keys tombstoned before that change stay dead; the sync skips them (and their
+edges) with a warning rather than failing, which it can only do by reading the
+key out of the error's detail — the refusal is a plain `CAS_CONFLICT` abort.
+A distinct reason (say `NODE_KEY_TOMBSTONED`) carrying the key would make that
+mechanical.
+
+Two smaller findings from the same investigation: edges *are* revived by a
+re-ingest (`upsert_edge` clears `deleted_at`), unlike nodes, and an edge's
+endpoint lookup does not filter tombstoned nodes, so a batch can attach a live
+edge to a deleted node — which Soft Delete rule 2 says cannot happen.
+
 *Need:* either a purge on the SDK, or a documented way to reuse a tombstoned
 key. Even "tombstones are purged after N days" would let us plan.
 
@@ -353,6 +371,22 @@ is a date rather than a fix.
 
 ---
 
+## 7. Refuse a NUL as a validation error, not as `unknown`
+
+PostgreSQL can store U+0000 in neither `jsonb` nor `text`. A payload string
+carrying one — valid UTF-8, and present in real source files (this repository's
+`scripts/check-api-usage.mjs` has one) — reaches the insert and fails there
+with `unsupported Unicode escape sequence`. The gear maps it to `unknown:
+internal error`, the detail never leaves the gear's log, and the batch is lost:
+every repository sync of studio-web dead-lettered on that one file. We found
+the cause only in the database server's own log.
+
+We now strip NUL from every payload string, key and name before ingest. *Need:*
+validate it at the boundary — an `invalid_argument` naming `nodes[i]/payload/…`,
+through the per-item report — or normalize it, and say which in the contract.
+
+---
+
 ## What we are not asking for
 
 **GTS major versions of a type** (`requirement.v2~` alongside `v1~`). We looked
@@ -376,6 +410,7 @@ sooner.
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
 | 5 | `$filter`/`$orderby` on payload attributes | key/name/timestamps only | every listing page re-reads the whole tenant graph — 144 projection calls and 31 MB per request, an 8.06 s p95 |
 | 6 | A cursor over edges | adjacency capped at 1,000, traversal at 10,000, neither pages | the relation graph comes back incomplete and says it is complete — 5,944 of 79,184 relations unreachable |
+| 7 | A NUL in a payload is a validation error | the insert fails as `unknown: internal error` | one file with a NUL dead-lettered every sync of its repository |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is

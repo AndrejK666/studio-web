@@ -16,7 +16,7 @@ pub(crate) mod clone;
 mod comment_threads;
 mod graph;
 #[cfg(feature = "graph")]
-mod graph_backend;
+pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod ingest_task;
 pub mod port;

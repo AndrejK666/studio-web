@@ -49,6 +49,10 @@ pub(crate) trait CatalogSink: Send + Sync {
     /// Remove one node by instance id. Reverting an override is deleting the
     /// node that carries it, so a catalogue that can only upsert is a
     /// catalogue whose overrides are one-way.
+    ///
+    /// A removed node must be writable again under the same key: catalogue
+    /// keys are deterministic, and a component that returns to its source
+    /// comes back under the id it had.
     async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()>;
     /// Every node type the graph holds for this tenant — not only the ones
     /// this gear registered. Which of them are components is a judgement an
@@ -265,6 +269,87 @@ const NODE_INGEST_CHUNK: usize = 32;
 #[cfg(feature = "graph")]
 const EDGE_INGEST_CHUNK: usize = 256;
 
+/// The payload of a catalogue node that is gone from its source.
+///
+/// Removing a catalogue node cannot be a graph-storage delete. The gear's
+/// delete is a tombstone, and "a tombstoned `node_key` is not reusable before
+/// purge" (graph-storage DESIGN § Soft Delete Contract, rule 4) — while v1 has
+/// neither purge nor undelete (both p2). Every catalogue key is deterministic,
+/// a uuid5 of the component's name, so a component that leaves its source and
+/// comes back, or a field schema reverted and then saved again, needs the key
+/// it had. After a tombstone that key can never be written again, and the
+/// ingest that tries aborts its whole batch.
+///
+/// So the catalogue retires a node instead: it overwrites the payload with
+/// this marker, keeping the key live, and every read of this sink skips it.
+/// The next ingest of the key replaces the marker with the component again —
+/// an ordinary upsert, which is exactly what the gear's contract offers.
+#[cfg(feature = "graph")]
+const RETIRED_MARKER: &str = "studio_catalog_retired";
+
+#[cfg(feature = "graph")]
+fn retired_payload() -> Value {
+    json!({ RETIRED_MARKER: true })
+}
+
+/// Whether a payload read back is a retired node rather than a component.
+#[cfg(feature = "graph")]
+fn is_retired(payload: Option<&Value>) -> bool {
+    payload
+        .and_then(|p| p.get(RETIRED_MARKER))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The key graph-storage refused because it is tombstoned, when that is what
+/// `error` says.
+///
+/// Keys this sink tombstoned before it learned to retire stay unwritable until
+/// the gear can purge them. One of them must not keep the rest of a sync out
+/// of the graph, so the sink skips it — and has to learn which key it was from
+/// the detail, because the gear reports this refusal as a generic
+/// `CAS_CONFLICT` abort with the key named only in the text.
+#[cfg(feature = "graph")]
+fn tombstoned_key(error: &toolkit_canonical_errors::CanonicalError) -> Option<String> {
+    if !matches!(
+        error,
+        toolkit_canonical_errors::CanonicalError::Aborted { .. }
+    ) {
+        return None;
+    }
+    tombstoned_key_in(error.detail()).map(str::to_owned)
+}
+
+/// The backticked key in the gear's "node key `…` is tombstoned" detail.
+#[cfg(feature = "graph")]
+fn tombstoned_key_in(detail: &str) -> Option<&str> {
+    if !detail.contains("is tombstoned") {
+        return None;
+    }
+    let start = detail.find('`')? + 1;
+    let len = detail[start..].find('`')?;
+    Some(&detail[start..start + len]).filter(|k| !k.is_empty())
+}
+
+#[cfg(feature = "graph")]
+fn node_batch(
+    nodes: Vec<graph_storage_sdk::models::NodeSpec>,
+    embed: bool,
+) -> graph_storage_sdk::models::IngestRequest {
+    use graph_storage_sdk::models::{IngestOptions, IngestRequest};
+    IngestRequest {
+        nodes,
+        edges: Vec::new(),
+        options: IngestOptions {
+            create_phantoms: Some(false),
+            report_per_item: false,
+            embed: Some(embed),
+        },
+        replace_scope: None,
+        idempotency_key: None,
+    }
+}
+
 #[cfg(feature = "graph")]
 #[async_trait]
 impl CatalogSink for GraphSink {
@@ -299,6 +384,7 @@ impl CatalogSink for GraphSink {
         nodes: &[GtsNode],
         edges: &[GtsEdge],
     ) -> anyhow::Result<()> {
+        use crate::artifact_ingest::graph_backend::{str_without_nul, without_nul};
         use graph_storage_sdk::models::{EdgeSpec, IngestOptions, IngestRequest, NodeSpec};
         if nodes.is_empty() && edges.is_empty() {
             return Ok(());
@@ -307,35 +393,49 @@ impl CatalogSink for GraphSink {
         // this preserves graph integrity even when the boundaries split a
         // gear from one of its many crate-version nodes. Re-running after a
         // transient failure is safe: both node keys and edge tuples upsert.
+        let mut unwritable: BTreeSet<String> = BTreeSet::new();
         for chunk in nodes.chunks(NODE_INGEST_CHUNK) {
-            let node_specs: Vec<NodeSpec> = chunk
+            let mut node_specs: Vec<NodeSpec> = chunk
                 .iter()
                 .map(|n| NodeSpec {
                     node_key: n.instance_id.clone(),
                     type_id: gts::graph_type_id(n.type_id),
-                    name: Some(node_name(&n.value)),
-                    payload: Some(n.value.clone()),
+                    name: Some(str_without_nul(node_name(&n.value))),
+                    payload: Some(without_nul(n.value.clone())),
                     expected_version: None,
                 })
                 .collect();
-            self.client
-                .ingest(
-                    ctx,
-                    IngestRequest {
-                        nodes: node_specs,
-                        edges: Vec::new(),
-                        options: IngestOptions {
-                            create_phantoms: Some(false),
-                            report_per_item: false,
-                            embed: Some(true),
-                        },
-                        replace_scope: None,
-                        idempotency_key: None,
+            // A key tombstoned before this sink retired instead of deleting
+            // aborts the batch it is in. Drop it and write the rest; the gear
+            // names one key per refusal, so this loops at most once per node.
+            while !node_specs.is_empty() {
+                match self
+                    .client
+                    .ingest(ctx, node_batch(node_specs.clone(), true))
+                    .await
+                {
+                    Ok(_) => break,
+                    Err(e) => match tombstoned_key(&e) {
+                        Some(key) if node_specs.iter().any(|s| s.node_key == key) => {
+                            tracing::warn!(
+                                node_key = %key,
+                                "components-catalog: graph-storage holds this key tombstoned and \
+                                 cannot re-ingest it before purge; skipped"
+                            );
+                            node_specs.retain(|s| s.node_key != key);
+                            unwritable.insert(key);
+                        }
+                        _ => return Err(anyhow!("graph-storage node ingest: {e}")),
                     },
-                )
-                .await
-                .map_err(|e| anyhow!("graph-storage node ingest: {e}"))?;
+                }
+            }
         }
+        // An edge to a node that was not written would be refused (phantoms are
+        // off) and would take its batch with it.
+        let edges: Vec<&GtsEdge> = edges
+            .iter()
+            .filter(|e| !unwritable.contains(&e.from) && !unwritable.contains(&e.to))
+            .collect();
 
         for chunk in edges.chunks(EDGE_INGEST_CHUNK) {
             let edge_specs: Vec<EdgeSpec> = chunk
@@ -394,6 +494,9 @@ impl CatalogSink for GraphSink {
                 .await
                 .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
             for row in page.items {
+                if is_retired(row.payload.as_ref()) {
+                    continue;
+                }
                 let Some(type_id) = gts::our_type_from_graph(&row.type_id) else {
                     continue;
                 };
@@ -413,15 +516,38 @@ impl CatalogSink for GraphSink {
         Ok(out)
     }
 
-    /// A soft delete in graph-storage, and idempotent here: deleting a node
-    /// that is already gone is what "revert to the built-in" means when it was
-    /// never overridden, and a caller should not have to know which.
+    /// A retire, not a graph-storage delete — see [`RETIRED_MARKER`] for why a
+    /// tombstone would make the key unwritable. Idempotent: removing a node
+    /// that is absent or already retired is what "revert to the built-in"
+    /// means when it was never overridden, and a caller should not have to
+    /// know which.
     async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
-        match self.client.delete_node(ctx, &instance_id.to_string()).await {
-            Ok(_) => Ok(()),
-            Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(()),
-            Err(e) => Err(anyhow!("graph-storage delete: {e}")),
+        use graph_storage_sdk::models::NodeSpec;
+        let key = instance_id.to_string();
+        // The type is needed to write the key again: a same-key ingest may not
+        // change it.
+        let view = match self.client.get_node(ctx, &key, Some(1)).await {
+            Ok(view) => view,
+            Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => return Ok(()),
+            Err(e) => return Err(anyhow!("graph-storage read before retire: {e}")),
+        };
+        if is_retired(view.payload.as_ref()) {
+            return Ok(());
         }
+        let spec = NodeSpec {
+            node_key: key,
+            type_id: view.type_id,
+            name: None,
+            payload: Some(retired_payload()),
+            expected_version: None,
+        };
+        // Not embedded: the marker has nothing to find, and skipping the
+        // embedding makes the old vector stale, so it no longer ranks.
+        self.client
+            .ingest(ctx, node_batch(vec![spec], false))
+            .await
+            .map_err(|e| anyhow!("graph-storage retire: {e}"))?;
+        Ok(())
     }
 
     async fn node_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GraphNodeType>> {
@@ -481,6 +607,9 @@ impl CatalogSink for GraphSink {
                 .await
                 .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
             for row in page.items {
+                if is_retired(row.payload.as_ref()) {
+                    continue;
+                }
                 out.push(CatalogNodeView {
                     type_id: gts::leaf_type_id(&row.type_id),
                     instance_id: row.node_key,
@@ -518,7 +647,11 @@ impl CatalogSink for GraphSink {
                 .project_nodes(ctx, &patterns, query.clone())
                 .await
                 .map_err(|e| anyhow!("graph-storage projection: {e}"))?;
-            total += page.items.len();
+            total += page
+                .items
+                .iter()
+                .filter(|row| !is_retired(row.payload.as_ref()))
+                .count();
             if total >= cap {
                 return Ok((cap, true));
             }
@@ -2668,5 +2801,431 @@ mod type_count_tests {
         assert_eq!(counts[0].leaf_id, FAMILY);
         assert_eq!(counts[0].count, 0);
         assert!(!counts[0].capped);
+    }
+}
+
+/// The graph-storage sink against a fake of the gear that keeps its
+/// soft-delete rule: a tombstoned key refuses re-ingest before purge.
+#[cfg(all(test, feature = "graph"))]
+mod graph_sink_tests {
+    use super::super::rest::StudioComponentsCatalogError;
+    use super::*;
+    use graph_storage_sdk::GraphStorageClientV1;
+    use graph_storage_sdk::models::{
+        DeleteOutcome, EdgeKey, ElementEnvelope, GraphRevision, GtsTypeId, IngestCounts,
+        IngestOutcome, IngestRequest, NeighborhoodRequest, NodeKey, NodeRow, NodeView, Page,
+        SearchRequest, SearchResponse, Subject, TraversalResponse, TraverseRequest, TypeQuery,
+        TypeRecord, TypeRegistration,
+    };
+    use toolkit_canonical_errors::CanonicalError;
+
+    #[derive(Clone)]
+    struct Row {
+        type_id: String,
+        payload: Value,
+        tombstoned: bool,
+    }
+
+    #[derive(Default)]
+    struct FakeGraph {
+        nodes: Mutex<BTreeMap<String, Row>>,
+        edges: Mutex<Vec<(String, String)>>,
+        deletes: Mutex<usize>,
+    }
+
+    impl FakeGraph {
+        fn tombstone(&self, key: &str, type_id: &str) {
+            self.nodes.lock().unwrap().insert(
+                key.to_owned(),
+                Row {
+                    type_id: type_id.to_owned(),
+                    payload: json!({}),
+                    tombstoned: true,
+                },
+            );
+        }
+    }
+
+    fn envelope(key: &str) -> ElementEnvelope {
+        let subject = Subject {
+            subject_id: Uuid::nil(),
+            subject_type: None,
+        };
+        ElementEnvelope {
+            tenant_id: Uuid::nil(),
+            key: key.to_owned(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            created_by: subject.clone(),
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_by: subject,
+            deleted_at: None,
+            deleted_by: None,
+            graph_revision: GraphRevision {
+                source_epoch: 0,
+                revision: 0,
+            },
+        }
+    }
+
+    fn revision() -> GraphRevision {
+        GraphRevision {
+            source_epoch: 0,
+            revision: 0,
+        }
+    }
+
+    fn not_found(key: &str) -> CanonicalError {
+        StudioComponentsCatalogError::not_found("not found")
+            .with_resource(key.to_owned())
+            .create()
+    }
+
+    #[async_trait]
+    impl GraphStorageClientV1 for FakeGraph {
+        async fn register_types(
+            &self,
+            _ctx: &SecurityContext,
+            _batch: Vec<TypeRegistration>,
+        ) -> Result<Vec<TypeRecord>, CanonicalError> {
+            Ok(Vec::new())
+        }
+        async fn get_type(
+            &self,
+            _ctx: &SecurityContext,
+            _type_id: &GtsTypeId,
+        ) -> Result<TypeRecord, CanonicalError> {
+            unimplemented!()
+        }
+        async fn list_types(
+            &self,
+            _ctx: &SecurityContext,
+            _query: TypeQuery,
+        ) -> Result<Page<TypeRecord>, CanonicalError> {
+            unimplemented!()
+        }
+
+        /// Atomic like the gear: one tombstoned key and nothing is written.
+        async fn ingest(
+            &self,
+            _ctx: &SecurityContext,
+            request: IngestRequest,
+        ) -> Result<IngestOutcome, CanonicalError> {
+            let mut nodes = self.nodes.lock().unwrap();
+            for spec in &request.nodes {
+                if nodes.get(&spec.node_key).is_some_and(|r| r.tombstoned) {
+                    return Err(StudioComponentsCatalogError::aborted(format!(
+                        "node key `{}` is tombstoned and cannot be re-ingested before purge",
+                        spec.node_key
+                    ))
+                    .with_reason("CAS_CONFLICT")
+                    .create());
+                }
+                assert!(
+                    !nodes
+                        .get(&spec.node_key)
+                        .is_some_and(|r| r.type_id != spec.type_id),
+                    "a same-key ingest may not change the type"
+                );
+                if let Some(payload) = &spec.payload {
+                    assert!(!payload.to_string().contains("\\u0000"));
+                }
+            }
+            for spec in &request.edges {
+                for end in [&spec.src_node_key, &spec.dst_node_key] {
+                    assert!(
+                        nodes.get(end).is_some_and(|r| !r.tombstoned),
+                        "edge endpoint `{end}` is not a live node"
+                    );
+                }
+            }
+            for spec in request.nodes {
+                nodes.insert(
+                    spec.node_key,
+                    Row {
+                        type_id: spec.type_id,
+                        payload: spec.payload.unwrap_or_else(|| json!({})),
+                        tombstoned: false,
+                    },
+                );
+            }
+            self.edges.lock().unwrap().extend(
+                request
+                    .edges
+                    .into_iter()
+                    .map(|e| (e.src_node_key, e.dst_node_key)),
+            );
+            Ok(IngestOutcome {
+                revision: revision(),
+                replayed: false,
+                counts: IngestCounts::default(),
+                per_item_nodes: None,
+                per_item_edges: None,
+            })
+        }
+
+        async fn delete_node(
+            &self,
+            _ctx: &SecurityContext,
+            node_key: &NodeKey,
+        ) -> Result<DeleteOutcome, CanonicalError> {
+            *self.deletes.lock().unwrap() += 1;
+            let mut nodes = self.nodes.lock().unwrap();
+            let row = nodes.get_mut(node_key).ok_or_else(|| not_found(node_key))?;
+            row.tombstoned = true;
+            Ok(DeleteOutcome {
+                revision: revision(),
+                tombstoned_nodes: 1,
+                tombstoned_edges: 0,
+            })
+        }
+        async fn delete_edge(
+            &self,
+            _ctx: &SecurityContext,
+            _edge_key: &EdgeKey,
+        ) -> Result<DeleteOutcome, CanonicalError> {
+            unimplemented!()
+        }
+
+        async fn get_node(
+            &self,
+            _ctx: &SecurityContext,
+            node_key: &NodeKey,
+            _adjacency_limit: Option<u32>,
+        ) -> Result<NodeView, CanonicalError> {
+            let nodes = self.nodes.lock().unwrap();
+            let row = nodes
+                .get(node_key)
+                .filter(|r| !r.tombstoned)
+                .ok_or_else(|| not_found(node_key))?;
+            Ok(NodeView {
+                node_key: node_key.clone(),
+                type_id: row.type_id.clone(),
+                name: None,
+                payload: Some(row.payload.clone()),
+                has_embedding: false,
+                labels: Vec::new(),
+                adjacency: Vec::new(),
+                adjacency_truncated: false,
+                envelope: envelope(node_key),
+            })
+        }
+
+        async fn project_nodes(
+            &self,
+            _ctx: &SecurityContext,
+            type_patterns: &[String],
+            _query: toolkit_odata::ODataQuery,
+        ) -> Result<toolkit_odata::Page<NodeRow>, CanonicalError> {
+            let nodes = self.nodes.lock().unwrap();
+            let items = nodes
+                .iter()
+                .filter(|(_, r)| !r.tombstoned && type_patterns.contains(&r.type_id))
+                .map(|(k, r)| NodeRow {
+                    node_key: k.clone(),
+                    type_id: r.type_id.clone(),
+                    name: None,
+                    payload: Some(r.payload.clone()),
+                    envelope: envelope(k),
+                })
+                .collect();
+            Ok(toolkit_odata::Page::new(
+                items,
+                toolkit_odata::PageInfo {
+                    next_cursor: None,
+                    prev_cursor: None,
+                    limit: 200,
+                },
+            ))
+        }
+
+        async fn search(
+            &self,
+            _ctx: &SecurityContext,
+            _request: SearchRequest,
+        ) -> Result<SearchResponse, CanonicalError> {
+            unimplemented!()
+        }
+        async fn traverse(
+            &self,
+            _ctx: &SecurityContext,
+            _request: TraverseRequest,
+        ) -> Result<TraversalResponse, CanonicalError> {
+            unimplemented!()
+        }
+        async fn neighborhood(
+            &self,
+            _ctx: &SecurityContext,
+            _request: NeighborhoodRequest,
+        ) -> Result<TraversalResponse, CanonicalError> {
+            unimplemented!()
+        }
+        async fn revision(&self, _ctx: &SecurityContext) -> Result<GraphRevision, CanonicalError> {
+            Ok(revision())
+        }
+    }
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca9))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(0x7e4a49))
+            .build()
+            .expect("security context")
+    }
+
+    fn sink() -> (Arc<FakeGraph>, GraphSink) {
+        let fake = Arc::new(FakeGraph::default());
+        (fake.clone(), GraphSink::new(fake))
+    }
+
+    fn gear(name: &str) -> GtsNode {
+        gts::gear_node(name, json!({ "name": name, "synced_from": "org/gears" }))
+    }
+
+    async fn names(sink: &GraphSink) -> Vec<String> {
+        let mut names: Vec<String> = sink
+            .list(&ctx(), Some(gts::GEAR_TYPE))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|n| n.value["name"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The failure on the stand: a pruned component that came back to its
+    /// source aborted every later sync, because its key had been tombstoned.
+    #[tokio::test]
+    async fn a_pruned_component_that_comes_back_is_stored_again() {
+        let (fake, sink) = sink();
+        let ctx = ctx();
+        sink.upsert(&ctx, &[gear("alpha"), gear("beta")], &[])
+            .await
+            .unwrap();
+
+        sink.delete(&ctx, &gts::gear_instance_id("alpha"))
+            .await
+            .unwrap();
+        assert_eq!(names(&sink).await, vec!["beta".to_owned()]);
+        assert_eq!(
+            *fake.deletes.lock().unwrap(),
+            0,
+            "a catalogue removal must never tombstone the key"
+        );
+
+        sink.upsert(&ctx, &[gear("alpha"), gear("beta")], &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            names(&sink).await,
+            vec!["alpha".to_owned(), "beta".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retired_node_is_neither_counted_nor_listed_by_type() {
+        let (_, sink) = sink();
+        let ctx = ctx();
+        sink.upsert(&ctx, &[gear("alpha"), gear("beta")], &[])
+            .await
+            .unwrap();
+        sink.delete(&ctx, &gts::gear_instance_id("alpha"))
+            .await
+            .unwrap();
+        let graph_type = gts::graph_type_id(gts::GEAR_TYPE);
+        assert_eq!(
+            sink.count_of_type(&ctx, &graph_type, 100).await.unwrap(),
+            (1, false)
+        );
+        let (views, truncated) = sink
+            .list_of_types(&ctx, std::slice::from_ref(&graph_type), 100)
+            .await
+            .unwrap();
+        assert!(!truncated);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].value["name"], "beta");
+    }
+
+    #[tokio::test]
+    async fn removing_an_absent_or_retired_node_is_a_no_op() {
+        let (_, sink) = sink();
+        let ctx = ctx();
+        sink.delete(&ctx, "never-written").await.unwrap();
+        sink.upsert(&ctx, &[gear("alpha")], &[]).await.unwrap();
+        let key = gts::gear_instance_id("alpha");
+        sink.delete(&ctx, &key).await.unwrap();
+        sink.delete(&ctx, &key).await.unwrap();
+        assert!(names(&sink).await.is_empty());
+    }
+
+    /// A key tombstoned before this sink retired instead stays unwritable
+    /// until the gear can purge it. It must cost that one component, not the
+    /// whole sync.
+    #[tokio::test]
+    async fn a_key_already_tombstoned_is_skipped_with_its_edges_and_the_rest_is_stored() {
+        let (fake, sink) = sink();
+        let ctx = ctx();
+        let dead = gear("dead");
+        fake.tombstone(&dead.instance_id, &gts::graph_type_id(gts::GEAR_TYPE));
+        let live = gear("live");
+        let edges = vec![
+            GtsEdge {
+                type_id: gts::REL_HAS_VERSION,
+                from: live.instance_id.clone(),
+                to: dead.instance_id.clone(),
+            },
+            GtsEdge {
+                type_id: gts::REL_HAS_VERSION,
+                from: live.instance_id.clone(),
+                to: live.instance_id.clone(),
+            },
+        ];
+        sink.upsert(&ctx, &[dead, live.clone()], &edges)
+            .await
+            .unwrap();
+        assert_eq!(names(&sink).await, vec!["live".to_owned()]);
+        assert_eq!(
+            *fake.edges.lock().unwrap(),
+            vec![(live.instance_id.clone(), live.instance_id)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nul_in_a_catalogue_payload_is_dropped_before_the_gear() {
+        let (_, sink) = sink();
+        let node = gts::gear_node("n", json!({ "name": "n", "description": "a\u{0}b" }));
+        sink.upsert(&ctx(), &[node], &[]).await.unwrap();
+        let listed = sink.list(&ctx(), Some(gts::GEAR_TYPE)).await.unwrap();
+        assert_eq!(listed[0].value["description"], "ab");
+    }
+
+    #[test]
+    fn the_tombstoned_key_is_read_from_the_gears_detail() {
+        assert_eq!(
+            tombstoned_key_in(
+                "node key `78ad2322-2729-5c23-8770-c8a7074326a5` is tombstoned and cannot be \
+                 re-ingested before purge"
+            ),
+            Some("78ad2322-2729-5c23-8770-c8a7074326a5")
+        );
+        assert_eq!(
+            tombstoned_key_in("same source generation with different content"),
+            None
+        );
+        assert_eq!(tombstoned_key_in("node key `` is tombstoned"), None);
+    }
+
+    #[test]
+    fn only_an_abort_names_a_tombstoned_key() {
+        let detail = "node key `k` is tombstoned and cannot be re-ingested before purge";
+        let aborted = StudioComponentsCatalogError::aborted(detail)
+            .with_reason("CAS_CONFLICT")
+            .create();
+        assert_eq!(tombstoned_key(&aborted).as_deref(), Some("k"));
+        let other = StudioComponentsCatalogError::not_found(detail)
+            .with_resource("k".to_owned())
+            .create();
+        assert_eq!(tombstoned_key(&other), None);
     }
 }
