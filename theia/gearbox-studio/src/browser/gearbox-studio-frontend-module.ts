@@ -1,6 +1,6 @@
 // Frontend wiring for Gearbox inside Constructor Studio.
 //
-// Ported from Gearbox Studio (github.com/MikeFalcon77/gearbox@7594c25,
+// Ported from Gearbox Studio (github.com/MikeFalcon77/gearbox@3b64969,
 // ide/gearbox-studio). The domain — the catalogue, the product, its edits, the
 // graph, the inspector, the lock, conflicts, generation, the wizards — is
 // bound as it was. What Gearbox Studio did to the shell is not: it was a whole

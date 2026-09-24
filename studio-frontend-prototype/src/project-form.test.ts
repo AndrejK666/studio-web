@@ -207,20 +207,15 @@ describe("stepBlocker", () => {
   });
 });
 
-// The engine resolves a plugin's SDK path inside one source root, so a plugin
-// of a corpus host can only be written into the corpus.
+// A plugin names its point by spec, which the engine joins across sources, so
+// the repository it goes into does not matter -- only that there is a host.
 describe("pluginBlocker", () => {
   const corpusUrl = "https://github.com/MikeFalcon77/gears-rust.git";
 
-  it("writes a plugin only into the corpus's own store", () => {
-    expect(pluginBlocker({ repoMode: "new", storeRepo: null, corpusUrl, host: "cf-gears-authn-resolver" })).toMatch(
-      /repository of the SDK/,
-    );
+  it("writes a plugin into a new repository as readily as into the corpus", () => {
+    expect(pluginBlocker({ repoMode: "new", storeRepo: null, corpusUrl, host: "cf-gears-authn-resolver::x" })).toBeNull();
     expect(
-      pluginBlocker({ repoMode: "existing", storeRepo: "acme/gears", corpusUrl, host: "cf-gears-authn-resolver" }),
-    ).toMatch(/mikefalcon77\/gears-rust/);
-    expect(
-      pluginBlocker({ repoMode: "existing", storeRepo: "MikeFalcon77/gears-rust", corpusUrl, host: "cf-gears-authn-resolver" }),
+      pluginBlocker({ repoMode: "existing", storeRepo: "acme/gears", corpusUrl, host: "cf-gears-authn-resolver::x" }),
     ).toBeNull();
   });
 

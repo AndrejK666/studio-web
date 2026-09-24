@@ -5,7 +5,7 @@ resolution, the lock, conflicts and generation, as Theia views beside
 Studio's own.
 
 **Provenance.** Ported from Gearbox Studio,
-[`MikeFalcon77/gearbox@7594c25`](https://github.com/MikeFalcon77/gearbox/tree/7594c25ef165916387d1613143d71a0d456415c6/ide/gearbox-studio),
+[`MikeFalcon77/gearbox@3b64969`](https://github.com/MikeFalcon77/gearbox/tree/3b64969f4ed01558d6e0697edc5cd5477e041cef/ide/gearbox-studio),
 the same commit the session image builds the engine from
 (`STUDIO_GEARBOX_REF` in `theia/Dockerfile`). That repository carries no
 licence yet. Its owner's permission is needed before this ships beyond

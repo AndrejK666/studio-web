@@ -3651,7 +3651,14 @@ function WorkspaceProjects({
             origin: "Scaffolded when the project was created.",
             parent_dir: gearDirValue,
             gear_kind: gearKind,
-            ...(gearKind === "plugin" ? { plugin_host: pluginHost } : {}),
+            // The picker's value is `host::spec`: a host may declare several
+            // points, and only the spec tells them apart.
+            ...(gearKind === "plugin"
+              ? {
+                  plugin_host: pluginHost.split("::")[0],
+                  plugin_spec: pluginHost.split("::").slice(1).join("::"),
+                }
+              : {}),
             open_pr: openPr,
           });
           ctx.scaffolded = true;
@@ -4198,8 +4205,8 @@ function WorkspaceProjects({
                         >
                           <option value="">Pick a host…</option>
                           {hostPoints.map((p) => (
-                            <option key={`${p.host}:${p.sdk}`} value={p.host}>
-                              {p.host} · {p.sdk}
+                            <option key={`${p.host}::${p.spec}`} value={`${p.host}::${p.spec}`}>
+                              {p.host} · {p.trait_ident}
                               {p.runs ? "" : " (cannot run yet)"}
                             </option>
                           ))}
@@ -9393,15 +9400,16 @@ async function startStudioSession(
   }
   // A product project's product.gdl names its gears from `../gears-rust`, so
   // its session checks the gear corpus out beside the project's own sources —
-  // the same corpus the portal's preview resolved against. Not a gear project:
-  // its gears are in its own repository (a plugin's in the corpus itself, see
-  // `pluginBlocker`), and a second copy of the corpus would describe every
-  // gear twice. Anything else, or a deployment without the engine, is unchanged.
+  // the same corpus the portal's preview resolved against. A gear project gets
+  // it too: a plugin's gear.gdl names its host's point by spec (`fills`), and
+  // the IDE joins that against the corpus. A checkout already named after the
+  // corpus is not doubled (`withCorpusSource`). Anything else, or a deployment
+  // without the engine, is unchanged.
   const kind = await api
     .projectConfig(token, target.id)
     .then((c) => c?.kind)
     .catch(() => undefined);
-  if (kind === "product") {
+  if (kind === "product" || kind === "new_gears") {
     repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
   }
   onResolved?.({ repos, root, kind });

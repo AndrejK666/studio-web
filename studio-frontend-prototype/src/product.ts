@@ -105,6 +105,17 @@ export function groupDiagnostics(ds: readonly GearboxDiagnostic[]): GroupedDiagn
   return groups;
 }
 
+/** The errors that are not about this product at all: a corpus `gear.gdl`
+ *  the engine could not read. They block the resolve, and no change to the
+ *  gears picked here can clear them -- they mean the engine and the gear
+ *  corpus disagree, which is a deployment's to fix. Counted by file, because
+ *  one unreadable description reports once per profile. */
+export function corpusErrors(ds: readonly GearboxDiagnostic[]): { errors: number; files: number } {
+  const own = (f?: string | null) => !f || f === "product.gdl" || f.endsWith("/product.gdl");
+  const errs = ds.filter((d) => d.severity === "error" && !own(d.file));
+  return { errors: errs.length, files: new Set(errs.map((d) => d.file)).size };
+}
+
 /** `cf-gears-api-gateway` → `api-gateway`, the way a person reads it. */
 export function gearLabel(name: string): string {
   return name.replace(/^cf-gears-/, "").replace(/^@[^/]+\//, "");

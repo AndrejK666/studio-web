@@ -18,6 +18,7 @@ import {
   gearLabel,
   isPickable,
   productIdFrom,
+  corpusErrors,
   groupDiagnostics,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
@@ -903,6 +904,20 @@ function ProductCard({
             </span>
             {stale && <span className="badge warn">the product changed since — preview again</span>}
           </div>
+
+          {(() => {
+            const c = corpusErrors(preview.diagnostics);
+            if (c.errors === 0) return null;
+            return (
+              <p className="error" style={{ fontSize: 12 }} data-corpus-errors>
+                {c.errors === errors ? "Every error here is" : `${c.errors} of these errors are`} in the gear
+                corpus&apos;s own descriptions ({c.files} <code>gear.gdl</code> file{c.files === 1 ? "" : "s"} in{" "}
+                <code>{gearbox?.corpus_ref ?? "the corpus"}</code>), not in this product. The Gearbox engine (
+                {gearbox?.engine_version ?? "its version"}) cannot read them, so the engine and the corpus disagree
+                — nothing picked here can fix that; the deployment has to move the engine or pin the corpus.
+              </p>
+            );
+          })()}
 
           {preview.not_described.length > 0 && (
             <p className="hint" style={{ fontSize: 12 }}>

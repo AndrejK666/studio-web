@@ -168,7 +168,7 @@ RUN --mount=type=secret,id=github_token \
 # bookworm-slim runtime. Debug info is stripped: 92 MB with it.
 FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS gearbox
 ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
-ARG STUDIO_GEARBOX_REF=7594c25ef165916387d1613143d71a0d456415c6
+ARG STUDIO_GEARBOX_REF=3b64969f4ed01558d6e0697edc5cd5477e041cef
 WORKDIR /src
 RUN git init -q . \
     && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \

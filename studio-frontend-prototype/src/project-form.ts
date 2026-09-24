@@ -160,22 +160,19 @@ export function repoKey(value: string): string {
 
 /** Why a plugin gear cannot be scaffolded as the form stands, or null.
  *
- *  The Gearbox engine resolves a plugin's `sdk = cargo(path = ...)` inside the
- *  source root that declares it, and refuses a path that climbs out. The hosts
- *  on offer are the corpus's, so a plugin of one has to be written INTO the
- *  corpus: a new repository, or any other store, could never validate it. */
+ *  A plugin names the point it fills by the point's GTS spec, and the engine
+ *  joins that across sources -- so it can live in the project's own repository
+ *  or in the corpus alike. What it cannot do without is an engine to list the
+ *  hosts, and a host picked from that list. `repoMode` and `storeRepo` are kept
+ *  in the signature for the caller's form state; neither decides anything now. */
 export function pluginBlocker(form: {
   repoMode: RepoMode;
-  /** `owner/repo` of the gear store picked, when the road is `existing`. */
   storeRepo: string | null;
   /** The corpus the hosts come from, as the engine status reports it. */
   corpusUrl: string | null;
   host: string;
 }): string | null {
-  const corpus = form.corpusUrl ? repoKey(form.corpusUrl) : "";
-  if (!corpus) return "The Gearbox engine is not configured here, so there is no host to fill.";
-  if (form.repoMode !== "existing" || !form.storeRepo || repoKey(form.storeRepo) !== corpus)
-    return `A plugin lives in the repository of the SDK it implements. Use the gear store ${corpus}, or make a service.`;
+  if (!form.corpusUrl) return "The Gearbox engine is not configured here, so there is no host to fill.";
   if (!form.host) return "Pick the host whose extension point the plugin fills.";
   return null;
 }
