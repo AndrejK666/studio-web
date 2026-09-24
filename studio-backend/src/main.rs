@@ -13,6 +13,7 @@ mod credstore_pg; // persistent credstore value store (issue #66)
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
+mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-0027)
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
@@ -387,7 +388,7 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 16] = [
+    const REST_MODULES: [(&str, &str); 17] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
         (
             "components_catalog",
@@ -395,6 +396,7 @@ mod operation_docs_tests {
         ),
         ("connectors", include_str!("connectors/rest.rs")),
         ("documents", include_str!("documents/rest.rs")),
+        ("git_proxy", include_str!("git_proxy/rest.rs")),
         ("domain_model", include_str!("domain_model/rest.rs")),
         (
             "identity_directory",

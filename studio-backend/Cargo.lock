@@ -2459,6 +2459,7 @@ dependencies = [
  "cf-gears-account-management-sdk",
  "cf-gears-api-gateway",
  "cf-gears-authn-resolver",
+ "cf-gears-authn-resolver-sdk",
  "cf-gears-authz-resolver",
  "cf-gears-authz-resolver-sdk",
  "cf-gears-credstore",

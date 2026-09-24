@@ -9,7 +9,7 @@
 #
 # Adding a line is a deliberate, reviewable act. See ADR-0020.
 #
-# 239 entries at 2026-09-23.
+# 245 entries at 2026-09-24.
 
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
@@ -212,11 +212,15 @@ path-literal	GET <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_theia/rest.rs>
 
-# --- scope-in-path (64) ---------------------------------------------------
+# --- scope-in-path (67) ---------------------------------------------------
 # Rule C. The scope is a path segment, so the same thought needs one
 # operation per scope. Fixing this is the expensive migration: the tenant moves
 # into the security context and a project becomes `?project_id=`, which collapses
 # the studio-documents duplicates and reshapes studio-theia and studio-kits.
+# studio-git (ADR-0027): `git` appends `/info/refs` and the pack paths to the
+# clone URL itself, so a query parameter cannot carry the scope. The handler
+# reads the workspace's settings under the caller's own context, which is the
+# access decision; the path names the workspace, it does not grant it.
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/capabilities/{key}
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/stages/{key}
 scope-in-path	DELETE /studio-documents/v1/organizations/{organization_id}/types/{key}
@@ -245,6 +249,7 @@ scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{proje
 scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
 scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/stages
 scope-in-path	GET /studio-documents/v1/workspaces/{workspace_id}/types
+scope-in-path	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
 scope-in-path	GET /studio-kits/v1/projects/{project_id}/installations
 scope-in-path	GET /studio-kits/v1/projects/{project_id}/repositories
 scope-in-path	GET /studio-theia/v1/workspaces/{workspace_id}/operations
@@ -268,6 +273,8 @@ scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{proj
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/stages
 scope-in-path	POST /studio-documents/v1/workspaces/{workspace_id}/types
+scope-in-path	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
+scope-in-path	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile
@@ -282,13 +289,16 @@ scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
 scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 
-# --- typed-response (17) ---------------------------------------------------
+# --- typed-response (20) ---------------------------------------------------
 # Rule B3. The response is registered without a schema, so the shape is
 # invisible to /cf/docs and to client generation. studio-theia, spec-quality and
 # studio-llm proxy an upstream body through verbatim; each needs a DTO of ours.
+# studio-git (ADR-0027): the body is Git's own wire protocol (pkt-lines and
+# packs), streamed through; there is no JSON shape to give a schema.
 typed-response	GET /spec-quality/v1/health
 typed-response	GET /spec-quality/v1/tasks
 typed-response	GET /spec-quality/v1/tasks/{task_id}
+typed-response	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
 typed-response	GET /studio-llm/v1/models
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/operations
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
@@ -299,6 +309,8 @@ typed-response	POST /spec-quality/v1/analyze/bloat
 typed-response	POST /spec-quality/v1/analyze/leak
 typed-response	POST /spec-quality/v1/analyze/purpose
 typed-response	POST /spec-quality/v1/analyze/traceability
+typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
+typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
 typed-response	POST /studio-llm/v1/chat/completions
 typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/open
 typed-response	POST /studio-theia/v1/workspaces/{workspace_id}/operations

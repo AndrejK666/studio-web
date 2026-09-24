@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 239,
+  "open_violations": 245,
   "operations": [
     {
       "method": "DELETE",
@@ -1132,6 +1132,37 @@
       ],
       "errors": [
         "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-git/v1/sources",
+      "operation_id": "studio_git.list_sources",
+      "tag": "StudioGit",
+      "summary": "The Git sources of a workspace that a desktop session can clone",
+      "authenticated": true,
+      "responses": [
+        "GitSourceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs",
+      "operation_id": "studio_git.get_refs",
+      "tag": "StudioGit",
+      "summary": "Git smart-HTTP ref advertisement for a workspace source",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
       ]
     },
     {
@@ -2358,6 +2389,32 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack",
+      "operation_id": "studio_git.push_pack",
+      "tag": "StudioGit",
+      "summary": "Git smart-HTTP receive-pack (push) for a workspace source",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack",
+      "operation_id": "studio_git.pull_pack",
+      "tag": "StudioGit",
+      "summary": "Git smart-HTTP upload-pack (clone and fetch) for a workspace source",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
