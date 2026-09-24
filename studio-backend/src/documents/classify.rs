@@ -25,7 +25,7 @@
 use std::collections::BTreeSet;
 
 use super::model::{DetectionSource, DocumentType, TypeCandidate};
-use super::validate::{headings, split_front_matter};
+use super::validate::{headings, normalize_heading, split_front_matter};
 
 /// Extensions that can hold a specification document. Everything else (source,
 /// images, lockfiles, build output) is not prose and is never classified.
@@ -122,20 +122,14 @@ fn declared_type(content: &str, types: &[DocumentType]) -> Option<String> {
 
 /// Fraction of `ty`'s required section headings the document actually has.
 fn section_score(ty: &DocumentType, body: &str) -> Option<(f32, usize, usize)> {
-    let required: Vec<&str> = ty
-        .template
-        .sections
-        .iter()
-        .filter(|s| s.required)
-        .map(|s| s.title.as_str())
-        .collect();
+    let required: Vec<_> = ty.template.sections.iter().filter(|s| s.required).collect();
     if required.is_empty() {
         return None;
     }
     let present: BTreeSet<String> = headings(body).into_iter().map(|h| h.title_norm).collect();
     let hits = required
         .iter()
-        .filter(|t| present.contains(&t.trim().to_lowercase()))
+        .filter(|s| s.titles().any(|t| present.contains(&normalize_heading(t))))
         .count();
     Some((hits as f32 / required.len() as f32, hits, required.len()))
 }
@@ -362,6 +356,26 @@ mod tests {
     fn a_real_prd_is_detected_from_its_sections_alone() {
         let types = builtin_types();
         // Deliberately an unhelpful filename: only the sections identify it.
+        // Numbered the way the SDLC template numbers them.
+        let content = filled(&[
+            "1. Overview",
+            "2. Actors",
+            "4. Scope",
+            "5. Functional Requirements",
+            "6. Non-Functional Requirements",
+            "9. Acceptance Criteria",
+            "11. Assumptions",
+            "12. Risks",
+        ]);
+        let c = classify("docs/notes-2026.md", &content, &types);
+        assert_eq!(c.type_key.as_deref(), Some("prd"));
+    }
+
+    /// The older shape -- Problem / Goals / Success Metrics, which the component
+    /// skeleton still writes -- is still a PRD, through the section aliases.
+    #[test]
+    fn a_prd_in_the_older_shape_is_still_detected() {
+        let types = builtin_types();
         let content = filled(&[
             "Problem",
             "Goals",
@@ -372,6 +386,23 @@ mod tests {
         ]);
         let c = classify("docs/notes-2026.md", &content, &types);
         assert_eq!(c.type_key.as_deref(), Some("prd"));
+    }
+
+    /// A file written straight from a built-in template is recognized as that
+    /// type on its headings alone — including DECOMPOSITION and FEATURE,
+    /// whose headings overlap the PRD's.
+    #[test]
+    fn every_builtin_template_is_classified_as_itself() {
+        let types = builtin_types();
+        for ty in &types {
+            let c = classify("docs/spec.md", &ty.template.body, &types);
+            assert_eq!(
+                c.type_key.as_deref(),
+                Some(ty.key.as_str()),
+                "candidates: {:?}",
+                c.candidates
+            );
+        }
     }
 
     #[test]
@@ -419,6 +450,7 @@ mod tests {
                         required: true,
                         min_words: None,
                         description: None,
+                        aliases: Vec::new(),
                     },
                     Section {
                         key: "diagnosis".into(),
@@ -426,6 +458,7 @@ mod tests {
                         required: true,
                         min_words: None,
                         description: None,
+                        aliases: Vec::new(),
                     },
                     Section {
                         key: "recovery".into(),
@@ -433,6 +466,7 @@ mod tests {
                         required: true,
                         min_words: None,
                         description: None,
+                        aliases: Vec::new(),
                     },
                 ],
                 rules: Rules::default(),

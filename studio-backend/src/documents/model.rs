@@ -304,6 +304,20 @@ pub struct Section {
     /// Short guidance shown in the editor for this section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Other headings that count as this section. A document written against an
+    /// older revision of the template (`## Context` where the template now says
+    /// `## Context and Problem Statement`) is still the same kind of document,
+    /// and a repository full of them should not stop being recognized because
+    /// the template was improved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+}
+
+impl Section {
+    /// The title followed by every alias — each heading this section answers to.
+    pub fn titles(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.title.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
 }
 
 fn default_true() -> bool {
@@ -747,8 +761,11 @@ pub struct DocumentBinding {
 
 // ── Built-in catalogue ──────────────────────────────────────────────────────
 // Seeded from the Constructor Studio KIT artifact chain
-// (UPSTREAM_REQS → PRD → ADR + DESIGN → DECOMPOSITION → FEATURE). A workspace
-// may override any of these by defining a type with the same key.
+// (PRD → ADR + DESIGN → DECOMPOSITION → FEATURE, the five types Spec Quality
+// analyses). The bodies in `templates/` are vendored verbatim from gears-rust
+// `docs/spec-templates/gears-sdlc/<KIND>/template.md` — refresh them from there
+// rather than editing them here. A workspace may override any of these by
+// defining a type with the same key.
 
 /// The GTS type every catalogue entry is an instance of.
 ///
@@ -792,6 +809,21 @@ fn sec(key: &str, title: &str, required: bool, min_words: Option<usize>) -> Sect
         required,
         min_words,
         description: None,
+        aliases: Vec::new(),
+    }
+}
+
+/// `sec` with the older headings that still count as this section.
+fn sec_aka(
+    key: &str,
+    title: &str,
+    required: bool,
+    min_words: Option<usize>,
+    aliases: &[&str],
+) -> Section {
+    Section {
+        aliases: aliases.iter().map(|a| a.to_string()).collect(),
+        ..sec(key, title, required, min_words)
     }
 }
 
@@ -842,35 +874,74 @@ fn prd_type() -> DocumentType {
         owner: Owner::Builtin,
         hidden: false,
         template: TemplateSpec {
-            // A PRD as the world writes one, with the intake's technical
-            // questions after it. Both halves have to be here: the required six
-            // are how a PRD sitting in somebody's repository is recognised at
-            // all -- `classify` scores a document against the REQUIRED sections
-            // -- and the tail is what the questionnaire fills and the Composer
-            // reads capabilities from. Narrowing the catalogue to the five
-            // types Spec Quality analyses must not cost the classifier the one
-            // type it recognises best.
+            // The SDLC template, whichever way the document is started. Written
+            // by hand, it is the skeleton; composed from the questionnaire, the
+            // answers are written INTO it, each under the template section its
+            // question names -- the questionnaire fills the PRD, it does not
+            // replace it with a form of its own.
+            //
+            // The required five are how a PRD sitting in somebody's repository
+            // is recognised at all -- `classify` scores a document against the
+            // REQUIRED sections -- so each also answers to the heading of the
+            // older Problem / Users / Non-Goals / Requirements / Success Metrics
+            // shape, and a PRD written that way is still a PRD.
             //
             // So a document composed from the questionnaire starts out NOT
-            // conforming, and says which sections it still needs. That is the
-            // truth about it: the intake settles what is being built and for
-            // whom; the problem, the goals and the success metrics are still
-            // somebody's to write.
-            body: "---\nstatus: draft\nowner: \n---\n\n# PRD — <title>\n\n## Overview\n\n## Problem\n\n## Goals\n\n## Non-Goals\n\n## Users & Use Cases\n\n## Requirements\n\n## Authentication & Authorization\n\n## Data & Storage\n\n## Integrations & External Systems\n\n## Billing\n\n## Compliance\n\n## Deployment\n\n## Success Metrics\n".to_string(),
+            // conforming: the intake settles what is being built and for whom,
+            // and the rest of the template is still somebody's to write.
+            body: concat!(
+                "---\ntype: prd\nstatus: draft\nowner: \n---\n\n",
+                include_str!("templates/prd.md")
+            )
+            .to_string(),
             sections: vec![
-                sec("overview", "Overview", false, None),
-                sec("problem", "Problem", true, Some(30)),
-                sec("goals", "Goals", true, Some(15)),
-                sec("non_goals", "Non-Goals", true, None),
-                sec("users", "Users & Use Cases", true, Some(20)),
-                sec("requirements", "Requirements", true, Some(30)),
-                sec("auth", "Authentication & Authorization", false, None),
-                sec("data", "Data & Storage", false, None),
-                sec("integrations", "Integrations & External Systems", false, None),
-                sec("billing", "Billing", false, None),
-                sec("compliance", "Compliance", false, None),
-                sec("deployment", "Deployment", false, None),
-                sec("success_metrics", "Success Metrics", true, Some(10)),
+                sec_aka(
+                    "overview",
+                    "Overview",
+                    true,
+                    Some(30),
+                    &["Problem", "Background / Problem Statement"],
+                ),
+                sec_aka("actors", "Actors", true, Some(10), &["Users & Use Cases"]),
+                sec(
+                    "operational_concept",
+                    "Operational Concept & Environment",
+                    false,
+                    None,
+                ),
+                sec_aka("scope", "Scope", true, None, &["Non-Goals", "Out of Scope"]),
+                sec_aka(
+                    "functional_requirements",
+                    "Functional Requirements",
+                    true,
+                    Some(30),
+                    &["Requirements"],
+                ),
+                sec(
+                    "non_functional_requirements",
+                    "Non-Functional Requirements",
+                    false,
+                    None,
+                ),
+                sec(
+                    "public_interfaces",
+                    "Public Library Interfaces",
+                    false,
+                    None,
+                ),
+                sec("use_cases", "Use Cases", false, None),
+                sec_aka(
+                    "acceptance_criteria",
+                    "Acceptance Criteria",
+                    true,
+                    Some(10),
+                    &["Success Metrics"],
+                ),
+                sec("dependencies", "Dependencies", false, None),
+                sec("assumptions", "Assumptions", false, None),
+                sec("risks", "Risks", false, None),
+                sec("open_questions", "Open Questions", false, None),
+                sec("traceability", "Traceability", false, None),
             ],
             rules: Rules {
                 // `status` only. An owner is a workflow fact nothing in the
@@ -882,16 +953,16 @@ fn prd_type() -> DocumentType {
             },
             questionnaire: vec![
                 q("product", "What are we building? Describe the product and its core domain.", QuestionKind::LongText, &[], true, Some("domain"), "overview", None),
-                q("primary_users", "Who are the primary users?", QuestionKind::Text, &[], true, None, "users", None),
-                q("tenancy", "What is the tenancy model?", QuestionKind::Single, &["Single-tenant", "Multi-tenant", "Hierarchical tenants"], true, Some("tenancy"), "users", None),
-                q("auth", "How do users authenticate?", QuestionKind::Single, &["None", "Username & password", "SSO / OIDC (Keycloak)", "External IdP"], true, Some("auth"), "auth", None),
-                q("rbac", "Do you need roles and access control (RBAC)?", QuestionKind::Bool, &[], false, Some("authz"), "auth", None),
-                q("storage", "What data does the app store?", QuestionKind::Multi, &["Relational (Postgres)", "Documents / graph", "Files / blobs", "Full-text search"], true, Some("storage"), "data", None),
-                q("integrations", "Which external systems do you integrate with or wrap?", QuestionKind::LongText, &[], false, Some("connectors"), "integrations", Some("e.g. GitHub, GitLab, Salesforce, Stripe")),
-                q("facade", "Is part of the product a facade over an existing system?", QuestionKind::Bool, &[], false, Some("facade"), "integrations", None),
-                q("billing", "Do you need billing or metering?", QuestionKind::Bool, &[], false, Some("billing"), "billing", None),
-                q("compliance", "Any compliance requirements?", QuestionKind::Multi, &["GDPR", "SOC 2", "HIPAA", "None"], false, Some("compliance"), "compliance", None),
-                q("deploy", "Target deployment?", QuestionKind::Single, &["Docker Compose", "Kubernetes", "Managed cloud"], true, Some("deploy"), "deployment", None),
+                q("primary_users", "Who are the primary users?", QuestionKind::Text, &[], true, None, "actors", None),
+                q("tenancy", "What is the tenancy model?", QuestionKind::Single, &["Single-tenant", "Multi-tenant", "Hierarchical tenants"], true, Some("tenancy"), "actors", None),
+                q("auth", "How do users authenticate?", QuestionKind::Single, &["None", "Username & password", "SSO / OIDC (Keycloak)", "External IdP"], true, Some("auth"), "functional_requirements", None),
+                q("rbac", "Do you need roles and access control (RBAC)?", QuestionKind::Bool, &[], false, Some("authz"), "functional_requirements", None),
+                q("storage", "What data does the app store?", QuestionKind::Multi, &["Relational (Postgres)", "Documents / graph", "Files / blobs", "Full-text search"], true, Some("storage"), "operational_concept", None),
+                q("integrations", "Which external systems do you integrate with or wrap?", QuestionKind::LongText, &[], false, Some("connectors"), "dependencies", Some("e.g. GitHub, GitLab, Salesforce, Stripe")),
+                q("facade", "Is part of the product a facade over an existing system?", QuestionKind::Bool, &[], false, Some("facade"), "dependencies", None),
+                q("billing", "Do you need billing or metering?", QuestionKind::Bool, &[], false, Some("billing"), "functional_requirements", None),
+                q("compliance", "Any compliance requirements?", QuestionKind::Multi, &["GDPR", "SOC 2", "HIPAA", "None"], false, Some("compliance"), "non_functional_requirements", None),
+                q("deploy", "Target deployment?", QuestionKind::Single, &["Docker Compose", "Kubernetes", "Managed cloud"], true, Some("deploy"), "operational_concept", None),
             ],
         },
     }
@@ -899,19 +970,44 @@ fn prd_type() -> DocumentType {
 
 /// The platform document-type catalogue.
 pub fn builtin_types() -> Vec<DocumentType> {
+    // Headings are matched with their numbering stripped (`## 5. Functional
+    // Requirements` is `Functional Requirements`), and a section's words include
+    // its subsections — the templates put the prose under `###`.
     vec![
         prd_type(),
         builtin(
             "adr",
             "Architecture Decision Record",
             "One decision, its context, and its consequences.",
-            "---\nstatus: proposed\n---\n\n# ADR — <decision title>\n\n## Status\n\n## Context\n\n## Decision\n\n## Consequences\n\n## Alternatives Considered\n",
+            include_str!("templates/adr.md"),
             vec![
-                sec("status", "Status", true, None),
-                sec("context", "Context", true, Some(30)),
-                sec("decision", "Decision", true, Some(20)),
+                sec_aka(
+                    "context",
+                    "Context and Problem Statement",
+                    true,
+                    Some(30),
+                    &["Context"],
+                ),
+                sec("decision_drivers", "Decision Drivers", false, None),
+                sec_aka(
+                    "considered_options",
+                    "Considered Options",
+                    false,
+                    None,
+                    &["Alternatives Considered"],
+                ),
+                sec_aka(
+                    "decision",
+                    "Decision Outcome",
+                    true,
+                    Some(20),
+                    &["Decision"],
+                ),
                 sec("consequences", "Consequences", true, Some(20)),
-                sec("alternatives", "Alternatives Considered", false, None),
+                sec("confirmation", "Confirmation", false, None),
+                sec("pros_and_cons", "Pros and Cons of the Options", false, None),
+                sec("more_information", "More Information", false, None),
+                sec("traceability", "Traceability", false, None),
             ],
             Rules {
                 front_matter: vec!["status".into()],
@@ -922,30 +1018,43 @@ pub fn builtin_types() -> Vec<DocumentType> {
             "design",
             "Design Document",
             "How the thing is built: components, interactions, trade-offs.",
-            "---\nstatus: draft\nowner: \n---\n\n# Design — <title>\n\n## Overview\n\n## Architecture\n\n## Data Model\n\n## Interfaces\n\n## Trade-offs\n\n## Risks\n",
+            include_str!("templates/design.md"),
             vec![
-                sec("overview", "Overview", true, Some(30)),
-                sec("architecture", "Architecture", true, Some(40)),
-                sec("data_model", "Data Model", true, None),
-                sec("interfaces", "Interfaces", true, None),
-                sec("trade_offs", "Trade-offs", true, Some(20)),
-                sec("risks", "Risks", false, None),
+                sec_aka(
+                    "overview",
+                    "Architecture Overview",
+                    true,
+                    Some(30),
+                    &["Overview"],
+                ),
+                sec("principles", "Principles & Constraints", true, None),
+                sec_aka(
+                    "architecture",
+                    "Technical Architecture",
+                    true,
+                    Some(40),
+                    &["Architecture"],
+                ),
+                sec("additional_context", "Additional context", false, None),
+                sec("traceability", "Traceability", false, None),
             ],
-            Rules {
-                front_matter: vec!["status".into()],
-                ..Rules::default()
-            },
+            Rules::default(),
         ),
         builtin(
             "decomposition",
             "Decomposition",
             "Breaking the design into features and work items.",
-            "---\nstatus: draft\n---\n\n# Decomposition — <title>\n\n## Approach\n\n## Features\n\n## Sequencing\n\n## Open Questions\n",
+            include_str!("templates/decomposition.md"),
             vec![
-                sec("approach", "Approach", true, Some(20)),
-                sec("features", "Features", true, Some(20)),
-                sec("sequencing", "Sequencing", true, None),
-                sec("open_questions", "Open Questions", false, None),
+                sec_aka("overview", "Overview", true, Some(20), &["Approach"]),
+                sec_aka("entries", "Entries", true, Some(20), &["Features"]),
+                sec_aka(
+                    "dependencies",
+                    "Feature Dependencies",
+                    true,
+                    None,
+                    &["Sequencing"],
+                ),
             ],
             Rules::default(),
         ),
@@ -953,18 +1062,28 @@ pub fn builtin_types() -> Vec<DocumentType> {
             "feature",
             "Feature Spec",
             "One shippable feature: behaviour, acceptance, and edges.",
-            "---\nstatus: draft\nowner: \n---\n\n# Feature — <title>\n\n## Summary\n\n## Behaviour\n\n## Acceptance Criteria\n\n## Edge Cases\n\n## Rollout\n",
+            include_str!("templates/feature.md"),
             vec![
-                sec("summary", "Summary", true, Some(15)),
-                sec("behaviour", "Behaviour", true, Some(25)),
-                sec("acceptance", "Acceptance Criteria", true, Some(15)),
-                sec("edge_cases", "Edge Cases", false, None),
-                sec("rollout", "Rollout", false, None),
+                sec_aka("context", "Feature Context", true, Some(15), &["Summary"]),
+                sec_aka(
+                    "actor_flows",
+                    "Actor Flows (CDSL)",
+                    true,
+                    Some(25),
+                    &["Actor Flows", "Behaviour"],
+                ),
+                sec_aka(
+                    "processes",
+                    "Processes / Business Logic (CDSL)",
+                    false,
+                    None,
+                    &["Processes / Business Logic"],
+                ),
+                sec_aka("states", "States (CDSL)", false, None, &["States"]),
+                sec("definitions_of_done", "Definitions of Done", true, None),
+                sec("acceptance_criteria", "Acceptance Criteria", true, Some(15)),
             ],
-            Rules {
-                front_matter: vec!["status".into(), "owner".into()],
-                ..Rules::default()
-            },
+            Rules::default(),
         ),
     ]
 }

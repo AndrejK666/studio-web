@@ -1515,6 +1515,7 @@ export interface DocSection {
   required: boolean;
   min_words?: number | null;
   description?: string | null;
+  aliases?: string[] | null;
 }
 export interface DocRules {
   warn_unknown_sections: boolean;
