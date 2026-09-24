@@ -11,7 +11,7 @@ date: 2026-07-30
 Status: accepted (MVP scope) · 2026-07-30
 Amended 2026-08-14: the image source moved into this repo — see
 [Amendment: the image lives here now](#amendment-2026-08-14--the-image-lives-here-now).
-The Context and Decision below are left as written on 2026-07-30, so every
+The Context and Problem Statement and the Decision Outcome below are left as written on 2026-07-30, so every
 `fabric-poc/poc/theia` in them means "where the image was built at the time".
 
 ## Table of Contents
