@@ -45,6 +45,8 @@
     "frontend": {
       "config": {
         "applicationName": "Constructor Studio",
+        "//warnOnPotentiallyInsecureHostPattern": "Off: the image sets THEIA_WEBVIEW_EXTERNAL_ENDPOINT to {{hostname}} on purpose (see theia/Dockerfile), and a person using the IDE can do nothing about it, so a warning on every open is noise. The session's entrypoint logs it instead, where whoever deploys it reads.",
+        "warnOnPotentiallyInsecureHostPattern": false,
         "defaultTheme": {
           "light": "light",
           "dark": "dark"

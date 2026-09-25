@@ -9,6 +9,13 @@ mkdir -p "$STUDIO_DATA_DIR"
 # "could not read Username" instead of waiting on a prompt nobody can answer.
 export GIT_TERMINAL_PROMPT=0
 
+# The IDE no longer says this (browser-app turns the warning off, because a
+# person using it cannot act on it), so the session's log does, for whoever
+# deploys it. See the THEIA_WEBVIEW_EXTERNAL_ENDPOINT note in theia/Dockerfile.
+if [ "${THEIA_WEBVIEW_EXTERNAL_ENDPOINT:-}" != "{{uuid}}.webview.{{hostname}}" ]; then
+  echo "session: webviews share the IDE's origin (THEIA_WEBVIEW_EXTERNAL_ENDPOINT=${THEIA_WEBVIEW_EXTERNAL_ENDPOINT:-unset}); Theia's default gives each its own and needs wildcard DNS and TLS" >&2
+fi
+
 # ── Splash ────────────────────────────────────────────────────────────────
 # Holds port 3003 until the gate below takes it over, so the browser gets a
 # page instead of a connection error, and so Kubernetes does not publish the
