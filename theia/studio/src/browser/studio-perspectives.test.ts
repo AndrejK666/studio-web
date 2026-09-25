@@ -18,7 +18,7 @@ jest.mock('./analyze-widget', () => ({ AnalyzeWidget: { ID: 'studio:analyze' } }
 jest.mock('./orca-widget', () => ({ OrcaWidget: { ID: 'studio.orca' } }));
 jest.mock('./workspace-graph-widget', () => ({ WorkspaceGraphWidget: { ID: 'studio:workspace-graph' } }));
 
-import { DOCUMENTS_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
+import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 
 function register() {
@@ -30,14 +30,24 @@ function register() {
 }
 
 describe('Studio workbench modes', () => {
-    it('offers two modes, and no leftover stub beside them', () => {
+    it('offers its modes, and no leftover stub beside them', () => {
         const registered = register();
         expect([...registered.keys()].sort()).toEqual(
-            [DOCUMENTS_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID].sort(),
+            [DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID].sort(),
         );
         expect([...registered.values()].map(d => d.label)).toEqual(
-            expect.arrayContaining(['Workbench', 'Documents']),
+            expect.arrayContaining(['Workbench', 'Documents', 'Orca', 'Full']),
         );
+    });
+
+    it('lays Orca out the way the Orca app is: agents left, changes right', () => {
+        const orca = register().get(ORCA_PERSPECTIVE_ID);
+        expect([...orca.viewPlacements.entries()]).toEqual([
+            ['studio.orca', 'left'],
+            ['scm-view-container', 'right'],
+        ]);
+        expect(orca.primaryViews).toEqual({ left: 'studio.orca', right: 'scm-view-container' });
+        expect(orca.chromeOptions).toEqual({ collapseAreas: ['bottom'] });
     });
 
     it('takes over Theia’s own default id rather than adding a third entry', () => {

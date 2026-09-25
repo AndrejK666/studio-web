@@ -51,6 +51,7 @@ import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
+import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
 import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioWorkspaceName } from './studio-workspace-name';
@@ -119,6 +120,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // none of it while writing.
     bind(StudioChromeMode).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioChromeMode);
+    // The three modes, chosen explicitly, each with its own toolbar.
+    bind(StudioModeBar).toSelf().inSingletonScope();
+    bind(StudioModeSwitch).toSelf().inSingletonScope();
+    bind(StudioModeBarContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioModeBarContribution);
     bind(MarkdownEditorOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownEditorOpenHandler);
     // Portal documents as editable resources (`studio-doc:`). Without the

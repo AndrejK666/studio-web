@@ -23,7 +23,10 @@ import { FILE_NAVIGATOR_ID } from '@theia/navigator/lib/browser/navigator-widget
 import { AnalyzeWidget } from './analyze-widget';
 import { DEFAULT_LAYOUT } from './studio-contribution';
 import { OrcaWidget } from './orca-widget';
-import { DOCUMENTS_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
+import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
+
+/** Theia's Source Control container, as `@theia/scm` names it. */
+const SCM_VIEW_CONTAINER_ID = 'scm-view-container';
 
 @injectable()
 export class StudioPerspectiveContribution implements PerspectiveContribution {
@@ -63,6 +66,32 @@ export class StudioPerspectiveContribution implements PerspectiveContribution {
             ]),
             chromeOptions: { collapseAreas: ['right', 'bottom'] },
             primaryViews: { left: FILE_NAVIGATOR_ID },
+        });
+        // Orca's own arrangement: the agents and their worktrees on the left,
+        // what they changed and the way to commit it on the right, and the
+        // middle for the files and terminals they are working in.
+        service.registerPerspective({
+            id: ORCA_PERSPECTIVE_ID,
+            label: 'Orca',
+            viewPlacements: new Map<string, ApplicationShell.Area>([
+                [OrcaWidget.ID, 'left'],
+                [SCM_VIEW_CONTAINER_ID, 'right'],
+            ]),
+            chromeOptions: { collapseAreas: ['bottom'] },
+            primaryViews: { left: OrcaWidget.ID, right: SCM_VIEW_CONTAINER_ID },
+        });
+        // Everything at once, for the person doing all of it: the workbench's
+        // own arrangement plus the files on the left and the findings below,
+        // and nothing collapsed.
+        service.registerPerspective({
+            id: FULL_PERSPECTIVE_ID,
+            label: 'Full',
+            viewPlacements: new Map<string, ApplicationShell.Area>([
+                ...DEFAULT_LAYOUT.map(placement => [placement.id, placement.area as ApplicationShell.Area] as [string, ApplicationShell.Area]),
+                [FILE_NAVIGATOR_ID, 'left'],
+                [AnalyzeWidget.ID, 'bottom'],
+            ]),
+            primaryViews: { left: FILE_NAVIGATOR_ID, right: OrcaWidget.ID },
         });
     }
 }
