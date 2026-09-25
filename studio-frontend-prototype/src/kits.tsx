@@ -31,6 +31,7 @@ export function ProjectKits({
   projectId,
   projectName,
   workspaceId,
+  section = "components",
 }: {
   token: string;
   projectId: string;
@@ -38,6 +39,9 @@ export function ProjectKits({
   projectName: string;
   /** The parent workspace — documents and the capability vocabulary hang off it. */
   workspaceId: string;
+  /** Which tab this is: the specs-to-product journey, or the project's kits.
+   *  One component, because both read the project's IDE repositories. */
+  section?: "components" | "kits";
 }) {
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
@@ -222,6 +226,8 @@ export function ProjectKits({
           they make -- ending in the IDE, where the product is built. It used to
           open on the product and leave the documents' suggestions behind a
           button further down, which is the answer before the question. */}
+      {section === "components" && (
+        <>
       <JourneyStrip capabilities={capCount} product={product} />
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
@@ -240,6 +246,10 @@ export function ProjectKits({
         <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
       )}
       <SpecAgainstCode token={token} projectId={projectId} workspaceId={workspaceId} />
+        </>
+      )}
+      {section === "kits" && (
+        <>
 
       <div className="card-head">
         <div>
@@ -377,6 +387,8 @@ export function ProjectKits({
             );
           })}
         </div>
+      )}
+        </>
       )}
     </section>
   );
@@ -1009,7 +1021,7 @@ function JourneyStrip({ capabilities, product }: { capabilities: number | null; 
     },
     {
       n: 3,
-      label: "Built in Theia",
+      label: "Built in Studio-ide",
       state: product.record?.written ? `product.gdl on ${product.record.written.branch}` : "not yet",
       done: !!product.record?.written,
     },
@@ -1132,7 +1144,7 @@ function ProductCard({
           </h2>
           <p className="subtitle">
             The components this project ships as one product, composed and checked by the Gearbox
-            engine. Make it resolve, then build it in Theia: that saves <code>product.gdl</code> to
+            engine. Make it resolve, then build it in Studio-ide: that saves <code>product.gdl</code> to
             the repository and opens it in the IDE&apos;s Gearbox view.
           </p>
         </div>
@@ -1217,7 +1229,7 @@ function ProductCard({
             onClick={() => void buildInTheia()}
             style={{ marginLeft: "auto" }}
           >
-            {busy === "save" ? "Saving…" : "Build it in Theia →"}
+            {busy === "save" ? "Saving…" : "Build it in Studio-ide →"}
           </button>
         )}
         {!preview && last && (

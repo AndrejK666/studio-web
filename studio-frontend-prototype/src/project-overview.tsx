@@ -72,6 +72,7 @@ export type ProjTab =
   | "overview"
   | "specs"
   | "components"
+  | "kits"
   | "artifacts"
   | "sources"
   | "activity"

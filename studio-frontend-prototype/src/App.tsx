@@ -4648,6 +4648,10 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // different product.
   { id: "specs", icon: "scan", label: "Specs" },
   { id: "components", icon: "package", label: "Components" },
+  // Kits are how the project works (workflows, conventions pinned to a Git
+  // version), not what it is made of, so they stopped sharing a page with the
+  // specs-to-product journey.
+  { id: "kits", icon: "grid", label: "Kits" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
   // Sources sits after them because it is where they come from: a sync run
   // here is what puts anything in Artifacts at all. It was a card near the
@@ -4981,6 +4985,15 @@ function ProjectScreen({
             projectId={proj.id}
             projectName={proj.name}
             workspaceId={workspace.id}
+          />
+        )}
+        {tab === "kits" && (
+          <ProjectKits
+            token={token}
+            projectId={proj.id}
+            projectName={proj.name}
+            workspaceId={workspace.id}
+            section="kits"
           />
         )}
         {tab === "sources" && (
