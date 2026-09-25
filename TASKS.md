@@ -164,8 +164,13 @@ hypothesis:
     as "Constructor Studio (service)" with no membership.
   - `the_second_member_of_a_workspace_does_not_work_as_the_first` runs
     un-ignored.
-  - On a realm that already exists (dev, test), import the `studio-service`
-    client and set `backend.serviceSubject` to its service account's id.
+  - On a realm that already exists (dev, test), the rollout imports the
+    `studio-service` client itself: `keycloak.serviceClient` is a
+    post-install/post-upgrade job that partial-imports the client and its
+    service account, then prints the subject the backend will act as. It stays
+    the fixed one, so `backend.serviceSubject` stays empty — and the job fails
+    the rollout, naming the id to set, on a realm where Keycloak assigned its
+    own instead.
 
   **Already there, and not to be duplicated:**
   `product-ext/src/node/viewer-credentials.js` gives each window's plugin host

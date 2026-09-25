@@ -2059,6 +2059,13 @@ mod service_account_tests {
                 "{file}: it holds no roles"
             );
         }
+        // The rollout job creates the client on a realm older than it, with
+        // the id from the chart, so the chart pins the same one.
+        let values = include_str!("../../../deploy/helm/studio-web/values.yaml");
+        assert!(
+            values.contains(&format!("subject: \"{STUDIO_SERVICE_SUBJECT}\"")),
+            "deploy/helm/studio-web/values.yaml: keycloak.serviceClient.subject"
+        );
     }
 
     /// Run at every start: the same person each time, kept in step with the

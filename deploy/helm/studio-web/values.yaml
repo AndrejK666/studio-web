@@ -122,8 +122,10 @@ backend:
   # The subject of Studio's service identity, the `studio-service` client's
   # service account (ADR-0030): what a shared IDE session acts as. Empty uses
   # the id fixed in the realm files, which holds for a realm Keycloak created
-  # from them. On a realm that existed before the client, import the client
-  # and set this to its service account's id:
+  # from them — and `keycloak.serviceClient` is the rollout job that puts the
+  # client on a realm that predates it and checks the id is that one. Set this
+  # only when that job reports a different subject, which happens on a realm
+  # where the client was created by hand before it existed:
   #   GET /auth/admin/realms/studio/users?username=service-account-studio-service&exact=true
   serviceSubject: ""
   # Knowledge-graph embeddings (graph-storage gear). ONE provider per
@@ -536,6 +538,38 @@ keycloak:
   # files-plaintext vault Secret (social client id/secret), mounted read-only at
   # /opt/keycloak/data/vault; keys are studio_<provider>-client-id/secret.
   vaultSecret: "studio-web-keycloak-vault"
+  # Studio's service identity on the realm (ADR-0030). A realm file is imported
+  # on a realm's FIRST boot and never again, so a realm created before the
+  # `studio-service` client does not grow one by redeploying — this job puts it
+  # there on every rollout, idempotently, and reports which subject the backend
+  # will act as. It needs the master-realm admin, which is why it is a hook job
+  # rather than something the backend does with its own IdP credential.
+  serviceClient:
+    enabled: true
+    # Reached in-cluster when this chart owns Keycloak. Set it when Keycloak is
+    # somewhere else (`http://host/auth`); with neither this nor an in-chart
+    # Keycloak the job is not rendered at all.
+    url: ""
+    # Defaults to the chart's Keycloak image — the one place kcadm already is.
+    image:
+      repository: ""
+      tag: ""
+    realm: "studio"
+    clientId: "studio-service"
+    # The id both realm files pin, and the backend's own default. A realm where
+    # Keycloak assigned its own instead is what `requireExpectedSubject` is for.
+    subject: "00000000-0000-4000-8000-00000000057d"
+    tenantId: "00000000-0000-0000-0000-000000000001"
+    email: "studio@constructor.tech"
+    # Fail the rollout when the realm's subject is not the one the backend acts
+    # as (`backend.serviceSubject`, or the id above when that is empty). It
+    # blocks a backend that would act as a subject nobody has.
+    requireExpectedSubject: true
+    backoffLimit: 2
+    activeDeadlineSeconds: 600
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
   # IdP host ingress: cert-manager annotations + TLS come from the override.
   ingress:
     annotations: {}

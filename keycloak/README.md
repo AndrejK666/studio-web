@@ -33,6 +33,51 @@ into the image. A deployed realm must be generated independently per environment
 - generate independent confidential-client secrets;
 - store the complete realm JSON in an environment-local Kubernetes Secret.
 
+## The service identity, on a realm that already exists
+
+`studio-service` is Studio's own identity (ADR-0030): what a shared IDE session
+acts as when it acts on nobody's behalf. Both realm files carry it — the client,
+its service account, and that account's **fixed id**
+`00000000-0000-4000-8000-00000000057d`, which is also the backend's own default,
+so a realm Keycloak created from a realm file needs no configuration at all.
+
+A realm file is imported on a realm's *first* boot and never again. A realm that
+existed before this client does not grow one by redeploying, and a missing one
+there means every shared session acts as a subject nobody has.
+
+The chart closes that with a rollout job (`keycloak.serviceClient`, in
+`deploy/helm/studio-web/templates/keycloak/service-client-job.yaml`): on every
+`post-install`/`post-upgrade` it signs in as the master-realm admin,
+partial-imports the client and the account with `ifResourceExists: SKIP`, and
+prints the subject the backend will act as. Re-running it is free, and it fails
+the rollout when the realm's subject is not the fixed one — Keycloak assigns a
+service account its id when it creates the client, an assigned id cannot be
+changed afterwards, and the only honest repair is a person choosing between:
+
+- setting `backend.serviceSubject` to the id the job printed. The job checks
+  the realm against that subject, so the next rollout passes; or
+- deleting the client on that realm and letting the next rollout recreate it
+  with the fixed id.
+
+Compose has the same gap for the same reason — `start-dev --import-realm` reads
+`docker/keycloak/realm-studio.json` into a *new* volume only — and the same fix
+by hand, against the running container:
+
+```bash
+docker exec studio-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080 --realm master --user admin --password admin
+docker exec studio-keycloak /opt/keycloak/bin/kcadm.sh get users -r studio \
+  -q username=service-account-studio-service -q exact=true --fields id --format csv --noquotes
+```
+
+An empty answer means this local realm predates the client; `docker compose down
+-v keycloak` and up again re-imports the file, fixed id and all.
+
+It uses the master-realm admin rather than the backend's own IdP credential on
+purpose: creating a client needs `manage-clients`, and `studio-admin` holds only
+`manage-users`, `view-users` and `query-users`. Widening a credential the
+application carries, permanently, for one provisioning step is the wrong trade.
+
 ## Social self-registration — app dependency
 Brokered users are mapped to a non-root **sandbox** tenant (`…0002`), never root.
 End-to-end self-signup still needs the app to JIT-provision a real per-user tenant;

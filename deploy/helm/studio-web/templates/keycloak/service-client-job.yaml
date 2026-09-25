@@ -1,0 +1,206 @@
+{{- $sc := .Values.keycloak.serviceClient }}
+{{- if and $sc.enabled (or .Values.keycloak.enabled $sc.url) }}
+{{- $repository := default .Values.keycloak.image.repository $sc.image.repository }}
+{{- $tag := default .Values.keycloak.image.tag $sc.image.tag }}
+{{- $server := $sc.url | default (printf "http://%s-keycloak%s" (include "studio-web.fullname" .) .Values.keycloak.relativePath) }}
+{{- $account := printf "service-account-%s" $sc.clientId }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak-service-client
+  labels:
+    {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-service-client
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  # The client and the service account exactly as the realm files carry them
+  # (keycloak/realm-studio.json for a stand, docker/keycloak/realm-studio.json
+  # for compose), so a realm provisioned by this job and a realm imported from
+  # a file are the same realm — including the service account's fixed id.
+  # `SKIP` is what makes re-running it free: anything already there is left as
+  # it is, and nothing here overwrites a realm somebody edited by hand.
+  partial-import.json: |
+    {
+      "ifResourceExists": "SKIP",
+      "users": [
+        {
+          "id": {{ $sc.subject | quote }},
+          "username": {{ $account | quote }},
+          "enabled": true,
+          "serviceAccountClientId": {{ $sc.clientId | quote }},
+          "firstName": "Constructor",
+          "lastName": "Studio",
+          "email": {{ $sc.email | quote }},
+          "emailVerified": true,
+          "attributes": {
+            "tenant_id": [{{ $sc.tenantId | quote }}],
+            "user_type": ["service"]
+          }
+        }
+      ],
+      "clients": [
+        {
+          "clientId": {{ $sc.clientId | quote }},
+          "name": "Constructor Studio (service)",
+          "description": "The identity of what a shared IDE session does on no one person's behalf (ADR-0030): its STUDIO_ACTOR_ID, and the neutral git author. No roles, no browser flows, nobody authenticates as it.",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": false,
+          "implicitFlowEnabled": false,
+          "serviceAccountsEnabled": true,
+          "protocolMappers": [
+            {
+              "name": "tenant-id-hardcoded",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-hardcoded-claim-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "tenant_id",
+                "claim.value": {{ $sc.tenantId | quote }},
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ensure.sh: |
+    #!/bin/sh
+    # Make sure the studio-service client and its service account are on the
+    # realm, and report the subject the backend will act as.
+    #
+    # This runs on every rollout because a realm outlives a release: the realm
+    # files are imported on a realm's FIRST boot and never again, so a stand
+    # whose realm predates ADR-0030 would otherwise need somebody to import the
+    # client by hand, once, and to remember to do it on every new environment.
+    set -eu
+
+    KCADM=/opt/keycloak/bin/kcadm.sh
+    CONFIG=/tmp/kcadm.config
+    ACCOUNT="service-account-${CLIENT_ID}"
+
+    # A post-upgrade hook does not wait for Keycloak to be ready, and an
+    # upgrade is exactly when it is restarting. Retry rather than fail the
+    # release for a Pod that is thirty seconds from serving.
+    attempt=0
+    until "$KCADM" config credentials --config "$CONFIG" --server "$SERVER" \
+        --realm master --user "$KC_ADMIN_USER" --password "$KC_ADMIN_PASSWORD" >/dev/null 2>&1; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 60 ]; then
+        echo "keycloak at $SERVER did not accept an admin login within five minutes" >&2
+        exit 1
+      fi
+      sleep 5
+    done
+
+    subject_of_account() {
+      "$KCADM" get users --config "$CONFIG" -r "$REALM" \
+        -q "username=$ACCOUNT" -q exact=true \
+        --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' | head -n 1
+    }
+
+    subject=$(subject_of_account || true)
+    if [ -z "$subject" ]; then
+      echo "$ACCOUNT is not on realm $REALM — importing the client and its service account"
+      "$KCADM" create partialImport --config "$CONFIG" -r "$REALM" -f /payload/partial-import.json
+      subject=$(subject_of_account || true)
+    fi
+
+    if [ -z "$subject" ]; then
+      echo "the import ran and $ACCOUNT still does not exist on realm $REALM" >&2
+      exit 1
+    fi
+
+    echo "$ACCOUNT = $subject"
+
+    if [ "$subject" = "$EXPECTED_SUBJECT" ]; then
+      echo "that is the subject the backend acts as"
+      exit 0
+    fi
+
+    # Keycloak creates the service account together with the client and assigns
+    # it an id; an id it assigned cannot be changed afterwards. So this is not
+    # something the job can repair — it is something it has to say out loud,
+    # because the alternative is a backend acting as a subject nobody has.
+    echo "that is NOT the subject the backend acts as ($EXPECTED_SUBJECT)" >&2
+    echo "set backend.serviceSubject: \"$subject\" in this stand's values," >&2
+    echo "or delete the $CLIENT_ID client so this job can recreate it with the fixed id." >&2
+    if [ "$REQUIRE_EXPECTED_SUBJECT" = "true" ]; then
+      exit 1
+    fi
+    echo "keycloak.serviceClient.requireExpectedSubject is false, so this is a warning" >&2
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak-service-client
+  labels:
+    {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-service-client
+  annotations:
+    # After the release, not before it: on a stand where this chart owns
+    # Keycloak, there is no Keycloak to talk to until the release is applied.
+    # The script waits for it rather than assuming it answers.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ $sc.backoffLimit }}
+  activeDeadlineSeconds: {{ $sc.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak-service-client
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: keycloak-service-client
+          image: "{{ $repository }}:{{ required "keycloak.serviceClient.image.tag (or keycloak.image.tag) is required to provision the studio-service client" $tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # The image's entrypoint is kc.sh; this container runs kcadm instead.
+          command: ["/bin/sh", "/payload/ensure.sh"]
+          resources: {{- toYaml $sc.resources | nindent 12 }}
+          env:
+            - name: SERVER
+              value: {{ $server | quote }}
+            - name: REALM
+              value: {{ $sc.realm | quote }}
+            - name: CLIENT_ID
+              value: {{ $sc.clientId | quote }}
+            # What the backend will act as: its own override when a stand
+            # carries one, the pinned id otherwise.
+            - name: EXPECTED_SUBJECT
+              value: {{ .Values.backend.serviceSubject | default $sc.subject | quote }}
+            - name: REQUIRE_EXPECTED_SUBJECT
+              value: {{ $sc.requireExpectedSubject | quote }}
+            # The master-realm bootstrap admin, not the backend's own IdP
+            # credential: creating a client needs manage-clients, and widening
+            # a credential the application holds for one provisioning step is
+            # a permanent cost for a one-time job.
+            - name: KC_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: username } }
+            - name: KC_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: password } }
+          volumeMounts:
+            - name: payload
+              mountPath: /payload
+              readOnly: true
+      volumes:
+        - name: payload
+          configMap:
+            name: {{ include "studio-web.fullname" . }}-keycloak-service-client
+{{- end }}
