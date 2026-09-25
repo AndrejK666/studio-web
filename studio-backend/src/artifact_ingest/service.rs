@@ -1359,14 +1359,24 @@ impl IngestService {
             .collect())
     }
 
-    /// Read ingested nodes back for the portal, optionally filtered by type
-    /// substring (`issue`, `pull_request`, `file`, `repo`).
-    pub async fn list_nodes(
+    /// The nodes of one type set that name `scope` as their workspace or
+    /// project — from the index when the tenant has one.
+    pub async fn list_in_scope(
         &self,
         ctx: &SecurityContext,
         type_filter: Option<&str>,
-    ) -> anyhow::Result<std::sync::Arc<Vec<GtsNode>>> {
-        self.graph.list(ctx, type_filter).await
+        scope: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        self.graph.list_in_scope(ctx, type_filter, scope).await
+    }
+
+    /// One page of the listing, as `/nodes` asks for it.
+    pub async fn page_nodes(
+        &self,
+        ctx: &SecurityContext,
+        query: &super::graph::NodePageQuery<'_>,
+    ) -> anyhow::Result<super::graph::NodePage> {
+        self.graph.page(ctx, query).await
     }
 
     /// Read the relations between ingested nodes back for the portal
@@ -1500,10 +1510,10 @@ impl IngestService {
 
 /// What the portfolio counts, answered without a page to count.
 ///
-/// The listing endpoint gives the same number as `total`, and costs a walk of
-/// the tenant's whole typed node set to do it — once per row of a table. Here
-/// it is one projection read, shared with every other caller through the
-/// per-tenant cache.
+/// The listing endpoint gives the same number as `total`. Here it is one
+/// `COUNT` against the artifact index, or — for a tenant the index has not
+/// been filled for yet — one projection read, shared with every other caller
+/// through the per-tenant cache.
 #[async_trait::async_trait]
 impl super::port::ArtifactCounter for IngestService {
     async fn count_nodes(
@@ -1512,26 +1522,21 @@ impl super::port::ArtifactCounter for IngestService {
         type_leaf: &str,
         scope: &str,
     ) -> anyhow::Result<u32> {
-        // The same narrowing the listing endpoint applies, and for the same
-        // reason: `scope` is a payload field, so it cannot be pushed into the
-        // projection and has to be matched here.
-        let nodes = self.list_nodes(ctx, Some(type_leaf)).await?;
-        // The listing route's own predicate, not a second copy of it: two
-        // spellings of "in this scope" is how a count and a list start
-        // disagreeing about the same project.
-        let n = nodes
-            .iter()
-            .filter(|node| super::rest::node_in_scope(&node.value, Some(scope)))
-            .count();
+        // The store's own count, through the same scope rule the listing
+        // applies: two spellings of "in this scope" is how a count and a list
+        // start disagreeing about the same project.
+        let n = self
+            .graph
+            .count_in_scope(ctx, Some(type_leaf), scope)
+            .await?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 }
 
 /// The files, offered to the gear that decides what each one is.
 ///
-/// The same projection read and the same scope predicate as the count beside
-/// it — `node_in_scope` rather than a second spelling of it, because two
-/// spellings is how a list and a count start disagreeing about one project.
+/// The same store read and the same scope rule as the count beside it — the
+/// index's columns when the tenant has them, `node_in_scope` otherwise.
 #[async_trait::async_trait]
 impl super::port::ArtifactFiles for IngestService {
     async fn list_files(
@@ -1539,39 +1544,7 @@ impl super::port::ArtifactFiles for IngestService {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
-        let nodes = self.list_nodes(ctx, Some("file")).await?;
-        let mut files = Vec::new();
-        for node in nodes.iter() {
-            if !super::rest::node_in_scope(&node.value, Some(scope)) {
-                continue;
-            }
-            let obj = match node.value.as_object() {
-                Some(o) => o,
-                None => continue,
-            };
-            // A directory is not a file the way this caller means it, and a
-            // node with no path is nothing anybody can show.
-            if obj.get("is_dir").and_then(serde_json::Value::as_bool) == Some(true) {
-                continue;
-            }
-            let path = obj
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if path.is_empty() {
-                continue;
-            }
-            files.push(super::port::IngestedFile {
-                node_id: node.instance_id.clone(),
-                path: path.to_owned(),
-                repo: obj
-                    .get("repo")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            });
-        }
-        Ok(files)
+        self.graph.files_in_scope(ctx, scope).await
     }
 }
 

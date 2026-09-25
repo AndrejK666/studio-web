@@ -563,6 +563,10 @@ fn our_edge_type(graph_type: &str) -> String {
 
 #[async_trait]
 impl GraphStore for GraphStorageBackend {
+    fn stored_payload(&self, value: &Value) -> Value {
+        bounded_payload(value)
+    }
+
     async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
         if nodes.is_empty() {
             return Ok(());
