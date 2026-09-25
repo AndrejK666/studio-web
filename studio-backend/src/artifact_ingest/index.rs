@@ -21,17 +21,18 @@
 //!
 //! ── How it stays true ────────────────────────────────────────────────────────
 //!
-//! Every write goes through [`IndexedGraphStore::upsert_nodes`]: the graph
-//! first, then the row. Nothing in this assembly deletes an artifact node, so
-//! an upsert is the only change there is to follow.
+//! Every change goes through this store: [`IndexedGraphStore::upsert_nodes`]
+//! and [`IndexedGraphStore::delete_nodes`] (a re-sync forgetting files the
+//! repository no longer has) change the graph first, then the rows.
 //!
 //! A tenant is served from here only once a FILL has copied its graph in and
 //! written its `studio_artifact_index_fill` row. Until then — the first read
 //! after this shipped, or after a failed write — reads go to the graph exactly
-//! as they did before, and the fill runs in the background. A write to the
-//! index that fails after the graph accepted the batch leaves rows behind the
-//! graph, so it withdraws the tenant's fill row: readers fall back to the
-//! graph, and the next read starts a fresh fill.
+//! as they did before, and the fill runs in the background. A change that
+//! reached the graph and not the index — a failed index write, or a delete
+//! that failed on either side — leaves the rows behind the graph, so it
+//! withdraws the tenant's fill row: readers fall back to the graph, and the
+//! next read starts a fresh fill.
 //!
 //! A fill clears the tenant's rows, then inserts what it read from the graph
 //! with `ON CONFLICT DO NOTHING`. A sync writing concurrently uses `DO
@@ -196,6 +197,23 @@ impl ArtifactIndex {
                 Err(ScopeError::Db(DbErr::RecordNotInserted)) if !replace => {}
                 Err(e) => return Err(e.into()),
             }
+        }
+        Ok(())
+    }
+
+    /// Drop the rows of nodes the graph has forgotten.
+    async fn delete(&self, tenant: Uuid, ids: Vec<String>) -> anyhow::Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.db.conn()?;
+        for chunk in ids.chunks(ROWS_PER_STATEMENT) {
+            node::Entity::delete_many()
+                .secure()
+                .scope_with(&AccessScope::for_tenant(tenant))
+                .filter(Condition::all().add(node::Column::InstanceId.is_in(chunk.iter().cloned())))
+                .exec(&conn)
+                .await?;
         }
         Ok(())
     }
@@ -462,6 +480,18 @@ impl IndexedGraphStore {
         false
     }
 
+    /// Stop serving a tenant from the index after a change reached the graph
+    /// and not the index. Readers fall back to the graph, and the next read
+    /// starts a fill; a fill already running must not declare the tenant
+    /// complete, since it may have read the graph before this change.
+    async fn withdraw(&self, tenant: Uuid, cause: &anyhow::Error) {
+        self.fills.bump(tenant);
+        warn!(error = %format!("{cause:#}"), "studio-artifact-ingest: the index missed a graph change — the tenant is read from the graph until it is refilled");
+        if let Err(e) = self.index.unfill(tenant).await {
+            warn!(error = %format!("{e:#}"), "studio-artifact-ingest: could not withdraw the index fill either");
+        }
+    }
+
     /// An index read that fell over is logged and answered from the graph: the
     /// index is an optimisation, and must not be what fails a listing.
     fn fell_back(e: &anyhow::Error) {
@@ -515,15 +545,39 @@ impl GraphStore for IndexedGraphStore {
             .collect();
         if let Err(e) = self.index.write(tenant, rows, true).await {
             // The graph has the batch and the index does not. Serving pages
-            // from here would hide it, so stop serving this tenant from here
-            // until a fill has caught up. The sync itself succeeded.
-            self.fills.bump(tenant);
-            warn!(error = %format!("{e:#}"), "studio-artifact-ingest: index write failed — the tenant is read from the graph until it is refilled");
-            if let Err(e) = self.index.unfill(tenant).await {
-                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: could not withdraw the index fill either");
-            }
+            // from here would hide it. The sync itself succeeded.
+            self.withdraw(tenant, &e).await;
         }
         Ok(())
+    }
+
+    async fn delete_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        let tenant = ctx.subject_tenant_id();
+        let removed = match self.inner.delete_nodes(ctx, nodes).await {
+            Ok(n) => n,
+            Err(e) => {
+                // A failure may come after part of the batch was retired, and
+                // which part is not reported — so neither half of the index can
+                // be trusted to match the graph for this tenant any more.
+                self.withdraw(tenant, &e).await;
+                return Err(e);
+            }
+        };
+        // A fill running now may have read these nodes before the graph
+        // forgot them, and its `DO NOTHING` insert would bring their rows
+        // back after the delete below. It must not declare the tenant complete.
+        self.fills.bump(tenant);
+        let ids = nodes.iter().map(|n| n.instance_id.clone()).collect();
+        if let Err(e) = self.index.delete(tenant, ids).await {
+            // The graph forgot these and the index did not: pages served from
+            // here would list files that are gone.
+            self.withdraw(tenant, &e).await;
+        }
+        Ok(removed)
     }
 
     async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()> {

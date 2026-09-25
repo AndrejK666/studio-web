@@ -329,6 +329,39 @@ async fn a_sync_after_the_fill_is_visible_at_once() {
 }
 
 #[tokio::test]
+async fn a_forgotten_file_leaves_every_page_at_once() {
+    let ctx = ctx();
+    let (graph, store) = filled(&ctx).await;
+    let gone: Vec<GtsNode> = graph
+        .list_in_scope(&ctx, Some("file"), PROJECT)
+        .await
+        .unwrap()
+        .into_iter()
+        .take(3)
+        .collect();
+    assert_eq!(store.delete_nodes(&ctx, &gone).await.unwrap(), 3);
+    assert!(
+        store.ready(&ctx).await,
+        "a clean delete keeps the tenant on the index"
+    );
+    let q = NodePageQuery {
+        type_filter: Some("file"),
+        scope: Some(PROJECT),
+        repo: None,
+        needle: None,
+        by_updated: false,
+        start: PageStart::Offset(0),
+        limit: 200,
+    };
+    let want = page_of_nodes(&graph.list(&ctx, Some("file")).await.unwrap(), &q);
+    let got = store.page(&ctx, &q).await.unwrap();
+    assert_eq!((ids(&got.nodes), got.total), (ids(&want.nodes), want.total));
+    for n in &gone {
+        assert!(!ids(&got.nodes).contains(&n.instance_id.as_str()));
+    }
+}
+
+#[tokio::test]
 async fn a_fill_never_overwrites_what_a_sync_wrote() {
     let ctx = ctx();
     let tenant = ctx.subject_tenant_id();

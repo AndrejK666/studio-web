@@ -76,7 +76,8 @@ file list (`/spec-rows`, `/specs-per-source`) are one indexed query each. The
 graph is still the source of truth and still serves search, relations and
 unscoped listings.
 
-- **Written** after every node upsert the graph accepts, in the same call.
+- **Written** after every node upsert the graph accepts, in the same call, and
+  **deleted** after every node a re-sync forgets (`delete_nodes`).
 - **Filled** per tenant on its first read, in the background, from one walk of
   the graph; until `studio_artifact_index_fill` has the tenant's row, reads go
   to the graph exactly as before.
