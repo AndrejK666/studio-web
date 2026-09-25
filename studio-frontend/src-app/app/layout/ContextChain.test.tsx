@@ -57,6 +57,17 @@ describe('ContextChain (the path in the top bar)', () => {
   });
 
   describe('slots per level', () => {
+    it('shows a skeleton in a slot whose name the shell has not resolved yet', () => {
+      level.value = 'project';
+      context.value.project = { id: 'p-9', name: '' };
+      context.value.projects = [];
+      render(<ContextChain />);
+      expect(screen.getByTestId('context-slot-pending')).toBeTruthy();
+      expect(screen.queryByText('p-9')).toBeNull();
+      // Reviewer finding (vasylcf): the accessible name must not trail off into nothing.
+      expect(screen.getByLabelText('Project: loading')).toBeTruthy();
+    });
+
     it('names the organization alone at its level, whatever is selected below', () => {
       render(<ContextChain />);
       expect(screen.getByText('Acme Corporation')).toBeTruthy();

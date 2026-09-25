@@ -121,9 +121,15 @@ const SlotLabel: React.FC<{ slot: ChainSlot; isCurrent: boolean; hasMenu: boolea
       {slot.caps}
     </span>
     <span className="flex w-full min-w-0 items-center gap-1.5">
-      <span className="min-w-0 truncate text-[12px] leading-4 text-foreground [font-weight:var(--text-label-weight)]">
-        {slot.current.name}
-      </span>
+      {slot.current.name ? (
+        <span className="min-w-0 truncate text-[12px] leading-4 text-foreground [font-weight:var(--text-label-weight)]">
+          {slot.current.name}
+        </span>
+      ) : (
+        // An address can name a project before its tenant has been read
+        // (ADR-0028): the id is published to the MFE at once, the name follows.
+        <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
+      )}
       {hasMenu && (
         <ChevronDown
           className="size-3.5 shrink-0 text-muted-foreground"
@@ -158,7 +164,7 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
       <BreadcrumbLink
         render={isCurrent ? <span /> : <button type="button" onClick={enter} />}
         aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name}`}
+        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}`}
         className={SLOT_CLASS}
       >
         <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu={false} />
@@ -171,7 +177,7 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
       <BreadcrumbLink
         render={<DropdownMenuTrigger />}
         aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name}, switch`}
+        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}, switch`}
         className={`${SLOT_CLASS} focus-visible:ring-2 focus-visible:ring-ring [&>span]:hover:bg-muted`}
       >
         <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu />
