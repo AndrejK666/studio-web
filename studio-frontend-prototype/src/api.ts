@@ -2418,6 +2418,20 @@ export const api = {
     );
   },
 
+  /** Every binding in the scope, read page by page to `total`. The route
+   *  clamps a page to 200 rows, and a repository has thousands of files, so a
+   *  single call is the first page and not the set: a caller matching rows
+   *  against it would see every file past the first page as unscanned. */
+  allDocBindings: async (token: string, workspaceId: string, projectId: string | null) => {
+    const PAGE = 200;
+    const items: DocBinding[] = [];
+    for (;;) {
+      const page = await api.docBindings(token, workspaceId, projectId, { offset: items.length, limit: PAGE });
+      items.push(...page.items);
+      if (page.items.length === 0 || items.length >= page.total) return { items, total: page.total };
+    }
+  },
+
   /** Rule on what an ingested file is. Pass `content` to re-check conformance
    *  against the new type in the same call. */
   decideDocBinding: (

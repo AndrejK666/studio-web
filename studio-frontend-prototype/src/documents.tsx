@@ -884,7 +884,7 @@ function IngestedDocumentsView({
     // The binding records themselves, for the panel that acts on one. The list
     // above no longer needs them — this is the detail, not the queue.
     try {
-      setBindings((await api.docBindings(token, workspaceId, projectTenantId)).items);
+      setBindings((await api.allDocBindings(token, workspaceId, projectTenantId)).items);
     } catch {
       // The rows are still on screen; only the detail panel loses its record.
     }
