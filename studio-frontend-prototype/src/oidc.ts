@@ -20,7 +20,8 @@
 
 import { env } from "./env";
 
-const ISSUER: string = env.oidcIssuer ?? "https://localhost:8443/realms/studio";
+/** The issuer this portal signs in with, the default included. */
+export const ISSUER: string = env.oidcIssuer ?? "https://localhost:8443/realms/studio";
 const CLIENT_ID: string = env.oidcClientId ?? "studio-portal";
 
 /** The route the portal mirrors an open space on (`App.tsx` owns the pair). */
