@@ -46,11 +46,11 @@
 const { ICONS } = require('./icons');
 const { activeProject } = require('./active-project');
 
-const CONNECT_PROJECT_COMMAND_ID = 'studio.connect-project';
-// Theia's file tree. The product's own Projects panel used to stand beside it
-// and this pointed there; one file tree is enough, and Explorer is the one that
-// every extension in the window already talks to.
-const FILE_NAVIGATOR_ID = 'files';
+/*
+ * No call to action. Studio picks the project, not this window: the portal
+ * opens a session on one, and the desktop opens one from its Constructor
+ * Studio view, which is already on screen beside this board.
+ */
 
 /*
  * The leader lines. Drawn rather than composed out of borders, because the
@@ -197,7 +197,6 @@ class WelcomeView {
         this.node.setAttribute('role', 'region');
         this.node.setAttribute('aria-label', 'Getting started');
         this.node.innerHTML = this.html();
-        this.node.addEventListener('click', event => this.onClick(event));
         container.appendChild(this.node);
 
         /*
@@ -239,7 +238,6 @@ class WelcomeView {
             '<span>Write<i>.</i></span> <span>Talk<i>.</i></span> <span>Decide<i>.</i></span></h2>' +
             '    <p class="studio-welcome-lede" data-welcome-lede>' +
             'Documents live in your repository. So does everything said about them.</p>' +
-            '    <div class="studio-welcome-cta" data-welcome-cta></div>' +
             '  </header>' +
             '  <div class="studio-welcome-cols">' + columns + '</div>' +
             '</div>';
@@ -260,20 +258,10 @@ class WelcomeView {
     refresh() {
         if (!this.node) { return; }
         const show = this.dockIsEmpty();
-        const connected = !!activeProject.get();
-
         if (!show) {
             this.node.classList.remove('on', 'in');
             return;
         }
-
-        /*
-         * The heading, the lede and the three columns are the same in both
-         * states — see the header comment. Only the next step differs.
-         */
-        this.node.querySelector('[data-welcome-cta]').innerHTML = connected
-            ? '<button class="studio-btn" data-act="projects">Show Projects</button>'
-            : '<button class="studio-btn primary" data-act="connect">Connect project</button>';
 
         if (this.node.classList.contains('on')) { this.fitHints(); return; }
         this.node.classList.add('on');
@@ -303,17 +291,6 @@ class WelcomeView {
         if (!this.node || !this.node.classList.contains('on')) { return; }
         const fits = this.node.scrollHeight <= this.node.clientHeight;
         this.node.classList.toggle('no-hints', !fits);
-    }
-
-    onClick(event) {
-        const target = event.target.closest('[data-act]');
-        if (!target) { return; }
-        const act = target.getAttribute('data-act');
-        if (act === 'connect' && this.commandRegistry) {
-            this.commandRegistry.executeCommand(CONNECT_PROJECT_COMMAND_ID);
-        } else if (act === 'projects' && this.shell) {
-            this.shell.activateWidget(FILE_NAVIGATOR_ID);
-        }
     }
 }
 
@@ -363,9 +340,6 @@ const WELCOME_CSS = `
   margin: 13px auto 0; max-width: 48ch; text-wrap: balance;
   color: var(--studio-muted); font: 400 13.5px/1.6 inherit;
 }
-.studio-welcome-cta { margin-top: 22px; }
-.studio-welcome-cta .studio-btn { padding: 9px 17px; font-size: 12.5px; border-radius: 7px; }
-.studio-welcome-cta .studio-btn:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 
 /* --- the three columns ---------------------------------------------------- */
 .studio-welcome-cols {
