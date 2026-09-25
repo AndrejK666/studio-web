@@ -119,6 +119,13 @@ backend:
   # different subject on each Keycloak. Find one with
   #   GET /auth/admin/realms/studio/users?username=<name>&exact=true
   platformAdmins: ""
+  # The subject of Studio's service identity, the `studio-service` client's
+  # service account (ADR-0030): what a shared IDE session acts as. Empty uses
+  # the id fixed in the realm files, which holds for a realm Keycloak created
+  # from them. On a realm that existed before the client, import the client
+  # and set this to its service account's id:
+  #   GET /auth/admin/realms/studio/users?username=service-account-studio-service&exact=true
+  serviceSubject: ""
   # Knowledge-graph embeddings (graph-storage gear). ONE provider per
   # deployment; switching it over a populated graph blocks vector search until
   # the graph is re-embedded, and the backend logs that at boot.

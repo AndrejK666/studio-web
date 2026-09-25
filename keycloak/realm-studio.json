@@ -40,6 +40,24 @@
           "query-users"
         ]
       }
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000057d",
+      "username": "service-account-studio-service",
+      "enabled": true,
+      "serviceAccountClientId": "studio-service",
+      "firstName": "Constructor",
+      "lastName": "Studio",
+      "email": "studio@constructor.tech",
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        "user_type": [
+          "service"
+        ]
+      }
     }
   ],
   "clients": [
@@ -129,6 +147,33 @@
       "publicClient": false,
       "secret": "mini-chat-dev-secret",
       "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "tenant-id-hardcoded",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "00000000-0000-0000-0000-000000000001",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "studio-service",
+      "name": "Constructor Studio (service)",
+      "description": "The identity of what a shared IDE session does on no one person's behalf (ADR-0030): its STUDIO_ACTOR_ID, and the neutral git author. A service account with no roles and no browser flows; its user has a fixed id so the backend knows it without asking. Nobody authenticates as it today, so the secret is left for Keycloak to generate.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
       "serviceAccountsEnabled": true,
       "protocolMappers": [
         {

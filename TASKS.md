@@ -157,11 +157,29 @@ hypothesis:
     caller's own key from their profile;
   - each window's Claude Code and Codex requests carry that window's person.
 
+  **Done, phase 2 (#416):**
+  - `STUDIO_ACTOR_ID` is Studio's service identity: the `studio-service`
+    client's service account, which has no roles, no browser or password
+    sign-in, and a subject fixed in both realm files. `studio-user` seeds it
+    as "Constructor Studio (service)" with no membership.
+  - `the_second_member_of_a_workspace_does_not_work_as_the_first` runs
+    un-ignored.
+  - On a realm that already exists (dev, test), import the `studio-service`
+    client and set `backend.serviceSubject` to its service account's id.
+
+  **Already there, and not to be duplicated:**
+  `product-ext/src/node/viewer-credentials.js` gives each window's plugin host
+  a `HOME` of its own through `PluginHostEnvironmentVariable`. That home holds
+  its own `~/.claude`, its own `~/.codex`, and a `.gitconfig` with the portal
+  viewer's name and e-mail. Per-window git authorship and per-person agent
+  logins in the plugin host are therefore solved. A per-connection
+  `GIT_CONFIG_GLOBAL` was tried and dropped: it made git skip that home's
+  `.gitconfig`.
+
   **Still open:**
-  - `STUDIO_ACTOR_ID` is still the launcher's, which is why the ignored test
-    still fails;
-  - commits carry the neutral author until the author comes from the
-    connection;
+  - processes the Theia backend spawns (terminals, and Theia's own Claude
+    Code / Codex services) keep the container's `HOME` and neutral git
+    author. `viewer-credentials` reaches only the plugin host;
   - a terminal `claude` or `codex`, and Orca's agents, have no token yet;
   - repository tokens still come in `STUDIO_SOURCES` (workspace
     connections, not personal).
