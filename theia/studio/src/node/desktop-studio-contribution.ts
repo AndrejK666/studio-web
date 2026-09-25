@@ -194,7 +194,9 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             current,
             switchable: !this.offered.pinned,
             state,
-            updates: this.settings.updates ?? 'stable',
+            // The same default as electron-app/desktop-updater.js: a pre-release
+            // follows betas until the member chooses.
+            updates: this.settings.updates ?? ((process.env.STUDIO_DESKTOP_VERSION ?? '').includes('-') ? 'beta' : 'stable'),
             ...extra,
         };
     }
