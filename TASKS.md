@@ -150,6 +150,22 @@ hypothesis:
   "who did it" in the journal, audit and presence, then a worktree and a
   `HOME` per person.
 
+  **Done (branch `AndrejK666/session-no-personal-env`):**
+  - the session environment no longer carries the launcher's provider keys
+    or git author (`a_session_carries_no_key_of_its_launcher`);
+  - agents reach their models through `/studio-llm/v1/providers/*` on the
+    caller's own key from their profile;
+  - each window's Claude Code and Codex requests carry that window's person.
+
+  **Still open:**
+  - `STUDIO_ACTOR_ID` is still the launcher's, which is why the ignored test
+    still fails;
+  - commits carry the neutral author until the author comes from the
+    connection;
+  - a terminal `claude` or `codex`, and Orca's agents, have no token yet;
+  - repository tokens still come in `STUDIO_SOURCES` (workspace
+    connections, not personal).
+
 - [ ] Decide what "Continue with Constructor ID" does with a live browser session @andrejk666
 
   `keycloak/tests/account-takeover.test.mjs` shows it. A browser still signed
