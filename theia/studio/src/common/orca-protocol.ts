@@ -138,8 +138,13 @@ export interface OrcaService {
      * directory on every boot (see `theia/docker/entrypoint.sh`): the workspace
      * on the volume outlives it, the runtime's knowledge of it does not.
      * Idempotent — Orca answers with the same repo for a path it already has.
+     *
+     * The workspace is registered repository by repository: a Studio session's
+     * root is a plain folder holding each source's checkout, which Orca
+     * refuses as "not a valid git repository". Answers with the repositories
+     * it registered.
      */
-    registerWorkspace(path: string): Promise<void>;
+    registerWorkspace(path: string): Promise<string[]>;
     currentWorktree(): Promise<OrcaWorktree | undefined>;
     listTerminals(worktree: string): Promise<OrcaTerminal[]>;
     /** Uncommitted changes in one worktree, by absolute path. */

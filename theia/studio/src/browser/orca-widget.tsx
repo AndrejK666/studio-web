@@ -53,6 +53,8 @@ export class OrcaWidget extends ReactWidget {
 
     protected status: OrcaRuntimeStatus | undefined;
     protected worktrees: OrcaWorktree[] = [];
+    /** Whether this panel has already handed the workspace to Orca on its own. */
+    protected autoRegistered = false;
     protected current: OrcaWorktree | undefined;
     /** Worktree the panel is acting on; defaults to the one Theia is open on. */
     protected selected: string | undefined;
@@ -99,6 +101,20 @@ export class OrcaWidget extends ReactWidget {
             }
             this.current = await this.orca.currentWorktree();
             this.worktrees = await this.orca.listWorktrees();
+            // A session's runtime starts empty on every boot, and the panel
+            // used to wait for someone to find the Register button. Once per
+            // panel, and only when Orca knows nothing: hand it the workspace's
+            // repositories, so the agents have somewhere to work.
+            if (this.worktrees.length === 0 && this.workspaceRoot && !this.autoRegistered) {
+                this.autoRegistered = true;
+                try {
+                    if ((await this.orca.registerWorkspace(this.workspaceRoot)).length > 0) {
+                        this.worktrees = await this.orca.listWorktrees();
+                    }
+                } catch (error) {
+                    console.warn(`[orca] could not register the workspace's repositories: ${error instanceof Error ? error.message : error}`);
+                }
+            }
             // Default the selection to the worktree the IDE is open on, which
             // is what "work on this project" means from in here.
             if (!this.selected) {
@@ -128,7 +144,10 @@ export class OrcaWidget extends ReactWidget {
             return;
         }
         void this.run(`Registering ${root}`, async () => {
-            await this.orca.registerWorkspace(root);
+            const registered = await this.orca.registerWorkspace(root);
+            if (registered.length === 0) {
+                this.messages.warn(`There is no git repository in ${root} for Orca to work in.`);
+            }
             this.worktrees = await this.orca.listWorktrees();
             this.selected = this.worktrees.find(w => w.path === root)?.id ?? this.worktrees[0]?.id;
             await this.loadSelection();

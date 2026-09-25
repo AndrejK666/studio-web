@@ -8,6 +8,7 @@
 // the IDE. What we cannot tolerate silently is a *missing* identity (path,
 // handle), so those fall back to something visible rather than to `undefined`.
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import {
@@ -28,6 +29,36 @@ import { GitExecutor } from './git-executor';
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 /** Creating a checkout runs setup hooks; it is the slowest thing we call. */
 const CREATE_TIMEOUT_MS = 180_000;
+
+/**
+ * The git repositories a workspace root holds: the root itself when it is one,
+ * or else the checkouts one level down -- which is how a Studio session lays
+ * out its sources (`/workspace/<source>`). Hidden folders and `node_modules`
+ * are not sources. A `.git` may be a directory or, in a linked worktree, a file.
+ */
+export async function gitRepositoriesAt(root: string): Promise<string[]> {
+    const isRepository = (dir: string) => fs.promises.stat(path.join(dir, '.git')).then(() => true, () => false);
+    if (await isRepository(root)) {
+        return [root];
+    }
+    let entries: fs.Dirent[];
+    try {
+        entries = await fs.promises.readdir(root, { withFileTypes: true });
+    } catch {
+        return [];
+    }
+    const found: string[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') {
+            continue;
+        }
+        const dir = path.join(root, entry.name);
+        if (await isRepository(dir)) {
+            found.push(dir);
+        }
+    }
+    return found.sort();
+}
 
 @injectable()
 export class OrcaServiceImpl implements OrcaService {
@@ -82,8 +113,12 @@ export class OrcaServiceImpl implements OrcaService {
         return rows.map(row => toWorktree(asRecord(row))).filter(w => w.path.length > 0);
     }
 
-    async registerWorkspace(path: string): Promise<void> {
-        await this.cli.json(['repo', 'add', '--path', path], CREATE_TIMEOUT_MS);
+    async registerWorkspace(root: string): Promise<string[]> {
+        const repositories = await gitRepositoriesAt(root);
+        for (const repository of repositories) {
+            await this.cli.json(['repo', 'add', '--path', repository], CREATE_TIMEOUT_MS);
+        }
+        return repositories;
     }
 
     async currentWorktree(): Promise<OrcaWorktree | undefined> {
