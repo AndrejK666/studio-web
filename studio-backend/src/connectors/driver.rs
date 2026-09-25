@@ -132,6 +132,20 @@ pub struct RemoteFile {
     pub size: Option<i64>,
 }
 
+/// A repository's files as the provider listed them, and whether that is all
+/// of them.
+///
+/// The flag is what lets a sync forget a file the repository no longer has. A
+/// listing the provider cut short looks exactly like a repository that lost
+/// its tail, and forgetting on it would delete files that are still there, so
+/// a reader has to be able to tell the two apart.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteFileList {
+    pub files: Vec<RemoteFile>,
+    /// Whether the provider truncated the tree for a very large repository.
+    pub truncated: bool,
+}
+
 /// A pull request opened for a published change — or the one that was already
 /// open for the same head and base.
 #[derive(Debug, Clone)]
@@ -475,14 +489,15 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// Files in one repository as a flat, recursive tree of the given ref (or
     /// the repo's default branch when `git_ref` is `None`). There is no paging
     /// contract — providers return the whole tree in one response, which they
-    /// may truncate for very large repos; the driver logs when that happens.
-    /// Defaulted so a non-source driver stays a small, local job.
+    /// may truncate for very large repos; the driver logs when that happens and
+    /// says so in [`RemoteFileList::truncated`]. Defaulted so a non-source
+    /// driver stays a small, local job.
     async fn list_files(
         &self,
         auth: &ConnectionAuth,
         repo_full_path: &str,
         git_ref: Option<&str>,
-    ) -> anyhow::Result<Vec<RemoteFile>> {
+    ) -> anyhow::Result<RemoteFileList> {
         let _ = (auth, repo_full_path, git_ref);
         Err(anyhow::anyhow!(
             "{} does not expose files",

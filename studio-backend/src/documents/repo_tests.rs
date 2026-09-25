@@ -780,3 +780,125 @@ async fn deleting_a_binding_takes_its_verdicts_with_it() {
     let rows = repo.list_binding_analyses(ws, &[id]).await.expect("list");
     assert!(rows.is_empty(), "the cascade took the verdict");
 }
+
+/// A re-sync forgets the files the repository no longer has, by the ids a sync
+/// in that scope wrote: those rows go — a confirmed one too, since the file is
+/// gone either way — with their verdicts, and nothing else does. Not the
+/// project's other files, not the workspace-level binding for the same node
+/// the project inherits, not another project's, not another tenant's.
+#[tokio::test]
+async fn forgetting_gone_files_deletes_exactly_their_bindings() {
+    let repo = repo().await;
+    let (ws, other_ws) = (tenant(), tenant());
+    let (project, other_project) = (Uuid::new_v4(), Uuid::new_v4());
+    repo.upsert_bindings(&[
+        binding(
+            ws,
+            Some(project),
+            "gone-a",
+            "docs/adr/a.md",
+            Some("adr"),
+            "confirmed",
+        ),
+        binding(
+            ws,
+            Some(project),
+            "gone-b",
+            "docs/adr/b.md",
+            None,
+            "unknown",
+        ),
+        binding(
+            ws,
+            Some(project),
+            "kept",
+            "docs/prd.md",
+            Some("prd"),
+            "detected",
+        ),
+        binding(ws, None, "gone-a", "docs/adr/a.md", Some("adr"), "detected"),
+        binding(
+            ws,
+            Some(other_project),
+            "gone-a",
+            "docs/adr/a.md",
+            None,
+            "unknown",
+        ),
+    ])
+    .await
+    .expect("insert");
+    repo.upsert_binding(binding(
+        other_ws,
+        Some(project),
+        "gone-a",
+        "a.md",
+        None,
+        "unknown",
+    ))
+    .await
+    .expect("insert elsewhere");
+
+    let gone_a = binding_row_id(ws, Some(project), "gone-a");
+    let now = OffsetDateTime::now_utc();
+    repo.upsert_analysis(analysis::Model {
+        id: analysis_row_id(gone_a, "purpose"),
+        tenant_id: ws,
+        document_id: None,
+        binding_id: Some(gone_a),
+        detector: "purpose".to_string(),
+        state: "passed".to_string(),
+        task_id: None,
+        summary: String::new(),
+        created_at: now,
+        updated_at: now,
+    })
+    .await
+    .expect("verdict");
+
+    let ids = [
+        gone_a,
+        binding_row_id(ws, Some(project), "gone-b"),
+        // A node this scope never bound: not an error, and not counted.
+        binding_row_id(ws, Some(project), "never-bound"),
+    ];
+    assert_eq!(repo.delete_bindings(ws, &ids).await.expect("delete"), 2);
+    assert_eq!(
+        repo.delete_bindings(ws, &ids).await.expect("again"),
+        0,
+        "forgetting is idempotent"
+    );
+
+    let (rows, _) = repo
+        .list_bindings(ws, DocScope::Effective(project), 0, None)
+        .await
+        .expect("list");
+    let mut left: Vec<(Option<Uuid>, &str)> = rows
+        .iter()
+        .map(|r| (r.project_id, r.node_id.as_str()))
+        .collect();
+    left.sort();
+    assert_eq!(left, [(None, "gone-a"), (Some(project), "kept")]);
+
+    let (other, _) = repo
+        .list_bindings(ws, DocScope::Effective(other_project), 0, None)
+        .await
+        .expect("list the other project");
+    assert!(
+        other
+            .iter()
+            .any(|r| r.project_id == Some(other_project) && r.node_id == "gone-a"),
+        "another project's binding for the same node is its own"
+    );
+    let (elsewhere, _) = repo
+        .list_bindings(other_ws, DocScope::Effective(project), 0, None)
+        .await
+        .expect("list the other tenant");
+    assert_eq!(elsewhere.len(), 1, "another tenant is untouched");
+
+    let verdicts = repo
+        .list_binding_analyses(ws, &[gone_a])
+        .await
+        .expect("verdicts");
+    assert!(verdicts.is_empty(), "the verdict went with its binding");
+}

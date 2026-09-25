@@ -72,6 +72,40 @@ fn is_parseable_doc(path: &str) -> bool {
     DOC_EXT.contains(&ext.as_str())
 }
 
+/// The stored file nodes of ONE repository in ONE source scope whose path a
+/// complete listing of that repository no longer has.
+///
+/// `repo_id` is enough to narrow to both at once: a file node's `repo` field
+/// is its repository node's instance id, and that id is a uuid5 of the source
+/// scope as well as the repository, so the same repository attached to two
+/// projects is two ids and neither sync can reach the other's files. A node
+/// with no `path` is left alone — nothing says it is gone.
+///
+/// `listed` is `None` unless the listing was COMPLETE, and then nothing is
+/// gone. A failed walk reads as no files and a truncated one as fewer, and
+/// believing either would forget files the repository still has — after a
+/// failed clone, all of them.
+fn gone_files<'a>(
+    stored: &'a [GtsNode],
+    repo_id: &str,
+    listed: Option<&HashSet<String>>,
+) -> Vec<&'a GtsNode> {
+    let Some(listed) = listed else {
+        return Vec::new();
+    };
+    stored
+        .iter()
+        .filter(|n| n.type_id == gts::FILE_TYPE)
+        .filter(|n| n.value.get("repo").and_then(serde_json::Value::as_str) == Some(repo_id))
+        .filter(|n| {
+            n.value
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| !listed.contains(path))
+        })
+        .collect()
+}
+
 /// What a sync has counted.
 ///
 /// Reported live through the progress bridge as the sync runs, and again as the
@@ -110,6 +144,11 @@ pub struct SyncSummary {
     /// queryable right now, mid-sync.
     #[serde(default)]
     pub stored: usize,
+    /// Files the graph held for this repository that its complete listing no
+    /// longer has, forgotten by this sync. Zero after a partial listing, which
+    /// forgets nothing. Like the thread counts, only on the final result.
+    #[serde(default)]
+    pub pruned: usize,
 }
 
 impl SyncSummary {
@@ -468,11 +507,16 @@ impl IngestService {
         //   3. the connector tree API (metadata only).
         // Best-effort: a failure here never discards the issue/PR nodes.
         let mut files = 0usize;
+        // Whether `file_paths` ends up holding EVERY file the repository has.
+        // Only then may the sync forget the ones it used to have: each failure
+        // below reads as an empty or short listing, and forgetting against one
+        // of those would wipe the repository's files from the graph.
+        let mut listing_complete = false;
         // The IDE materializes each repo under the tenant that opened Studio —
         // the project tenant when opened from a project. Prefer `project_id`
         // for the checkout path; fall back to `workspace_id` for a
         // workspace-level open.
-        let on_disk: Option<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> = if let Some(dir) =
+        let on_disk: Option<(PathBuf, clone::Walk, Option<String>)> = if let Some(dir) =
             self.shared_checkout_dir(project_id.or(workspace_id), repo_dir)
         {
             progress.set("reading workspace files…");
@@ -488,7 +532,8 @@ impl IngestService {
                         repo = repo_full_path,
                         "studio-artifact-ingest: reading the workspace checkout failed — skipping files"
                     );
-                    Some((PathBuf::new(), Vec::new(), None))
+                    // An incomplete walk, so nothing is forgotten over it.
+                    Some((PathBuf::new(), clone::Walk::default(), None))
                 }
             }
         } else if let Some(work_root) = self.work_root.clone() {
@@ -511,7 +556,8 @@ impl IngestService {
                         repo = repo_full_path,
                         "studio-artifact-ingest: clone failed — skipping files"
                     );
-                    Some((PathBuf::new(), Vec::new(), None))
+                    // An incomplete walk, so nothing is forgotten over it.
+                    Some((PathBuf::new(), clone::Walk::default(), None))
                 }
             }
         } else {
@@ -527,9 +573,10 @@ impl IngestService {
         // through a connector's tree API has no sidecars to read, and claiming
         // it has no threads would be a different statement from not knowing.
         let mut threads = comment_threads::RepositoryThreads::default();
-        if let Some((_, list, _)) = on_disk.as_ref() {
+        if let Some((_, walk, _)) = on_disk.as_ref() {
             threads = comment_threads::fold_repository(
-                list.iter()
+                walk.files
+                    .iter()
                     .filter_map(|wf| wf.text.as_deref().map(|text| (wf.path.as_str(), text))),
             );
             open_document_threads =
@@ -537,8 +584,10 @@ impl IngestService {
         }
 
         match on_disk {
-            Some((dir, list, commit)) => {
-                for wf in list.into_iter().take(MAX_FILES) {
+            Some((dir, walk, commit)) => {
+                // The walk stops at the same cap, and says so when it does.
+                listing_complete = walk.complete && walk.files.len() <= MAX_FILES;
+                for wf in walk.files.into_iter().take(MAX_FILES) {
                     files += 1;
                     let file_id =
                         gts::file_instance_id(source_scope, connector_id, repo_full_path, &wf.path);
@@ -595,8 +644,11 @@ impl IngestService {
                 // No checkout available — fall back to connector metadata.
                 progress.set("listing files…");
                 match driver.list_files(&auth, repo_full_path, None).await {
-                    Ok(list) => {
-                        for f in list.into_iter().filter(|f| !f.is_dir).take(MAX_FILES) {
+                    Ok(listing) => {
+                        let blobs: Vec<_> =
+                            listing.files.into_iter().filter(|f| !f.is_dir).collect();
+                        listing_complete = !listing.truncated && blobs.len() <= MAX_FILES;
+                        for f in blobs.into_iter().take(MAX_FILES) {
                             files += 1;
                             let path = f.path.clone();
                             let file_id = gts::file_instance_id(
@@ -679,6 +731,22 @@ impl IngestService {
             0,
         )
         .await?;
+
+        // Forget what the repository no longer has. Everything above only
+        // ever adds, so a file deleted or moved away stayed in the graph — and
+        // stayed a document on the Specs screen — however often the repository
+        // was re-synced.
+        progress.set("forgetting deleted files…");
+        let pruned = self
+            .prune_gone_files(
+                ctx,
+                &repo_id,
+                listing_complete.then_some(&file_paths),
+                workspace_id,
+                project_id,
+                repo_full_path,
+            )
+            .await;
 
         // PR → file (`modifies`): one API call per PR, best-effort, and only for
         // files we actually ingested so every edge endpoint exists in the graph.
@@ -934,6 +1002,7 @@ impl IngestService {
             open_review_threads,
             open_document_threads,
             stored: total_nodes,
+            pruned,
         })
     }
 
@@ -946,7 +1015,7 @@ impl IngestService {
         repo_full_path: &str,
         base_url: &str,
         token: &str,
-    ) -> anyhow::Result<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
         let clone_url = driver.clone_url(base_url, repo_full_path)?;
         let (username, password) = driver.clone_credentials(token);
         let username = username.to_string();
@@ -1009,7 +1078,7 @@ impl IngestService {
         dir: PathBuf,
         username: String,
         password: String,
-    ) -> anyhow::Result<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             match clone::update_shared_checkout(&dir, &username, &password) {
                 Ok(clone::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
@@ -1039,7 +1108,7 @@ impl IngestService {
     async fn walk_checkout(
         &self,
         dir: PathBuf,
-    ) -> anyhow::Result<(PathBuf, Vec<clone::WalkedFile>, Option<String>)> {
+    ) -> anyhow::Result<(PathBuf, clone::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let commit = clone::head_commit(&dir);
             let walked = clone::walk(&dir)?;
@@ -1078,6 +1147,109 @@ impl IngestService {
             Err(e) => {
                 tracing::warn!(error = %e, path = rel, "studio-artifact-ingest: file-parser extraction failed — leaving file metadata-only");
                 None
+            }
+        }
+    }
+
+    /// Forget the files the graph holds for this repository that a complete
+    /// listing no longer has: their document bindings, then their nodes.
+    /// Returns how many nodes were forgotten.
+    ///
+    /// Best-effort, like every other phase after the issues and pull requests:
+    /// a failure is a warning and forgets nothing more, and the next sync
+    /// computes the same set again and retries.
+    ///
+    /// Bindings go first. A binding whose node is gone cannot be found again —
+    /// the stale set is read from the graph, and a forgotten node is no longer
+    /// in it — so if the documents gear refuses, the nodes are kept for the
+    /// next sync to try both. The reverse failure is harmless: a node whose
+    /// bindings are already gone is simply forgotten on the next attempt.
+    ///
+    /// It reads the whole file projection to do this. That read is the cost of
+    /// graph-storage not filtering on payload fields (see [`GraphStore::list`]),
+    /// and it is paid once per sync, after the file flush has already dropped
+    /// the cached projection.
+    async fn prune_gone_files(
+        &self,
+        ctx: &SecurityContext,
+        repo_id: &str,
+        listed: Option<&HashSet<String>>,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        repo_full_path: &str,
+    ) -> usize {
+        // `gone_files` would answer "nothing" for a partial listing anyway;
+        // asking here first saves the projection read that answer needs.
+        if listed.is_none() {
+            info!(
+                repo = repo_full_path,
+                "studio-artifact-ingest: file listing incomplete; nothing forgotten this sync"
+            );
+            return 0;
+        }
+        let stored = match self.graph.list(ctx, Some(gts::FILE_TYPE)).await {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: could not read the stored files; nothing forgotten this sync"
+                );
+                return 0;
+            }
+        };
+        let gone: Vec<GtsNode> = gone_files(&stored, repo_id, listed)
+            .into_iter()
+            .cloned()
+            .collect();
+        if gone.is_empty() {
+            return 0;
+        }
+
+        let mut bindings = 0usize;
+        if let (Some(classifier), Some(workspace)) = (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) {
+            let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
+            let node_ids = gone.iter().map(|n| n.instance_id.clone()).collect();
+            match classifier
+                .forget_ingested(ctx, workspace, project, node_ids)
+                .await
+            {
+                Ok(n) => bindings = n,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        gone = gone.len(),
+                        "studio-artifact-ingest: could not forget the bindings of deleted files; \
+                         their nodes are kept for the next sync"
+                    );
+                    return 0;
+                }
+            }
+        }
+
+        match self.graph.delete_nodes(ctx, &gone).await {
+            Ok(pruned) => {
+                info!(
+                    repo = repo_full_path,
+                    pruned,
+                    bindings,
+                    "studio-artifact-ingest: forgot files the repository no longer has"
+                );
+                pruned
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    gone = gone.len(),
+                    bindings,
+                    "studio-artifact-ingest: could not forget deleted files; the next sync retries"
+                );
+                0
             }
         }
     }
@@ -1160,6 +1332,7 @@ impl IngestService {
                 open_review_threads: None,
                 open_document_threads: None,
                 stored: *flushed,
+                pruned: 0,
             }
             .as_detail(),
         );
@@ -1180,6 +1353,7 @@ impl IngestService {
         };
         let (_dir, walked, _commit) = self.walk_checkout(dir).await?;
         Ok(walked
+            .files
             .into_iter()
             .filter_map(|f| f.text.map(|t| (f.path, t)))
             .collect())
@@ -1414,5 +1588,103 @@ impl super::port::RepoFileReader for IngestService {
         repo_dir: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
         IngestService::read_repo_files(self, workspace_id, repo_dir).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONNECTOR: &str = "conn-1";
+    const REPO: &str = "constructorfabric/studio-web";
+
+    /// A file node exactly as a sync in `scope` stores it.
+    fn file(scope: &str, repo: &str, path: &str) -> GtsNode {
+        let repo_id = gts::repo_node(scope, CONNECTOR, "github", repo).instance_id;
+        gts::file_node_cloned(scope, &repo_id, CONNECTOR, repo, path, 1, None, None, None)
+    }
+
+    fn repo_id(scope: &str) -> String {
+        gts::repo_node(scope, CONNECTOR, "github", REPO).instance_id
+    }
+
+    fn listing(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|p| (*p).to_string()).collect()
+    }
+
+    fn paths<'a>(nodes: &[&'a GtsNode]) -> Vec<&'a str> {
+        let mut out: Vec<&str> = nodes
+            .iter()
+            .filter_map(|n| n.value.get("path").and_then(serde_json::Value::as_str))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The observed bug: an ADR moved away weeks ago is still a file node.
+    /// Against a complete listing it is gone, and the files that are still
+    /// there are not.
+    #[test]
+    fn a_complete_listing_forgets_what_it_no_longer_has() {
+        let stored = [
+            file("project-a", REPO, "README.md"),
+            file("project-a", REPO, "docs/adr/0010-theia-backend-bridge.md"),
+            file("project-a", REPO, "studio-backend/docs/adr/0001.md"),
+        ];
+        let listed = listing(&["README.md"]);
+        let gone = gone_files(&stored, &repo_id("project-a"), Some(&listed));
+        assert_eq!(
+            paths(&gone),
+            [
+                "docs/adr/0010-theia-backend-bridge.md",
+                "studio-backend/docs/adr/0001.md"
+            ]
+        );
+    }
+
+    /// A walk that failed, or was cut short, forgets nothing — however little
+    /// it found. The error paths read as an empty listing, and believing one
+    /// would wipe the repository.
+    #[test]
+    fn a_partial_listing_forgets_nothing() {
+        let stored = [
+            file("project-a", REPO, "README.md"),
+            file("project-a", REPO, "docs/prd.md"),
+        ];
+        assert!(gone_files(&stored, &repo_id("project-a"), None).is_empty());
+    }
+
+    /// Another repository's files in the same project are not this listing's
+    /// to judge.
+    #[test]
+    fn another_repositorys_files_are_left_alone() {
+        let stored = [
+            file("project-a", REPO, "README.md"),
+            file("project-a", "constructorfabric/gears-rust", "Cargo.toml"),
+        ];
+        let listed = listing(&["README.md"]);
+        assert!(gone_files(&stored, &repo_id("project-a"), Some(&listed)).is_empty());
+    }
+
+    /// The same repository attached to another project is another graph: its
+    /// files are keyed on that scope, and this sync must not reach them.
+    #[test]
+    fn the_same_repository_in_another_scope_is_left_alone() {
+        let stored = [
+            file("project-a", REPO, "README.md"),
+            file("project-b", REPO, "docs/adr/0010-theia-backend-bridge.md"),
+        ];
+        let listed = listing(&["README.md"]);
+        assert!(gone_files(&stored, &repo_id("project-a"), Some(&listed)).is_empty());
+    }
+
+    /// Only files. A repository's issues and pull requests carry the same
+    /// `repo` field and have no path in any listing, and are not gone.
+    #[test]
+    fn nodes_that_are_not_files_are_left_alone() {
+        let mut issue = file("project-a", REPO, "not-a-file");
+        issue.type_id = gts::ISSUE_TYPE;
+        let listed = listing(&[]);
+        assert!(gone_files(&[issue], &repo_id("project-a"), Some(&listed)).is_empty());
     }
 }

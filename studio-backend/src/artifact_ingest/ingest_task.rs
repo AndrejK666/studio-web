@@ -141,7 +141,7 @@ impl TaskHandler for IngestTask {
 
         match outcome {
             Ok(counts) => {
-                let summary = format!(
+                let mut summary = format!(
                     "{}: {} issue(s), {} pull request(s), {} file(s), {} comment(s), \
                      {} commit(s), {} node(s) stored",
                     payload.repo_full_path,
@@ -152,6 +152,11 @@ impl TaskHandler for IngestTask {
                     counts.commits,
                     counts.stored,
                 );
+                // Only when it happened: most syncs forget nothing, and "0
+                // deleted file(s) forgotten" on every one of them is noise.
+                if counts.pruned > 0 {
+                    summary.push_str(&format!(", {} deleted file(s) forgotten", counts.pruned));
+                }
                 match serde_json::to_value(counts) {
                     Ok(result) => TaskOutcome::done_with(summary, result),
                     // The sync happened; failing the run over a serialization

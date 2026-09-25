@@ -34,6 +34,20 @@ pub struct WalkedFile {
     pub text: Option<String>,
 }
 
+/// What a walk of a checkout found, and whether that is every file in it.
+///
+/// `complete` is false when the walk stopped at [`MAX_FILES`] or could not
+/// read a directory or an entry on the way. A sync forgets the files a
+/// repository no longer has by comparing against this list, and a directory
+/// the walk could not open looks, in the list, exactly like a directory
+/// somebody deleted — so the caller must know which one it has before it
+/// forgets anything.
+#[derive(Debug, Clone, Default)]
+pub struct Walk {
+    pub files: Vec<WalkedFile>,
+    pub complete: bool,
+}
+
 /// The result of a clone/update: where the checkout lives and its HEAD commit.
 #[derive(Debug, Clone)]
 pub struct CloneResult {
@@ -379,25 +393,45 @@ pub fn head_commit(dir: &Path) -> Option<String> {
 
 /// Walk a checkout depth-first, skipping `.git` and symlinks, reading text-file
 /// content within the caps. Blocking — call under `spawn_blocking`.
-pub fn walk(dir: &Path) -> anyhow::Result<Vec<WalkedFile>> {
+///
+/// Unreadable directories and entries are still skipped rather than failing
+/// the walk — one of them must not cost a sync every other file — but the walk
+/// says that it skipped something (see [`Walk::complete`]).
+pub fn walk(dir: &Path) -> anyhow::Result<Walk> {
     let mut out: Vec<WalkedFile> = Vec::new();
+    let mut complete = true;
     let mut text_budget: u64 = MAX_TOTAL_TEXT_BYTES;
     let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
 
     while let Some(current) = stack.pop() {
         let entries = match std::fs::read_dir(&current) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let Ok(entry) = entry else {
+                complete = false;
+                continue;
+            };
             if out.len() >= MAX_FILES {
-                return Ok(out);
+                // There is at least one more entry, so the cap cut the walk
+                // short rather than landing exactly on the repository's size.
+                return Ok(Walk {
+                    files: out,
+                    complete: false,
+                });
             }
             let path = entry.path();
             // Skip symlinks entirely — don't follow them or record them.
             let meta = match std::fs::symlink_metadata(&path) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
             if meta.file_type().is_symlink() {
                 continue;
@@ -436,7 +470,10 @@ pub fn walk(dir: &Path) -> anyhow::Result<Vec<WalkedFile>> {
     }
 
     out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    Ok(Walk {
+        files: out,
+        complete,
+    })
 }
 
 #[cfg(test)]
@@ -544,5 +581,31 @@ mod tests {
             "edited in the IDE\n"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A checkout the walk read end to end is a complete listing: it is what a
+    /// sync may forget files against.
+    #[test]
+    fn a_walk_that_read_everything_is_complete() {
+        let root = std::env::temp_dir().join(format!("walk-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("docs")).expect("dir");
+        std::fs::write(root.join("README.md"), "one\n").expect("write");
+        std::fs::write(root.join("docs/a.md"), "two\n").expect("write");
+        let walked = walk(&root).expect("walk");
+        assert!(walked.complete);
+        let paths: Vec<&str> = walked.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["README.md", "docs/a.md"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A checkout that is not there reads as no files at all. That must not be
+    /// mistaken for a repository somebody emptied, or the sync would forget
+    /// every file it has.
+    #[test]
+    fn a_walk_that_could_not_read_its_root_is_not_complete() {
+        let root = std::env::temp_dir().join(format!("walk-missing-{}", uuid::Uuid::new_v4()));
+        let walked = walk(&root).expect("walk");
+        assert!(walked.files.is_empty());
+        assert!(!walked.complete);
     }
 }
