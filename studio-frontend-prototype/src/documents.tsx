@@ -287,6 +287,29 @@ const findingTone = (severity?: string | null) =>
  *  made the row as tall as the document's worst day and told the reader four
  *  detector names they cannot act on from a list. The names are one click
  *  away, in the panel beside it. */
+/** How a document written in Studio travels through a detector run: as a
+ *  binding-shaped target whose node is `studio-doc:<id>` -- the subject its
+ *  findings are kept under -- and whose path is the one the run echoes back. */
+const STUDIO_DOC = "studio-doc:";
+function isStudioDoc(b: DocBinding): boolean {
+  return b.node_id.startsWith(STUDIO_DOC);
+}
+function studioDocTarget(doc: Doc): DocBinding {
+  return {
+    id: doc.id,
+    tenant_id: "",
+    inherited: !!doc.inherited,
+    node_id: `${STUDIO_DOC}${doc.id}`,
+    path: `studio-doc/${doc.id}.md`,
+    type_key: doc.type_key,
+    state: "manual",
+    candidates: [],
+    content_sha: "",
+    created_at: doc.updated_at,
+    updated_at: doc.updated_at,
+  };
+}
+
 /** The bound set, with one file sent from its row added if it is not in it. */
 function withFile(only: DocBinding | undefined, bound: DocBinding[]): DocBinding[] {
   return only && !bound.some((b) => b.id === only.id) ? [only, ...bound] : bound;
@@ -587,7 +610,8 @@ function IngestedDocumentsView({
         workspaceId,
         projectTenantId,
         "purpose",
-        targets.map((b) => b.id),
+        targets.filter((b) => !isStudioDoc(b)).map((b) => b.id),
+        targets.filter(isStudioDoc).map((b) => b.id),
       );
       const collected = await collectBatch(token, run.run_id, {
         onProgress: (phase) => {
@@ -662,7 +686,9 @@ function IngestedDocumentsView({
         // it named, exactly right as the verdict a stage gating on `purpose`
         // waits for. Unknown stays `pending`: a gate never opens on a value we
         // could not interpret.
-        void api
+        // A document written in Studio has no binding to keep a gate on; its
+        // finding above is all there is to record.
+        if (!isStudioDoc(b)) void api
           .recordBindingAnalysis(token, workspaceId, b.id, "purpose", {
             state: gatePassed === true ? "passed" : gatePassed === false ? "failed" : "pending",
             task_id: taskId,
@@ -672,7 +698,10 @@ function IngestedDocumentsView({
             // Same reasoning: the person is watching the queue, not the gate.
           });
 
-        if (docType && recognised && types.some((t) => t.key === docType)) {
+        if (isStudioDoc(b)) {
+          // Its type was chosen when it was started; the verdict is advice.
+          named += 1;
+        } else if (docType && recognised && types.some((t) => t.key === docType)) {
           await api.decideDocBinding(token, workspaceId, b.id, {
             action: "set",
             type_key: docType,
@@ -754,7 +783,8 @@ function IngestedDocumentsView({
         workspaceId,
         projectTenantId,
         "leak",
-        targets.map((b) => b.id),
+        targets.filter((b) => !isStudioDoc(b)).map((b) => b.id),
+        targets.filter(isStudioDoc).map((b) => b.id),
       );
       const collected = await collectBatch(token, run.run_id, {
         onProgress: (phase) => setProgress(`Leak · ${phase}`),
@@ -800,7 +830,9 @@ function IngestedDocumentsView({
             // The run the person is watching matters more than its trace.
           });
 
-        void api
+        // A document written in Studio has no binding to keep a gate on; its
+        // finding above is all there is to record.
+        if (!isStudioDoc(b)) void api
           .recordBindingAnalysis(token, workspaceId, b.id, "leak", {
             state: passed === true ? "passed" : passed === false ? "failed" : "pending",
             task_id: taskId,
@@ -866,7 +898,8 @@ function IngestedDocumentsView({
         workspaceId,
         projectTenantId,
         "traceability",
-        targets.map((b) => b.id),
+        targets.filter((b) => !isStudioDoc(b)).map((b) => b.id),
+        targets.filter(isStudioDoc).map((b) => b.id),
       );
       const collected = await collectBatch(token, run.run_id, {
         onProgress: (phase) => setProgress(`Traceability · ${phase}`),
@@ -926,7 +959,9 @@ function IngestedDocumentsView({
           })
           .catch(() => {});
 
-        void api
+        // A document written in Studio has no binding to keep a gate on; its
+        // finding above is all there is to record.
+        if (!isStudioDoc(b)) void api
           .recordBindingAnalysis(token, workspaceId, b.id, "traceability", {
             state: "passed",
             task_id: taskId,
@@ -987,7 +1022,8 @@ function IngestedDocumentsView({
         workspaceId,
         projectTenantId,
         "bloat",
-        targets.map((b) => b.id),
+        targets.filter((b) => !isStudioDoc(b)).map((b) => b.id),
+        targets.filter(isStudioDoc).map((b) => b.id),
       );
       const collected = await collectBatch(token, run.run_id, {
         onProgress: (phase) => setProgress(`Duplication · ${phase}`),
@@ -1036,7 +1072,9 @@ function IngestedDocumentsView({
           })
           .catch(() => {});
 
-        void api
+        // A document written in Studio has no binding to keep a gate on; its
+        // finding above is all there is to record.
+        if (!isStudioDoc(b)) void api
           .recordBindingAnalysis(token, workspaceId, b.id, "bloat", {
             state: clean ? "passed" : "failed",
             task_id: taskId,
@@ -1409,7 +1447,8 @@ function IngestedDocumentsView({
                got". */
             <TileGrid>
               {visible.map((row) => {
-                const open = row.node_id ? (findings[row.node_id] ?? []).length : 0;
+                const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
+                const open = findingKey ? (findings[findingKey] ?? []).length : 0;
                 const repoId = row.repo || undefined;
                 return (
                   <Tile
@@ -1470,7 +1509,8 @@ function IngestedDocumentsView({
             </div>
             {visible.map((row) => {
               const b = bindings.find((x) => x.id === row.id);
-              const open = row.node_id ? findings[row.node_id] : undefined;
+              const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
+              const open = findingKey ? findings[findingKey] : undefined;
               const repoId = row.repo || undefined;
               const opened = selectedId === row.id && selected ? selected : null;
               const openedDoc =
@@ -1703,8 +1743,63 @@ function IngestedDocumentsView({
               Compose plan
             </button>
           </div>
+          <div className="ing-send">
+            <span className="ing-send-label">Send to Spec Quality</span>
+            <button onClick={() => void refineWithSpecQuality(studioDocTarget(doc))} disabled={busy}>
+              Purpose
+            </button>
+            <button onClick={() => void runLeakChecks(studioDocTarget(doc))} disabled={busy}>
+              Leak
+            </button>
+            <button onClick={() => void runBloatCheck(studioDocTarget(doc))} disabled={busy}>
+              Bloat
+            </button>
+            <button onClick={() => void runTraceCheck(studioDocTarget(doc))} disabled={busy}>
+              Trace
+            </button>
+          </div>
         </div>
+        {findingsCard(STUDIO_DOC + doc.id)}
       </div>
+    );
+  }
+
+  /** What the detectors found on one document, by the key its findings are
+   *  kept under: a file's node, or `studio-doc:<id>` for one written here. */
+  function findingsCard(key: string) {
+    return (
+                <div style={card}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Analysis</div>
+                  {(findings[key] ?? []).length === 0 ? (
+                    <p className="empty" style={{ fontSize: 12, margin: 0 }}>
+                      No detector has looked at this document yet. Run one from the Analyze tab, or
+                      refine the undetermined above.
+                    </p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {(findings[key] ?? []).map((f) => (
+                        <div key={f.detector} style={{ fontSize: 12 }}>
+                          <span
+                            className="ing-state"
+                            style={{
+                              background: findingTone(f.severity).bg,
+                              color: findingTone(f.severity).fg,
+                            }}
+                          >
+                            {f.detector}
+                          </span>{" "}
+                          {f.severity ?? "recorded"}
+                          {f.score != null && (
+                            <span className="ing-conf"> · {Math.round(f.score * 100)}%</span>
+                          )}
+                          {f.summary && (
+                            <div style={{ opacity: 0.7, marginTop: 2 }}>{f.summary}</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
     );
   }
 
@@ -1806,38 +1901,7 @@ function IngestedDocumentsView({
                   )}
                 </div>
                 <Checklist report={selected.validation ?? null} />
-                <div style={card}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Analysis</div>
-                  {(findings[selected.node_id] ?? []).length === 0 ? (
-                    <p className="empty" style={{ fontSize: 12, margin: 0 }}>
-                      No detector has looked at this document yet. Run one from the Analyze tab, or
-                      refine the undetermined above.
-                    </p>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {(findings[selected.node_id] ?? []).map((f) => (
-                        <div key={f.detector} style={{ fontSize: 12 }}>
-                          <span
-                            className="ing-state"
-                            style={{
-                              background: findingTone(f.severity).bg,
-                              color: findingTone(f.severity).fg,
-                            }}
-                          >
-                            {f.detector}
-                          </span>{" "}
-                          {f.severity ?? "recorded"}
-                          {f.score != null && (
-                            <span className="ing-conf"> · {Math.round(f.score * 100)}%</span>
-                          )}
-                          {f.summary && (
-                            <div style={{ opacity: 0.7, marginTop: 2 }}>{f.summary}</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {findingsCard(selected.node_id)}
       </div>
     );
   }

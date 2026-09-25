@@ -1528,7 +1528,12 @@ impl IngestService {
             }
             let finding_id = node.instance_id.clone();
             nodes.push(node);
-            edges.push(gts::finding_on_edge(&finding_id, f.subject.trim()));
+            // A document written in Studio (`studio-doc:<id>`) lives in the
+            // documents gear, not in this graph, so there is no node for the
+            // edge to reach; the finding's `subject` is what finds it again.
+            if !f.subject.trim().starts_with("studio-doc:") {
+                edges.push(gts::finding_on_edge(&finding_id, f.subject.trim()));
+            }
         }
         for d in duplicates {
             let (a, b) = (d.from.trim(), d.to.trim());

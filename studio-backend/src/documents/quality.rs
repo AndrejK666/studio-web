@@ -45,6 +45,12 @@ pub struct SpecDoc {
     pub doc_type: Option<String>,
 }
 
+/// The name a document written in Studio goes by in a detector run. It has no
+/// path in any repository, and the run echoes this back as the item's id.
+pub fn studio_doc_path(id: uuid::Uuid) -> String {
+    format!("studio-doc/{id}.md")
+}
+
 /// The four the upstream serves. Rejected by name rather than forwarded, so an
 /// unknown one fails here instead of as an upstream 404 inside a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +199,15 @@ pub fn docs_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_studio_document_goes_by_its_id_in_a_run() {
+        let id = uuid::Uuid::from_u128(7);
+        assert_eq!(
+            studio_doc_path(id),
+            "studio-doc/00000000-0000-0000-0000-000000000007.md"
+        );
+    }
 
     fn doc(path: &str, text: &str, ty: Option<&str>) -> SpecDoc {
         SpecDoc {
