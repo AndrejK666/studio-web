@@ -532,7 +532,9 @@ jobs:
 
   build-backend-binary:
     needs: build-require-ci
-    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
+    # always(): without it GitHub adds success(), which treats the test jobs
+    # the change filter skipped as failed ancestors and skips the build.
+    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
     # Pinned, not `-latest`: the binary links the builder's glibc, and the
     # runtime image (Dockerfile, debian:trixie-slim, glibc 2.41) must be at
     # least as new. `ubuntu-latest` moving to a newer glibc than trixie would
@@ -570,7 +572,9 @@ jobs:
 
   build-file-storage-sidecar-binary:
     needs: build-require-ci
-    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
+    # always(): without it GitHub adds success(), which treats the test jobs
+    # the change filter skipped as failed ancestors and skips the build.
+    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -621,7 +625,9 @@ jobs:
   # replaced studio-frontend-prototype/ (now a playground with its own image).
   build-frontend-dist:
     needs: build-require-ci
-    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
+    # always(): without it GitHub adds success(), which treats the test jobs
+    # the change filter skipped as failed ancestors and skips the build.
+    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -669,7 +675,9 @@ jobs:
   # ci.yml deliberately does not gate on it.
   build-prototype-dist:
     needs: build-require-ci
-    if: needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
+    # always(): without it GitHub adds success(), which treats the test jobs
+    # the change filter skipped as failed ancestors and skips the build.
+    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -929,7 +937,9 @@ jobs:
 
   build-infra-images:
     needs: build-require-ci
-    if: needs.build-require-ci.outputs.scope == 'infra'
+    # always(): without it GitHub adds success(), which treats the test jobs
+    # the change filter skipped as failed ancestors and skips the build.
+    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'infra'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
