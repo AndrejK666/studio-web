@@ -91,7 +91,31 @@ export function environmentFor(link: DesktopLink, environments: readonly Desktop
     const norm = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase();
     const same = (a: string | undefined, b: string) => !!a && norm(a) === norm(b);
     return environments.find(e => same(link.issuer, e.issuer))
-        ?? environments.find(e => same(link.studioUrl, e.studioUrl));
+        ?? environments.find(e => same(link.studioUrl, e.studioUrl))
+        // The same machine, reached another way: a local stand serves the
+        // portal, the gateway and Keycloak on different ports, and names the
+        // loopback as localhost in one place and 127.0.0.1 in another.
+        ?? environments.find(e => sameHost(link, e));
+}
+
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function hostOf(value: string | undefined): string | undefined {
+    if (!value) {
+        return undefined;
+    }
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+        return LOOPBACK.has(host) ? 'loopback' : host;
+    } catch {
+        return undefined;
+    }
+}
+
+/** Whether the link's Studio or realm is on the host of the environment's. */
+function sameHost(link: DesktopLink, environment: DesktopEnvironment): boolean {
+    const theirs = new Set([hostOf(environment.studioUrl), hostOf(environment.issuer)]);
+    return [hostOf(link.studioUrl), hostOf(link.issuer)].some(h => h !== undefined && theirs.has(h));
 }
 
 /** Whether the link is about the Studio the desktop is connected to now. */

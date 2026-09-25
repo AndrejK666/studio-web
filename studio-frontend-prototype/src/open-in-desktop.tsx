@@ -11,7 +11,7 @@
 // offered, and when the page keeps the focus after the click -- nothing took
 // the link -- it says where the app comes from.
 import { useEffect, useRef, useState } from "react";
-import { env } from "./env";
+import { ISSUER } from "./oidc";
 
 /** Where the desktop installer is published: the workflow that builds it. */
 export const DESKTOP_DOWNLOAD_URL =
@@ -22,7 +22,9 @@ export const DESKTOP_DOWNLOAD_URL =
 export function desktopLink(project: { id: string; name?: string }): string {
   const params = new URLSearchParams();
   params.set("studio", window.location.origin);
-  if (env.oidcIssuer) params.set("issuer", env.oidcIssuer.replace(/\/+$/, ""));
+  // The issuer this portal actually signs in with -- its default included, which
+  // a local stand relies on -- since the realm is what the desktop matches first.
+  params.set("issuer", ISSUER.replace(/\/+$/, ""));
   params.set("project", project.id);
   if (project.name) params.set("name", project.name);
   return `cfstudio://open?${params.toString()}`;

@@ -48,6 +48,15 @@ describe('the desktop link', () => {
         expect(environmentFor({ project: PROJECT, studioUrl: 'https://elsewhere.example' }, [dev, local])).toBeUndefined();
     });
 
+    it('knows a local stand reached on another port, or as localhost', () => {
+        // The portal on :8081 signing in at https://localhost:8443 is the same
+        // stand as the desktop's Local, whose gateway is :8090 and realm :8088.
+        const fromLocalPortal = { project: PROJECT, studioUrl: 'http://127.0.0.1:8081', issuer: 'https://localhost:8443/realms/studio' };
+        expect(environmentFor(fromLocalPortal, [dev, local])).toBe(local);
+        expect(isCurrent(fromLocalPortal, local)).toBe(true);
+        expect(isCurrent(fromLocalPortal, dev)).toBe(false);
+    });
+
     it('knows when the link is about the Studio in use', () => {
         expect(isCurrent({ project: PROJECT, issuer: dev.issuer }, dev)).toBe(true);
         expect(isCurrent({ project: PROJECT, issuer: dev.issuer }, local)).toBe(false);

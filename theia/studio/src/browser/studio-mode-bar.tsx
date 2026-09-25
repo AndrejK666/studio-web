@@ -202,6 +202,10 @@ abstract class ModeAware extends ReactWidget {
         if (this.perspectives) {
             this.toDispose.push(this.perspectives.onDidChangePerspective(() => this.update()));
         }
+        // A mode's actions are drawn only when their command exists, and most
+        // are registered after this widget first renders -- in the desktop app
+        // nothing else re-renders it, and its ribbon stayed empty.
+        this.toDispose.push(this.commands.onCommandsChanged(() => this.update()));
         this.update();
     }
 
@@ -373,7 +377,17 @@ const MODE_BAR_CSS = `
     background: var(--theia-titleBar-activeBackground, var(--theia-editor-background));
     border-bottom: 1px solid var(--theia-widget-border, var(--theia-editorGroup-border));
 }
-#theia-top-panel > * { position: static !important; }
+/* Everything in the row flows, except the desktop's window-drag layer, which
+   Theia lays over the whole panel and must stay out of the flow: in flow it is
+   a 95px block that pushes the menu, the modes and the window controls out of
+   the panel. */
+#theia-top-panel > *:not(#theia-drag-panel) { position: static !important; }
+#theia-top-panel > #theia-custom-title.hidden { display: none !important; }
+/* The desktop's minimise / maximise / close, at the end of the first row. */
+#theia-top-panel > [id="window-controls"] { order: 2; height: 30px !important; align-self: flex-start; }
+/* The window drags by the empty parts of the header, never by a control. */
+#theia-top-panel .studio-mode-switch-widget, #theia-top-panel .studio-mode-bar,
+#theia-top-panel [id="theia:menubar"], #theia-top-panel .studio-collab-strip { -webkit-app-region: no-drag; }
 #theia-top-panel > .theia-icon { display: none !important; }
 /* Row one: menu, tabs, collaboration. */
 #theia-top-panel .studio-mode-switch-widget { order: 0; height: 30px !important; }
