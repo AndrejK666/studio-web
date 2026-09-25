@@ -1540,6 +1540,128 @@ mod tests {
         );
     }
 
+    /// A runtime that launches: it keeps the environment each container was
+    /// started with, and lists the container afterwards the way Docker does.
+    #[derive(Default)]
+    struct LaunchingRuntime {
+        launched: Mutex<Vec<(Uuid, Vec<String>)>>,
+    }
+
+    #[async_trait]
+    impl SessionDriver for LaunchingRuntime {
+        async fn image_present(&self) -> bool {
+            true
+        }
+        async fn refresh_image(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn launch(&self, spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
+            let workspace = spec.labels[super::WS_LABEL].parse()?;
+            self.launched
+                .lock()
+                .unwrap()
+                .push((workspace, spec.env.clone()));
+            Ok(LaunchedSession {
+                handle: spec.name.clone(),
+                address: SessionAddress::Loopback { port: spec.port },
+            })
+        }
+        async fn is_running(&self, handle: &str) -> bool {
+            self.launched
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(ws, _)| handle == format!("cf-studio-session-{ws}"))
+        }
+        async fn is_reachable(&self, _address: &SessionAddress) -> bool {
+            true
+        }
+        async fn destroy(&self, _handle: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
+            Ok(self
+                .launched
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(ws, _)| AdoptedSession {
+                    handle: format!("cf-studio-session-{ws}"),
+                    ..running_session(*ws, 41000)
+                })
+                .collect())
+        }
+    }
+
+    fn person(subject: u128) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(subject))
+            .subject_type("user")
+            .subject_tenant_id(TENANT)
+            .build()
+            .expect("security context")
+    }
+
+    /// WHO A SHARED SESSION IS. One session per workspace is deliberate (the
+    /// test above), and a session is launched once — its environment is built
+    /// from whoever launched it: `STUDIO_ACTOR_ID`, the git author, and the
+    /// agent keys read from credstore under that person's identity, their
+    /// private secrets first. So the second member to open the workspace types
+    /// into a container that commits, pushes and calls agents as the first.
+    ///
+    /// This is "signed in as Vasil, and it was not Vasil" without any login
+    /// going wrong: both tokens were right, and the IDE still was not.
+    ///
+    /// Ignored, not deleted: it states where a shared session has to get to —
+    /// several people in one container, each acting as themselves (TASKS.md,
+    /// 2026-09-25). It fails today; drop the `ignore` when it passes.
+    #[tokio::test]
+    #[ignore = "known: a shared session runs as its launcher (TASKS.md 2026-09-25)"]
+    async fn the_second_member_of_a_workspace_does_not_work_as_the_first() {
+        let root = std::env::temp_dir().join(format!("studio-session-actor-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+
+        let vasil = Uuid::from_u128(0x7A5);
+        let colleague = Uuid::from_u128(0xC011);
+        let ws = Uuid::from_u128(0xD1);
+
+        let (_, existed) = service
+            .create(&person(0x7A5), ws, None, None, vec![])
+            .await
+            .expect("Vasil opens the workspace");
+        assert!(!existed);
+        let (_, reused) = service
+            .create(&person(0xC011), ws, None, None, vec![])
+            .await
+            .expect("a colleague opens the same workspace");
+
+        let launched = runtime.launched.lock().unwrap().clone();
+        let actor = |env: &[String]| {
+            env.iter()
+                .find_map(|v| v.strip_prefix("STUDIO_ACTOR_ID=").map(str::to_owned))
+                .unwrap_or_default()
+        };
+        let actor_of_the_colleagues_ide = actor(&launched.last().expect("a launch").1);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            !reused || actor_of_the_colleagues_ide == colleague.to_string(),
+            "the colleague ({colleague}) was handed the session Vasil ({vasil}) launched, \
+             and it runs as {actor_of_the_colleagues_ide}: commits, pushes and agent calls \
+             from their keyboard are Vasil's"
+        );
+    }
+
     /// The other half: reachability is a question, not a formality.
     #[tokio::test]
     async fn a_workspace_the_caller_does_not_reach_has_no_session() {
