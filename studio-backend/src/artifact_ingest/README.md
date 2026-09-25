@@ -85,6 +85,10 @@ unscoped listings.
   readers fall back to the graph and the next read refills.
 - **Optional**: without the gear's `database:` section there is no index and
   nothing changes but speed.
+- **Not file content.** A file's searchable excerpt is a `file_content` node of
+  its own, joined to the file by `content_of`; search folds a hit on it back
+  into the file. Nothing lists it (`gts::is_listed`), so it has no row here,
+  and a file row is metadata only.
 
 When request 5 lands in graph-storage this table becomes redundant, and the
 thing to do is delete it rather than keep two mirrors in step.

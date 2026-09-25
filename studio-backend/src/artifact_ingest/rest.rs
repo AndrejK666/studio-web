@@ -615,9 +615,10 @@ async fn list_nodes(
         .nodes
         .into_iter()
         .map(|n| {
-            // File nodes carry full text content; drop it from the listing so
-            // the payload stays small (`has_text` still flags it). A dedicated
-            // content endpoint can serve the body when needed.
+            // A file's text is its content node, which is not listed, so a
+            // file here has none (`has_text` still flags it). Dropped anyway,
+            // so no node that does carry one ever makes a listing heavy. A
+            // dedicated content endpoint can serve the body when needed.
             let mut value = n.value;
             if let Some(obj) = value.as_object_mut() {
                 obj.remove("text");

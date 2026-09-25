@@ -361,6 +361,65 @@ async fn a_forgotten_file_leaves_every_page_at_once() {
     }
 }
 
+/// A file's content goes to the graph and never to the index: no page lists
+/// it, even when asked for by name, and the file's own row stays light. A
+/// prune retiring both keeps the tenant on the index.
+#[tokio::test]
+async fn a_files_content_never_becomes_a_row() {
+    let ctx = ctx();
+    let (graph, store) = filled(&ctx).await;
+    let scope = json!({ "workspace_id": WS, "project_id": PROJECT });
+    let mut file = node(
+        gts::FILE_TYPE,
+        "f-content",
+        json!({ "repo": "acme/web", "path": "docs/with-text.md", "has_text": true }),
+    );
+    merge(&mut file.value, &scope);
+    let mut content = gts::file_content_node(&file, "# words").expect("text has content");
+    merge(&mut content.value, &scope);
+    store
+        .upsert_nodes(&ctx, &[file.clone(), content.clone()])
+        .await
+        .unwrap();
+    assert!(store.ready(&ctx).await);
+
+    let page = |type_filter| NodePageQuery {
+        type_filter,
+        scope: Some(PROJECT),
+        repo: None,
+        needle: None,
+        by_updated: false,
+        start: PageStart::Offset(0),
+        limit: 1000,
+    };
+    let everything = store.page(&ctx, &page(None)).await.unwrap();
+    assert!(ids(&everything.nodes).contains(&"f-content"));
+    assert!(!ids(&everything.nodes).contains(&content.instance_id.as_str()));
+    let files = store.page(&ctx, &page(Some("file"))).await.unwrap();
+    let row = files
+        .nodes
+        .iter()
+        .find(|n| n.instance_id == "f-content")
+        .expect("the file is listed");
+    assert!(row.value.get("text").is_none() && row.value.get("text_excerpt").is_none());
+    let named = store
+        .page(&ctx, &page(Some(gts::FILE_CONTENT_TYPE)))
+        .await
+        .unwrap();
+    assert_eq!(named.total, 0);
+    // The graph holds it, so search still finds the file through it.
+    assert_eq!(
+        ids(&graph.search(&ctx, "words", 10).await.unwrap()),
+        ["f-content"]
+    );
+
+    store.delete_nodes(&ctx, &[content]).await.unwrap();
+    store.delete_nodes(&ctx, &[file]).await.unwrap();
+    assert!(store.ready(&ctx).await);
+    let after = store.page(&ctx, &page(Some("file"))).await.unwrap();
+    assert!(!ids(&after.nodes).contains(&"f-content"));
+}
+
 #[tokio::test]
 async fn a_fill_never_overwrites_what_a_sync_wrote() {
     let ctx = ctx();
