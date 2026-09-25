@@ -1,0 +1,107 @@
+// The link the portal opens a project in the desktop Studio with (ADR-0027 §6).
+//
+//   cfstudio://open?studio=<Studio address>&issuer=<OIDC issuer>&project=<id>&name=<name>
+//
+// It names a Studio and a project and carries no token: whatever it asks for
+// is done with the member's own sign-in, the same way a click in the desktop's
+// Studio view does it. The Studio is named twice because one Studio can be
+// reached at more than one address -- the portal a person clicked on is not
+// always the address the desktop signs in to -- while the realm they both sign
+// in with is one, so the issuer is what the desktop matches first.
+
+import { DesktopEnvironment } from './desktop-environments';
+
+/** The scheme the desktop registers with the operating system. */
+export const DESKTOP_LINK_SCHEME = 'cfstudio';
+/** The one thing a link asks for today. */
+export const DESKTOP_LINK_OPEN = 'open';
+
+export interface DesktopLink {
+    /** The project to clone and open. */
+    readonly project: string;
+    /** What to call its folder and its window; the project id when absent. */
+    readonly name?: string;
+    readonly studioUrl?: string;
+    readonly issuer?: string;
+}
+
+const trimSlash = (value: string | null | undefined): string | undefined => {
+    const trimmed = value?.trim().replace(/\/+$/, '');
+    return trimmed ? trimmed : undefined;
+};
+
+/**
+ * Read a `cfstudio://open?...` link, or `undefined` for anything else.
+ *
+ * Strict on what it acts on: the scheme, the `open` action and a project id
+ * that looks like one. A Studio address that is not http(s) is dropped rather
+ * than handed to the sign-in, since the link comes from outside the app.
+ */
+export function parseDesktopLink(raw: string): DesktopLink | undefined {
+    let url: URL;
+    try {
+        url = new URL(raw);
+    } catch {
+        return undefined;
+    }
+    if (url.protocol !== `${DESKTOP_LINK_SCHEME}:`) {
+        return undefined;
+    }
+    // `cfstudio://open?..` parses with `open` as the host; `cfstudio:open?..`
+    // with it as the path. Both are the same link.
+    const action = url.host || url.pathname.replace(/^\/+/, '').split('/')[0];
+    if (action !== DESKTOP_LINK_OPEN) {
+        return undefined;
+    }
+    const project = url.searchParams.get('project')?.trim();
+    if (!project || !/^[0-9a-zA-Z-]{8,64}$/.test(project)) {
+        return undefined;
+    }
+    const web = (value: string | undefined) => (value && /^https?:\/\/[^/\s]+/.test(value) ? value : undefined);
+    return {
+        project,
+        name: url.searchParams.get('name')?.trim() || undefined,
+        studioUrl: web(trimSlash(url.searchParams.get('studio'))),
+        issuer: web(trimSlash(url.searchParams.get('issuer'))),
+    };
+}
+
+/** The link the portal writes for a project. */
+export function desktopLink(link: DesktopLink): string {
+    const params = new URLSearchParams();
+    if (link.studioUrl) {
+        params.set('studio', link.studioUrl);
+    }
+    if (link.issuer) {
+        params.set('issuer', link.issuer);
+    }
+    params.set('project', link.project);
+    if (link.name) {
+        params.set('name', link.name);
+    }
+    return `${DESKTOP_LINK_SCHEME}://${DESKTOP_LINK_OPEN}?${params.toString()}`;
+}
+
+/**
+ * Which of the build's Studios the link means: the one with its issuer, else
+ * the one at its address. `undefined` when it names neither -- a Studio this
+ * build does not offer, which the member is asked about before it is used.
+ */
+export function environmentFor(link: DesktopLink, environments: readonly DesktopEnvironment[]): DesktopEnvironment | undefined {
+    const norm = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase();
+    const same = (a: string | undefined, b: string) => !!a && norm(a) === norm(b);
+    return environments.find(e => same(link.issuer, e.issuer))
+        ?? environments.find(e => same(link.studioUrl, e.studioUrl));
+}
+
+/** Whether the link is about the Studio the desktop is connected to now. */
+export function isCurrent(link: DesktopLink, current: DesktopEnvironment | undefined): boolean {
+    if (!current) {
+        return false;
+    }
+    if (!link.issuer && !link.studioUrl) {
+        // A link that names no Studio means the one in use.
+        return true;
+    }
+    return environmentFor(link, [current]) !== undefined;
+}

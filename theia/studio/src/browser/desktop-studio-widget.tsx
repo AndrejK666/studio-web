@@ -15,7 +15,7 @@ import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
-interface DesktopStatus extends DesktopEnvironmentChoice {
+export interface DesktopStatus extends DesktopEnvironmentChoice {
     enabled: boolean;
     studioUrl?: string;
     state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
@@ -33,7 +33,7 @@ interface Organization extends Tenant {
     workspaces: Tenant[];
 }
 
-function desktopUrl(path: string): string {
+export function desktopUrl(path: string): string {
     return new Endpoint({ path: `studio-desktop/${path}` }).getRestUrl().toString();
 }
 

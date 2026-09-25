@@ -37,6 +37,7 @@ import type {
 } from "./api";
 import { parseRepoSource } from "./artifact-sync";
 import { errText, initials, relTime } from "./format";
+import { OpenInDesktop } from "./open-in-desktop";
 
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
@@ -737,9 +738,12 @@ export function ProjectOverview({
                   . Opening it brings the IDE into this window; the Spaces list in the sidebar is
                   where you stop it.
                 </p>
-                <button className="primary" onClick={onOpenStudio}>
-                  Open in IDE
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <button className="primary" onClick={onOpenStudio}>
+                    Open in IDE
+                  </button>
+                  <OpenInDesktop project={project} />
+                </div>
               </>
             ) : (
               <>
@@ -750,9 +754,12 @@ export function ProjectOverview({
                     : `${repos.length} attached repositor${repos.length === 1 ? "y" : "ies"} and opens them together`}
                   .
                 </p>
-                <button className="primary" onClick={onOpenStudio}>
-                  Launch Studio
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <button className="primary" onClick={onOpenStudio}>
+                    Launch Studio
+                  </button>
+                  <OpenInDesktop project={project} />
+                </div>
               </>
             )}
           </div>
