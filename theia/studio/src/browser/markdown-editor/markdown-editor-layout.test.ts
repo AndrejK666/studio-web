@@ -31,10 +31,19 @@ describe('Markdown editor layout contract', () => {
     it('pins the flex toolbar and scrolling ownership CSS contract', () => {
         const css = fs.readFileSync(path.resolve(__dirname, 'markdown-editor.css'), 'utf8');
 
-        const editorRule = getRuleBlock(css, '.studio-markdown-editor');
+        // Not `.studio-markdown-editor` bare: MDXEditor gives its popup
+        // container the editor's class too, and a full-height flex column on
+        // that container is a layer over the whole IDE that eats every click.
+        const editorRule = getRuleBlock(css, '.studio-markdown-editor:not(.mdxeditor-popup-container)');
         expectDeclaration(editorRule, 'display', 'flex');
         expectDeclaration(editorRule, 'flex-direction', 'column');
         expectDeclaration(editorRule, 'min-height', '0');
+
+        expect(css).not.toMatch(/(^|\})\s*\.studio-markdown-editor\s*\{/u);
+        const popupRule = getRuleBlock(css, '.mdxeditor-popup-container');
+        expectDeclaration(popupRule, 'pointer-events', 'none');
+        const popupChildRule = getRuleBlock(css, '.mdxeditor-popup-container > *');
+        expectDeclaration(popupChildRule, 'pointer-events', 'auto');
 
         const toolbarRule = getRuleBlock(css, '.studio-markdown-editor .mdxeditor-toolbar');
         expectDeclaration(toolbarRule, 'flex-shrink', '0');
