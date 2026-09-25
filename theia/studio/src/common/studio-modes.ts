@@ -17,6 +17,10 @@ export const WORKBENCH_PERSPECTIVE_ID = 'default';
 
 /** Writing, rather than building. */
 export const DOCUMENTS_PERSPECTIVE_ID = 'studio.documents';
+/** Running and steering coding agents, laid out the way the Orca app is. */
+export const ORCA_PERSPECTIVE_ID = 'studio.orca-mode';
+/** Everything at once: every view placed, nothing collapsed, the whole menu. */
+export const FULL_PERSPECTIVE_ID = 'studio.full';
 
 /**
  * How the two markdown editors are arbitrated.
