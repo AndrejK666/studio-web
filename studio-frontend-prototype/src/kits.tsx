@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  type DeclaredCapability,
   type GearConfig,
   type GearboxStatus,
   type KitInstallation,
@@ -51,6 +52,8 @@ export function ProjectKits({
   // re-run a rollout that has nothing left to do.
   const reconciled = useRef(new Set<string>());
   const product = useProjectProduct(token, projectId, projectName);
+  /** How many capabilities the documents declare; null until they are read. */
+  const [capCount, setCapCount] = useState<number | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -214,16 +217,28 @@ export function ProjectKits({
 
   return (
     <section className="kits-view">
-      {product.composing && (
-        <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
-      )}
+      {/* The page reads as the question a person brings to it: what do my
+          documents ask for, which components answer that, and what product do
+          they make -- ending in the IDE, where the product is built. It used to
+          open on the product and leave the documents' suggestions behind a
+          button further down, which is the answer before the question. */}
+      <JourneyStrip capabilities={capCount} product={product} />
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
           {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
         </p>
       )}
-      <SuggestedComponents token={token} projectId={projectId} workspaceId={workspaceId} product={product} />
+      <SuggestedComponents
+        token={token}
+        projectId={projectId}
+        workspaceId={workspaceId}
+        product={product}
+        onCapabilities={setCapCount}
+      />
+      {product.composing && (
+        <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
+      )}
       <SpecAgainstCode token={token} projectId={projectId} workspaceId={workspaceId} />
 
       <div className="card-head">
@@ -487,13 +502,17 @@ function SuggestedComponents({
   projectId,
   workspaceId,
   product,
+  onCapabilities,
 }: {
   token: string;
   projectId: string;
   workspaceId: string;
   product: ProductState;
+  onCapabilities?: (count: number) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
+  /** Which documents declare each capability, to say where a row comes from. */
+  const [sources, setSources] = useState<Record<string, DeclaredCapability["sources"]>>({});
   const [docCount, setDocCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -514,6 +533,8 @@ function SuggestedComponents({
       // met -- Studio's own documents and the repository files bound to a type
       // alike. The server indexes these from front matter, so this is a read.
       const caps = declared.items.map((c) => c.key);
+      setSources(Object.fromEntries(declared.items.map((c) => [c.key, c.sources])));
+      onCapabilities?.(caps.length);
       setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
       const next = (await api.composePlan(token, caps, vocab.items ?? [])).items;
       setPlan(next);
@@ -530,6 +551,14 @@ function SuggestedComponents({
     }
   };
 
+  // Read on arrival: the documents are the question this page answers, so it
+  // should not wait for a button to ask it.
+  useEffect(() => {
+    void suggest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const recommended = plan ? defaultPicks(plan).filter((n) => !product.picks.includes(n)) : [];
   const built = plan?.flatMap((r) => r.candidates).filter((c) => c.built !== "docs-only").length ?? 0;
   const gaps = plan?.filter((r) => r.gap).length ?? 0;
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
@@ -539,16 +568,28 @@ function SuggestedComponents({
     <section className="card" style={{ marginBottom: 16 }}>
       <div className="card-head">
         <div>
-          <h2>Suggested from your documents</h2>
+          <h2>1 · What your specs ask for</h2>
           <p className="subtitle">
-            The capabilities this project&apos;s documents declare, matched against the component
-            catalogue. Components that have been built come first.
-            {composing && " + puts a gear into the product above; its name opens its page in the catalogue."}
+            The capabilities this project&apos;s documents declare, and the components in the
+            catalogue that provide each. Built components come first.
+            {composing && " + puts one into the product below; a name opens its page in the catalogue."}
           </p>
         </div>
-        <button className="ghost" onClick={() => void suggest()} disabled={busy}>
-          {busy ? "Matching…" : plan ? "Refresh" : "Suggest"}
-        </button>
+        <span style={{ display: "flex", gap: 6 }}>
+          {composing && recommended.length > 0 && (
+            <button
+              className="primary"
+              disabled={busy}
+              title={`The best built component for each capability: ${recommended.join(", ")}`}
+              onClick={() => product.setPicks((current) => [...current, ...recommended.filter((n) => !current.includes(n))])}
+            >
+              Add recommended ({recommended.length})
+            </button>
+          )}
+          <button className="ghost" onClick={() => void suggest()} disabled={busy}>
+            {busy ? "Matching…" : "Refresh"}
+          </button>
+        </span>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -579,6 +620,11 @@ function SuggestedComponents({
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
+                    {(sources[row.capability] ?? []).length > 0 && (
+                      <span style={{ fontSize: 11, opacity: 0.65 }} title="The documents that declare it">
+                        from {(sources[row.capability] ?? []).map((src) => src.label).join(", ")}
+                      </span>
+                    )}
                     {row.gap && (
                       <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
                         NOTHING IN THE CATALOGUE
@@ -941,6 +987,57 @@ function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: stri
  *  catalogue page; the engine's verdict on them; and the two ways onward — into
  *  the project's repository, and into the IDE where the language server keeps
  *  checking it. */
+/** Where the person is in the page's three steps, at a glance. */
+function JourneyStrip({ capabilities, product }: { capabilities: number | null; product: ProductState }) {
+  const last = product.record?.last_preview;
+  const steps: { n: number; label: string; state: string; done: boolean }[] = [
+    {
+      n: 1,
+      label: "Your specs ask for",
+      state: capabilities == null ? "reading…" : `${capabilities} capabilit${capabilities === 1 ? "y" : "ies"}`,
+      done: (capabilities ?? 0) > 0,
+    },
+    {
+      n: 2,
+      label: "Your product",
+      state:
+        product.picks.length === 0
+          ? "no components yet"
+          : `${product.picks.length} component${product.picks.length === 1 ? "" : "s"}` +
+            (last ? (last.ok ? " · resolves" : " · does not resolve") : ""),
+      done: !!last?.ok,
+    },
+    {
+      n: 3,
+      label: "Built in Theia",
+      state: product.record?.written ? `product.gdl on ${product.record.written.branch}` : "not yet",
+      done: !!product.record?.written,
+    },
+  ];
+  return (
+    <ol className="journey-strip" style={{ display: "flex", gap: 8, listStyle: "none", padding: 0, margin: "0 0 12px", flexWrap: "wrap" }}>
+      {steps.map((st) => (
+        <li
+          key={st.n}
+          style={{
+            flex: "1 1 200px",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: "6px 10px",
+            fontSize: 12,
+            background: st.done ? "var(--accent)" : "transparent",
+          }}
+        >
+          <b>
+            {st.done ? "✓" : st.n} · {st.label}
+          </b>
+          <div style={{ opacity: 0.7 }}>{st.state}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function ProductCard({
   token,
   projectId,
@@ -978,7 +1075,7 @@ function ProductCard({
   // The crate behind an engine id, for linking a resolved gear to its page.
   const crateOf = (id: string) => preview?.gears.find((g) => g.id === id)?.crate_name ?? `cf-gears-${id}`;
 
-  const run = async (write: boolean) => {
+  const run = async (write: boolean): Promise<ProductPreview | null> => {
     setBusy(write ? "save" : "preview");
     setError(null);
     try {
@@ -993,11 +1090,27 @@ function ProductCard({
       setPreview(result);
       setAsked(question);
       await product.refresh();
+      return result;
     } catch (cause) {
       setError(errText(cause));
+      return null;
     } finally {
       setBusy(null);
     }
+  };
+
+  /** The last step of the page: the product's description in its repository,
+   *  and the IDE open on it in the Gearbox perspective, where it is built. A
+   *  product already saved and unchanged is opened as it is. */
+  const buildInTheia = async () => {
+    if (!studio) return;
+    let branch = record?.written?.branch;
+    if (!branch || stale || !preview) {
+      const saved = await run(true);
+      if (!saved?.written) return;
+      branch = saved.written.branch;
+    }
+    void studio.openProduct({ id: projectId, name: projectName }, "product.gdl", branch);
   };
 
   // Completion replaced the picks: show at once what the engine makes of them.
@@ -1015,11 +1128,12 @@ function ProductCard({
       <div className="card-head">
         <div>
           <h2>
-            Product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>
+            2 · Your product <code style={{ fontSize: 13, fontWeight: 500 }}>{productId}</code>
           </h2>
           <p className="subtitle">
-            The gears this project ships as one product, composed and checked by the Gearbox engine.
-            Saved with the project; a gear&apos;s name opens its page in the component catalogue.
+            The components this project ships as one product, composed and checked by the Gearbox
+            engine. Make it resolve, then build it in Theia: that saves <code>product.gdl</code> to
+            the repository and opens it in the IDE&apos;s Gearbox view.
           </p>
         </div>
         <span className="hint" style={{ fontSize: 11 }}>
@@ -1031,7 +1145,7 @@ function ProductCard({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         {picks.length === 0 ? (
           <span className="empty" style={{ fontSize: 12 }}>
-            Nothing in the product yet — press Suggest below and pick gears with +.
+            Nothing in the product yet — add the recommended components above, or pick them with +.
           </span>
         ) : (
           picks.map((name) => (
@@ -1095,6 +1209,17 @@ function ProductCard({
         >
           Make it resolve
         </button>
+        {studio && (
+          <button
+            className="primary"
+            disabled={busy !== null || picks.length === 0 || studio.opening !== null}
+            title="Save product.gdl to the repository and open it in the IDE's Gearbox view"
+            onClick={() => void buildInTheia()}
+            style={{ marginLeft: "auto" }}
+          >
+            {busy === "save" ? "Saving…" : "Build it in Theia →"}
+          </button>
+        )}
         {!preview && last && (
           <span style={{ fontSize: 12 }}>
             <span className={`badge ${last.ok ? "ok" : "failed"}`}>
