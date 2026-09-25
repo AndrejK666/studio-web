@@ -18,11 +18,25 @@
     min-height: 0;
 }
 
-.studio-markdown-editor {
+/* MDXEditor puts the editor's `className` on its popup container too, which it
+   mounts straight into <body>. Sized like the editor, that container became a
+   full-height layer over the whole IDE that took every click and let only the
+   keyboard through -- read as "the IDE froze" whenever a markdown editor was
+   open. The layout rule is the editor's alone. */
+.studio-markdown-editor:not(.mdxeditor-popup-container) {
     height: 100%;
     display: flex;
     flex-direction: column;
     min-height: 0;
+}
+
+/* And the popup layer itself only catches what is on it: a toolbar dropdown or
+   a link dialog, never the space between them. */
+.mdxeditor-popup-container {
+    pointer-events: none;
+}
+.mdxeditor-popup-container > * {
+    pointer-events: auto;
 }
 
 .studio-markdown-editor .mdxeditor-toolbar {
