@@ -22,6 +22,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
+use super::port::IngestedFile;
+
 /// A GTS node to persist: its type id (`gts.cf.studio.artifact.*`), a
 /// deterministic instance id (uuid5 of a stable key — idempotent across
 /// syncs), and the payload.
@@ -107,6 +109,209 @@ pub trait GraphStore: Send + Sync {
     /// The relations the UI draws — authored_by / modifies / artifact_of /
     /// contains — as endpoint instance-id pairs.
     async fn list_relations(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsEdgeView>>;
+
+    /// The payload this store keeps for a node — what a later read returns.
+    ///
+    /// The graph does not keep what it is given: file content becomes a
+    /// bounded excerpt, and an oversized payload loses fields. Whoever mirrors
+    /// the store (the artifact index) has to mirror THAT, or a page served
+    /// from the mirror would differ from the same page served from the graph.
+    fn stored_payload(&self, value: &Value) -> Value {
+        value.clone()
+    }
+
+    /// The nodes of [`GraphStore::list`] whose payload names `scope` as its
+    /// workspace or its project.
+    ///
+    /// Defaulted to the whole projection narrowed here, which is what every
+    /// caller did before there was an index to ask. The index overrides it.
+    async fn list_in_scope(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        scope: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        Ok(self
+            .list(ctx, type_filter)
+            .await?
+            .iter()
+            .filter(|n| super::rest::node_in_scope(&n.value, Some(scope)))
+            .cloned()
+            .collect())
+    }
+
+    /// How many of those there are, without handing them over.
+    async fn count_in_scope(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        scope: &str,
+    ) -> anyhow::Result<u64> {
+        let n = self
+            .list(ctx, type_filter)
+            .await?
+            .iter()
+            .filter(|n| super::rest::node_in_scope(&n.value, Some(scope)))
+            .count();
+        Ok(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
+    /// The scope's files, as the documents gear lists them.
+    async fn files_in_scope(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<IngestedFile>> {
+        Ok(self
+            .list(ctx, Some(super::gts::FILE_TYPE))
+            .await?
+            .iter()
+            .filter(|n| super::rest::node_in_scope(&n.value, Some(scope)))
+            .filter_map(ingested_file)
+            .collect())
+    }
+
+    /// One page of the listing, narrowed, ordered and sliced.
+    ///
+    /// Defaulted to the whole projection narrowed in process
+    /// ([`page_of_nodes`]) — what `/nodes` has always done. The index
+    /// overrides it with a query.
+    async fn page(
+        &self,
+        ctx: &SecurityContext,
+        query: &NodePageQuery<'_>,
+    ) -> anyhow::Result<NodePage> {
+        let nodes = self.list(ctx, query.type_filter).await?;
+        Ok(page_of_nodes(&nodes, query))
+    }
+}
+
+/// What `/nodes` asks for.
+#[derive(Debug, Clone)]
+pub struct NodePageQuery<'a> {
+    /// As [`GraphStore::list`]'s `type_filter`.
+    pub type_filter: Option<&'a str>,
+    /// Keep nodes whose payload names this as its workspace or its project.
+    /// `None` is every node.
+    pub scope: Option<&'a str>,
+    /// Keep nodes whose payload `repo` equals this.
+    pub repo: Option<&'a str>,
+    /// Already lower-cased. Matched against title, author, path, full path
+    /// and the number, as the listing always has.
+    pub needle: Option<&'a str>,
+    /// Newest `updated_at` first, ties by instance id; else by instance id.
+    pub by_updated: bool,
+    pub start: PageStart<'a>,
+    pub limit: usize,
+}
+
+/// Where a page starts.
+#[derive(Debug, Clone, Copy)]
+pub enum PageStart<'a> {
+    Offset(usize),
+    /// Just after this instance id, in the page's order. An id the filtered
+    /// set does not contain starts at the beginning, as it always has.
+    After(&'a str),
+}
+
+/// One page and how many nodes the filter matches across every page.
+#[derive(Debug, Clone)]
+pub struct NodePage {
+    pub nodes: Vec<GtsNode>,
+    pub total: u64,
+    /// The position of the first node of `nodes` in the filtered set.
+    pub start: u64,
+}
+
+/// Narrow, order and slice a projection in process — the listing's rules,
+/// written once, and the reference the index is tested against.
+pub fn page_of_nodes(nodes: &[GtsNode], q: &NodePageQuery<'_>) -> NodePage {
+    // `nodes` may be the store's shared projection. Narrow by reference and
+    // clone only the page: the filters typically keep a page out of tens of
+    // thousands.
+    let mut kept: Vec<&GtsNode> = nodes
+        .iter()
+        .filter(|n| super::rest::node_in_scope(&n.value, q.scope))
+        // Repo nodes carry no `repo` field, so they drop out when a repo
+        // filter is set — which is the intent (you're listing its contents).
+        .filter(|n| match q.repo {
+            Some(r) => n.value.get("repo").and_then(Value::as_str) == Some(r),
+            None => true,
+        })
+        .filter(|n| match q.needle {
+            None => true,
+            Some(needle) => {
+                let v = &n.value;
+                let hay = [
+                    v.get("title").and_then(Value::as_str).unwrap_or(""),
+                    v.get("author").and_then(Value::as_str).unwrap_or(""),
+                    v.get("path").and_then(Value::as_str).unwrap_or(""),
+                    v.get("full_path").and_then(Value::as_str).unwrap_or(""),
+                ]
+                .join(" ")
+                .to_lowercase();
+                let num = v
+                    .get("number")
+                    .and_then(Value::as_i64)
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                hay.contains(needle) || num.contains(needle)
+            }
+        })
+        .collect();
+    // Newest `updated_at` first when asked, else a stable order by instance id
+    // (the graph returns storage pages in any order). ISO-8601 timestamps sort
+    // lexically, so a string compare is chronological.
+    if q.by_updated {
+        fn updated(n: &GtsNode) -> &str {
+            n.value
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        }
+        kept.sort_by(|a, b| {
+            updated(b)
+                .cmp(updated(a))
+                .then_with(|| a.instance_id.cmp(&b.instance_id))
+        });
+    } else {
+        kept.sort_by(|a, b| a.instance_id.cmp(&b.instance_id));
+    }
+    let start = match q.start {
+        PageStart::Offset(offset) => offset.min(kept.len()),
+        PageStart::After(cursor) => kept
+            .iter()
+            .position(|n| n.instance_id == cursor)
+            .map_or(0, |i| i + 1),
+    };
+    let end = start.saturating_add(q.limit).min(kept.len());
+    NodePage {
+        nodes: kept[start..end].iter().map(|n| (*n).clone()).collect(),
+        total: u64::try_from(kept.len()).unwrap_or(u64::MAX),
+        start: u64::try_from(start).unwrap_or(u64::MAX),
+    }
+}
+
+/// A file node as the documents gear wants it, or `None` for a directory or a
+/// node with no path — neither is anything a spec screen can show.
+pub fn ingested_file(node: &GtsNode) -> Option<IngestedFile> {
+    let obj = node.value.as_object()?;
+    if obj.get("is_dir").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let path = obj.get("path").and_then(Value::as_str).unwrap_or_default();
+    if path.is_empty() {
+        return None;
+    }
+    Some(IngestedFile {
+        node_id: node.instance_id.clone(),
+        path: path.to_owned(),
+        repo: obj
+            .get("repo")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    })
 }
 
 /// In-memory store: keyed by instance id, so a re-sync upserts. Not persistent
