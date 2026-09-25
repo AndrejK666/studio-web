@@ -62,6 +62,27 @@ What was left out on purpose, or worked around to get a binary on one machine:
   an Orca panel that reports a runtime this machine may not have, and the
   Studio view is narrow enough to wrap every line.
 
+- [ ] Open a project from the portal in the local desktop Studio @andrejk666
+
+  A separate track. Today a member starts the desktop app, signs in and picks
+  a workspace in its own Studio view. The portal should offer "Open in desktop"
+  beside "Open Studio" and land them in that project in the app they already
+  have installed (ADR-0027 §6):
+
+  - the installer registers a `cfstudio://` protocol handler (electron-builder
+    `protocols`), and the app handles the link on start and when already
+    running (Electron `open-url` / second-instance);
+  - the link names the Studio and the project,
+    `cfstudio://open?studio=<url>&project=<id>`, and carries no token. The app
+    switches to that Studio if it is one it offers (or asks first when it is
+    not), signs in if it has to, and clones and opens the project through
+    `studio-git` exactly as a click in its Studio view does;
+  - the portal shows the button only when it can tell the app is installed.
+    If it cannot, it shows "Get the desktop app" linking to the installer.
+
+  Needs `studio-git` deployed (#391) for the clone, and the desktop installer
+  (#395).
+
 - [ ] ADR-0027 phases 3–5: leases, events, commands @andrejk666
 
   The portal does not know a workspace is open on a desktop, the desktop's
