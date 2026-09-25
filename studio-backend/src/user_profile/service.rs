@@ -986,6 +986,11 @@ impl IdentityService {
     /// Without this there is a lockout waiting at the end of the migration: once
     /// the token signal is removed, a deployment whose administrators were only
     /// ever administrators *by token* would have none, and no way to make one.
+    /// Studio's own service identity, as a person nobody is (ADR-0030).
+    pub async fn seed_service_account(&self, account: &super::ServiceAccount) -> Result<String> {
+        seed_service_account_in(self.store.as_ref(), account).await
+    }
+
     pub async fn seed_platform_admins(&self, subjects: &[String]) -> Result<usize> {
         let mut seeded = 0;
         for subject in subjects {
@@ -1388,6 +1393,67 @@ pub struct ConfirmReport {
     pub skipped_no_handle: usize,
     /// Refusals from the write policy, in the policy's own words.
     pub refused: Vec<String>,
+}
+
+/// Make Studio's service identity a person the directory can name
+/// (ADR-0030): a login for its Keycloak subject and a profile saying what it
+/// is. Idempotent — run at every start — and it keeps the profile's name and
+/// address in step with the configuration.
+///
+/// Deliberately NOT `resolve_or_provision`: that is a person's first sign-in,
+/// and the installation's `on_first_login` join would make the service
+/// identity a member of an organization. It must hold no membership, so it
+/// can do nothing — it is a name for what a shared session does on nobody's
+/// behalf, not an actor with rights.
+pub(crate) async fn seed_service_account_in(
+    store: &dyn IdentityStore,
+    account: &super::ServiceAccount,
+) -> Result<String> {
+    let now = now_ms();
+    let existing = store
+        .find_login(PROVIDER_KEYCLOAK, &account.subject)
+        .await?;
+    let user_id = existing
+        .as_ref()
+        .map(|login| login.user_id.clone())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let profile = store.get_user(&user_id).await?;
+    let current = profile
+        .as_ref()
+        .map(|p| (p.display_name.as_deref(), p.email.as_deref()));
+    if current
+        != Some((
+            Some(account.display_name.as_str()),
+            Some(account.email.as_str()),
+        ))
+    {
+        let mut profile = profile.unwrap_or(UserProfile {
+            id: user_id.clone(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            locale: None,
+            created_at_epoch_ms: now,
+            updated_at_epoch_ms: now,
+            merged_into: None,
+        });
+        profile.display_name = Some(account.display_name.clone());
+        profile.email = Some(account.email.clone());
+        profile.updated_at_epoch_ms = now;
+        store.upsert_user(&profile).await?;
+    }
+    if existing.is_none() {
+        store
+            .upsert_login(&LoginView {
+                provider: PROVIDER_KEYCLOAK.to_owned(),
+                subject: account.subject.clone(),
+                user_id: user_id.clone(),
+                verified: true,
+                linked_at_epoch_ms: now,
+            })
+            .await?;
+    }
+    Ok(user_id)
 }
 
 /// Attribute an external identity to a user, subject to the write policy.
@@ -1822,5 +1888,203 @@ mod tests {
         assert!(normalize_alias("github", "  ").is_err());
         assert!(normalize_alias(&"g".repeat(41), "alice").is_err());
         assert!(normalize_alias("github", &"a".repeat(321)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod service_account_tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::user_profile::{STUDIO_SERVICE_SUBJECT, ServiceAccount};
+
+    /// Logins and profiles in memory, and NOTHING ELSE: a membership write
+    /// panics, which is what proves the seed never joins an organization.
+    #[derive(Default)]
+    struct People {
+        logins: Mutex<HashMap<(String, String), LoginView>>,
+        users: Mutex<HashMap<String, UserProfile>>,
+    }
+
+    #[async_trait::async_trait]
+    impl IdentityStore for People {
+        async fn find_login(&self, p: &str, s: &str) -> Result<Option<LoginView>> {
+            Ok(self
+                .logins
+                .lock()
+                .unwrap()
+                .get(&(p.to_owned(), s.to_owned()))
+                .cloned())
+        }
+        async fn get_user(&self, id: &str) -> Result<Option<UserProfile>> {
+            Ok(self.users.lock().unwrap().get(id).cloned())
+        }
+        async fn upsert_user(&self, profile: &UserProfile) -> Result<()> {
+            self.users
+                .lock()
+                .unwrap()
+                .insert(profile.id.clone(), profile.clone());
+            Ok(())
+        }
+        async fn upsert_login(&self, login: &LoginView) -> Result<()> {
+            self.logins.lock().unwrap().insert(
+                (login.provider.clone(), login.subject.clone()),
+                login.clone(),
+            );
+            Ok(())
+        }
+        async fn ui_preferences_of(&self, _u: &str) -> Result<Option<String>> {
+            unimplemented!()
+        }
+        async fn set_ui_preferences(&self, _u: &str, _j: Option<&str>) -> Result<bool> {
+            unimplemented!()
+        }
+        async fn logins_of(&self, _u: &str) -> Result<Vec<LoginView>> {
+            unimplemented!()
+        }
+        async fn upsert_membership(&self, _m: &MembershipView) -> Result<()> {
+            panic!("the service identity was given a membership")
+        }
+        async fn memberships_of(&self, _u: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!()
+        }
+        async fn memberships_in_org(&self, _o: &str) -> Result<Vec<MembershipView>> {
+            unimplemented!()
+        }
+        async fn delete_membership(&self, _u: &str, _o: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn upsert_alias(&self, _a: &AliasRecord) -> Result<()> {
+            unimplemented!()
+        }
+        async fn aliases_of(&self, _u: &str) -> Result<Vec<AliasRecord>> {
+            unimplemented!()
+        }
+        async fn find_alias(&self, _k: &str, _e: &str) -> Result<Option<AliasRecord>> {
+            unimplemented!()
+        }
+        async fn find_aliases(&self, _k: &str, _e: &[String]) -> Result<Vec<AliasRecord>> {
+            unimplemented!()
+        }
+        async fn delete_alias(&self, _k: &str, _e: &str) -> Result<()> {
+            unimplemented!()
+        }
+        async fn insert_invitation(&self, _i: &InvitationRecord) -> Result<()> {
+            unimplemented!()
+        }
+        async fn find_invitation_by_digest(&self, _d: &str) -> Result<Option<InvitationRecord>> {
+            unimplemented!()
+        }
+        async fn find_invitation_by_id(&self, _i: &str) -> Result<Option<InvitationRecord>> {
+            unimplemented!()
+        }
+        async fn invitations_of_org(&self, _o: &str) -> Result<Vec<InvitationRecord>> {
+            unimplemented!()
+        }
+        async fn invitations_for_email(&self, _e: &str) -> Result<Vec<InvitationRecord>> {
+            unimplemented!()
+        }
+        async fn accept_invitation(&self, _i: &str, _u: &str) -> Result<bool> {
+            unimplemented!()
+        }
+        async fn delete_invitation(&self, _i: &str, _o: &str) -> Result<bool> {
+            unimplemented!()
+        }
+    }
+
+    /// The subject a shared session names as its actor resolves to a person
+    /// called "Constructor Studio (service)" — and that person holds nothing.
+    #[tokio::test]
+    async fn the_session_actor_is_a_person_the_directory_can_name() {
+        let store = People::default();
+        let account = ServiceAccount::default();
+        let person = seed_service_account_in(&store, &account)
+            .await
+            .expect("seeded");
+
+        let login = store
+            .find_login(PROVIDER_KEYCLOAK, STUDIO_SERVICE_SUBJECT)
+            .await
+            .unwrap()
+            .expect("the session's actor has a login");
+        assert_eq!(login.user_id, person);
+        let profile = store.get_user(&person).await.unwrap().expect("a profile");
+        assert_eq!(
+            profile.display_name.as_deref(),
+            Some("Constructor Studio (service)")
+        );
+        assert_eq!(profile.email.as_deref(), Some("studio@constructor.tech"));
+    }
+
+    /// The subject is fixed in the realm files, so the backend never asks
+    /// Keycloak for it. Both realms must say the same, or the session's actor
+    /// silently names nobody.
+    #[test]
+    fn both_realms_give_the_service_account_the_subject_the_backend_uses() {
+        for (file, realm) in [
+            (
+                "keycloak/realm-studio.json",
+                include_str!("../../../keycloak/realm-studio.json"),
+            ),
+            (
+                "docker/keycloak/realm-studio.json",
+                include_str!("../../../docker/keycloak/realm-studio.json"),
+            ),
+        ] {
+            let realm: serde_json::Value = serde_json::from_str(realm).expect("realm json");
+            let user = realm["users"]
+                .as_array()
+                .and_then(|users| {
+                    users
+                        .iter()
+                        .find(|u| u["serviceAccountClientId"] == "studio-service")
+                })
+                .unwrap_or_else(|| panic!("{file}: no service account for studio-service"));
+            assert_eq!(user["id"], STUDIO_SERVICE_SUBJECT, "{file}");
+            let client = realm["clients"]
+                .as_array()
+                .and_then(|c| c.iter().find(|c| c["clientId"] == "studio-service"))
+                .unwrap_or_else(|| panic!("{file}: no studio-service client"));
+            assert_eq!(
+                client["standardFlowEnabled"], false,
+                "{file}: a browser may not sign in as it"
+            );
+            assert_eq!(
+                client["directAccessGrantsEnabled"], false,
+                "{file}: nobody may sign in as it with a password"
+            );
+            assert!(
+                user.get("clientRoles").is_none() && user.get("realmRoles").is_none(),
+                "{file}: it holds no roles"
+            );
+        }
+    }
+
+    /// Run at every start: the same person each time, kept in step with the
+    /// configuration, and never a second one.
+    #[tokio::test]
+    async fn seeding_again_is_the_same_person_with_the_configured_name() {
+        let store = People::default();
+        let first = seed_service_account_in(&store, &ServiceAccount::default())
+            .await
+            .unwrap();
+        let renamed = ServiceAccount {
+            display_name: "Acme Studio (service)".into(),
+            ..ServiceAccount::default()
+        };
+        let second = seed_service_account_in(&store, &renamed).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(store.users.lock().unwrap().len(), 1);
+        assert_eq!(
+            store
+                .get_user(&first)
+                .await
+                .unwrap()
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some("Acme Studio (service)")
+        );
     }
 }

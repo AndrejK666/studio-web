@@ -65,6 +65,38 @@ pub struct StudioUserConfig {
     /// neither.
     #[serde(default)]
     pub on_first_login: Option<FirstLoginJoin>,
+
+    /// Studio's own service identity (ADR-0030): what a shared IDE session
+    /// acts as when it acts on nobody's behalf. Seeded at every start as a
+    /// person with no membership, so the directory can name it and it can do
+    /// nothing.
+    #[serde(default)]
+    pub service_account: ServiceAccount,
+}
+
+/// The subject of Studio's service identity: the fixed id of the
+/// `service-account-studio-service` user in both realm files, so the backend
+/// knows it without asking Keycloak.
+pub const STUDIO_SERVICE_SUBJECT: &str = "00000000-0000-4000-8000-00000000057d";
+
+/// Who Studio's service identity is, as the directory shows it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServiceAccount {
+    pub subject: String,
+    pub display_name: String,
+    /// The neutral git author's address too — one name for both.
+    pub email: String,
+}
+
+impl Default for ServiceAccount {
+    fn default() -> Self {
+        Self {
+            subject: STUDIO_SERVICE_SUBJECT.to_owned(),
+            display_name: "Constructor Studio (service)".to_owned(),
+            email: "studio@constructor.tech".to_owned(),
+        }
+    }
 }
 
 /// The organization a new person joins, and as what.
@@ -499,6 +531,20 @@ impl RestApiCapability for StudioUserGear {
                      (ADR-0018 §3) — conflict resolution and the directory's administrative \
                      routes have nobody to answer to until such a membership exists."
                 );
+            }
+            {
+                let svc = svc.clone();
+                let account = cfg.service_account.clone();
+                tokio::spawn(async move {
+                    match svc.seed_service_account(&account).await {
+                        Ok(id) => {
+                            info!(person = %id, subject = %account.subject, "studio-user: Studio's service identity seeded")
+                        }
+                        Err(e) => {
+                            warn!("studio-user: cannot seed Studio's service identity: {e:#}")
+                        }
+                    }
+                });
             }
             if !admins.is_empty() {
                 let svc = svc.clone();

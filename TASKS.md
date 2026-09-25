@@ -157,9 +157,15 @@ hypothesis:
     caller's own key from their profile;
   - each window's Claude Code and Codex requests carry that window's person.
 
-  **Done, phase 2 (#416):** `STUDIO_ACTOR_ID` is `workspace:<id>`, and
-  `the_second_member_of_a_workspace_does_not_work_as_the_first` runs
-  un-ignored.
+  **Done, phase 2 (#416):**
+  - `STUDIO_ACTOR_ID` is Studio's service identity: the `studio-service`
+    client's service account, which has no roles, no browser or password
+    sign-in, and a subject fixed in both realm files. `studio-user` seeds it
+    as "Constructor Studio (service)" with no membership.
+  - `the_second_member_of_a_workspace_does_not_work_as_the_first` runs
+    un-ignored.
+  - On a realm that already exists (dev, test), import the `studio-service`
+    client and set `backend.serviceSubject` to its service account's id.
 
   **Already there, and not to be duplicated:**
   `product-ext/src/node/viewer-credentials.js` gives each window's plugin host

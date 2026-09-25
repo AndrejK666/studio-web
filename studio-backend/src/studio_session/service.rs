@@ -734,8 +734,9 @@ impl SessionService {
             format!("STUDIO_WORKSPACE_ID={workspace_id}"),
             // Not the launcher (ADR-0030): several people work in this
             // container, and each window knows its own. The container as a
-            // whole acts for the workspace.
-            format!("STUDIO_ACTOR_ID=workspace:{workspace_id}"),
+            // whole is Studio's service identity — a subject the directory
+            // names "Constructor Studio (service)" and that holds no rights.
+            format!("STUDIO_ACTOR_ID={}", self.cfg.service_actor),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
             format!("STUDIO_SESSION_TOKEN={session_token}"),
             // Gateway URL as seen FROM the container — the session gate
@@ -1724,9 +1725,9 @@ mod tests {
     /// This is "signed in as Vasil, and it was not Vasil" without any login
     /// going wrong: both tokens were right, and the IDE still was not.
     ///
-    /// What holds now (ADR-0030): the container names nobody. Its actor is
-    /// the workspace, the keys and the author are gone (the test above), and
-    /// each window carries its own person.
+    /// What holds now (ADR-0030): the container names no person. Its actor is
+    /// Studio's service identity, the keys and the author are gone (the test
+    /// above), and each window carries its own person.
     #[tokio::test]
     async fn the_second_member_of_a_workspace_does_not_work_as_the_first() {
         let root = std::env::temp_dir().join(format!("studio-session-actor-{}", Uuid::new_v4()));
@@ -1778,8 +1779,8 @@ mod tests {
         );
         assert_eq!(
             actor_of_the_colleagues_ide,
-            format!("workspace:{ws}"),
-            "a shared container acts for its workspace, not for a person"
+            crate::user_profile::STUDIO_SERVICE_SUBJECT,
+            "a shared container acts as Studio's service identity, not as a person"
         );
     }
 

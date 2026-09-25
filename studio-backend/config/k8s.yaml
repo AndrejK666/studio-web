@@ -527,6 +527,14 @@ gears:
       # which the gear drops and then reports as nobody. Several administrators
       # go in one value, comma-separated.
       platform_admins: ["${STUDIO_PLATFORM_ADMINS:-}"]
+      # Studio's own service identity (ADR-0030): what a shared IDE session
+      # acts as. Its subject is fixed in the realm files, which Keycloak honours
+      # only when it creates a realm; on a realm that already exists the
+      # `studio-service` client is imported by hand and its service account
+      # gets a subject of its own, which the chart passes here
+      # (`backend.serviceSubject`). The same value goes to studio-session.
+      service_account:
+        subject: "${STUDIO_SERVICE_SUBJECT:-00000000-0000-4000-8000-00000000057d}"
 
   studio-credstore-pg:
     database:
@@ -812,6 +820,8 @@ gears:
 
   studio-session:
     config:
+      # The same subject studio-user seeds as Studio's service identity.
+      service_actor: "${STUDIO_SERVICE_SUBJECT:-00000000-0000-4000-8000-00000000057d}"
       # IDE sessions via the Kubernetes Pod driver (ADR-0003). Needs the
       # backend Role over pods/services (Helm backend.sessions.enabled=true)
       # and a browser reachable through the /studio proxy.

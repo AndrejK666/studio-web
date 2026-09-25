@@ -129,6 +129,11 @@ pub struct StudioSessionConfig {
     /// uses the host gateway; Kubernetes injects the backend Service DNS.
     #[serde(default = "default_gateway_url")]
     pub gateway_url: String,
+    /// What a shared session acts as (`STUDIO_ACTOR_ID`): Studio's service
+    /// identity, not the person who happened to launch it (ADR-0030). The same
+    /// subject `studio-user` seeds as "Constructor Studio (service)".
+    #[serde(default = "default_service_actor")]
+    pub service_actor: String,
     /// Inclusive host port range for sessions.
     #[serde(default = "default_port_start")]
     pub port_range_start: u16,
@@ -219,6 +224,7 @@ impl Default for StudioSessionConfig {
             bind_host: default_bind_host(),
             public_host: default_public_host(),
             gateway_url: default_gateway_url(),
+            service_actor: default_service_actor(),
             port_range_start: default_port_start(),
             port_range_end: default_port_end(),
             max_session_secs: default_max_session_secs(),
@@ -278,6 +284,9 @@ fn default_bind_host() -> String {
 }
 fn default_public_host() -> String {
     "localhost".into()
+}
+fn default_service_actor() -> String {
+    crate::user_profile::STUDIO_SERVICE_SUBJECT.to_owned()
 }
 fn default_gateway_url() -> String {
     "http://host.docker.internal:8090/cf".into()
