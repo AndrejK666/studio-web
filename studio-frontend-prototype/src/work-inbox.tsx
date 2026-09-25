@@ -75,6 +75,9 @@ export function useCompletedWork(
         if (event.subject_type !== "task_run") return;
         const payload = event.payload as RunEventPayload;
         if (!ENDINGS.has(payload.state)) return;
+        // Studio's own work ends every few minutes; announcing it would bury
+        // the import somebody is actually waiting for.
+        if (payload.asked_by_person === false) return;
         const run: CompletedRun = {
           runId: payload.run_id ?? event.subject_id,
           taskType: payload.task_type ?? "background work",

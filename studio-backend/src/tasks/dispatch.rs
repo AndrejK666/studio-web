@@ -76,6 +76,17 @@ fn announce(hub: &ClientHub, tenant: Uuid, run_id: Uuid, kind: &str, payload: Va
     );
 }
 
+/// Whether a run was started by a person rather than by Studio itself.
+///
+/// Studio's own work is enqueued under the two service identities: the
+/// scheduler's, for what runs on a timer, and this worker's, for what a run
+/// queues after itself (a delivery). Everything else was asked for by
+/// somebody -- through the portal, the IDE or the API -- and its ending is
+/// something they may be waiting on.
+fn asked_by_person(requested_by: Uuid) -> bool {
+    requested_by != SERVICE_SUBJECT_ID && requested_by != crate::scheduler::SERVICE_SUBJECT_ID
+}
+
 /// How a finished run reads in the IDE.
 ///
 /// A function because it is the only part of the notice with a decision in it,
@@ -314,6 +325,20 @@ impl TaskDispatcher {
         };
         if let Err(e) = write.await {
             warn!(run_id = %id, "studio-tasks: could not record the run outcome: {e:#}");
+        }
+        let mut payload = payload;
+        // Whether a person started the run, on the ending only: that is what
+        // decides whether its ending is news to anyone. A sweep the scheduler
+        // fires every few minutes ends as often, and telling the IDE each time
+        // buries the one import somebody is waiting for.
+        if patch.state.is_terminal()
+            && let (Value::Object(event), Ok(Some(row))) =
+                (&mut payload, self.run_row(tenant, id).await)
+        {
+            event.insert(
+                "asked_by_person".into(),
+                json!(asked_by_person(row.requested_by)),
+            );
         }
         announce(&self.hub, tenant, id, &kind, payload);
         if patch.state.is_terminal() {
@@ -705,6 +730,15 @@ mod tests {
         let (level, text) = completion_notice("artifact.ingest", RunState::Succeeded, "42 files");
         assert_eq!(level, "info");
         assert_eq!(text, "artifact.ingest finished — 42 files");
+    }
+
+    #[test]
+    fn only_a_run_somebody_started_is_theirs_to_hear_about() {
+        assert!(!asked_by_person(SERVICE_SUBJECT_ID));
+        assert!(!asked_by_person(crate::scheduler::SERVICE_SUBJECT_ID));
+        assert!(asked_by_person(Uuid::from_u128(
+            0x0f58_f91d_ec56_4041_b768_d44a_ae52_3886
+        )));
     }
 
     #[test]

@@ -367,8 +367,9 @@ ENV STUDIO_GIT_MODE=disabled \
 # webviews here are panels of plugins this image installs itself, the container
 # is per-session and ephemeral, and the session gate already serves the webview
 # shell on those subdomains (`webviewShellOk` in entrypoint.sh) for the same
-# reason. Theia announces the change in the UI; that notification is correct and
-# stays.
+# reason. Theia would announce the change in the UI on every open; a person
+# using the IDE cannot act on it, so browser-app turns that off
+# (`warnOnPotentiallyInsecureHostPattern`) and entrypoint.sh logs it instead.
 #
 # One ENV, so a deployment that grows wildcard DNS and TLS sets it back to
 # `{{uuid}}.webview.{{hostname}}` and loses nothing else.
