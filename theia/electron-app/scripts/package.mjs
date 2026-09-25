@@ -2,7 +2,7 @@
 // Package the built electron-app as an installable desktop Studio (ADR-0027).
 //
 //   npm --prefix electron-app run package -- [--environments environments.json] \
-//       [--default dev] [--version 0.1.0]
+//       [--default dev] [--version <electron-app's own version>]
 //   npm --prefix electron-app run package -- --studio-url https://studio.example.com \
 //       [--issuer https://studio.example.com/auth/realms/studio]
 //
@@ -29,13 +29,15 @@ import { parseArgs } from 'node:util';
 
 const require = createRequire(import.meta.url);
 const app = dirname(dirname(fileURLToPath(import.meta.url)));
+// The installer carries electron-app's own version, so it is set in one place.
+const ownVersion = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')).version;
 const { values } = parseArgs({
     options: {
         environments: { type: 'string', default: join(app, 'environments.json') },
         default: { type: 'string' },
         'studio-url': { type: 'string' },
         issuer: { type: 'string' },
-        version: { type: 'string', default: '0.1.0' },
+        version: { type: 'string', default: ownVersion },
         out: { type: 'string', default: join(app, 'dist') },
     },
 });
@@ -110,6 +112,10 @@ await build({
         // credential helper git runs), and nothing can be spawned out of an
         // archive.
         asar: false,
+        // The portal's "Open in desktop" link (ADR-0027 §6), registered at
+        // install so it works before the app's first run; the app registers it
+        // again itself on every start (Theia's `electron.uriScheme`).
+        protocols: [{ name: 'Constructor Studio', schemes: ['cfstudio'] }],
         win: {
             target: ['nsis', 'zip'],
             artifactName: 'Constructor-Studio-${version}-${os}-${arch}.${ext}',

@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "electron-app",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "main": "lib/backend/electron-main.js",
   "dependencies": {
     "@theia/ai-claude-code": "1.75.0",
@@ -48,9 +48,19 @@
   },
   "theia": {
     "target": "electron",
+    "backend": {
+      "config": {
+        "//singleInstance": "One app per member: a second launch -- a cfstudio:// link opened from the portal -- hands its arguments to the running one instead of starting another (see desktop-main.js).",
+        "singleInstance": true
+      }
+    },
     "frontend": {
       "config": {
         "applicationName": "Constructor Studio",
+        "//electron.uriScheme": "The scheme the portal's Open in desktop link uses (ADR-0027 §6). Theia registers it with the OS and delivers the link to an OpenHandler; the installer registers it too (scripts/package.mjs).",
+        "electron": {
+          "uriScheme": "cfstudio"
+        },
         "defaultTheme": {
           "light": "light",
           "dark": "dark"

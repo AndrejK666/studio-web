@@ -26,6 +26,7 @@ import { ObjectDetailsWidget } from './object-details-widget';
 import { bindAgentCredentials } from './agent-credentials';
 import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-widget';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
+import { DesktopLinkHandler } from './desktop-link-handler';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
 import { ArtifactGraphContribution } from './artifact-graph-contribution';
 import { ArtifactGraphWidget } from './artifact-graph-widget';
@@ -202,6 +203,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     })).inSingletonScope();
     bindViewContribution(bind, DesktopStudioContribution);
     bind(FrontendApplicationContribution).toService(DesktopStudioContribution);
+    // ADR-0027 §6: the portal's "Open in desktop" link, `cfstudio://open?...`,
+    // which Theia delivers here from the operating system (`electron.uriScheme`).
+    bind(DesktopLinkHandler).toSelf().inSingletonScope();
+    bind(OpenHandler).toService(DesktopLinkHandler);
     bind(WorkspaceSourcesWidget).toSelf();
     bind(OrcaWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({

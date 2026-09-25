@@ -55,4 +55,17 @@ for (const dir of [workspace, data]) {
     fs.mkdirSync(dir, { recursive: true });
 }
 
+// The portal's "Open in desktop" link (ADR-0027 §6). Theia takes a link only
+// after `--open-url`, which is how it registers the scheme itself once the app
+// has run; the installer registers it before that, and hands the link over as
+// a bare argument, which Theia would read as a folder to open. So a bare
+// `cfstudio:` argument is moved to the end behind the flag -- in this process,
+// and so also for an instance already running, which receives this process's
+// argv through the single-instance lock (`singleInstance` in package.json).
+const link = process.argv.findIndex(arg => /^cfstudio:/i.test(arg));
+if (link >= 0 && !process.argv.includes('--open-url')) {
+    const [url] = process.argv.splice(link, 1);
+    process.argv.push('--open-url', url);
+}
+
 require('./lib/backend/electron-main.js');
