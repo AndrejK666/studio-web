@@ -15,7 +15,7 @@
 //! embeds both the stored text and the query. This contract therefore carries
 //! text only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -61,6 +61,18 @@ pub trait GraphStore: Send + Sync {
     /// by node instance id; a batch with a dangling endpoint is the caller's
     /// bug, so implementations may drop or reject such an edge.
     async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()>;
+
+    /// Forget nodes their source no longer has, with the relations that touch
+    /// them, and return how many this call removed.
+    ///
+    /// Idempotent: a node that is absent or already removed is not an error
+    /// and is not counted. A node forgotten here must stay writable under the
+    /// same instance id, because every id is deterministic — a file that leaves
+    /// a repository and comes back, or a checkout switched to another branch
+    /// and back, needs the key it had. The next upsert of the key brings the
+    /// node back.
+    async fn delete_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode])
+    -> anyhow::Result<usize>;
 
     /// Rank nodes by relevance to a query. The real store runs hybrid
     /// retrieval — lexical and vector arms fused — embedding the query with
@@ -147,6 +159,28 @@ impl GraphStore for InMemoryGraphStore {
         Ok(())
     }
 
+    /// A real removal: nothing here outlives the process, so there is no
+    /// tombstone to keep a key from coming back.
+    async fn delete_nodes(
+        &self,
+        _ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        let gone: HashSet<&str> = nodes.iter().map(|n| n.instance_id.as_str()).collect();
+        let removed = {
+            let mut map = self
+                .nodes
+                .lock()
+                .map_err(|_| anyhow::anyhow!("graph store lock poisoned"))?;
+            gone.iter().filter(|id| map.remove(**id).is_some()).count()
+        };
+        self.edges
+            .lock()
+            .map_err(|_| anyhow::anyhow!("graph store lock poisoned"))?
+            .retain(|_, e| !gone.contains(e.from.as_str()) && !gone.contains(e.to.as_str()));
+        Ok(removed)
+    }
+
     async fn list(
         &self,
         _ctx: &SecurityContext,
@@ -205,5 +239,85 @@ impl GraphStore for InMemoryGraphStore {
                 .collect()
         };
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+    use crate::artifact_ingest::gts;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca7))
+            .subject_type("service")
+            .subject_tenant_id(Uuid::from_u128(0x7e4a47))
+            .build()
+            .expect("security context")
+    }
+
+    fn node(id: &str) -> GtsNode {
+        GtsNode {
+            type_id: gts::FILE_TYPE,
+            instance_id: id.to_string(),
+            value: json!({ "path": id }),
+        }
+    }
+
+    fn edge(from: &str, to: &str) -> GtsEdge {
+        GtsEdge {
+            type_id: gts::REL_CONTAINS,
+            from: from.to_string(),
+            to: to.to_string(),
+        }
+    }
+
+    /// A forgotten node takes the relations that touch it along, from either
+    /// end, and leaves every other node and relation where it was.
+    #[tokio::test]
+    async fn forgetting_a_node_takes_its_relations_and_nothing_else() {
+        let store = InMemoryGraphStore::default();
+        let ctx = ctx();
+        store
+            .upsert_nodes(&ctx, &[node("repo"), node("a"), node("b")])
+            .await
+            .unwrap();
+        store
+            .upsert_edges(
+                &ctx,
+                &[edge("repo", "a"), edge("repo", "b"), edge("a", "b")],
+            )
+            .await
+            .unwrap();
+
+        let removed = store.delete_nodes(&ctx, &[node("a")]).await.unwrap();
+        assert_eq!(removed, 1);
+
+        let mut left: Vec<String> = store
+            .list(&ctx, Some("file"))
+            .await
+            .unwrap()
+            .iter()
+            .map(|n| n.instance_id.clone())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["b", "repo"]);
+        let relations = store.list_relations(&ctx).await.unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(
+            (relations[0].from.as_str(), relations[0].to.as_str()),
+            ("repo", "b")
+        );
+
+        // Again, and for a node that was never there: nothing to do, no error.
+        let again = store
+            .delete_nodes(&ctx, &[node("a"), node("nope")])
+            .await
+            .unwrap();
+        assert_eq!(again, 0);
     }
 }

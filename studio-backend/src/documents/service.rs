@@ -1215,6 +1215,16 @@ impl DocumentClassifier for DocumentsService {
             kept: outcome.kept,
         })
     }
+
+    async fn forget_ingested(
+        &self,
+        _ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        node_ids: Vec<String>,
+    ) -> Result<usize> {
+        DocumentsService::forget_ingested(self, workspace_id, project_id, &node_ids).await
+    }
 }
 
 /// Which decision is being made, rather than a soup of optional flags the
@@ -1759,6 +1769,34 @@ impl DocumentsService {
 
     pub async fn delete_binding(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
         self.repo.delete_binding(workspace_id, id).await
+    }
+
+    /// Delete the bindings of files a repository no longer has.
+    ///
+    /// Every binding goes, including one a person confirmed. That is not the
+    /// verdict being overturned — `classify_ingested` still never re-guesses
+    /// a ruling on a file that exists — it is the file being gone. A confirmed
+    /// type for a path the repository does not have describes nothing, and
+    /// keeping it is what left the Specs list showing documents that had been
+    /// moved away weeks before. If the file comes back, the sync that finds it
+    /// classifies it again from what it says.
+    ///
+    /// The ids are derived the way `classify_ingested` derives them, so this
+    /// touches exactly the rows a sync in this scope wrote and never a
+    /// workspace-level binding a project happens to inherit. The verdicts
+    /// about each binding go with it (see [`DocumentsRepo::delete_bindings`]).
+    pub async fn forget_ingested(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        node_ids: &[String],
+    ) -> Result<usize> {
+        let ids: Vec<Uuid> = node_ids
+            .iter()
+            .map(|node| binding_row_id(workspace_id, project_id, node))
+            .collect();
+        let deleted = self.repo.delete_bindings(workspace_id, &ids).await?;
+        Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     }
 }
 

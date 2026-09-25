@@ -1,6 +1,6 @@
 //! What another gear may ask studio-documents to do.
 //!
-//! One method, deliberately. `studio-artifact-ingest` walks a repository and
+//! One seam, deliberately. `studio-artifact-ingest` walks a repository and
 //! ends up holding every file's path and text; this gear owns the type
 //! catalogue and decides what each file is. Neither can answer alone and
 //! neither should learn the other's job, so the seam between them is a trait
@@ -57,6 +57,25 @@ pub trait DocumentClassifier: Send + Sync + 'static {
         project_id: Option<Uuid>,
         files: Vec<IngestedDocument>,
     ) -> anyhow::Result<ClassifiedCounts>;
+
+    /// Forget files the repository no longer has: delete this scope's
+    /// bindings for `node_ids` and return how many rows went.
+    ///
+    /// On this trait rather than a sibling because it is the other half of the
+    /// same job. The walker is the only gear that can tell a file is gone, and
+    /// `classify_ingested` only ever hears about the files that are there, so
+    /// without this a binding outlives its file for good.
+    ///
+    /// Scoped exactly as `classify_ingested` writes: `(tenant, project, node)`
+    /// with the same `project_id`, so a project's sync never deletes a binding
+    /// the workspace itself recorded. A node with no binding is not an error.
+    async fn forget_ingested(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        node_ids: Vec<String>,
+    ) -> anyhow::Result<usize>;
 }
 
 /// How much a project has in it, as this gear counts it.

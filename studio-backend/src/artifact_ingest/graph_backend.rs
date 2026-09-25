@@ -24,8 +24,8 @@ use super::graph::{GraphStore, GtsEdge, GtsEdgeView, GtsNode};
 use super::gts;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
-    EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest, TraversalResponse,
-    TraverseRequest, TypeRegistration,
+    EdgeRef, EdgeSpec, IngestOptions, IngestRequest, NodeSpec, SearchMode, SearchRequest,
+    TraversalResponse, TraverseRequest, TypeRegistration,
 };
 
 /// Nodes per ingest batch.
@@ -127,6 +127,35 @@ const LIST_CACHE_TTL_DEFAULT: Duration = Duration::from_secs(60);
 /// carries the node count, so the number to set is measured rather than
 /// guessed.
 const LIST_CACHE_MAX_NODES_DEFAULT: usize = 40_000;
+
+/// The payload of an artifact node whose source no longer has it.
+///
+/// Forgetting a node cannot be a graph-storage delete, for the reason the
+/// components catalogue found first (see its `RETIRED_MARKER`): the gear's
+/// delete is a tombstone, "a tombstoned `node_key` is not reusable before
+/// purge" (graph-storage DESIGN § Soft Delete Contract, rule 4), and v1 has
+/// neither purge nor undelete. A file's key is a uuid5 of its scope,
+/// repository and path, so a file deleted and later restored — a revert, or
+/// the IDE's checkout switched to a branch that still has it — needs the key
+/// it had. After a tombstone that key could never be written again, and the
+/// ingest chunk that tried would abort with every other file in it.
+///
+/// So a forgotten node is retired: its payload is overwritten with this
+/// marker, which keeps the key live, and every read on this backend skips it.
+/// The next ingest of the key is an ordinary upsert that replaces the marker.
+const RETIRED_MARKER: &str = "studio_artifact_retired";
+
+fn retired_payload() -> Value {
+    json!({ RETIRED_MARKER: true })
+}
+
+/// Whether a payload read back is a retired node rather than an artifact.
+fn is_retired(payload: Option<&Value>) -> bool {
+    payload
+        .and_then(|p| p.get(RETIRED_MARKER))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
 
 /// One tenant's projection for one type set, and when it was read.
 struct CachedListing {
@@ -236,6 +265,52 @@ impl GraphStorageBackend {
             .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))
     }
 
+    /// The relations touching `keys`, from either end, once each.
+    ///
+    /// The seeded depth-1 traversal the relation read uses, and halved on a
+    /// truncated batch for the same reason (see `list_relations`): a truncated
+    /// walk is missing edges anywhere, and an edge missed here is one that
+    /// stays live pointing at a node nobody can read any more.
+    async fn incident_edges(
+        &self,
+        ctx: &SecurityContext,
+        keys: &[String],
+    ) -> anyhow::Result<Vec<EdgeRef>> {
+        let edge_patterns: Vec<String> = gts::ALL_EDGE_TYPES
+            .into_iter()
+            .map(gts::graph_type_id)
+            .collect();
+        let wanted: HashSet<&str> = keys.iter().map(String::as_str).collect();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out: Vec<EdgeRef> = Vec::new();
+        let mut batches: Vec<&[String]> = keys.chunks(TRAVERSE_SEED_CHUNK).collect();
+        while let Some(batch) = batches.pop() {
+            let response = self.traverse_from(ctx, batch, &edge_patterns).await?;
+            if response.truncated.is_some() {
+                if batch.len() > 1 {
+                    let (left, right) = batch.split_at(batch.len() / 2);
+                    batches.push(left);
+                    batches.push(right);
+                    continue;
+                }
+                tracing::warn!(
+                    seed = %batch[0],
+                    budget = TRAVERSE_NODE_BUDGET,
+                    "studio-artifact-ingest: node degree exceeds the traversal budget; \
+                     some of its relations stay live after it is forgotten"
+                );
+            }
+            for edge in response.edges {
+                let touches =
+                    wanted.contains(edge.src.as_str()) || wanted.contains(edge.dst.as_str());
+                if touches && seen.insert(edge.edge_key.clone()) {
+                    out.push(edge);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Drop every cached projection for a tenant.
     ///
     /// Called after an ingest the moment graph-storage has accepted it, so a
@@ -332,6 +407,9 @@ impl GraphStorageBackend {
             .get_node(ctx, &key.to_owned(), Some(1))
             .await
             .map_err(|e| anyhow::anyhow!("graph-storage node read: {e}"))?;
+        if is_retired(view.payload.as_ref()) {
+            return Ok(None);
+        }
         Ok(Some(GtsNode {
             type_id: our_type,
             instance_id: view.node_key,
@@ -576,6 +654,101 @@ impl GraphStore for GraphStorageBackend {
         Ok(())
     }
 
+    /// A retire, not a graph-storage delete — see [`RETIRED_MARKER`] for why a
+    /// tombstone would make the key unwritable.
+    ///
+    /// Relations go first, and they CAN be deleted. graph-storage's own node
+    /// delete would tombstone them with the node (DESIGN § Soft Delete
+    /// Contract, rule 2), but a retire is an upsert and leaves them live, so a
+    /// `contains` edge would go on pointing at a node every read skips. An edge
+    /// tombstone, unlike a node's, is undone by the next ingest of the same
+    /// relation — the gear's edge upsert clears `deleted_at` — so a file that
+    /// comes back gets its edges back from the sync that finds it.
+    ///
+    /// A node whose relations could not all be removed is left as it is, and
+    /// the next sync that finds it stale tries again. Retiring it anyway would
+    /// hide it from every read, including the one that would have retried.
+    async fn delete_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        use toolkit_canonical_errors::CanonicalError;
+
+        if nodes.is_empty() {
+            return Ok(0);
+        }
+        self.register_types(ctx).await?;
+
+        let keys: Vec<String> = nodes.iter().map(|n| n.instance_id.clone()).collect();
+        let edges = self.incident_edges(ctx, &keys).await?;
+        let mut blocked: HashSet<String> = HashSet::new();
+        let mut edges_removed = 0u64;
+        for edge in &edges {
+            match self.client.delete_edge(ctx, &edge.edge_key).await {
+                Ok(outcome) => edges_removed += outcome.tombstoned_edges,
+                Err(CanonicalError::NotFound { .. }) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        edge = %edge.edge_key,
+                        "studio-artifact-ingest: relation not removed; its nodes are kept for the next sync"
+                    );
+                    blocked.insert(edge.src.clone());
+                    blocked.insert(edge.dst.clone());
+                }
+            }
+        }
+
+        let specs: Vec<NodeSpec> = nodes
+            .iter()
+            .filter(|n| !blocked.contains(&n.instance_id))
+            .map(|n| NodeSpec {
+                node_key: n.instance_id.clone(),
+                // A same-key ingest may not change the type.
+                type_id: gts::graph_type_id(n.type_id),
+                name: None,
+                payload: Some(retired_payload()),
+                expected_version: None,
+            })
+            .collect();
+        let mut retired = 0u64;
+        let mut failure = None;
+        for chunk in specs.chunks(NODE_INGEST_CHUNK) {
+            // Not embedded: the marker has nothing to find, and skipping the
+            // embedding leaves the old vector stale, so it no longer ranks.
+            match self
+                .client
+                .ingest(ctx, batch(chunk.to_vec(), Vec::new(), false))
+                .await
+            {
+                // Updated only: a node already retired comes back unchanged,
+                // and it was not this call that forgot it.
+                Ok(res) => retired += res.counts.nodes_updated,
+                Err(e) => {
+                    failure = Some(anyhow::anyhow!("graph-storage retire: {e}"));
+                    break;
+                }
+            }
+        }
+        // Whatever was retired before a failure is retired, so the cached
+        // listings are wrong either way.
+        if retired > 0 || edges_removed > 0 {
+            self.invalidate_listings(ctx.subject_tenant_id());
+        }
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        tracing::info!(
+            batch = nodes.len(),
+            nodes_retired = retired,
+            edges_removed,
+            kept = blocked.len(),
+            "studio-artifact-ingest: graph-storage retire"
+        );
+        Ok(usize::try_from(retired).unwrap_or(usize::MAX))
+    }
+
     async fn list(
         &self,
         ctx: &SecurityContext,
@@ -617,6 +790,9 @@ impl GraphStore for GraphStorageBackend {
                 .await
                 .map_err(|e| anyhow::anyhow!("graph-storage projection: {e}"))?;
             for row in page.items {
+                if is_retired(row.payload.as_ref()) {
+                    continue;
+                }
                 let Some(type_id) = gts::our_type_from_graph(&row.type_id) else {
                     continue;
                 };
@@ -1039,6 +1215,19 @@ mod tests {
         assert_eq!(payload["path"], "scripts/wildcard.mjs");
         assert_eq!(payload["labels"][0], "ab");
         assert_eq!(payload["nested"]["key"], "v");
+    }
+
+    /// A retired node reads as retired, and nothing an artifact carries does:
+    /// a file whose payload merely mentions the marker is still a file.
+    #[test]
+    fn only_the_retire_marker_reads_as_retired() {
+        assert!(is_retired(Some(&retired_payload())));
+        assert!(!is_retired(None));
+        assert!(!is_retired(Some(&json!({ "path": "a.md" }))));
+        assert!(!is_retired(Some(&json!({ RETIRED_MARKER: false }))));
+        assert!(!is_retired(Some(
+            &json!({ "text_excerpt": RETIRED_MARKER })
+        )));
     }
 
     #[test]

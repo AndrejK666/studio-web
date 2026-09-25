@@ -541,4 +541,31 @@ impl DocumentsRepo {
             .await?;
         Ok(result.rows_affected > 0)
     }
+
+    /// Delete many bindings by id within one workspace tenant, returning how
+    /// many rows went.
+    ///
+    /// Their verdicts go with them: `studio_document_analyses.binding_id` is
+    /// `ON DELETE CASCADE` (m0008), the same way deleting a document takes its
+    /// own. Chunked for the reason `upsert_bindings` is — an `IN` list binds
+    /// one parameter per id.
+    pub async fn delete_bindings(&self, workspace_id: Uuid, ids: &[Uuid]) -> Result<u64> {
+        const IDS_PER_STATEMENT: usize = 1_000;
+
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.db.conn()?;
+        let mut deleted = 0u64;
+        for chunk in ids.chunks(IDS_PER_STATEMENT) {
+            let result = document_binding::Entity::delete_many()
+                .filter(document_binding::Column::Id.is_in(chunk.to_vec()))
+                .secure()
+                .scope_with(&AccessScope::for_tenant(workspace_id))
+                .exec(&conn)
+                .await?;
+            deleted += result.rows_affected;
+        }
+        Ok(deleted)
+    }
 }

@@ -8,8 +8,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
-    OpenedPullRequest, PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue,
-    RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry, WrittenFile,
+    OpenedPullRequest, PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList,
+    RemoteIssue, RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -709,7 +709,7 @@ impl ConnectorDriver for GitHubDriver {
         auth: &ConnectionAuth,
         repo_full_path: &str,
         git_ref: Option<&str>,
-    ) -> anyhow::Result<Vec<RemoteFile>> {
+    ) -> anyhow::Result<RemoteFileList> {
         // Resolve the ref: the caller's, or the repo's default branch (one
         // extra call, only when no ref was given).
         let git_ref = match git_ref.map(str::trim).filter(|s| !s.is_empty()) {
@@ -753,7 +753,7 @@ impl ConnectorDriver for GitHubDriver {
                 "GitHub truncated the recursive tree — file listing is partial"
             );
         }
-        Ok(tree
+        let files = tree
             .tree
             .into_iter()
             .filter(|e| e.entry_type == "blob" || e.entry_type == "tree")
@@ -763,7 +763,11 @@ impl ConnectorDriver for GitHubDriver {
                 sha: e.sha,
                 size: e.size,
             })
-            .collect())
+            .collect();
+        Ok(RemoteFileList {
+            files,
+            truncated: tree.truncated,
+        })
     }
 
     fn clone_url(&self, base_url: &str, repo_full_path: &str) -> anyhow::Result<String> {
