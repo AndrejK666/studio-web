@@ -243,9 +243,6 @@ const IDENTITY_VIEWER_COMMAND = {
     id: 'studio.identity.viewer'
 };
 
-// The DOM id of the rendered toolbar item is the ITEM's id, so it stays free of
-// dots — a selector-friendly hook for the regression suites.
-const CONNECT_PROJECT_ITEM_ID = 'studio-connect-project';
 
 /*
  * Which project the project-scoped surfaces are about. See switchProjectHandler
@@ -2828,18 +2825,10 @@ const mod = new ContainerModule(bind => {
     })).inSingletonScope();
     bind(TabBarToolbarContribution).toDynamicValue(ctx => ({
         registerToolbarItems(registry) {
-            registry.registerItem({
-                id: CONNECT_PROJECT_ITEM_ID,
-                command: CONNECT_PROJECT_COMMAND.id,
-                tooltip: 'Connect a local project',
-                group: 'navigation',
-                priority: 0,
-                // The side panel's toolbar renders the items of whichever view
-                // is current, so this must say "only on the file tree" —
-                // otherwise a + would appear over an assistant panel offering to
-                // connect a project to it.
-                isVisible: widget => !!widget && widget.id === FILE_NAVIGATOR_ID
-            });
+            // No "Connect a local project" on the file tree: Studio picks the
+            // project -- the portal opens a session on one, the desktop opens
+            // one from its Constructor Studio view -- so a second way in from
+            // here only led to folders Studio knows nothing about.
             registry.registerItem({
                 id: SWITCH_PROJECT_ITEM_ID,
                 command: SWITCH_PROJECT_COMMAND.id,
