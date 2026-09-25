@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF, themeSchema, languageSchema, extensionScreenSchema, type JSONSchema } from '@gears-frontx/react';
+import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF } from '@gears-frontx/react';
+import { SHELL_SCHEMAS } from '@/app/mfe/schemas';
 import { Toaster } from '@/app/components/ui/sonner';
 import { AccountsApiService, STUDIO_MFE_ENTRY_IFRAME } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, OrganizationsApiService, StudioEventsApiService } from '@/app/api';
@@ -14,17 +15,6 @@ import { mfeBootstrapSlice } from '@/app/slices/mfeBootstrapSlice';
 import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
 import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
-import extensionOverlaySchemaJson from '@/app/mfe/schemas/extension_overlay.v1.json';
-import extensionScreenLeveledSchemaJson from '@/app/mfe/schemas/extension_screen_leveled.v1.json';
-import actionContextPublishSchemaJson from '@/app/mfe/schemas/action_context_publish.v1.json';
-import sharedPropertyContextProjectSchemaJson from '@/app/mfe/schemas/shared_property_context_project.v1.json';
-import sharedPropertyContextOrganizationSchemaJson from '@/app/mfe/schemas/shared_property_context_organization.v1.json';
-import sharedPropertyContextWorkspaceSchemaJson from '@/app/mfe/schemas/shared_property_context_workspace.v1.json';
-import sharedPropertyContextSectionSchemaJson from '@/app/mfe/schemas/shared_property_context_section.v1.json';
-import actionContextWorkspacesPublishSchemaJson from '@/app/mfe/schemas/action_context_workspaces_publish.v1.json';
-import sharedPropertySessionProfileSchemaJson from '@/app/mfe/schemas/shared_property_session_user_profile.v1.json';
-import sharedPropertySpaceFrameUrlSchemaJson from '@/app/mfe/schemas/shared_property_space_frame_url.v1.json';
-import entryIframeSchemaJson from '@/app/mfe/schemas/entry_iframe.v1.json';
 import App from './App';
 
 // Import all themes
@@ -34,56 +24,9 @@ import { lightTheme } from '@/app/themes/light';
 import { draculaTheme } from '@/app/themes/dracula';
 import { draculaLargeTheme } from '@/app/themes/dracula-large';
 
-// Register application-specific GTS schemas before constructing the FrontX app.
-// These derived schemas encode application-level constraints (valid theme names,
-// supported languages, screen extension shape) and are not part of the core
-// type system in @gears-frontx/gts-plugin.
-gtsPlugin.registerSchema(themeSchema);
-gtsPlugin.registerSchema(languageSchema);
-gtsPlugin.registerSchema(extensionScreenSchema);
-// The overlay counterpart of extensionScreenSchema, owned here rather than in
-// the template's src/gts: GTS refuses to register an instance whose type has no
-// schema, and the overlay domain pins no derived type — so a contribution to it
-// needs one declared somewhere. Without this, registering the search extension
-// throws, bootstrapMFE rejects, and MfeScreenContainer never renders the screen
-// slot: the rail still lists its items while every click mounts into nothing.
-gtsPlugin.registerSchema(extensionOverlaySchemaJson as JSONSchema);
-// One derivation further down the screen chain: the level a screen belongs to —
-// organization, workspace or project — which the rail groups by. Registered
-// after extensionScreenSchema on purpose: a derived schema resolves its parent
-// by chain, so the type it extends has to be in the registry first, and a
-// screen extension that chains through this one fails to register otherwise.
-gtsPlugin.registerSchema(extensionScreenLeveledSchemaJson as JSONSchema);
-// The context-slot action an MFE executes against the screen domain. Same rule
-// as above: GTS refuses to route an action instance whose type has no schema.
-gtsPlugin.registerSchema(actionContextPublishSchemaJson as JSONSchema);
-// The overlay-domain counterpart: a workspace an MFE has just created, handed to
-// the shell that owns the list it belongs in.
-gtsPlugin.registerSchema(actionContextWorkspacesPublishSchemaJson as JSONSchema);
-// The shell -> MFE half of the same slot. `sharedProperties` on a domain and
-// `requiredProperties` on an entry both carry an `x-gts-ref` that checks the type
-// is IN THE REGISTRY, not merely that the string looks right, so an unregistered
-// id fails registration and takes bootstrapMFE with it.
-gtsPlugin.registerSchema(sharedPropertyContextProjectSchemaJson as JSONSchema);
-// The other two halves of the same channel: which organization the session is
-// working in, and who is signed in. Both are the shell's to know and every MFE's
-// to be told — see mfe/contextActions.ts for what they replace.
-gtsPlugin.registerSchema(sharedPropertyContextOrganizationSchemaJson as JSONSchema);
-// The level between them: a project's parent and the Projects list's root.
-gtsPlugin.registerSchema(sharedPropertyContextWorkspaceSchemaJson as JSONSchema);
-// The rail is the shell's, the sections are the MFE's — this is the choice
-// crossing between them.
-gtsPlugin.registerSchema(sharedPropertyContextSectionSchemaJson as JSONSchema);
-gtsPlugin.registerSchema(sharedPropertySessionProfileSchemaJson as JSONSchema);
-// The address a frame-entry MFE loads. Registered for the same reason as the
-// context properties above: `sharedProperties` carries an `x-gts-ref` that
-// checks the type is in the registry, so an unregistered id fails registration
-// and takes bootstrapMFE with it.
-gtsPlugin.registerSchema(sharedPropertySpaceFrameUrlSchemaJson as JSONSchema);
-// A frame is an entry the host loads into an iframe. Registered before any
-// package declaring one: GTS refuses to register an instance whose type has
-// no schema, and the refusal takes bootstrapMFE down with it.
-gtsPlugin.registerSchema(entryIframeSchemaJson as JSONSchema);
+// Register the shell's GTS schemas before constructing the FrontX app — why each
+// one has to be there is in mfe/schemas/index.ts.
+for (const schema of SHELL_SCHEMAS) gtsPlugin.registerSchema(schema);
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);

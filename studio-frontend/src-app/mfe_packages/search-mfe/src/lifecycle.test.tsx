@@ -52,8 +52,8 @@ vi.mock('./api/_BlankApiService', () => ({
   },
 }));
 
-vi.mock('./shared/useScreenTranslations', () => ({
-  useScreenTranslations: useScreenTranslationsMock,
+vi.mock('./i18n', () => ({
+  useHomeTranslations: useScreenTranslationsMock,
 }));
 
 describe('blank-mfe lifecycle', () => {

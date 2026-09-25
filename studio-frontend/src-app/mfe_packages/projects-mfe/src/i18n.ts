@@ -12,6 +12,7 @@ import {
   useTranslation,
   type UseScreenTranslationsReturn,
 } from '@gears-frontx/react';
+import { loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
 
 
 const SCREENSET = 'projects';
@@ -25,8 +26,7 @@ export const PROJECT_NAMESPACE = `screen.${SCREENSET}.${PROJECT_SCREEN}`;
 export const PROJECT_CREATE_NAMESPACE = `screen.${SCREENSET}.${CREATE_SCREEN}`;
 export const WORKSPACE_CREATE_NAMESPACE = `screen.${SCREENSET}.${WORKSPACE_SCREEN}`;
 
-type JsonModule = { default: Record<string, string> };
-type ModuleMap = Record<string, () => Promise<JsonModule>>;
+type ModuleMap = TranslationModules;
 
 
 const listModules = import.meta.glob('./screens/project-list/i18n/*.json') as ModuleMap;
@@ -34,23 +34,11 @@ const projectModules = import.meta.glob('./screens/project/i18n/*.json') as Modu
 const createModules = import.meta.glob('./screens/project-create/i18n/*.json') as ModuleMap;
 const workspaceModules = import.meta.glob('./screens/workspace-create/i18n/*.json') as ModuleMap;
 
-/**
- * A language with no file resolves to an empty dictionary rather than to
- * English — `t()` then falls through to the registry's own English fallback,
- * one fallback instead of a second one open-coded here.
- */
-function loadFrom(modules: ModuleMap, directory: string) {
-  return async (language: string): Promise<Record<string, string>> => {
-    const importer = modules[`${directory}/${language}.json`];
-    if (!importer) return {};
-    return (await importer()).default;
-  };
-}
 
-const loadListTranslations = loadFrom(listModules, './screens/project-list/i18n');
-const loadProjectTranslations = loadFrom(projectModules, './screens/project/i18n');
-const loadCreateTranslations = loadFrom(createModules, './screens/project-create/i18n');
-const loadWorkspaceTranslations = loadFrom(workspaceModules, './screens/workspace-create/i18n');
+const loadListTranslations = loadScreenTranslations(listModules, './screens/project-list/i18n');
+const loadProjectTranslations = loadScreenTranslations(projectModules, './screens/project/i18n');
+const loadCreateTranslations = loadScreenTranslations(createModules, './screens/project-create/i18n');
+const loadWorkspaceTranslations = loadScreenTranslations(workspaceModules, './screens/workspace-create/i18n');
 
 /** Loads the list screen's dictionary. One call, in `ProjectListScreen`. */
 export function useProjectListScreenTranslations(): UseScreenTranslationsReturn {

@@ -3,6 +3,7 @@
 
 import { ActionHandler, eventBus } from '@gears-frontx/react';
 import '@/app/events/bootstrapEvents';
+import { STUDIO_ARTIFACT_KINDS, type StudioArtifactKind } from '@constructor-studio/mfe-shared';
 
 interface ContextEntityPayload {
   id: string;
@@ -90,5 +91,38 @@ export function createWorkspacePublishHandler(): ActionHandler {
       ...payload.workspace,
       ...scopeOf(payload, 'organizationId'),
     });
+  });
+}
+
+const ARTIFACT_KINDS: ReadonlySet<string> = new Set(STUDIO_ARTIFACT_KINDS);
+
+/** The open-artifact payload as the schema names it, or `null` when it is not one. */
+export function artifactRequestOf(
+  payload: Record<string, unknown> | undefined
+): {
+  projectId: string;
+  artifactId: string;
+  repository: string;
+  path: string;
+  kind: StudioArtifactKind;
+} | null {
+  const { projectId, artifactId, repository, path, kind } = payload ?? {};
+  if (typeof projectId !== 'string' || !projectId) return null;
+  if (typeof artifactId !== 'string' || !artifactId) return null;
+  if (typeof repository !== 'string' || typeof path !== 'string') return null;
+  if (typeof kind !== 'string' || !ARTIFACT_KINDS.has(kind)) return null;
+  return { projectId, artifactId, repository, path, kind: kind as StudioArtifactKind };
+}
+
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
+export function createArtifactOpenHandler(): ActionHandler {
+  return ActionHandler.fromFunction(async (_actionTypeId, payload) => {
+    const request = artifactRequestOf(payload);
+    if (!request) {
+      console.warn('[shell] artifact open: payload refused', payload);
+      return;
+    }
+    // TODO(#320): navigate to the editor instead of logging.
+    console.info('[shell] artifact open received', request);
   });
 }

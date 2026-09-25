@@ -44,6 +44,7 @@ import type {
 } from '@gears-frontx/react';
 
 import {
+  STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
@@ -54,6 +55,7 @@ import {
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from '@constructor-studio/mfe-shared';
 import {
+  createArtifactOpenHandler,
   createContextPublishHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
@@ -213,6 +215,7 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     // an action chain and not an event.
     ctx.registerHandler(STUDIO_ACTION_CONTEXT_PUBLISH, createContextPublishHandler());
     ctx.registerHandler(STUDIO_ACTION_WORKSPACES_PUBLISH, createWorkspacePublishHandler());
+    ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
   }
 
   protected getMountStrategies(): MountStrategy[] {
@@ -433,6 +436,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       ...screenDomain.actions,
       STUDIO_ACTION_CONTEXT_PUBLISH,
       STUDIO_ACTION_WORKSPACES_PUBLISH,
+      STUDIO_ACTION_ARTIFACT_OPEN,
     ],
     sharedProperties: [
       ...screenDomain.sharedProperties,

@@ -139,6 +139,30 @@ input.search {
   min-width: 0;
 }
 
+.nameButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.nameButton:hover .nameText {
+  color: var(--link-foreground);
+}
+
+.nameButton:focus-visible {
+  outline: var(--border-width-focus) solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .kindIcon {
   display: inline-flex;
   flex-shrink: 0;
@@ -209,6 +233,16 @@ input.search {
   height: var(--control-height-sm);
   width: 20rem;
   margin: var(--space-3) var(--space-4);
+}
+
+.cellSkeleton {
+  height: var(--text-body-line-height, 1.25rem);
+  inline-size: min(100%, 8rem);
+}
+
+.rangeSkeleton {
+  height: var(--text-body-line-height, 1.25rem);
+  width: 8rem;
 }
 
 .tableSkeleton {

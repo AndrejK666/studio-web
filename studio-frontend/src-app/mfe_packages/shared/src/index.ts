@@ -1,5 +1,5 @@
 /**
- * The public surface of this package. The `host/`, `connector/` and `errors/`
+ * The public surface of this package. The `host/`, `connector/`, `errors/` and `i18n/`
  * split inside is an implementation detail — MFEs import from here.
  */
 
@@ -10,16 +10,20 @@ export {
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+  STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
 } from './host/hostProperties';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
+  STUDIO_ACTION_ARTIFACT_OPEN,
+  STUDIO_ARTIFACT_KINDS,
   STUDIO_EXTENSION_WORKSPACE_CREATE,
   sendToHost,
   sendAndForget,
   type HostAction,
+  type StudioArtifactKind,
 } from './host/hostActions';
 export {
   OrganizationProvider,
@@ -102,4 +106,9 @@ export {
   workspacesPath,
 } from './accounts/accountsPaths';
 export { isNotFound, orNullOnNotFound, responseStatus } from './errors/notFound';
+export {
+  loadScreenTranslations,
+  type TranslationModule,
+  type TranslationModules,
+} from './i18n/screenTranslations';
 export { errorMessage } from './errors/message';

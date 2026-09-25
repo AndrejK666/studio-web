@@ -4,10 +4,6 @@
  * What this module adds is the namespace: call sites write `t('col_projects')`
  * while the binding asks the registry for
  * `screen.organization.workspaces:col_projects`.
- *
- * `HomeScreen` is deliberately not moved here: it still uses the scaffold's own
- * `shared/useScreenTranslations`, and rewriting the template's demo screen is
- * not part of this level's work.
  */
 
 import { useCallback } from 'react';
@@ -16,6 +12,7 @@ import {
   useTranslation,
   type UseScreenTranslationsReturn,
 } from '@gears-frontx/react';
+import { loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
 
 const SCREENSET = 'organization';
 const OVERVIEW_SCREEN = 'overview';
@@ -23,28 +20,19 @@ const WORKSPACES_SCREEN = 'workspaces';
 
 export const OVERVIEW_NAMESPACE = `screen.${SCREENSET}.${OVERVIEW_SCREEN}`;
 export const WORKSPACES_NAMESPACE = `screen.${SCREENSET}.${WORKSPACES_SCREEN}`;
+const HOME_SCREEN = 'home';
+export const HOME_NAMESPACE = `screen.${SCREENSET}.${HOME_SCREEN}`;
 
-type JsonModule = { default: Record<string, string> };
-type ModuleMap = Record<string, () => Promise<JsonModule>>;
+type ModuleMap = TranslationModules;
 
 const overviewModules = import.meta.glob('./screens/overview/i18n/*.json') as ModuleMap;
 const workspacesModules = import.meta.glob('./screens/workspaces/i18n/*.json') as ModuleMap;
+const homeModules = import.meta.glob('./screens/home/i18n/*.json') as ModuleMap;
 
-/**
- * A language with no file resolves to an empty dictionary rather than to
- * English — `t()` then falls through to the registry's own English fallback,
- * one fallback instead of a second one open-coded here.
- */
-function loadFrom(modules: ModuleMap, directory: string) {
-  return async (language: string): Promise<Record<string, string>> => {
-    const importer = modules[`${directory}/${language}.json`];
-    if (!importer) return {};
-    return (await importer()).default;
-  };
-}
 
-const loadOverviewTranslations = loadFrom(overviewModules, './screens/overview/i18n');
-const loadWorkspacesTranslations = loadFrom(workspacesModules, './screens/workspaces/i18n');
+const loadOverviewTranslations = loadScreenTranslations(overviewModules, './screens/overview/i18n');
+const loadWorkspacesTranslations = loadScreenTranslations(workspacesModules, './screens/workspaces/i18n');
+const loadHomeTranslations = loadScreenTranslations(homeModules, './screens/home/i18n');
 
 /** Loads the overview's dictionary. One call, in `OverviewScreen`. */
 export function useOverviewScreenTranslations(): UseScreenTranslationsReturn {
@@ -70,3 +58,17 @@ function createText(namespace: string): () => ScreenText {
 
 export const useOverviewText = createText(OVERVIEW_NAMESPACE);
 export const useWorkspacesText = createText(WORKSPACES_NAMESPACE);
+
+/**
+ * The home screen's dictionary and its text function in one call — the shape
+ * the scaffold's own hook had, so `HomeScreen` reads the same.
+ */
+export function useHomeTranslations(): { t: ScreenText; loading: boolean } {
+  const { isLoaded } = useScreenTranslations(SCREENSET, HOME_SCREEN, loadHomeTranslations);
+  const { t } = useTranslation();
+  const text = useCallback<ScreenText>(
+    (key, params) => t(`${HOME_NAMESPACE}:${key}`, params),
+    [t]
+  );
+  return { t: text, loading: !isLoaded };
+}

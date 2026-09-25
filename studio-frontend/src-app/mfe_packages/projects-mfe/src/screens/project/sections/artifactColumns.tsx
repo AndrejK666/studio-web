@@ -9,12 +9,15 @@ import {
 import {
   FileText,
   GitBranch,
+  GitCommitHorizontal,
   GitMerge,
+  MessageCircle,
   MessageSquare,
   MoreHorizontal,
+  UserRound,
 } from 'lucide-react';
 import type { ArtifactKind } from '../../../api/artifactTypes';
-import type { ArtifactRow } from '../../../model/artifact';
+import { opensInEditor, type ArtifactRow } from '../../../model/artifact';
 import styles from './ArtifactsSection.module.css';
 
 const KIND_ICON: Record<ArtifactKind, React.ReactNode> = {
@@ -22,6 +25,9 @@ const KIND_ICON: Record<ArtifactKind, React.ReactNode> = {
   file: <FileText size={16} strokeWidth={1.3} />,
   issue: <MessageSquare size={16} strokeWidth={1.3} />,
   pullRequest: <GitMerge size={16} strokeWidth={1.3} />,
+  commit: <GitCommitHorizontal size={16} strokeWidth={1.3} />,
+  comment: <MessageCircle size={16} strokeWidth={1.3} />,
+  user: <UserRound size={16} strokeWidth={1.3} />,
 };
 
 export interface ArtifactColumnLabels {
@@ -34,6 +40,7 @@ export interface ArtifactColumnLabels {
   provenance: Record<string, string>;
   actions: (name: string) => string;
   open: string;
+  openInEditor: string;
   copyLink: string;
 }
 
@@ -49,46 +56,64 @@ export interface ArtifactColumnDeps {
   labels: ArtifactColumnLabels;
   formatRelative: (value: number) => string;
   container?: HTMLElement | null;
+  onOpen?: ArtifactOpen;
 }
 
+/** Which control asked: the name button or the row menu's Open in editor. */
+export type ArtifactOpenVia = 'name' | 'menu';
+export type ArtifactOpen = (row: ArtifactRow, via: ArtifactOpenVia) => void;
+
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
 const RowMenu: React.FC<{
   row: ArtifactRow;
   labels: ArtifactColumnLabels;
   container?: HTMLElement | null;
-}> = ({ row, labels, container }) => (
-  <div className={styles.actionsCell}>
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className={styles.actionsButton}
-            aria-label={labels.actions(row.name)}
-            disabled={row.url === null}
-            icon={<MoreHorizontal size={16} strokeWidth={1.5} />}
-          />
-        }
-      />
-      <DropdownMenuContent align="end" container={container ?? undefined}>
-        <DropdownMenuItem
-          onClick={() => {
-            if (row.url) window.open(row.url, '_blank', 'noopener,noreferrer');
-          }}
-        >
-          {labels.open}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => {
-            if (row.url) void navigator.clipboard?.writeText(row.url);
-          }}
-        >
-          {labels.copyLink}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  </div>
-);
+  onOpen?: ArtifactOpen;
+}> = ({ row, labels, container, onOpen }) => {
+  const editor = onOpen !== undefined && opensInEditor(row);
+  return (
+    <div className={styles.actionsCell}>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.actionsButton}
+              aria-label={labels.actions(row.name)}
+              disabled={!editor && row.url === null}
+              icon={<MoreHorizontal size={16} strokeWidth={1.5} />}
+            />
+          }
+        />
+        <DropdownMenuContent align="end" container={container ?? undefined}>
+          {editor ? (
+            <DropdownMenuItem onClick={() => onOpen(row, 'menu')}>
+              {labels.openInEditor}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onClick={() => {
+                if (row.url) window.open(row.url, '_blank', 'noopener,noreferrer');
+              }}
+            >
+              {labels.open}
+            </DropdownMenuItem>
+          )}
+          {row.url !== null && (
+            <DropdownMenuItem
+              onClick={() => {
+                if (row.url) void navigator.clipboard?.writeText(row.url);
+              }}
+            >
+              {labels.copyLink}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+};
 
 RowMenu.displayName = 'RowMenu';
 
@@ -98,22 +123,31 @@ export function artifactColumns({
   labels,
   formatRelative,
   container,
+  onOpen,
 }: ArtifactColumnDeps): ArtifactColumn[] {
+  const nameCell = (row: ArtifactRow): React.ReactNode => (
+    <>
+      {row.kind !== null && (
+        <span className={styles.kindIcon} aria-hidden="true">
+          {KIND_ICON[row.kind]}
+        </span>
+      )}
+      <span className={styles.nameText}>{row.name}</span>
+    </>
+  );
   return [
     {
       key: 'name',
       label: labels.name,
       className: styles.colName,
-      render: (row) => (
-        <span className={styles.nameCell}>
-          {row.kind !== null && (
-            <span className={styles.kindIcon} aria-hidden="true">
-              {KIND_ICON[row.kind]}
-            </span>
-          )}
-          <span className={styles.nameText}>{row.name}</span>
-        </span>
-      ),
+      render: (row) =>
+        onOpen !== undefined && opensInEditor(row) ? (
+          <button type="button" className={styles.nameButton} onClick={() => onOpen(row, 'name')}>
+            {nameCell(row)}
+          </button>
+        ) : (
+          <span className={styles.nameCell}>{nameCell(row)}</span>
+        ),
     },
     {
       key: 'repository',
@@ -151,7 +185,9 @@ export function artifactColumns({
       key: 'actions',
       label: '',
       className: styles.colActions,
-      render: (row) => <RowMenu row={row} labels={labels} container={container} />,
+      render: (row) => (
+        <RowMenu row={row} labels={labels} container={container} onOpen={onOpen} />
+      ),
     },
   ];
 }

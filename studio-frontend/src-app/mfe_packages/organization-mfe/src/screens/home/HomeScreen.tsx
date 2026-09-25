@@ -5,14 +5,9 @@ import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
 import { Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
-import { useScreenTranslations } from '../../shared/useScreenTranslations';
+import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
-// Stable reference for translation modules (hoisted to module level to prevent re-render loops)
-const languageModules = import.meta.glob('./i18n/*.json') as Record<
-  string,
-  () => Promise<{ default: Record<string, string> }>
->;
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
@@ -70,7 +65,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     setLanguage(readBridgeProperty(bridge, FRONTX_SHARED_PROPERTY_LANGUAGE, 'en'));
   }
 
-  const { t, loading } = useScreenTranslations(languageModules, bridge);
+  const { t, loading } = useHomeTranslations();
 
   useEffect(() => {
     const themeUnsubscribe = bridge.subscribeToProperty(

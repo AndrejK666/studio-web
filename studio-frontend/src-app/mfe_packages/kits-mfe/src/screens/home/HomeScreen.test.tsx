@@ -10,8 +10,8 @@ const { useScreenTranslationsMock } = vi.hoisted(() => ({
   useScreenTranslationsMock: vi.fn(),
 }));
 
-vi.mock('../../shared/useScreenTranslations', () => ({
-  useScreenTranslations: useScreenTranslationsMock,
+vi.mock('../../i18n', () => ({
+  useHomeTranslations: useScreenTranslationsMock,
 }));
 
 import { HomeScreen } from './HomeScreen';

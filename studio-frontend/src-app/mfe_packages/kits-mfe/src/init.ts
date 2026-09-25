@@ -15,6 +15,7 @@ import {
   registerSlice,
   apiRegistry,
   effects,
+  i18n,
   mock,
   queryCacheShared,
 } from '@gears-frontx/react';
@@ -29,7 +30,7 @@ apiRegistry.initialize();
 
 // Create only the local MFE app shell.
 // queryCacheShared() joins the host-owned QueryClient without reconfiguring it.
-const mfeApp = createFrontX().use(effects()).use(queryCacheShared()).use(mock()).build();
+const mfeApp = createFrontX().use(effects()).use(i18n()).use(queryCacheShared()).use(mock()).build();
 
 // Register slices with effects (needs store from build())
 registerSlice(homeSlice, initHomeEffects);

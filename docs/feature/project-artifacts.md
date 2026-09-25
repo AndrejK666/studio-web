@@ -38,6 +38,7 @@ owner: studio-team
   - [A repository is the unit of sync and of retry](#a-repository-is-the-unit-of-sync-and-of-retry)
   - [A first import is recognised from data](#a-first-import-is-recognised-from-data)
   - [A created project opens](#a-created-project-opens)
+  - [Opening a file is the shell's to answer](#opening-a-file-is-the-shells-to-answer)
   - [Nothing is invented where the gear is silent](#nothing-is-invented-where-the-gear-is-silent)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 
@@ -166,6 +167,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Decomposition**: [DECOMPOSITION](../decomposition/constructor-studio.md), entry `cpt-studio-feature-project-artifacts`
 - **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md) — the project's rail lives inside the project frame, not in the shell
 - **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md) — what `scope` addresses
+- **ADR**: [ADR-0028 — the address decides where the shell is](../adr/0028-the-address-decides-where-the-shell-is.md) — the router an opened file will navigate on
 - **Feature**: [Create a project](project-create.md) — writes the sources this feature syncs
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the parent tenant tagged onto every synced node
 - **Feature**: [Connect a source host](connection-create.md) — holds the `secret_ref` a sync needs
@@ -446,8 +448,12 @@ ones that happen to be on screen; and a `limit=1` read whose only purpose is
 the project holds. That last one is the same read that decides a first import,
 so it is one request, not two.
 
-The search waits for the typing to settle before it becomes a request. Ordering
-is `sort=updated` and only that: the gear offers newest-first or its own stable
+The search waits for the typing to settle before it becomes a request. The kind
+filter travels the same way, as the node type's full GTS id in `type`, and the
+gear does the narrowing — its default answer is already the four first-class
+kinds, so "all types" sends nothing. Commits, comments and authors are graph
+detail the gear leaves out of that default; the filter offers them too, and they
+are listed only when chosen, so "all types" means the gear's four and not seven. Ordering is `sort=updated` and only that: the gear offers newest-first or its own stable
 order by instance id, and "by instance id" is not an order a member asked for.
 Re-sorting the page on the client is the one thing this DoD forbids outright —
 it would order the fifteen rows in hand and silently disagree with every other
@@ -465,9 +471,8 @@ under a member who is standing on its last page.
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-counters`
 
-The system **MUST** state the project's artifact total and the number of
-repositories those artifacts came from, **MUST** compute both over the whole
-project rather than over the searched rows, **MUST** restate itself around a
+The system **MUST** state the project's artifact total, **MUST** compute it over
+the whole project rather than over the searched rows, **MUST** restate itself around a
 chosen repository — that repository's own total, named — and **MUST NOT** state
 how many artifacts are complete or need attention.
 
@@ -482,7 +487,13 @@ makes the same split — `1,286 artifacts · 97 repositories` with nothing chose
 `96 artifacts in trust-center` once one is. How many of those are on screen is
 the footer's sentence, not the header's.
 
-The repository count is what the graph holds, not a "reached out of
+The header no longer counts repositories. The repository filter is always shown
+and lists every repository, and choosing the Repositories type lists them as
+rows with their number in the footer, so the count beside the artifact total
+said a third time what the strip already shows. What follows is why the count,
+while it was there, was a plain one.
+
+The repository count was what the graph holds, not a "reached out of
 configured" pair. The pair was specified here first, to keep a failed sync
 visible — a repository's node is written *during* its sync, so one that failed
 is absent from the graph entirely. Two things retired it. The prototype states a
@@ -681,6 +692,52 @@ without asking.
 - Action: `constructor_studio.context.projects.publish.v1~` (`kind: opened`)
 - Entities: `NewProjectWizard`, `projectsActions`
 
+### Opening a file is the shell's to answer
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-open-request`
+
+The system **MUST** publish a member's request to open a file as an action
+against the screen domain, carrying the project, the node, its repository, its
+checkout-relative path and its kind, and **MUST NOT** open anything or record
+the choice on its own; a chain the shell refuses **MUST** leave the table
+standing.
+
+Only a file asks the editor. The IDE's `studio.openInEditor` takes a
+checkout-relative path, which only a file node carries, and an issue or a pull
+request has no meaning inside it — its home is the forge. So a file's name is a
+button, the way a project's name is in the projects list, and its row menu says
+_Open in editor_; every other kind keeps its name as text and its row menu says
+_Open_, which follows the node's url. The one rule is `opensInEditor`, read by
+both cells, so the name and the menu cannot disagree.
+
+The action is its own, `context.artifact.open`, not a fourth `kind` of the
+projects publish: workspaces got their own action for the same reason, and an
+artifact is a different entity from the project it sits in. Its answer is the
+shell's — once the editor navigation (#320) lands on the router ADR-0028
+brought in, the request becomes a navigation: the shell mounts the editor and
+writes the artifact into the address, and
+`context.artifact.selected` is what it echoes back, `null` outside the editor.
+Nothing here writes that property; `ChildMfeBridge` has no `updateSharedProperty`,
+and a local write beside the publish would fork the answer across the realm
+boundary, as it once did for the open project.
+
+Until then — there is no editor screen to navigate to yet, and the address
+does not carry an artifact — the shell's handler checks the request and does
+nothing with it. The handler cannot wait for #320: the registry refuses a domain that
+declares an action without a handler, and the action has to be declared,
+because the contract check rejects an entry whose domain action the domain does
+not list. Either refusal is no screen slot at all — which is why a test
+registers the shell's domains on a real registry. A chain the shell does refuse
+is logged by `sendAndForget`, and the row stays on screen.
+
+**Implements**:
+- `cpt-studiofrontend-flow-project-artifacts-browse`
+
+**Touches**:
+- Action: `constructor_studio.context.artifact.open.v1~`
+- Property: `constructor_studio.context.artifact.selected.v1~` (read by nobody yet; published by #320)
+- Entities: `artifactActions`, `opensInEditor`, `artifactColumns`, `ArtifactsSection`, `createArtifactOpenHandler`
+
 ### Nothing is invented where the gear is silent
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-no-invented`
@@ -722,15 +779,16 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] Activating Artifacts shows the artifacts table; the open project does not change and the list behind it is not re-read.
 - [ ] The table has exactly the columns Name, Repository, Path, Sync and Updated, in that order.
 - [ ] Every row names the repository it came from by name, not by an identifier.
-- [ ] Rows for issues and pull requests show a relative time in Updated; every other row — files and repositories alike — names where it came from instead.
+- [ ] Rows for issues, pull requests, commits and comments show a relative time in Updated; files and repositories name where they came from instead; an author's row leaves it empty, since the gear gives an author no time.
 - [ ] Updated is marked as newest-first, offers no way to reverse it, and rows without a time sit at the bottom.
-- [ ] The header states the number of artifacts and the number of repositories they came from, each in the singular when there is one.
+- [ ] The header states the number of artifacts, in the singular when there is one, and no number of repositories.
 - [ ] Narrowing by text changes the table and the footer, and leaves the header's totals as they were.
 - [ ] Choosing a repository restates the header as that repository's own total, names it, and starts the table again from the first page.
 - [ ] Narrowing by text while on a later page shows the matching rows from the first page, not an empty page.
 - [ ] A project with more artifacts than one page holds lists them all across the paginator, and the footer's total is the gear's, not the page's.
 - [ ] The repository filter offers every repository in the project, including ones whose rows are not on the page in view.
-- [ ] Every row on every page names its repository; none is left blank.
+- [ ] The repository filter is shown whenever the table is, with one repository as with many, and opens on all repositories.
+- [ ] Every row on every page names its repository by name — except an author's, which belongs to none, and a row whose repository is not among the project's repositories, which is left blank rather than named by a guess.
 - [ ] The header states nothing about artifacts being complete or needing attention.
 - [ ] A project with no sources shows an empty state that says so and offers no sync.
 - [ ] A project with sources and nothing ingested shows an empty state that offers a sync.
@@ -745,4 +803,11 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] Leaving Artifacts for another section and returning shows the rows that arrived while it was away.
 - [ ] Pulling a repository into another project leaves this project's rows for it untouched, and no banner claims a repository was never pulled in.
 - [ ] No request for artifacts is made without the open project as its scope.
+- [ ] A file's name is a button, reachable by Tab with a visible focus ring; an issue's, a pull request's and a repository's name is plain text.
+- [ ] Activating a file's name, or _Open in editor_ in its row menu, publishes one action naming the project, the node, its repository, its path and its kind, and the table does not change.
+- [ ] The row menu of an issue or a pull request says _Open_ and follows the node's url; it never says _Open in editor_.
+- [ ] A row with neither a path to edit nor a url to visit has its row menu disabled.
+- [ ] When the shell refuses the action, the table stays as it was and the failure is logged.
+- [ ] Choosing a type narrows the table to that kind through the request, and starts the table again from the first page.
+- [ ] Choosing Commits, Comments or Authors lists that kind; "All types" lists files, issues, pull requests and repositories only.
 - [ ] No row shows a document kind, a readiness percentage, or a per-file ingest status.

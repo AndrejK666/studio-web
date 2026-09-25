@@ -57,8 +57,10 @@ vi.mock('./api/_BlankApiService', () => ({
   },
 }));
 
-vi.mock('./shared/useScreenTranslations', () => ({
-  useScreenTranslations: useScreenTranslationsMock,
+// Only the home screen's text is stubbed; the other screens keep the real module.
+vi.mock('./i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./i18n')>()),
+  useHomeTranslations: useScreenTranslationsMock,
 }));
 
 describe('organization-mfe lifecycle', () => {

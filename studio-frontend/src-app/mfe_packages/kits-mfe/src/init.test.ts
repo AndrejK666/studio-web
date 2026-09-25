@@ -11,6 +11,7 @@ const initialize = vi.fn();
 const effects = vi.fn(() => 'effects-plugin');
 const queryCacheShared = vi.fn(() => 'query-cache-shared-plugin');
 const mock = vi.fn(() => 'mock-plugin');
+const i18n = vi.fn(() => 'i18n-plugin');
 
 vi.mock('@gears-frontx/react', () => ({
   createFrontX,
@@ -20,6 +21,7 @@ vi.mock('@gears-frontx/react', () => ({
     initialize,
   },
   effects,
+  i18n,
   mock,
   queryCacheShared,
 }));
@@ -62,8 +64,11 @@ describe('_blank-mfe init', () => {
     expect(effects).toHaveBeenCalledTimes(1);
     expect(queryCacheShared).toHaveBeenCalledTimes(1);
     expect(mock).toHaveBeenCalledTimes(1);
+    // The home screen reads its text through the framework's i18n.
+    expect(i18n).toHaveBeenCalledTimes(1);
     expect(use.mock.calls).toEqual(expect.arrayContaining([
       ['effects-plugin'],
+      ['i18n-plugin'],
       ['query-cache-shared-plugin'],
       ['mock-plugin'],
     ]));

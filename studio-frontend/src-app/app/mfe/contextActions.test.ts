@@ -7,7 +7,15 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: { on: vi.fn(), emit: mockEmit },
 }));
 
-import { createContextPublishHandler, createWorkspacePublishHandler } from './contextActions';
+import artifactOpenSchema from './schemas/action_context_artifact_open.v1.json';
+import artifactSelectedSchema from './schemas/shared_property_context_artifact.v1.json';
+import { STUDIO_ARTIFACT_KINDS } from '@constructor-studio/mfe-shared';
+import {
+  artifactRequestOf,
+  createArtifactOpenHandler,
+  createContextPublishHandler,
+  createWorkspacePublishHandler,
+} from './contextActions';
 
 /**
  * What an MFE's action turns into on the shell's event bus. This is the seam
@@ -120,5 +128,45 @@ describe('a project opened by the MFE that owns projects', () => {
     await contextAction({ kind: 'closed' });
 
     expect(emitted('app/context/project/closed')).toHaveLength(1);
+  });
+});
+
+describe('artifact open request', () => {
+  const REQUEST = {
+    projectId: 'p1',
+    artifactId: 'n-1',
+    repository: 'group/repo',
+    path: 'docs/a.md',
+    kind: 'file',
+  };
+
+  it('reads the five fields the schema names', () => {
+    expect(artifactRequestOf(REQUEST)).toEqual(REQUEST);
+  });
+
+  it('refuses a payload missing an id or carrying an unknown kind', () => {
+    expect(artifactRequestOf({ ...REQUEST, projectId: '' })).toBeNull();
+    expect(artifactRequestOf({ ...REQUEST, artifactId: undefined })).toBeNull();
+    expect(artifactRequestOf({ ...REQUEST, kind: 'spec_finding' })).toBeNull();
+    expect(artifactRequestOf(undefined)).toBeNull();
+  });
+
+  it('is accepted and changes nothing on the bus until the editor navigation answers it (#320)', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    mockEmit.mockClear();
+    await expect(createArtifactOpenHandler().handleAction('action', REQUEST)).resolves.toBeUndefined();
+    expect(mockEmit).not.toHaveBeenCalled();
+  });
+
+  it('names the same kinds as the property the shell answers with', () => {
+    expect(artifactSelectedSchema.properties.value.properties.kind.enum).toEqual(
+      artifactOpenSchema.properties.payload.properties.kind.enum
+    );
+  });
+
+  it('names the kinds mfe-shared declares — the ones projects-mfe keys its types by', () => {
+    expect([...artifactOpenSchema.properties.payload.properties.kind.enum].sort()).toEqual(
+      [...STUDIO_ARTIFACT_KINDS].sort()
+    );
   });
 });

@@ -4,6 +4,7 @@ import {
   Pagination,
   PaginationContent,
   PaginationItem,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -34,9 +35,12 @@ interface ArtifactsTableProps {
   total: number;
   pageSize: number;
   onOffsetChange: (offset: number) => void;
+  /** Rows are on the way: skeleton rows in the body, header and paginator stay. */
+  loading?: boolean;
 }
 
 const MAX_PAGES_SHOWN = 4;
+const MIN_SKELETON_ROWS = 3;
 
 function pageWindow(current: number, count: number): number[] {
   if (count <= MAX_PAGES_SHOWN) return Array.from({ length: count }, (_, i) => i);
@@ -55,9 +59,15 @@ export const ArtifactsTable: React.FC<ArtifactsTableProps> = ({
   total,
   pageSize,
   onOffsetChange,
+  loading = false,
 }) => {
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const current = Math.min(Math.floor(offset / pageSize), pageCount - 1);
+  // As many skeleton rows as the page that is being replaced, so the table
+  // keeps its height.
+  const shown = React.useRef(rows.length);
+  if (!loading) shown.current = rows.length;
+  const skeletonRows = Math.min(pageSize, Math.max(shown.current, MIN_SKELETON_ROWS));
 
   return (
     <>
@@ -78,8 +88,18 @@ export const ArtifactsTable: React.FC<ArtifactsTableProps> = ({
             ))}
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {rows.length === 0 ? (
+        <TableBody aria-busy={loading || undefined}>
+          {loading ? (
+            Array.from({ length: skeletonRows }, (_, index) => (
+              <TableRow key={index}>
+                {columns.map((column) => (
+                  <TableCell key={column.key} className={column.className}>
+                    {column.label && <Skeleton className={styles.cellSkeleton} />}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : rows.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columns.length} className={styles.emptyCell}>
                 {labels.emptyMessage}
@@ -101,7 +121,11 @@ export const ArtifactsTable: React.FC<ArtifactsTableProps> = ({
 
       <div className={styles.footer}>
         <span className={styles.range}>
-          {labels.range(total === 0 ? 0 : offset + 1, offset + rows.length, total)}
+          {loading ? (
+            <Skeleton className={styles.rangeSkeleton} />
+          ) : (
+            labels.range(total === 0 ? 0 : offset + 1, offset + rows.length, total)
+          )}
         </span>
         <Pagination className={styles.pagination}>
           <PaginationContent>

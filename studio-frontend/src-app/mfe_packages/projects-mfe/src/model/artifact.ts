@@ -20,6 +20,13 @@ export interface ArtifactRow {
   provenance: ArtifactProvenance | null;
 }
 
+/** A file opens in the editor; everything else opens where it came from */
+
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
+export function opensInEditor(row: ArtifactRow): boolean {
+  return row.kind === 'file' && row.path !== '';
+}
+
 export interface ArtifactRepository {
   id: string;
   name: string;
@@ -50,8 +57,8 @@ function pathFromUrl(raw: string | undefined, repository: string): string {
   if (!raw) return '';
   let path: string;
   try {
-    const { pathname, search } = new URL(raw);
-    path = `${pathname}${search}`;
+    const { pathname, search, hash } = new URL(raw);
+    path = `${pathname}${search}${hash}`;
   } catch {
     path = raw;
   }
@@ -67,7 +74,7 @@ function pathOf(
   value: ArtifactNodeValue,
   repository: string
 ): string {
-  if (kind === 'repo') return '';
+  if (kind === 'repo' || kind === 'user') return '';
   if (kind === 'file') return value.path ?? '';
   return pathFromUrl(value.url, repository);
 }
@@ -75,6 +82,8 @@ function pathOf(
 function nameOf(kind: ArtifactKind | null, value: ArtifactNodeValue): string {
   if (kind === 'repo') return value.full_path ?? '';
   if (kind === 'file') return value.path?.split('/').pop() ?? value.path ?? '';
+  if (kind === 'user') return value.login ?? value.title ?? '';
+  if (kind === 'commit') return `${value.short_sha ?? ''} ${value.title ?? ''}`.trim();
   const title = value.title ?? '';
   return value.number != null ? `#${value.number} ${title}`.trim() : title;
 }
@@ -116,7 +125,7 @@ export function buildArtifactRows(
       sync: 'ingested',
       updatedAt,
       provenance:
-        updatedAt !== null || kind === null
+        updatedAt !== null || kind === null || kind === 'user'
           ? null
           : kind === 'file'
             ? fileProvenance(value)

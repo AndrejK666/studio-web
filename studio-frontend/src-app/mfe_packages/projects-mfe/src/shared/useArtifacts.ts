@@ -2,7 +2,7 @@ import { ProjectSource } from '../api/types';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import { ArtifactIngestApiService, type NodesParams } from '../api/ArtifactIngestApiService';
-import { ARTIFACT_REPO_TYPE } from '../api/artifactTypes';
+import { ARTIFACT_NODE_TYPES, ARTIFACT_REPO_TYPE, type ArtifactKind } from '../api/artifactTypes';
 import {
   buildArtifactRows,
   buildRepositories,
@@ -41,6 +41,7 @@ export function useArtifactCount(projectId: string): ArtifactCountView {
 
 export interface ArtifactsQuery {
   repo: string | null;
+  kind: ArtifactKind | null;
   search: string;
   offset: number;
   pageSize?: number;
@@ -50,9 +51,14 @@ export interface ArtifactsView {
   rows: ArtifactRow[];
   total: number;
   projectTotal: number;
+  repositoryTotal: number | null;
+  repositoryTotalFailed: boolean;
   repositories: ArtifactRepository[];
   sources: ProjectSource[];
+  /** Nothing to show yet: the first page, the repositories or the count. */
   loading: boolean;
+  /** A filter or page changed and its rows are on the way; `total` is the last one. */
+  refreshing: boolean;
   failed: boolean;
   refetch: () => void;
 }
@@ -92,9 +98,10 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
       limit: pageSize,
       offset: query.offset,
       repo: query.repo ?? undefined,
+      type: query.kind ? ARTIFACT_NODE_TYPES[query.kind] : undefined,
       q: search || undefined,
     }),
-    [projectId, pageSize, query.offset, query.repo, search]
+    [projectId, pageSize, query.offset, query.repo, query.kind, search]
   );
 
   const repositoryParams = useMemo<NodesParams>(
@@ -103,8 +110,20 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
   );
 
   const page = useApiQuery(ingest.nodes(pageParams));
+  // The last answer for this project, so a new filter keeps the strip and the
+  // paginator on screen instead of dropping back to the first-load skeleton.
+  const settled = useRef<{ projectId: string; total: number } | null>(null);
+  if (page.data) settled.current = { projectId, total: page.data.total };
+  const held = settled.current?.projectId === projectId ? settled.current : null;
   const repositoryNodes = useApiQuery(ingest.nodes(repositoryParams));
   const scope = useArtifactCount(projectId);
+
+  const repositoryTotalParams = useMemo<NodesParams>(
+    () =>
+      query.repo ? { scope: projectId, repo: query.repo, limit: 1 } : { scope: projectId, limit: 1 },
+    [projectId, query.repo]
+  );
+  const repositoryTotalNodes = useApiQuery(ingest.nodes(repositoryTotalParams));
 
   const repositories = useMemo(
     () => buildRepositories(repositoryNodes.data?.nodes ?? []),
@@ -123,17 +142,21 @@ export function useArtifacts(projectId: string, query: ArtifactsQuery): Artifact
     void cache.invalidate(ingest.nodes(pageParams));
     void cache.invalidate(ingest.nodes(repositoryParams));
     void cache.invalidate(ingest.nodes({ scope: projectId, limit: 1 }));
-  }, [cache, ingest, pageParams, repositoryParams, projectId]);
+    void cache.invalidate(ingest.nodes(repositoryTotalParams));
+  }, [cache, ingest, pageParams, repositoryParams, projectId, repositoryTotalParams]);
 
   useImportRefresh(projectId, refetch);
 
   return {
     rows,
-    total: page.data?.total ?? 0,
+    total: page.data?.total ?? held?.total ?? 0,
     projectTotal: scope.total,
+    repositoryTotal: query.repo && repositoryTotalNodes.data ? repositoryTotalNodes.data.total : null,
+    repositoryTotalFailed: query.repo !== null && repositoryTotalNodes.isError,
     repositories,
     sources: scope.sources,
-    loading: page.isLoading || repositoryNodes.isLoading || scope.loading,
+    loading: (page.isLoading && held === null) || repositoryNodes.isLoading || scope.loading,
+    refreshing: page.isLoading && held !== null,
     failed: page.isError || repositoryNodes.isError || scope.failed,
     refetch,
   };
