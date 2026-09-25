@@ -40,6 +40,13 @@ describe('desktop sign-in', () => {
         expect(url.searchParams.get('state')).toBe('s1');
     });
 
+    it('makes the person at the desktop sign in, whatever session the browser already has', () => {
+        // A browser signed in to the realm as somebody else would otherwise
+        // hand the desktop that somebody's code without showing a form.
+        const url = new URL(authorizationUrl(keycloakEndpoints(ISSUER), 'studio-desktop', 'http://127.0.0.1:5555/callback', 's1', 'c1'));
+        expect(url.searchParams.get('prompt')).toBe('login');
+    });
+
     it('trades the returned code and its verifier for tokens', async () => {
         let challenge = '';
         const fetchImpl = jest.fn(async (_url: string, init: RequestInit) => {

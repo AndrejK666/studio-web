@@ -73,6 +73,11 @@ export function authorizationUrl(
         state,
         code_challenge: challenge,
         code_challenge_method: 'S256',
+        // Always ask who is signing in. Without it, a browser that already has
+        // a session on this realm — the portal, somebody else's login, an
+        // admin's — is answered at once with a code for THAT account, and the
+        // desktop silently becomes them.
+        prompt: 'login',
     });
     return `${endpoints.authorization}?${query}`;
 }
