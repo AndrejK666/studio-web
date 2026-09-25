@@ -29,7 +29,15 @@ on:
         default: 0.1.0
   pull_request:
     paths:
+      # The app itself, and every extension it bundles: a fix in one of them
+      # is a fix in the installer, and the session image's CI never builds
+      # Electron.
       - theia/electron-app/**
+      - theia/studio/**
+      - theia/product-ext/**
+      - theia/drawio-editor/**
+      - theia/gearbox-studio/**
+      - theia/package-lock.json
       - .github/workflows/desktop-windows.yml
   # A branch that changes the packaging builds it too — which is also the only
   # way to run this before it exists on the default branch, since
@@ -37,6 +45,11 @@ on:
   push:
     paths:
       - theia/electron-app/**
+      - theia/studio/**
+      - theia/product-ext/**
+      - theia/drawio-editor/**
+      - theia/gearbox-studio/**
+      - theia/package-lock.json
       - .github/workflows/desktop-windows.yml
 
 permissions:

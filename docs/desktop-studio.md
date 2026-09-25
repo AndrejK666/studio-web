@@ -160,7 +160,7 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 
 `.github/workflows/desktop-windows.yml` builds and packages on `windows-2022`,
 where the native modules compile, and uploads the installer and the zip as the
-run's artifact. It runs when `theia/electron-app/**` or the workflow changes,
+run's artifact. It runs when `theia/electron-app/**`, any extension the app bundles, the lockfile or the workflow changes,
 and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
 
 | Input | Default | Meaning |
