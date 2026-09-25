@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
+use super::gts;
 use super::port::IngestedFile;
 
 /// A GTS node to persist: its type id (`gts.cf.studio.artifact.*`), a
@@ -80,6 +81,10 @@ pub trait GraphStore: Send + Sync {
     /// retrieval — lexical and vector arms fused — embedding the query with
     /// the same provider that embedded the nodes. Defaulted to empty for a
     /// store with no search.
+    ///
+    /// A file comes back as a file however it was found — a hit on its
+    /// content node is folded into it ([`fold_content_hits`]) — so a caller
+    /// never sees a `file_content` node here.
     async fn search(
         &self,
         _ctx: &SecurityContext,
@@ -314,6 +319,84 @@ pub fn ingested_file(node: &GtsNode) -> Option<IngestedFile> {
     })
 }
 
+/// The file ids that `hits` reach only through a content node.
+///
+/// What a store has to read before [`fold_content_hits`] can answer: a file
+/// that is itself among the hits is already in hand.
+pub(crate) fn files_behind_content(hits: &[GtsNode]) -> Vec<String> {
+    let present: HashSet<&str> = hits.iter().map(|h| h.instance_id.as_str()).collect();
+    let mut wanted: Vec<String> = Vec::new();
+    for hit in hits.iter().filter(|h| h.type_id == gts::FILE_CONTENT_TYPE) {
+        if let Some(file) = hit.value.get("file").and_then(Value::as_str)
+            && !present.contains(file)
+            && !wanted.iter().any(|w| w == file)
+        {
+            wanted.push(file.to_owned());
+        }
+    }
+    wanted
+}
+
+/// Search hits as the artifacts a caller asked about, in rank order.
+///
+/// A file's text is its own node, so a query that matches a file's words hits
+/// the content node and a query that matches its name hits the file — and one
+/// that matches both hits both. Neither is what a caller searching the graph
+/// means by a result: the content becomes its file, carrying the excerpt that
+/// matched as `text_excerpt` (the field the file node used to hold), and a
+/// file reached twice is kept once, at the better of its two ranks.
+///
+/// `files` holds the files reached only through content (see
+/// [`files_behind_content`]). A content hit whose file is not there — retired,
+/// or never written — is dropped rather than shown as a node nobody can open.
+pub(crate) fn fold_content_hits(
+    hits: Vec<GtsNode>,
+    files: &HashMap<String, GtsNode>,
+    limit: usize,
+) -> Vec<GtsNode> {
+    fn attach(file: &mut GtsNode, excerpt: Option<&Value>) {
+        if let (Some(excerpt), Some(obj)) = (excerpt, file.value.as_object_mut()) {
+            obj.entry("text_excerpt").or_insert_with(|| excerpt.clone());
+        }
+    }
+
+    // A file that ranks below its own content is still the one the content
+    // stands for, so the content takes its place from here.
+    let ranked_files: HashMap<String, GtsNode> = hits
+        .iter()
+        .filter(|h| h.type_id == gts::FILE_TYPE)
+        .map(|h| (h.instance_id.clone(), h.clone()))
+        .collect();
+    let mut out: Vec<GtsNode> = Vec::new();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for hit in hits {
+        if hit.type_id != gts::FILE_CONTENT_TYPE {
+            if !at.contains_key(&hit.instance_id) {
+                at.insert(hit.instance_id.clone(), out.len());
+                out.push(hit);
+            }
+            continue;
+        }
+        let Some(file_id) = hit.value.get("file").and_then(Value::as_str) else {
+            continue;
+        };
+        let excerpt = hit.value.get("text_excerpt");
+        if let Some(&i) = at.get(file_id) {
+            attach(&mut out[i], excerpt);
+            continue;
+        }
+        let Some(file) = files.get(file_id).or_else(|| ranked_files.get(file_id)) else {
+            continue;
+        };
+        let mut file = file.clone();
+        attach(&mut file, excerpt);
+        at.insert(file.instance_id.clone(), out.len());
+        out.push(file);
+    }
+    out.truncate(limit);
+    out
+}
+
 /// In-memory store: keyed by instance id, so a re-sync upserts. Not persistent
 /// — it resets when the backend restarts. The fallback for a build without the
 /// graph-storage gear.
@@ -411,7 +494,10 @@ impl GraphStore for InMemoryGraphStore {
                 .edges
                 .lock()
                 .map_err(|_| anyhow::anyhow!("graph store lock poisoned"))?;
+            // Not `content_of`: its source is a node no listing returns, and
+            // the graph-storage store never reaches it from the seeds it walks.
             map.values()
+                .filter(|e| e.type_id != gts::REL_CONTENT_OF)
                 .map(|e| GtsEdgeView {
                     type_id: e.type_id.to_string(),
                     from: e.from.clone(),
@@ -435,13 +521,18 @@ impl GraphStore for InMemoryGraphStore {
                 .nodes
                 .lock()
                 .map_err(|_| anyhow::anyhow!("graph store lock poisoned"))?;
-            map.values()
+            let hits: Vec<GtsNode> = map
+                .values()
                 .filter(|n| {
                     needle.is_empty() || n.value.to_string().to_lowercase().contains(&needle)
                 })
-                .take(limit as usize)
                 .cloned()
-                .collect()
+                .collect();
+            let files: HashMap<String, GtsNode> = files_behind_content(&hits)
+                .into_iter()
+                .filter_map(|id| map.get(&id).map(|f| (id, f.clone())))
+                .collect();
+            fold_content_hits(hits, &files, limit as usize)
         };
         Ok(out)
     }
@@ -479,6 +570,59 @@ mod tests {
             from: from.to_string(),
             to: to.to_string(),
         }
+    }
+
+    fn content(file: &str, excerpt: &str) -> GtsNode {
+        GtsNode {
+            type_id: gts::FILE_CONTENT_TYPE,
+            instance_id: gts::file_content_instance_id(file),
+            value: json!({ "file": file, "path": file, "text_excerpt": excerpt }),
+        }
+    }
+
+    fn ids(nodes: &[GtsNode]) -> Vec<&str> {
+        nodes.iter().map(|n| n.instance_id.as_str()).collect()
+    }
+
+    /// A hit on a file's words is a hit on the file, and it brings the words
+    /// that matched along.
+    #[test]
+    fn a_content_hit_comes_back_as_its_file_with_the_excerpt() {
+        let hits = vec![content("a", "the matching words"), node("b")];
+        let behind = files_behind_content(&hits);
+        assert_eq!(behind, ["a"]);
+        let files = HashMap::from([("a".to_owned(), node("a"))]);
+
+        let out = fold_content_hits(hits, &files, 10);
+        assert_eq!(ids(&out), ["a", "b"]);
+        assert_eq!(out[0].type_id, gts::FILE_TYPE);
+        assert_eq!(out[0].value["text_excerpt"], "the matching words");
+        assert!(out[1].value.get("text_excerpt").is_none());
+    }
+
+    /// A file found by its name and by its words is one result, at the better
+    /// of the two ranks, whichever of them came first.
+    #[test]
+    fn a_file_found_twice_is_one_result_at_its_better_rank() {
+        let name_first = vec![node("a"), node("b"), content("a", "words")];
+        assert!(files_behind_content(&name_first).is_empty());
+        let out = fold_content_hits(name_first, &HashMap::new(), 10);
+        assert_eq!(ids(&out), ["a", "b"]);
+        assert_eq!(out[0].value["text_excerpt"], "words");
+
+        let words_first = vec![content("a", "words"), node("b"), node("a")];
+        let out = fold_content_hits(words_first, &HashMap::new(), 10);
+        assert_eq!(ids(&out), ["a", "b"]);
+        assert_eq!(out[0].value["text_excerpt"], "words");
+    }
+
+    /// Content whose file cannot be read is not a result, and the limit is on
+    /// what is left.
+    #[test]
+    fn content_without_its_file_is_dropped_and_the_limit_holds() {
+        let hits = vec![content("gone", "x"), node("a"), node("b"), node("c")];
+        let out = fold_content_hits(hits, &HashMap::new(), 2);
+        assert_eq!(ids(&out), ["a", "b"]);
     }
 
     /// A forgotten node takes the relations that touch it along, from either

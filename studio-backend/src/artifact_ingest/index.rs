@@ -539,8 +539,12 @@ impl GraphStore for IndexedGraphStore {
     async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
         self.inner.upsert_nodes(ctx, nodes).await?;
         let tenant = ctx.subject_tenant_id();
+        // Not a file's content: nothing lists it, and its excerpt is the
+        // weight the file rows were split to shed (see `gts::is_listed`). The
+        // fill skips it the same way, because the graph never lists it.
         let rows: Vec<node::Model> = nodes
             .iter()
+            .filter(|n| gts::is_listed(n.type_id))
             .map(|n| row_of(tenant, n, self.inner.stored_payload(&n.value)))
             .collect();
         if let Err(e) = self.index.write(tenant, rows, true).await {
