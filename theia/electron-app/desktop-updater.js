@@ -30,14 +30,26 @@ const RELEASES = 'https://github.com/constructorfabric/studio-web/releases/tag';
 const FIRST_CHECK_MS = 10_000;
 const EVERY_MS = 6 * 60 * 60 * 1000;
 
-/** `beta` when the member asked for pre-releases, `latest` otherwise. */
-function channelFrom(settingsFile) {
+/**
+ * `beta` when the member asked for pre-releases, `latest` when they asked for
+ * releases only. Without a choice, an installed pre-release follows betas --
+ * whoever installed 0.3.0-beta.1 wants 0.3.0-beta.2, not to wait for 0.3.0 --
+ * and a release follows releases.
+ */
+function channelFrom(settingsFile, currentVersion = app.getVersion()) {
+    let chosen;
     try {
-        const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-        return settings.updates === 'beta' ? 'beta' : 'latest';
+        chosen = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).updates;
     } catch {
+        chosen = undefined;
+    }
+    if (chosen === 'beta') {
+        return 'beta';
+    }
+    if (chosen === 'stable') {
         return 'latest';
     }
+    return currentVersion.includes('-') ? 'beta' : 'latest';
 }
 
 /**

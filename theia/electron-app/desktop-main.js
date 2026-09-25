@@ -43,6 +43,9 @@ const defaults = {
     STUDIO_WORKSPACE_ROOT: workspace,
     STUDIO_REPOSITORY_ROOT: workspace,
     STUDIO_DATA_DIR: data,
+    // The app's own version, for the Studio view's default update channel: an
+    // installed pre-release follows betas until the member chooses.
+    STUDIO_DESKTOP_VERSION: require('electron').app.getVersion(),
     // The built-in VS Code plugins ship as a resource beside the app.
     THEIA_DEFAULT_PLUGINS: `local-dir:${path.join(process.resourcesPath, 'plugins')}`,
 };
