@@ -115,6 +115,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 | `cpt-studio-adr-the-person-is-the-key-not-the-login` | The person is the key on the request path (ADR-0025). |
 | `cpt-studio-adr-studio-events-push-channel` | One push channel to the portal (ADR-0026). |
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A desktop Studio is a session on the member's machine; Git and the LLM are proxied, secrets stay on the server (ADR-0027). |
+| `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | One IDE session per workspace, one identity per connection; nothing personal in the container (ADR-0030, proposed). |
 
 ### 1.3 Architecture Layers
 

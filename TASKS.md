@@ -107,8 +107,27 @@ hypothesis:
     Studio extension records who did something (journal, audit, presence).
 
   The Theia PoC was built single-user (ADR-0003 asked for one instance per
-  user and workspace), so this is a design task, starting with an ADR that
-  amends ADR-0003.
+  user and workspace). **ADR-0030** (proposed) amends it: one container per
+  workspace, identity per connection. What actually stands in the way:
+
+  1. **Identity is baked into the environment at launch.** The git credential
+     helper and the agent CLIs read it. Theia already has one plugin host per
+     window (`HostedPluginProcess` in a `ConnectionContainerModule`), and its
+     environment is extensible (`PluginHostEnvironmentVariable`), so identity
+     can come from the connection. The portal already hands each window its
+     own person's token.
+  2. **One working tree for everybody:** one index, one branch, one set of
+     uncommitted changes. A `git worktree` per person, as Orca already does
+     per agent task.
+  3. **One OS user for every process,** so members can read each other's
+     `/proc/*/environ`, `~/.claude` and shell history. Keep nothing
+     long-lived there and state the workspace as the trust boundary;
+     per-person uids are a later step if that boundary must move.
+
+  Phases in ADR-0030: no personal secrets in env (git through `studio-git`,
+  models through `studio-llm-proxy`), then identity per connection, then
+  "who did it" in the journal, audit and presence, then a worktree and a
+  `HOME` per person.
 
 - [ ] Decide what "Continue with Constructor ID" does with a live browser session @andrejk666
 
