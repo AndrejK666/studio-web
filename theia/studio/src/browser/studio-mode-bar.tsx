@@ -381,8 +381,14 @@ const MODE_BAR_CSS = `
    Theia lays over the whole panel and must stay out of the flow: in flow it is
    a 95px block that pushes the menu, the modes and the window controls out of
    the panel. */
-#theia-top-panel > *:not(#theia-drag-panel) { position: static !important; }
-#theia-top-panel > #theia-custom-title.hidden { display: none !important; }
+#theia-top-panel > *:not(#theia-drag-panel) { position: relative !important; }
+/* Relative, not static: the drag layer is positioned, and a positioned box is
+   painted over static ones, so with static children every click on the menu,
+   the mode picker and the ribbon landed on the drag layer instead. Relative
+   keeps them in the flow and puts them above it. */
+/* The window's title: the header already names the app's mode and holds its
+   menu, and Theia shows the title over the mode picker when it un-hides it. */
+#theia-top-panel > #theia-custom-title { display: none !important; }
 /* The desktop's minimise / maximise / close, at the end of the first row. */
 #theia-top-panel > [id="window-controls"] { order: 2; height: 30px !important; align-self: flex-start; }
 /* The window drags by the empty parts of the header, never by a control. */
@@ -392,7 +398,10 @@ const MODE_BAR_CSS = `
 /* Row one: menu, tabs, collaboration. */
 #theia-top-panel .studio-mode-switch-widget { order: 0; height: 30px !important; }
 #theia-top-panel [id="theia:menubar"] { order: 1; }
-#theia-top-panel .studio-collab-strip { order: 2; height: 30px !important; flex: 1 1 auto !important; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; }
+/* Its own width, at the right end. Stretched over the free space it was
+   no-drag everywhere, and the desktop window had nothing left to be dragged by:
+   the gap between the menu and this line is where it drags now. */
+#theia-top-panel .studio-collab-strip { order: 2; height: 30px !important; flex: 0 0 auto !important; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; }
 /* The line break between the rows: a zero-height item a full row wide. */
 #theia-top-panel::after { content: ''; order: 3; flex-basis: 100%; height: 0; }
 /* Row two: the ribbon, full width. */
