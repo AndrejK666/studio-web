@@ -573,7 +573,6 @@ impl SessionService {
         // only invites a mismatch between the identity we authorize with
         // and the one we record.
         let tenant_id = ctx.subject_tenant_id();
-        let actor_id = ctx.subject_id();
         // Before anything is read or launched: this is the whole access
         // decision, and it is about the WORKSPACE (see `access.rs`).
         if !self.may_reach(ctx, workspace_id).await {
@@ -733,7 +732,10 @@ impl SessionService {
 
         let mut env = vec![
             format!("STUDIO_WORKSPACE_ID={workspace_id}"),
-            format!("STUDIO_ACTOR_ID={actor_id}"),
+            // Not the launcher (ADR-0030): several people work in this
+            // container, and each window knows its own. The container as a
+            // whole acts for the workspace.
+            format!("STUDIO_ACTOR_ID=workspace:{workspace_id}"),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
             format!("STUDIO_SESSION_TOKEN={session_token}"),
             // Gateway URL as seen FROM the container — the session gate
@@ -1722,11 +1724,10 @@ mod tests {
     /// This is "signed in as Vasil, and it was not Vasil" without any login
     /// going wrong: both tokens were right, and the IDE still was not.
     ///
-    /// Ignored, not deleted: it states where a shared session has to get to —
-    /// several people in one container, each acting as themselves (TASKS.md,
-    /// 2026-09-25). It fails today; drop the `ignore` when it passes.
+    /// What holds now (ADR-0030): the container names nobody. Its actor is
+    /// the workspace, the keys and the author are gone (the test above), and
+    /// each window carries its own person.
     #[tokio::test]
-    #[ignore = "known: a shared session runs as its launcher (TASKS.md 2026-09-25)"]
     async fn the_second_member_of_a_workspace_does_not_work_as_the_first() {
         let root = std::env::temp_dir().join(format!("studio-session-actor-{}", Uuid::new_v4()));
         let runtime = Arc::new(LaunchingRuntime::default());
@@ -1765,10 +1766,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
 
         assert!(
-            !reused || actor_of_the_colleagues_ide == colleague.to_string(),
+            reused,
+            "one session per workspace: the colleague joins Vasil's"
+        );
+        assert_ne!(
+            actor_of_the_colleagues_ide,
+            vasil.to_string(),
             "the colleague ({colleague}) was handed the session Vasil ({vasil}) launched, \
-             and it runs as {actor_of_the_colleagues_ide}: commits, pushes and agent calls \
-             from their keyboard are Vasil's"
+             and it runs as Vasil: commits, pushes and agent calls from their keyboard \
+             are Vasil's"
+        );
+        assert_eq!(
+            actor_of_the_colleagues_ide,
+            format!("workspace:{ws}"),
+            "a shared container acts for its workspace, not for a person"
         );
     }
 
