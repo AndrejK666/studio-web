@@ -1695,6 +1695,11 @@ pub struct AnalyzeBindingsRequest {
     /// which documents deserve a detector is policy, and only the reading of
     /// them moved to the server.
     pub binding_ids: Vec<Uuid>,
+    /// Documents written in Studio this run should cover too. Their text is
+    /// the document's own, and each is named in the run by
+    /// `studio-doc/<id>.md`, the path its verdict comes back under.
+    #[serde(default)]
+    pub document_ids: Vec<Uuid>,
 }
 
 /// The run doing the work.
@@ -1733,21 +1738,31 @@ async fn analyze_project_documents(
     })?;
 
     let reader = quality.reader()?;
-    let docs = service
-        .quality_docs(
-            &ctx,
-            workspace_id,
-            Some(project_id),
-            &body.binding_ids,
-            reader.as_ref(),
-        )
-        .await
-        .map_err(internal)?;
+    let mut docs = if body.binding_ids.is_empty() {
+        Vec::new()
+    } else {
+        service
+            .quality_docs(
+                &ctx,
+                workspace_id,
+                Some(project_id),
+                &body.binding_ids,
+                reader.as_ref(),
+            )
+            .await
+            .map_err(internal)?
+    };
+    docs.extend(
+        service
+            .quality_documents(workspace_id, project_id, &body.document_ids)
+            .await
+            .map_err(internal)?,
+    );
     if docs.is_empty() {
         return Err(DocumentsError::invalid_argument()
             .with_constraint(
-                "none of those bindings has text in a checkout — sync the repository, \
-                 or open the project in the IDE to clone it",
+                "none of those documents has text — sync the repository or open the \
+                 project in the IDE to clone it, or write something in the document first",
             )
             .create());
     }

@@ -1297,6 +1297,33 @@ impl DocumentsService {
         Ok(quality::docs_for(&wanted, &by_path))
     }
 
+    /// Documents written in Studio, as a detector run takes them: their own
+    /// text, their type, and `studio-doc/<id>.md` for the path the verdict
+    /// comes back under -- they have no path in any repository. Only the
+    /// project's effective documents count, and an empty one is left out, as
+    /// a file with no text is.
+    pub async fn quality_documents(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<quality::SpecDoc>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .all_documents(workspace_id, Some(project_id))
+            .await?
+            .into_iter()
+            .filter(|d| ids.contains(&d.id) && !d.content.trim().is_empty())
+            .map(|d| quality::SpecDoc {
+                path: quality::studio_doc_path(d.id),
+                text: d.content,
+                doc_type: Some(d.type_key),
+            })
+            .collect())
+    }
+
     /// The current text of one binding's file, or `None` when no checkout has
     /// it. For re-checking conformance when a decision names a type and the
     /// caller sent no text -- which is now every caller.

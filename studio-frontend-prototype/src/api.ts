@@ -2383,13 +2383,15 @@ export const api = {
     projectId: string,
     detector: "purpose" | "leak" | "bloat" | "traceability",
     bindingIds: string[],
+    /** Documents written in Studio; each comes back as `studio-doc/<id>.md`. */
+    documentIds: string[] = [],
   ) =>
     request<{ run_id: string; poll: string; documents: number }>(
       `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(
         projectId,
       )}/quality/${encodeURIComponent(detector)}`,
       token,
-      { method: "POST", body: JSON.stringify({ binding_ids: bindingIds }) },
+      { method: "POST", body: JSON.stringify({ binding_ids: bindingIds, document_ids: documentIds }) },
     ),
 
   /** Every capability the project's documents declare -- the ones Studio holds
