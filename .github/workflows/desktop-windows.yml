@@ -11,6 +11,13 @@ name: Desktop — Windows build
 # Not on every pull request: a Windows runner costs several times a Linux one,
 # and the browser session image does not depend on this. It runs when the
 # desktop packaging itself changes, and on demand.
+#
+# A tag `desktop-v<version>` makes it a RELEASE: the tag must match
+# theia/electron-app/package.json's version, and the installer, its blockmap
+# and the update channel files go into a GitHub release `desktop-v<version>`
+# (a pre-release when the version has a `-beta`-style suffix) and into the
+# rolling release `desktop-updates`, which installed apps check for updates
+# (theia/electron-app/desktop-updater.js).
 
 on:
   workflow_dispatch:
@@ -25,8 +32,8 @@ on:
         description: That Studio's realm, when not <address>/auth/realms/studio
         default: ''
       version:
-        description: The version the installer carries
-        default: 0.1.0
+        description: The version the installer carries, when not electron-app's own
+        default: ''
   pull_request:
     paths:
       - theia/electron-app/**
@@ -35,6 +42,9 @@ on:
   # way to run this before it exists on the default branch, since
   # workflow_dispatch needs it there.
   push:
+    branches: ['**']
+    # Path filters do not apply to tag pushes, so a release tag always builds.
+    tags: ['desktop-v*']
     paths:
       - theia/electron-app/**
       - .github/workflows/desktop-windows.yml
@@ -56,7 +66,7 @@ jobs:
       STUDIO_DEFAULT: ${{ inputs.default_environment || 'dev' }}
       STUDIO_URL: ${{ inputs.studio_url }}
       STUDIO_ISSUER: ${{ inputs.issuer }}
-      STUDIO_VERSION: ${{ inputs.version || '0.1.0' }}
+      STUDIO_VERSION_INPUT: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -70,6 +80,20 @@ jobs:
       - name: Ship the CFS map schema
         shell: bash
         run: mkdir -p .cf-studio/.core/schemas && cp docker/cfs-map.schema.json .cf-studio/.core/schemas/map.schema.json
+      # One version, from one place: electron-app/package.json, which a release
+      # tag has to agree with. A manual run may still name another.
+      - name: Version
+        shell: bash
+        run: |
+          own=$(node -p "require('./electron-app/package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/desktop-v* ]]; then
+            tagged="${GITHUB_REF_NAME#desktop-v}"
+            if [ "$tagged" != "$own" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match electron-app/package.json ($own)"
+              exit 1
+            fi
+          fi
+          echo "STUDIO_VERSION=${STUDIO_VERSION_INPUT:-$own}" >> "$GITHUB_ENV"
       - name: Install
         run: npm ci
       - name: Build drawio-editor
@@ -100,5 +124,47 @@ jobs:
           name: constructor-studio-windows-${{ env.STUDIO_VERSION }}
           path: |
             theia/electron-app/dist/*.exe
+            theia/electron-app/dist/*.exe.blockmap
             theia/electron-app/dist/*.zip
+            theia/electron-app/dist/*.yml
           if-no-files-found: error
+
+  release:
+    # Only for a release tag: publish what the build made.
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+      - name: The versioned release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la dist
+          version="${TAG#desktop-v}"
+          flags=(--repo "$GITHUB_REPOSITORY" --title "Constructor Studio desktop $version" --generate-notes --verify-tag)
+          # A pre-release version (0.3.1-beta.1) is a GitHub pre-release, and
+          # never becomes the repository's "latest".
+          if [[ "$version" == *-* ]]; then flags+=(--prerelease); else flags+=(--latest=false); fi
+          gh release create "$TAG" "${flags[@]}" dist/*.exe dist/*.exe.blockmap dist/*.yml dist/*.zip
+      - name: The rolling release installed apps read
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The feed electron-updater's generic provider reads: the channel
+          # files (latest.yml, beta.yml) and the installers they point at. A
+          # pre-release, so it never becomes the repository's "latest".
+          if ! gh release view desktop-updates --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create desktop-updates --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Desktop updates (rolling)" \
+              --notes "The update feed installed desktop apps read. Refreshed by every desktop-v* release; not an installer to download by hand."
+          fi
+          gh release upload desktop-updates --repo "$GITHUB_REPOSITORY" --clobber dist/*.exe dist/*.exe.blockmap dist/*.yml

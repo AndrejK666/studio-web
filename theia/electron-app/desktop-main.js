@@ -68,4 +68,14 @@ if (link >= 0 && !process.argv.includes('--open-url')) {
     process.argv.push('--open-url', url);
 }
 
+// Updates: checked on start and every few hours, offered once downloaded
+// (desktop-updater.js). The same settings file as the Studio view's choice of
+// Studio holds the member's choice of channel.
+try {
+    require('./desktop-updater.js').startUpdates({ settingsFile: path.join(home, 'settings.json') });
+} catch (error) {
+    // A build without the updater (a checkout, an old stage) still starts.
+    console.warn(`[studio-desktop] updates are off: ${error}`);
+}
+
 require('./lib/backend/electron-main.js');

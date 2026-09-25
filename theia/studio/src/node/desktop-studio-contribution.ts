@@ -45,6 +45,9 @@ export interface DesktopStudioConfig {
 export interface DesktopSettings {
     readonly environment?: string;
     readonly custom?: { readonly studioUrl: string; readonly issuer?: string };
+    /** Which updates the app takes: `beta` adds pre-releases. Read by the
+     *  electron main process (electron-app/desktop-updater.js), not here. */
+    readonly updates?: 'stable' | 'beta';
 }
 
 /** The Studios on offer, and the one a developer pinned, from the environment. */
@@ -142,6 +145,8 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     readonly error?: string;
     readonly user?: { readonly sub: string; readonly name?: string; readonly tenantId?: string };
+    /** The update channel the member chose. */
+    readonly updates: 'stable' | 'beta';
 }
 
 function claimsOf(accessToken: string): Record<string, unknown> {
@@ -189,8 +194,20 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             current,
             switchable: !this.offered.pinned,
             state,
+            updates: this.settings.updates ?? 'stable',
             ...extra,
         };
+    }
+
+    /** Keep the member's choices, and say so if they could not be written. */
+    protected saveSettings(settings: DesktopSettings): void {
+        this.settings = settings;
+        try {
+            fs.mkdirSync(path.dirname(this.settingsFile), { recursive: true });
+            fs.writeFileSync(this.settingsFile, JSON.stringify(settings, null, 2));
+        } catch (error) {
+            console.warn(`[studio-desktop] the settings could not be saved: ${error}`);
+        }
     }
 
     configure(app: express.Application): void {
@@ -219,15 +236,22 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 return;
             }
             await this.signOut();
-            this.settings = settings;
-            try {
-                fs.mkdirSync(path.dirname(this.settingsFile), { recursive: true });
-                fs.writeFileSync(this.settingsFile, JSON.stringify(settings, null, 2));
-            } catch (error) {
-                console.warn(`[studio-desktop] the choice of Studio could not be saved: ${error}`);
-            }
+            // The update channel is the member's too, and outlives a change of Studio.
+            this.saveSettings({ ...settings, updates: this.settings.updates });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
+            res.json(this.status);
+        });
+        // Which updates the app takes. The electron main process reads the
+        // file before every check, so this needs no restart.
+        app.post('/studio-desktop/updates', express.json(), (req, res) => {
+            const { channel } = (req.body ?? {}) as { channel?: string };
+            if (channel !== 'stable' && channel !== 'beta') {
+                res.status(400).json({ error: 'the channel is stable or beta' });
+                return;
+            }
+            this.saveSettings({ ...this.settings, updates: channel });
+            this.status = { ...this.status, updates: channel };
             res.json(this.status);
         });
         app.post('/studio-desktop/sign-out', async (_req, res) => {

@@ -21,6 +21,8 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     error?: string;
     user?: { sub: string; name?: string; tenantId?: string };
+    /** Which updates the app takes; absent from a backend that predates it. */
+    updates?: 'stable' | 'beta';
 }
 
 interface Tenant {
@@ -153,6 +155,28 @@ export class DesktopStudioWidget extends ReactWidget {
         </div>;
     }
 
+    /** Take pre-releases of the app too, or only releases. */
+    protected async setUpdates(beta: boolean): Promise<void> {
+        const answer = await fetch(desktopUrl('updates'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel: beta ? 'beta' : 'stable' }),
+        });
+        if (answer.ok) {
+            this.status = await answer.json() as DesktopStatus;
+            this.update();
+        }
+    }
+
+    /** The app's own updates: checked on start, offered once downloaded. */
+    protected renderUpdates(status: DesktopStatus): React.ReactNode {
+        return <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '16px', fontSize: '12px', opacity: 0.85 }}
+            title='Beta versions come out before a release, to try what is next. The app checks on start and offers each update once it has downloaded.'>
+            <input type='checkbox' checked={status.updates === 'beta'} onChange={e => void this.setUpdates(e.target.checked)} />
+            Get beta versions of the app
+        </label>;
+    }
+
     protected async signIn(): Promise<void> {
         await fetch(desktopUrl('sign-in'), { method: 'POST' });
         await this.refresh();
@@ -235,6 +259,7 @@ export class DesktopStudioWidget extends ReactWidget {
                     Sign in with Constructor ID
                 </button>
                 <p style={{ opacity: 0.7, marginTop: '8px' }}>Opens the sign-in page in your browser.</p>
+                {this.renderUpdates(status)}
             </div>;
         }
         const link: React.CSSProperties = { cursor: 'pointer', marginRight: '12px' };
@@ -264,6 +289,7 @@ export class DesktopStudioWidget extends ReactWidget {
                 </div>)}
             </div>)}
             {this.openError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.openError}</p>}
+            {this.renderUpdates(status)}
         </div>;
     }
 }

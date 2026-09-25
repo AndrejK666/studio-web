@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 const require = createRequire(import.meta.url);
+/** The rolling release the desktop-windows workflow refreshes on each desktop release. */
+const UPDATES_URL = 'https://github.com/constructorfabric/studio-web/releases/download/desktop-updates';
 const app = dirname(dirname(fileURLToPath(import.meta.url)));
 // The installer carries electron-app's own version, so it is set in one place.
 const ownVersion = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')).version;
@@ -68,6 +70,18 @@ rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 cpSync(join(app, 'lib'), join(stage, 'lib'), { recursive: true, filter: source => !source.endsWith('.map') });
 cpSync(join(app, 'desktop-main.js'), join(stage, 'desktop-main.js'));
+// The updater and electron-updater in one file: the staged app has no
+// node_modules, and electron is the only thing the runtime provides.
+await require('esbuild').build({
+    entryPoints: [join(app, 'desktop-updater.js')],
+    outfile: join(stage, 'desktop-updater.js'),
+    bundle: true,
+    platform: 'node',
+    target: 'node22',
+    format: 'cjs',
+    external: ['electron'],
+    logLevel: 'warning',
+});
 // Where desktop-studio-contribution looks for it in a bundle: beside lib/.
 mkdirSync(join(stage, 'scripts'));
 cpSync(join(app, '..', 'studio', 'scripts', 'desktop-git-credentials.mjs'), join(stage, 'scripts', 'desktop-git-credentials.mjs'));
@@ -89,6 +103,8 @@ const electronPackage = require.resolve('electron/package.json');
 const { build } = require('electron-builder');
 await build({
     projectDir: stage,
+    // Publishing is the workflow's, from the files this writes.
+    publish: 'never',
     config: {
         appId: 'tech.constructor.studio.desktop',
         productName: 'Constructor Studio',
@@ -116,6 +132,13 @@ await build({
         // install so it works before the app's first run; the app registers it
         // again itself on every start (Theia's `electron.uriScheme`).
         protocols: [{ name: 'Constructor Studio', schemes: ['cfstudio'] }],
+        // Where the installed app looks for updates (desktop-updater.js): one
+        // rolling release every desktop release refreshes. Written into the
+        // app's app-update.yml; this script publishes nothing.
+        publish: [{ provider: 'generic', url: UPDATES_URL }],
+        // A stable release writes beta.yml too, so a member on betas is
+        // offered a stable version that has passed their beta.
+        generateUpdatesFilesForAllChannels: true,
         win: {
             target: ['nsis', 'zip'],
             artifactName: 'Constructor-Studio-${version}-${os}-${arch}.${ext}',
