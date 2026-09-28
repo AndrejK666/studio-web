@@ -14,6 +14,7 @@
 
 import { execFile } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { promisify } from "util";
 
@@ -131,5 +132,54 @@ export async function materializeGitSource(
   }
   await run(["clone", "--quiet", "--filter=blob:none", url, target]);
   await run(["-C", target, "checkout", "--quiet", "--detach", ref.rev ?? ref.tag ?? `origin/${want}`]);
+  return target;
+}
+
+// Constructor Studio: one copy of the gear corpus per machine, not per project.
+//
+// A desktop project whose own repositories hold no gear lists the corpus from
+// the Studio backend, which keeps one checkout of it for everybody. Opening a
+// gear, resolving a product or generating needs the files here, though -- and
+// cloning the corpus into every project that wants them is the thing this is
+// here to avoid. So it lands once, under the member's Studio directory, one
+// directory per commit: a commit never changes, so every project reading it
+// reads the same tree, and moving to a newer commit is a new directory rather
+// than a checkout switched under somebody's open editor.
+
+/** Where the shared corpora live: `STUDIO_CORPUS_CACHE`, else `~/ConstructorStudio/corpus`. */
+export function corpusCacheRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const fromEnv = env.STUDIO_CORPUS_CACHE?.trim();
+  return fromEnv ? path.resolve(fromEnv) : path.join(os.homedir(), "ConstructorStudio", "corpus");
+}
+
+/** `<root>/<host__owner__repo>/<commit[0..12]>/<id>`: named by `id`, which the engine names the source after. */
+export function sharedCorpusDir(root: string, id: string, url: string, rev: string): string {
+  const repo = remoteKey(url).replace(/[^a-z0-9._-]+/g, "__");
+  return path.join(root, repo, rev.slice(0, 12), id);
+}
+
+/**
+ * The corpus `url` at commit `rev`, from the shared cache. Undefined when it is
+ * not there and `fetch` is false, or when the input is not something to hand
+ * to git. Cloned into a `.partial` directory and renamed at the end, so an
+ * interrupted clone is never taken for a corpus.
+ */
+export async function materializeSharedCorpus(
+  root: string,
+  id: string,
+  url: string,
+  rev: string,
+  fetch: boolean,
+): Promise<string | undefined> {
+  if (!isKebabId(id) || !isSafeUrl(url) || !/^[0-9a-f]{40}$/.test(rev)) return undefined;
+  const target = sharedCorpusDir(root, id, url, rev);
+  if (fs.existsSync(path.join(target, ".git"))) return target;
+  if (!fetch) return undefined;
+  const partial = `${target}.partial`;
+  fs.rmSync(partial, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await run(["clone", "--quiet", "--filter=blob:none", "--no-checkout", url, partial]);
+  await run(["-C", partial, "checkout", "--quiet", "--detach", rev]);
+  fs.renameSync(partial, target);
   return target;
 }

@@ -302,7 +302,13 @@ pub struct GearboxCatalogueDto {
     pub source_id: String,
     /// `owner/repo@ref` of the checkout, as a person reads it.
     pub corpus: String,
+    /// The repository the corpus is checked out from, without credentials.
+    pub corpus_url: String,
+    pub corpus_ref: String,
     pub corpus_commit: Option<String>,
+    /// Whether cloning it takes a token. This backend never hands one out, so
+    /// an IDE cannot clone such a corpus itself.
+    pub corpus_needs_token: bool,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
@@ -1936,10 +1942,14 @@ async fn gearbox_catalogue(
         .catalogue_json()
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin();
     Ok(Json(GearboxCatalogueDto {
         source_id: CORPUS_SOURCE_ID.to_string(),
         corpus: gearbox.corpus_label(),
+        corpus_url,
+        corpus_ref,
         corpus_commit: commit,
+        corpus_needs_token,
         catalogue: Value::clone(&raw),
     }))
 }

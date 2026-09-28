@@ -26,6 +26,7 @@ import type { InitializeResult } from "../common/generated/InitializeResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import {
   CatalogueState,
+  type CorpusOrigin,
   GearboxClient,
   GearboxService,
   RemoteCatalogueSource,
@@ -592,7 +593,68 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       completed: remote.gears.length,
       remote: remote.corpus,
     };
+    this.remoteOrigin = remote.origin;
+    // A copy of this very commit may already be on this machine, brought by
+    // another project. Then there is no reason to stay read-only: adopt it and
+    // reload onto it. Only a copy already there -- nothing is fetched unasked.
+    if (remote.origin !== undefined && !remote.origin.needsToken) {
+      void this.adoptSharedCorpus(remote.origin, false);
+    }
     return true;
+  }
+
+  /** Where the listed corpus comes from, while the rows are the backend's. */
+  protected remoteOrigin: CorpusOrigin | undefined;
+  protected bringingState: { readonly busy: boolean; readonly error?: string } = { busy: false };
+
+  /**
+   * Whether the listed corpus can be brought here: `undefined` when there is
+   * nothing to bring, otherwise the reason it cannot be, or `true`.
+   */
+  get corpusBringable(): true | string | undefined {
+    if (this.state.remote === undefined || this.remoteOrigin === undefined) return undefined;
+    if (this.remoteOrigin.needsToken) {
+      return "This corpus is private, and Studio does not hand its token to a laptop.";
+    }
+    return true;
+  }
+
+  get corpusBringing(): { readonly busy: boolean; readonly error?: string } {
+    return this.bringingState;
+  }
+
+  /**
+   * Clone the listed corpus into the machine's shared copy (once per commit,
+   * for every project) and reload the catalogue onto it, so gears open and a
+   * product resolves and generates.
+   */
+  async bringCorpusHere(): Promise<void> {
+    const origin = this.remoteOrigin;
+    if (origin === undefined || origin.needsToken || this.bringingState.busy) return;
+    this.bringingState = { busy: true };
+    this.onChangedEmitter.fire();
+    await this.adoptSharedCorpus(origin, true);
+  }
+
+  protected async adoptSharedCorpus(origin: CorpusOrigin, fetch: boolean): Promise<void> {
+    let dir: string | undefined;
+    try {
+      dir = await this.service.useSharedCorpus(origin.sourceId, origin.url, origin.rev, fetch);
+    } catch (error) {
+      this.bringingState = { busy: false, error: describe(error) };
+      this.onChangedEmitter.fire();
+      return;
+    }
+    this.bringingState = { busy: false };
+    if (dir === undefined) {
+      if (fetch) {
+        this.bringingState = { busy: false, error: "the corpus could not be brought here" };
+      }
+      this.onChangedEmitter.fire();
+      return;
+    }
+    this.remoteOrigin = undefined;
+    await this.load();
   }
 
   /**

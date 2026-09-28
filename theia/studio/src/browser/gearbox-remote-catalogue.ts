@@ -13,6 +13,8 @@ export interface RemoteGearCatalogue {
     readonly corpus: string;
     /** Each a Gearbox `GearDescriptor`, passed through untouched. */
     readonly gears: readonly unknown[];
+    /** Where a copy of the corpus can be cloned from, at the listed commit. */
+    readonly origin?: { readonly sourceId: string; readonly url: string; readonly rev: string; readonly needsToken: boolean };
 }
 
 type Fetch = (path: string) => Promise<Response>;
@@ -38,10 +40,20 @@ export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioAp
     if (!res.ok) {
         return undefined;
     }
-    const body = await res.json() as { corpus?: string; catalogue?: { gears?: Record<string, unknown> } };
+    const body = await res.json() as {
+        corpus?: string;
+        source_id?: string;
+        corpus_url?: string;
+        corpus_commit?: string | null;
+        corpus_needs_token?: boolean;
+        catalogue?: { gears?: Record<string, unknown> };
+    };
     const gears = Object.values(body.catalogue?.gears ?? {});
     if (gears.length === 0) {
         return undefined;
     }
-    return { corpus: body.corpus ?? 'the gear corpus', gears };
+    const origin = body.source_id && body.corpus_url && body.corpus_commit
+        ? { sourceId: body.source_id, url: body.corpus_url, rev: body.corpus_commit, needsToken: body.corpus_needs_token === true }
+        : undefined;
+    return { corpus: body.corpus ?? 'the gear corpus', gears, ...(origin ? { origin } : {}) };
 }

@@ -45,7 +45,7 @@ import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
 import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
 import { fileOnBranch } from "./product-branch";
-import { materializeGitSource } from "./git-sources";
+import { corpusCacheRoot, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
   folderOfWorkspaceUri,
@@ -165,6 +165,17 @@ export class GearboxServiceImpl implements GearboxService {
     return sourceRoots(process.env, workspace);
   }
 
+  /** The shared corpus adopted by `useSharedCorpus`, if any. */
+  protected sharedCorpus: string | undefined;
+
+  /** What an engine opens by default: the workspace's own roots, and the shared corpus. */
+  protected engineRoots(): string[] {
+    const roots = this.defaultRoots();
+    return this.sharedCorpus !== undefined && !roots.includes(this.sharedCorpus)
+      ? [...roots, this.sharedCorpus]
+      : roots;
+  }
+
   protected client: GearboxClient | undefined;
   protected engine: EngineHandle | undefined;
 
@@ -196,7 +207,7 @@ export class GearboxServiceImpl implements GearboxService {
     // `product/load` then answered `no source root is open`. The RPC side already
     // treats an empty `initialize.roots` as "keep the CLI defaults" -- match it.
     const roots_ =
-      session === undefined || session.roots.length === 0 ? this.defaultRoots() : [...session.roots];
+      session === undefined || session.roots.length === 0 ? this.engineRoots() : [...session.roots];
     const engine = spawnEngine(enginePath(), roots_, this.logger);
     this.engine = engine;
     this.openRoots = roots_;
@@ -280,7 +291,7 @@ export class GearboxServiceImpl implements GearboxService {
         // call, so each process sees exactly one `initialize` and has no boot of
         // its own to remember. These are that boot -- the same defaults the
         // catalogue-only case uses.
-        creation_boundary: { roots: this.defaultRoots(), workspace: this.defaultWorkspace() },
+        creation_boundary: { roots: this.engineRoots(), workspace: this.defaultWorkspace() },
       },
       INITIALIZE_TIMEOUT_MS,
     );
@@ -366,6 +377,20 @@ export class GearboxServiceImpl implements GearboxService {
       this.logger.warn(`gearbox: could not bring source ${id} (${url}) into the workspace: ${String(error)}`);
       return undefined;
     }
+  }
+
+  async useSharedCorpus(id: string, url: string, rev: string, fetch: boolean): Promise<string | undefined> {
+    let dir: string | undefined;
+    try {
+      dir = await materializeSharedCorpus(corpusCacheRoot(), id, url, rev, fetch);
+    } catch (error) {
+      this.logger.warn(`gearbox: could not bring the corpus ${url}@${rev} here: ${String(error)}`);
+      throw new Error(`the corpus could not be cloned from ${url}: ${messageOfGit(error)}`);
+    }
+    if (dir !== undefined) {
+      this.sharedCorpus = dir;
+    }
+    return dir;
   }
 
   async loadProduct(path: string): Promise<ProductLoadResult> {
@@ -935,4 +960,11 @@ export function withEngineData(error: unknown): unknown {
   // Keep the origin readable in the backend log; the browser gets its own stack.
   wrapped.stack = error.stack;
   return wrapped;
+}
+
+/** The line git said, not the whole `Command failed: git clone ...` dump. */
+function messageOfGit(error: unknown): string {
+  const stderr = (error as { stderr?: unknown })?.stderr;
+  const text = typeof stderr === "string" && stderr.trim() !== "" ? stderr : String(error);
+  return text.trim().split(/\r?\n/).filter(Boolean).pop() ?? text;
 }
