@@ -14,7 +14,8 @@
 // instead of leaving `loading` set forever.
 
 import { Emitter, Event } from "@theia/core/lib/common/event";
-import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
+import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
 
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { gearIdOf, SelectionService } from "./shell/selection-service";
@@ -62,6 +63,8 @@ const EMPTY: CatalogueState = {
 @injectable()
 export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostics"> {
   @inject(GearboxService) protected readonly service!: GearboxService;
+  /** What this window has open; the backend scans it where there is no `/workspace`. */
+  @inject(WorkspaceService) @optional() protected readonly workspaceService?: WorkspaceService;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
 
   protected readonly onChangedEmitter = new Emitter<void>();
@@ -406,6 +409,16 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     }
   }
 
+  protected async announceOpenedWorkspace(): Promise<void> {
+    if (!this.workspaceService) return;
+    try {
+      await this.workspaceService.ready;
+      await this.service.useOpenedWorkspace(this.workspaceService.workspace?.resource.toString());
+    } catch {
+      // A backend from before this call, or no workspace yet: the defaults stand.
+    }
+  }
+
   /** One load, against the session decided when it was asked for. */
   protected async doLoad(session: StudioSession | undefined): Promise<void> {
     const epoch = ++this.epoch;
@@ -418,6 +431,9 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       // The session, when a product session drives the load. `initialize`
       // disposes and respawns the engine, so this is also what makes the roots
       // and the write boundary change wholesale rather than drift.
+      // Said first, every time: the folder is this window's, and a desktop
+      // member opening another project reloads the window onto it.
+      await this.announceOpenedWorkspace();
       const init = await this.service.initialize(session);
       if (epoch !== this.epoch) {
         return;

@@ -46,7 +46,14 @@ import { GearboxClient, GearboxService, ProductRef, method } from "../common/pro
 import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
 import { fileOnBranch } from "./product-branch";
 import { materializeGitSource } from "./git-sources";
-import { enginePath, productFiles, sourceRoots, workspaceDir } from "./gearbox-environment";
+import {
+  enginePath,
+  folderOfWorkspaceUri,
+  isDescribedCheckout,
+  productFiles,
+  sourceRoots,
+  workspaceDir,
+} from "./gearbox-environment";
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 
 /**
@@ -123,12 +130,40 @@ export function productTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 // Constructor Studio: the engine, the roots and the workspace come from
-// `./gearbox-environment`, which knows the session's `/workspace` layout.
-const roots = (): string[] => sourceRoots();
+// `./gearbox-environment`, which knows the session's `/workspace` layout — and,
+// on a desktop, the folder the IDE has open (`GearboxServiceImpl.opened`).
 
 @injectable()
 export class GearboxServiceImpl implements GearboxService {
   @inject(ILogger) protected readonly logger!: ILogger;
+
+  /**
+   * The folder this window has open, as it said (`useOpenedWorkspace`). One
+   * service per window, so it is that window's: a desktop member opens a
+   * project, the window reloads onto it, and says so before the boot load.
+   */
+  protected opened: string | undefined;
+
+  async useOpenedWorkspace(uri: string | undefined): Promise<void> {
+    this.opened = folderOfWorkspaceUri(uri);
+  }
+
+  /** The workspace when no session names one. */
+  protected defaultWorkspace(): string {
+    return workspaceDir(process.env, this.opened);
+  }
+
+  /**
+   * The source roots when no session names them. A desktop member who opened
+   * one repository directly has opened a source root, not a workspace of them.
+   */
+  protected defaultRoots(): string[] {
+    const workspace = this.defaultWorkspace();
+    if (!process.env.GEARBOX_ROOT?.trim() && workspace === this.opened && isDescribedCheckout(workspace)) {
+      return [workspace];
+    }
+    return sourceRoots(process.env, workspace);
+  }
 
   protected client: GearboxClient | undefined;
   protected engine: EngineHandle | undefined;
@@ -153,7 +188,7 @@ export class GearboxServiceImpl implements GearboxService {
     this.disposeEngine();
     // From the session when there is one. The fixed repository root is only a
     // default for the catalogue-only case.
-    this.workspace = session?.workspace ?? workspaceDir();
+    this.workspace = session?.workspace ?? this.defaultWorkspace();
     // Empty `roots` means "use the defaults", not "open nothing". The frontend
     // reaches that after a reload, when `CatalogueStore.rootPaths()` is still
     // empty because the boot load has not installed `rootsById` yet; passing the
@@ -161,7 +196,7 @@ export class GearboxServiceImpl implements GearboxService {
     // `product/load` then answered `no source root is open`. The RPC side already
     // treats an empty `initialize.roots` as "keep the CLI defaults" -- match it.
     const roots_ =
-      session === undefined || session.roots.length === 0 ? roots() : [...session.roots];
+      session === undefined || session.roots.length === 0 ? this.defaultRoots() : [...session.roots];
     const engine = spawnEngine(enginePath(), roots_, this.logger);
     this.engine = engine;
 
@@ -244,7 +279,7 @@ export class GearboxServiceImpl implements GearboxService {
         // call, so each process sees exactly one `initialize` and has no boot of
         // its own to remember. These are that boot -- the same defaults the
         // catalogue-only case uses.
-        creation_boundary: { roots: roots(), workspace: workspaceDir() },
+        creation_boundary: { roots: this.defaultRoots(), workspace: this.defaultWorkspace() },
       },
       INITIALIZE_TIMEOUT_MS,
     );
@@ -273,7 +308,7 @@ export class GearboxServiceImpl implements GearboxService {
   }
 
   async workspaceRoots(): Promise<string[]> {
-    const candidates = [workspaceDir(), ...roots()];
+    const candidates = [this.defaultWorkspace(), ...this.defaultRoots()];
     const seen = new Set<string>();
     return candidates
       .map((dir) => path.resolve(dir))
@@ -296,13 +331,13 @@ export class GearboxServiceImpl implements GearboxService {
    * outside this layout is still resolvable -- open it in the editor.
    */
   async listProducts(): Promise<ProductRef[]> {
-    const root = workspaceDir();
+    const root = this.defaultWorkspace();
     return productFiles(root).map((candidate) => ({ path: candidate, label: path.relative(root, candidate) }));
   }
 
   async fileOnBranch(branch: string, file: string): Promise<string | undefined> {
     try {
-      return await fileOnBranch(workspaceDir(), branch, file);
+      return await fileOnBranch(this.defaultWorkspace(), branch, file);
     } catch (error) {
       this.logger.warn(`gearbox: could not bring ${branch} into the workspace: ${String(error)}`);
       return undefined;
@@ -315,7 +350,7 @@ export class GearboxServiceImpl implements GearboxService {
     ref: { rev?: string | null; tag?: string | null; branch?: string | null },
   ): Promise<string | undefined> {
     try {
-      return await materializeGitSource(workspaceDir(), id, url, ref);
+      return await materializeGitSource(this.defaultWorkspace(), id, url, ref);
     } catch (error) {
       this.logger.warn(`gearbox: could not bring source ${id} (${url}) into the workspace: ${String(error)}`);
       return undefined;

@@ -7,19 +7,58 @@
 // `/workspace`, holding one checkout per source (`/workspace/gears-rust`,
 // `/workspace/<project>`), and the engine installed at `/usr/local/bin/gearbox`
 // by the session image.
+//
+// A desktop IDE (theia/electron-app) has no `/workspace`: the member opens a
+// project, cloned under ~/ConstructorStudio/workspaces/<project>, and that
+// folder — the one Theia has open — plays the part `/workspace` plays in a
+// session. The session's order is untouched: `GEARBOX_WORKSPACE`, then
+// `/workspace`, and only then the opened folder.
 
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
 /** Directories never worth descending into when looking for descriptions. */
 const SKIP = new Set(["node_modules", "target", ".git", ".gearbox", "dist", "lib"]);
 /** Deep enough for `gears/system/authn-resolver/plugins/x/gear.gdl`. */
 const MAX_DEPTH = 7;
 
-export function workspaceDir(env: NodeJS.ProcessEnv = process.env): string {
+export function workspaceDir(env: NodeJS.ProcessEnv = process.env, opened?: string): string {
   const fromEnv = env.GEARBOX_WORKSPACE?.trim();
   if (fromEnv) return path.resolve(fromEnv);
-  return fs.existsSync("/workspace") ? "/workspace" : process.cwd();
+  if (fs.existsSync("/workspace")) return "/workspace";
+  // Off a session: the folder the IDE has open, before the process's own
+  // directory — which on a desktop is the application's, holding no gear.
+  return opened ?? process.cwd();
+}
+
+/**
+ * The folder behind a workspace URI as Theia keeps it: a folder's `file://`
+ * URI, or a `*.theia-workspace` / `*.code-workspace` file, whose folder is
+ * the one beside it. Undefined for anything that is not a local path.
+ */
+export function folderOfWorkspaceUri(uri: string | undefined): string | undefined {
+  if (!uri?.startsWith("file:")) return undefined;
+  let folder: string;
+  try {
+    folder = fileURLToPath(uri);
+  } catch {
+    return undefined;
+  }
+  try {
+    return fs.statSync(folder).isDirectory() ? folder : path.dirname(folder);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Is `dir` one checkout holding gear descriptions? Then it is a source root of
+ * its own, not a workspace of checkouts — a member who opened a repository
+ * directly, not a project folder with repositories in it.
+ */
+export function isDescribedCheckout(dir: string): boolean {
+  return fs.existsSync(path.join(dir, ".git")) && holdsDescription(dir, 0);
 }
 
 export function enginePath(env: NodeJS.ProcessEnv = process.env): string {

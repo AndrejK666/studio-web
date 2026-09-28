@@ -209,6 +209,18 @@ export interface GearboxService {
   initialize(session?: StudioSession): Promise<InitializeResult>;
 
   /**
+   * The folder this window has open, as Theia names it: a `file://` URI of a
+   * folder, or of a workspace file (whose folder is the one beside it).
+   *
+   * Where the environment names no workspace — no `GEARBOX_WORKSPACE`, no
+   * `/workspace`, which is a desktop IDE — this is the workspace the catalogue
+   * scans for sources. The window says it before its first `initialize`: the
+   * backend cannot tell which of its windows asked, and the most recently used
+   * workspace it keeps is the command line's when one was given.
+   */
+  useOpenedWorkspace(uri: string | undefined): Promise<void>;
+
+  /**
    * Begin a staged load. Resolves at the boundary between the two passes: the
    * whole tree by name, none of it projected. Projections arrive on the client
    * callback.
