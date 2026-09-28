@@ -297,6 +297,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
     }
 
+    /** Whether this backend is connected to a Studio: a desktop, never a session. */
+    isEnabled(): boolean {
+        return !!this.config;
+    }
+
     configure(app: express.Application): void {
         if (!this.config) {
             return;

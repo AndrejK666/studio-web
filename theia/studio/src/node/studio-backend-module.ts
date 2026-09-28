@@ -3,6 +3,7 @@ import * as express from '@theia/core/shared/express';
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { mountStudioControlApi } from './studio-control-api';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
+import { DesktopAssistantsContribution } from './desktop-assistants';
 import { StudioEventForwarder, resolveForwarderConfig } from './studio-event-forwarder';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { ConnectionHandler, Disposable, DisposableCollection, RpcConnectionHandler } from '@theia/core/lib/common';
@@ -744,6 +745,9 @@ export default new ContainerModule(bind => {
     // ADR-0027: dormant unless STUDIO_DESKTOP_URL names a Studio.
     bind(DesktopStudioContribution).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(DesktopStudioContribution);
+    // #480: the assistant extensions a desktop fetches; dormant without its manifest.
+    bind(DesktopAssistantsContribution).toSelf().inSingletonScope();
+    bind(BackendApplicationContribution).toService(DesktopAssistantsContribution);
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioRuntimeClient>(studioRuntimeServicePath, client => {
             const endpoint = ctx.container.get(StudioRuntimeEndpoint);

@@ -84,6 +84,12 @@ member only. It is Orca's token for this machine's own runtime on
 `127.0.0.1`, not a Studio secret; revoking it in Orca, or deleting the file,
 undoes it.
 
+And the assistants: Claude Code and Codex are fetched on first start into
+`~/ConstructorStudio/plugins/<id>-<version>/`
+([The assistant extensions](#the-assistant-extensions)). That folder holds the
+extensions' code as open-vsx publishes it, checked against the digest the build
+recorded. It holds no secret; deleting it only means the app fetches them again.
+
 ## What a Studio deployment needs
 
 **1. The `studio-desktop` Keycloak client.** The client is in both realm files
@@ -157,6 +163,9 @@ installed build is pointed somewhere else for a test.
 | `STUDIO_DESKTOP_BROWSER` | a command to open the sign-in page with, instead of the system browser |
 | `STUDIO_DESKTOP_AUTO_SIGN_IN` | `1` starts the sign-in at launch |
 | `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else `gearbox` on `PATH` |
+| `STUDIO_DESKTOP_ASSISTANTS` | the assistants' manifest; default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
+| `STUDIO_DESKTOP_PLUGINS` | where the assistants are unpacked; default `~/ConstructorStudio/plugins` |
+| `STUDIO_DESKTOP_VSIX_DIRS` | more folders to look in for a VSIX put there by hand (`;` on Windows, `:` elsewhere); default the app's own folder |
 
 With none of the first three set, the IDE is an ordinary editor and the Studio
 view does not open.
@@ -269,75 +278,78 @@ and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
 ### The assistant extensions
 
 Claude Code and Codex ship as the VS Code extensions product-ext drives. The
-workflow reads the `fetch_vsix` pins from `theia/Dockerfile` and downloads each
-one's `win32-x64` build from open-vsx. When the pinned version has no win32
-build, it takes the newest win32 build instead, and the run warns about it.
-Codex 26.5803.61601 was pinned while 26.5730.61309 shipped, so the desktop and
-the session can run different Codex versions.
+installer does not carry them
+([#480](https://github.com/constructorfabric/studio-web/issues/480)). It
+carries `resources/assistants.json`, the pinned win32 builds, and the app
+fetches each one on first start.
 
-Codex is most of the installer. Its win32 VSIX is 364 MB and unpacks to 958 MB:
+**The pin.** The workflow's *Assistant extensions manifest* step runs
+`theia/electron-app/scripts/assistants-manifest.mjs`. The script reads the
+`fetch_vsix` pins from `theia/Dockerfile`, the same pins the session image
+uses. For each pin it asks open-vsx for that version's `win32-x64` build. When
+the pinned version has none, it takes the newest win32 build, and the run warns
+about it. Codex 26.5803.61601 is pinned, but only 26.5730.61309 has a win32
+build, so the desktop and the session can run different Codex versions. The
+script downloads each VSIX once and checks it against open-vsx's
+`files.sha256`. It then writes `{ id, label, version, target, url, sha256 }`
+for each extension. `package.mjs --assistants <file>` ships the manifest. From
+then on the app trusts the manifest's digest, not what open-vsx answers at run
+time.
 
-| Part | Unpacked | In the VSIX |
-|---|---|---|
-| `bin/windows-x86_64` (the CLI, sandbox, `rg`) | 428 MB | 153 MB |
-| `bin/linux-x86_64` (only for *run Codex in WSL*) | 361 MB | 135 MB |
-| `webview/` | 156 MB | 58 MB |
+**On the member's machine**
+(`theia/studio/src/node/desktop-assistants.ts`, `desktop-assistants-store.ts`).
+The backend contribution mounts `/studio-desktop/assistants` only on a desktop
+connected to a Studio whose build carries a manifest. A browser session has no
+such route, and nothing in it runs there. Once the window is up, it asks the
+backend to fetch whatever is missing, one extension at a time:
 
-The workflow drops `bin/linux-*`, which leaves 598 MB unpacked. Codex uses those
-binaries only when the member turns on its WSL setting, which is off by default.
-Compressed with xz, the linux binaries come to 92 MB. The NSIS installer should
-therefore shrink from 451 MB (0.3.0-beta.3) to roughly 360 MB. That figure is
-an estimate until the next workflow run builds the installer.
+1. It uses a VSIX the member put in place by hand, under the name open-vsx
+   gives it (`Anthropic.claude-code-2.1.227@win32-x64.vsix`), in
+   `~/ConstructorStudio/plugins` or next to `Constructor Studio.exe`, but only
+   when its digest is the pinned one. Otherwise it downloads the VSIX from the
+   manifest's URL into a `.partial-*` file.
+2. It checks the SHA-256 against the manifest. On a mismatch the file is
+   deleted and nothing is installed.
+3. It unpacks the VSIX, without Codex's `bin/linux-*` (used only for *run Codex
+   in WSL*, off by default), into
+   `~/ConstructorStudio/plugins/<id>-<version>/<id>/`. The unpack goes into a
+   `.partial-*` folder first, which is then renamed into place in one step.
+4. It deploys the extension into the running app with
+   `PluginServer.install('local-dir:<folder>')` (`@theia/plugin-ext`). Theia
+   deploys it and fires `onDidDeploy`, and each window's `HostedPluginSupport`
+   loads and starts the new plugin. The rail's assistant then opens without a
+   restart.
+5. Once the new version has deployed, it deletes the other versions of the same
+   extension. A new app version with a new manifest therefore fetches the new
+   pin on start and then removes the old one.
 
-**Proposed: fetch the assistants on first use instead of shipping them**
-([design below](#lazy-assistants)), tracked in
-[#480](https://github.com/constructorfabric/studio-web/issues/480).
+On the next start, `desktop-main.js` adds the folder of each pinned version
+that is already there to `THEIA_PLUGINS`, so it loads like a built-in plugin.
+Only the pinned version's folder is added, so a leftover older version never
+loads.
 
-<a id="lazy-assistants"></a>
-#### Lazy assistants: the design
+**What the member sees.** A progress notification while an assistant
+downloads ("Downloading Codex 26.5730.61309… 37 %") and a note when it is ready.
+Until then the rail answers "Codex is downloading (37 %). It opens here once it
+is installed." instead of "… is not available here". The rail gets that
+sentence from the command `studio.desktop.assistantMessage`, which a session
+answers with nothing. A failure leaves nothing behind, and its message says
+what happened and offers **Try again**:
 
-What changes: the installer carries a manifest instead of the two extensions.
-The app fetches them into the member's profile when it first needs them. The
-session image stays as it is: the Dockerfile keeps fetching the linux builds,
-and nothing below runs in a session.
+- open-vsx cannot be reached: the message names the host and the cause, and
+  says where to put the VSIX by hand (the offline path above);
+- a digest mismatch: the download is discarded;
+- the archive is not an extension, or the deploy fails.
 
-1. **The pin, written once.** The workflow resolves the version exactly as it
-   does now (the Dockerfile pin, or the newest win32 build when the pin has
-   none). It records `{ id, version, target, url, sha256 }` for each extension
-   in `resources/assistants.json`. It takes the digest from open-vsx
-   (`…/file/<name>.sha256`, which the API lists as `files.sha256`) and checks it
-   against a download made during the build. The build then trusts only its own
-   manifest, not open-vsx's answer at run time.
-2. **Where they go.** `~/ConstructorStudio/plugins/<id>-<version>/`, unpacked.
-   `desktop-main.js` adds that folder to Theia's plugin sources next to
-   `resources/plugins` (`THEIA_PLUGINS=local-dir:…`), so a copy already fetched
-   loads at start like a built-in plugin. The folder holds code from open-vsx,
-   not a secret, so rule 2 of desktop-contributing.md holds. It still needs its
-   line in this page.
-3. **When they are fetched.** A desktop-only backend contribution
-   (`studio/src/node/desktop-assistants.ts`) mounts only when a Studio is
-   configured, like `DesktopStudioContribution`. It starts in the background
-   after the window is up and fetches whichever extension from the manifest is
-   missing. It streams the download to a temporary file, checks the SHA-256
-   against the manifest, unpacks the file, and moves the folder into place in
-   one rename. It then deploys the extension into the running app with
-   `PluginServer.install('local-dir:<folder>')` (`@theia/plugin-ext`), so no
-   restart is needed. Until the extension is in place, the rail's assistant
-   says "Codex is downloading (37 %)" rather than "… is not available here".
-   A failed download or a digest mismatch leaves nothing behind. The message
-   then says what failed and offers to try again.
-4. **Updates.** A new app version can carry a new manifest. On start, the
-   contribution fetches any pinned version that is missing. It deletes other
-   versions of the same extension only after the new one deploys.
-5. **Offline and locked-down machines.** Where open-vsx is out of reach, the
-   member can put the VSIX next to the installer. The contribution looks there
-   first and applies the same digest check.
+**Sizes.** The member downloads 92 MB for Claude Code and 347 MB for Codex
+(win32 VSIX, which still includes the linux binaries). Unpacked, without
+those, Codex takes about 600 MB. The installer now carries neither.
 
-What it saves: the installer drops to an estimated 140–160 MB (the Theia
-bundle, Electron, `gearbox.exe`). This is not measured, since no build has been
-made that way. The member then downloads the two VSIXs once: 96 MB for Claude
-Code and 364 MB for Codex, whose download still includes the linux binaries. What it costs: a first-use wait, a new failure mode that needs its
-own messages (rule 5), and one more place where a file is written.
+**Behind a proxy.** The download is Node's `fetch` in the IDE backend, which
+does not read the system proxy. Where open-vsx is reachable only through a
+proxy, the VSIX can be put in place by hand. Mirroring the VSIXs as assets of
+the `desktop-v*` release is the way out, should that become common: the
+manifest's `url` would point there.
 
 ## Updates
 
@@ -379,7 +391,9 @@ module talking to an `electronMain` one over Theia's Electron IPC
   beta.3 has no workaround: every start draws a new anonymous home and removes
   it again. In a browser session, signing in to Codex from the product's
   assistant sign-in creates the directory, and reloading the page then works.
-- Codex cannot run in WSL on the desktop: the installer leaves out its linux
-  binaries ([The assistant extensions](#the-assistant-extensions)).
+- Codex cannot run in WSL on the desktop: its linux binaries are not unpacked
+  ([The assistant extensions](#the-assistant-extensions)).
 - The desktop's Codex can be older than the session's. The Dockerfile pin has
-  no win32 build, so the installer ships the newest one that has.
+  no win32 build, so the manifest pins the newest one that has.
+- The first start downloads about 440 MB of assistants. Until then the rail's
+  assistants say they are downloading.
