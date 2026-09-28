@@ -62,6 +62,37 @@ export interface EngineHandle {
 }
 
 /**
+ * A Windows path as the rest of the IDE spells it. The engine canonicalizes
+ * its roots, and on Windows Rust's `canonicalize` answers in the verbatim form
+ * (`\\?\C:\…`, `\\?\UNC\server\share\…`), which Theia's `URI.fromFilePath`
+ * turns into `file://%3F/c%3A/…` — a URI nothing can open. A `file:` URI built
+ * from such a path gets the same repair. Anything else is returned as it is,
+ * so on Linux this changes nothing.
+ */
+/** `\\?\` and `\\?\UNC\`, spelled as JavaScript strings. */
+const VERBATIM = "\\\\?\\";
+const VERBATIM_UNC = "\\\\?\\UNC\\";
+
+export function plainPath(value: string): string {
+  if (value.startsWith(VERBATIM_UNC)) return `\\\\${value.slice(VERBATIM_UNC.length)}`;
+  if (value.startsWith(VERBATIM)) return value.slice(VERBATIM.length);
+  const uri = value.match(/^file:\/{2,4}(?:%3F|\?)\/(.*)$/i);
+  return uri ? `file:///${uri[1]}` : value;
+}
+
+/** `plainPath` applied to every string in an engine answer, however deep. */
+export function plainPaths<T>(value: T): T {
+  if (typeof value === "string") return plainPath(value) as unknown as T;
+  if (Array.isArray(value)) return value.map((item) => plainPaths(item)) as unknown as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = plainPaths(item);
+    return out as T;
+  }
+  return value;
+}
+
+/**
  * Why the engine did not start, finishing "the engine …". A missing binary is
  * the common case outside the session image — a desktop build without one, a
  * checkout with nothing on PATH — and a bare ENOENT does not say what to do.
@@ -172,8 +203,17 @@ export function spawnEngine(
   outbound.pipe(child.stdin);
 
   const live = connection;
+  // Every notification the engine sends reaches its handler with plain paths,
+  // whoever registered it (see `plainPath`).
+  const listen = live.onNotification.bind(live) as (method: unknown, handler: (...params: unknown[]) => unknown) => unknown;
+  const plain = Object.create(live, {
+    onNotification: {
+      value: (method: unknown, handler: (...params: unknown[]) => unknown) =>
+        listen(method, (...params: unknown[]) => handler(...params.map((param) => plainPaths(param)))),
+    },
+  }) as MessageConnection;
   const handle: EngineHandle = {
-    connection,
+    connection: plain,
     exited,
     get dead(): boolean {
       return dead;
@@ -206,11 +246,11 @@ export function spawnEngine(
         throw new Error(`the engine ${reason} while answering \`${requestMethod}\``);
       });
       try {
-        return await Promise.race([
+        return plainPaths(await Promise.race([
           live.sendRequest<T>(requestMethod, params),
           died,
           timeout,
-        ]);
+        ]));
       } finally {
         clearTimeout(timer);
       }
