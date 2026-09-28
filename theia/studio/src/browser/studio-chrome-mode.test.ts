@@ -103,10 +103,10 @@ describe('the chrome a mode implies', () => {
         // Explorer. Right for a document, wrong for someone who just edited
         // code and wants to commit it.
         expect(css).toContain('body[data-studio-mode="workbench"] #shell-tab-scm-view-container');
-        // The workbench names no other tabs of its own yet (see MODE_TABS):
-        // Explorer comes back only for the modes that ask for it.
+        // Explorer comes back per mode (MODE_TABS), never for every workbench
+        // mode at once: Building and Agent development do not ask for it.
         expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-explorer-view-container');
-        expect(css).not.toContain('body[data-studio-perspective="default"]');
+        expect(css).not.toContain('body[data-studio-perspective="gearbox.product"]');
         expect(css).not.toContain('shell-tab-debug');
     });
 
@@ -138,6 +138,16 @@ describe('the rail tabs a mode brings back', () => {
         expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-explorer-view-container');
         // One search: the product's, not Theia's file search beside it.
         expect(css).not.toContain('#shell-tab-search-view-container');
+    });
+
+    it('gives the code modes their file tree back', () => {
+        for (const mode of ['default', 'studio.full']) {
+            const { contribution } = chrome(mode);
+            contribution.onDidInitializeLayout();
+            const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-explorer-view-container`);
+            contribution.onStop();
+        }
     });
 
     it('names the mode it is in, and follows a switch', async () => {

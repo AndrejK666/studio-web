@@ -305,6 +305,17 @@ export class OrcaWidget extends ReactWidget {
 
     // ── render ─────────────────────────────────────────────────────────────
 
+    /** Take the focus when activated, as the other Studio views do: the Agent
+     *  development mode activates this view, and Theia waits two seconds for a
+     *  widget that does not. */
+    protected override onActivateRequest(msg: Message): void {
+        super.onActivateRequest(msg);
+        if (!this.node.hasAttribute('tabindex')) {
+            this.node.tabIndex = -1;
+        }
+        this.node.focus();
+    }
+
     protected render(): React.ReactNode {
         return (
             <div className="studio-orca-body">
