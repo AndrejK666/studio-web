@@ -1,13 +1,21 @@
-// The projects a desktop member can open, found the way the portal finds them
-// (studio-frontend `appContextEffects.ts`): the organizations come from the
-// person's memberships in `studio-user` — membership is the authority
-// (ADR-0011 §2), not the tenant the token names — and each organization's
-// `workspace` tenants are the projects the portal shows (concept v2: a root
-// project is the AM tenant of type `workspace`).
+// The projects a desktop member can open, found the way the main portal finds them.
+//
+// Every level is an account-management tenant, listed as a tenant's children
+// and told apart by `tenant_type`: organization → workspace (the portal's
+// "root project") → project (a nested one, with sources of its own in its own
+// workspace settings).
+//
+// Which organizations: the member's `studio-user` memberships, as the main
+// portal takes them (studio-frontend `appContextEffects.ts`). Membership is the
+// authority (ADR-0011 §2); the home tenant a token names is not, even where a
+// listing under it answers — authorization is still allow-all (ADR-0004), and
+// what it lets through is not what a member was given. The platform
+// administrator walks the root, by role.
 
 export const TENANT_TYPES = {
     organization: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~',
     workspace: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~',
+    project: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~',
 } as const;
 
 /** The platform root: its caller reaches every organization by role, not membership. */
@@ -22,8 +30,13 @@ export interface Tenant {
     tenant_type?: string;
 }
 
+/** A workspace (a root project) and the projects nested in it. */
+export interface Workspace extends Tenant {
+    nested: Tenant[];
+}
+
 export interface Organization extends Tenant {
-    projects: Tenant[];
+    projects: Workspace[];
 }
 
 /** GET a gear path (`/account-management/v1/...`) and answer its JSON, or throw. */
@@ -40,31 +53,45 @@ function childrenPath(tenantId: string, tenantType?: string): string {
     return `/account-management/v1/tenants/${tenantId}/children?${query}`;
 }
 
-/** The organizations this person may switch between, as the portal lists them. */
+/** A tenant's children of one type; none where the member cannot list them. */
+async function childrenOf(get: GetJson, tenantId: string, tenantType: string): Promise<Tenant[]> {
+    try {
+        // Filtered twice: a backend that ignores `$filter` still answers right.
+        return items(await get(childrenPath(tenantId, tenantType))).filter(t => t.tenant_type === tenantType);
+    } catch {
+        return [];
+    }
+}
+
+async function tenantOf(get: GetJson, id: string): Promise<Tenant | undefined> {
+    try {
+        return await get(`/account-management/v1/tenants/${id}`) as Tenant;
+    } catch {
+        // From outside a self-managed organization the answer is 404 by
+        // design: isolation working, so it is dropped rather than shown nameless.
+        return undefined;
+    }
+}
+
+/** The organizations this person may switch between, as the main portal lists them. */
 export async function organizationsOf(get: GetJson): Promise<Tenant[]> {
     const me = await get('/account-management/v1/me') as { subject_tenant_id?: string } | undefined;
     if (me?.subject_tenant_id === PLATFORM_ROOT_TENANT_ID) {
-        return items(await get(childrenPath(PLATFORM_ROOT_TENANT_ID)))
-            .filter(t => t.tenant_type === TENANT_TYPES.organization);
+        return childrenOf(get, PLATFORM_ROOT_TENANT_ID, TENANT_TYPES.organization);
     }
     const memberships = ((await get('/studio-user/v1/me/memberships')) as { items?: { org_id: string }[] } | undefined)?.items ?? [];
-    const resolved = await Promise.all(memberships.map(async m => {
-        try {
-            return await get(`/account-management/v1/tenants/${m.org_id}`) as Tenant;
-        } catch {
-            // From outside a self-managed organization the answer is 404 by
-            // design: isolation working, so it is dropped rather than shown nameless.
-            return undefined;
-        }
-    }));
+    const resolved = await Promise.all(memberships.map(m => tenantOf(get, m.org_id)));
     return resolved.filter((t): t is Tenant => !!t && t.tenant_type === TENANT_TYPES.organization);
 }
 
-/** Every organization with its projects; an organization that cannot be listed says so by throwing. */
+/** Every organization with its workspaces, and each workspace with its nested projects. */
 export async function projectsOf(get: GetJson): Promise<Organization[]> {
     const organizations = await organizationsOf(get);
     return Promise.all(organizations.map(async org => ({
         ...org,
-        projects: items(await get(childrenPath(org.id, TENANT_TYPES.workspace))),
+        projects: await Promise.all((await childrenOf(get, org.id, TENANT_TYPES.workspace)).map(async ws => ({
+            ...ws,
+            nested: await childrenOf(get, ws.id, TENANT_TYPES.project),
+        }))),
     })));
 }
