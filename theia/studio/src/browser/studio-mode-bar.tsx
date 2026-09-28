@@ -58,7 +58,10 @@ interface Mode {
 }
 
 const AGENTS: ModeAction = { command: 'studio.orca.toggle', icon: 'sparkle', label: 'Agents', title: 'Coding agents, their worktrees and their terminals' };
-const TERMINAL: ModeAction = { command: 'terminal:new', icon: 'terminal', label: 'Terminal', title: 'A new terminal in the workspace' };
+// Toggle, not new: the terminal that is already open comes to the front, and a
+// new one is opened only when there is none. `terminal:new` added a shell per
+// press, and a session collected them in the bottom panel.
+const TERMINAL: ModeAction = { command: 'workbench.action.terminal.toggleTerminal', icon: 'terminal', label: 'Terminal', title: 'Show the terminal, or open one' };
 const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control', label: 'Changes', title: 'What changed, and commit it' };
 const GIT_OPS: ModeAction = { command: 'studio.git-operations:toggle', icon: 'git-pull-request', label: 'Pushes & PRs', title: 'Commits and pushes waiting to go out' };
 

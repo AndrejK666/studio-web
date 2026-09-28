@@ -77,6 +77,17 @@ body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: non
    Only this one is restored here. Explorer comes back per mode (MODE_TABS),
    and Debug, Test and Search are not part of the question being answered. */
 body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex !important; }
+/* One search per mode. The code modes bring back Theia's search across files
+   (MODE_TABS), which is the one that searches code; the product's Search rail
+   button, which searches documents, comments and proposals, stays for the
+   others. FULL still reaches the product's Search from its ribbon. */
+body[data-studio-perspective="default"] #studio-search-rail,
+body[data-studio-perspective="studio.full"] #studio-search-rail { display: none !important; }
+/* Writing's bottom panel is Analyze. The Problems list, Operations and a
+   terminal the session started are still there, one menu away, but their tabs
+   show only while one of them is the tab in front, so opening findings does
+   not put a shell beside the paragraph. */
+body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current):not([id="shell-tab-studio:analyze"]) { display: none !important; }
 `;
 
 /**
@@ -97,8 +108,10 @@ export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
     // Development and FULL place the file tree too (studio-perspectives.ts),
     // and product-ext hid its tab: the modes for working on code had no way
     // to browse the code.
-    [WORKBENCH_PERSPECTIVE_ID]: ['explorer-view-container'],
-    [FULL_PERSPECTIVE_ID]: ['explorer-view-container'],
+    // Their search is Theia's, across the files: code is found by its text,
+    // and the product's Search reads documents, not code.
+    [WORKBENCH_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
+    [FULL_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
 };
 
 /** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */

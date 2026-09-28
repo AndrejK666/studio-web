@@ -2898,7 +2898,16 @@ const mod = new ContainerModule(bind => {
     bind(KeybindingContribution).toDynamicValue(() => ({
         registerKeybindings(keybindings) {
             keybindings.unregisterKeybinding('ctrlcmd+shift+f');
-            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f' });
+            /*
+             * Per mode. The code modes (studio's Development, `default`, and
+             * FULL, `studio.full`) search code with Theia's search across files,
+             * and show its rail tab; every other mode searches the project's
+             * documents with this one. Keyed on Theia's own context key for the
+             * active perspective.
+             */
+            const CODE_MODES = "(activePerspectiveId == 'default' || activePerspectiveId == 'studio.full')";
+            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f', when: '!' + CODE_MODES });
+            keybindings.registerKeybinding({ command: 'search-in-workspace.open', keybinding: 'ctrlcmd+shift+f', when: CODE_MODES });
         }
     })).inSingletonScope();
     bind(TabBarToolbarContribution).toDynamicValue(ctx => ({
