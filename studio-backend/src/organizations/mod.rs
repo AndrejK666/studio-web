@@ -128,6 +128,12 @@ impl RestApiCapability for StudioOrganizationsGear {
                         .client_hub()
                         .get::<dyn crate::artifact_ingest::port::ProjectSignalSource>()
                         .ok(),
+                    roster: ctx
+                        .client_hub()
+                        .get_scoped::<dyn crate::user_profile::OrganizationRoster>(
+                            &ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
+                        )
+                        .ok(),
                 })
             });
         if sources.is_none() {

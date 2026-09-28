@@ -248,7 +248,13 @@ pub struct RollupDto {
     pub pull_days: Option<Vec<u32>>,
     /// The window `pulls_merged` and `pull_days` cover.
     pub activity_days: Option<u32>,
-    /// Projects: people in the project's tenant.
+    /// Projects: the people who may work in it, from Studio's memberships
+    /// rather than the IdP. Under the organization's `tenant` access model
+    /// (the default) that is every active member of the organization; under
+    /// `roles`, the active members holding a grant on this project or across
+    /// the organization. Each person counts once. Null when the memberships or
+    /// the access config could not be read, or the workspace does not sit
+    /// under an organization.
     pub team: Option<u32>,
     /// Projects: the newest event the Activity feed lists, as it words it
     /// (`Document checked`, `Comment`); null when nothing is recorded.

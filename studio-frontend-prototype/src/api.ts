@@ -1805,7 +1805,11 @@ export interface RollupRow {
   pulls_merged?: number | null;
   pull_days?: number[] | null;
   activity_days?: number | null;
-  /** People in the project's tenant. */
+  /**
+   * People who may work in the project, from Studio memberships: every active
+   * organization member under tenant access, the members granted a role on it
+   * under role-based access. Null when that could not be read.
+   */
   team?: number | null;
   /** The newest event the Activity feed lists. */
   last_event?: string | null;
