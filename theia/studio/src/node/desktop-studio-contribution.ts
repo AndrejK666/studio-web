@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -6,6 +7,7 @@ import * as express from '@theia/core/shared/express';
 import { injectable } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
+import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
@@ -53,6 +55,9 @@ export interface DesktopSettings {
      *  handshake is not there to say it — so without this a window in the
      *  folder cannot tell Studio which project it is looking at. */
     readonly opened?: Readonly<Record<string, OpenedFolder>>;
+    /** This installation's id, which keys its desktop sessions in Studio.
+     *  Drawn once and kept, so a restart renews the leases it had. */
+    readonly deviceId?: string;
 }
 
 /** What a folder opened from the Studio view was cloned for. */
@@ -238,6 +243,27 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected broker: TokenBroker | undefined;
     protected ready: Promise<void> | undefined;
     protected status: DesktopStatus = this.describe('signed-out');
+    protected readonly leases = new DesktopLeases();
+
+    /** Where this desktop's leases go, while it is signed in. */
+    protected leaseTarget(): LeaseTarget | undefined {
+        const session = this.session;
+        if (!this.config || !session) {
+            return undefined;
+        }
+        let deviceId = this.settings.deviceId;
+        if (!deviceId) {
+            deviceId = randomUUID();
+            this.saveSettings({ ...this.settings, deviceId });
+        }
+        return {
+            studioUrl: this.config.studioUrl,
+            gatewayPrefix: this.config.gatewayPrefix,
+            accessToken: () => session.accessToken(),
+            deviceId,
+            deviceName: os.hostname(),
+        };
+    }
 
     /** The status for the current Studio, in the given state and signed out of any other. */
     protected describe(state: DesktopStatus['state'], extra: Partial<DesktopStatus> = {}): DesktopStatus {
@@ -295,7 +321,10 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             await this.signOut();
             // The update channel is the member's too, and outlives a change of Studio.
             // So is what each folder was opened for: it says which Studio too.
-            this.saveSettings({ ...settings, updates: this.settings.updates, opened: this.settings.opened });
+            // And the device is the same machine whichever Studio it talks to.
+            this.saveSettings({
+                ...settings, updates: this.settings.updates, opened: this.settings.opened, deviceId: this.settings.deviceId,
+            });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
             res.json(this.status);
@@ -344,6 +373,40 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 return;
             }
             res.json({ tenantId });
+        });
+        // A window showing a folder Studio opened says so every heartbeat, and
+        // this renews the workspace's desktop session. 404 is an answer, as for
+        // `opened`: a folder somebody opened by hand has no workspace to hold.
+        app.post('/studio-desktop/heartbeat', express.json(), async (req, res) => {
+            const root = (req.body as { root?: string } | undefined)?.root ?? '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            if (!tenantId) {
+                res.status(404).json({ error: 'this folder was not opened from Studio' });
+                return;
+            }
+            const target = this.leaseTarget();
+            if (!target) {
+                res.status(503).json({ error: 'not signed in to Constructor Studio' });
+                return;
+            }
+            try {
+                const held = await this.leases.renew(target, tenantId);
+                res.status(held ? 204 : 409).end();
+            } catch (error) {
+                res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+            }
+        });
+        // The window closed. Another window on the same workspace renews the
+        // lease again on its next heartbeat, so ending it here is never wrong
+        // for longer than one interval.
+        app.post('/studio-desktop/closed', express.json({ type: () => true }), async (req, res) => {
+            const root = (req.body as { root?: string } | undefined)?.root ?? '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            const target = this.leaseTarget();
+            if (tenantId && target) {
+                await this.leases.end(target, tenantId);
+            }
+            res.status(204).end();
         });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {
@@ -395,11 +458,22 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     }
 
     onStop(): void {
+        // Best effort: the process may be gone before Studio answers, and a
+        // lease nobody renews ends on its own there.
+        const target = this.leaseTarget();
+        if (target) {
+            void this.leases.endAll(target);
+        }
         this.broker?.close();
     }
 
     /** Forget the token and stop handing it to git. */
     protected async signOut(): Promise<void> {
+        const target = this.leaseTarget();
+        if (target) {
+            await this.leases.endAll(target);
+        }
+        this.leases.forget();
         this.session = undefined;
         await this.broker?.close();
         this.broker = undefined;
