@@ -383,7 +383,18 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
         request: DetectContainingWorkspaceRepositoryRequest
     ): Promise<WorkspaceRepositorySuggestion | undefined> {
         this.assertWorkspaceRequest(request.workspaceId, request.configPath);
-        this.assertPathWithinWorkspace(request.openedPath, 'openedPath');
+        // A folder outside the workspace root is not a question about this
+        // workspace: nothing to suggest, rather than an error. A desktop opens a
+        // project from the Studio view under ~/ConstructorStudio/workspaces/,
+        // outside the fixed root, and the refusal used to stop the whole
+        // sources contribution from starting. A session's folder is always
+        // inside the root, so nothing changes there.
+        const openedPath = path.isAbsolute(request.openedPath)
+            ? path.resolve(request.openedPath)
+            : path.resolve(this.workspaceRoot, request.openedPath);
+        if (!isWithin(this.workspaceRoot, openedPath)) {
+            return undefined;
+        }
         const snapshot = (await this.workspaceSyncOrchestrator.getSnapshotResponse()).snapshot;
         return this.workspaceDiscoveryService.detectContainingRepository(
             request.openedPath,
