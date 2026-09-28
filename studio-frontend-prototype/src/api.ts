@@ -1788,6 +1788,29 @@ export interface RollupRow {
   documents?: number | null;
   findings?: number | null;
   repos?: number | null;
+  /** Projects: `new_gears` | `product` | `existing`, and the project's brief. */
+  project_kind?: string | null;
+  brief?: string | null;
+  /** Findings still to fix (`high`, `gate-failed`, `some`); `findings` counts every verdict. */
+  open_findings?: number | null;
+  /** Unresolved threads the repositories report. */
+  open_comments?: number | null;
+  /** Bound repository files plus documents written in Studio. */
+  specs?: number | null;
+  specs_authored?: number | null;
+  specs_checked?: number | null;
+  specs_failing?: number | null;
+  /** Null when no pull request was ever synced. */
+  pulls_open?: number | null;
+  pulls_merged?: number | null;
+  pull_days?: number[] | null;
+  activity_days?: number | null;
+  /** People in the project's tenant. */
+  team?: number | null;
+  /** The newest event the Activity feed lists. */
+  last_event?: string | null;
+  last_subject?: string | null;
+  last_at?: string | null;
 }
 
 /** A verdict as the server read it. Fields follow the detector, so most are
@@ -1834,9 +1857,14 @@ export const api = {
    *
    *  The portal used to compose this itself — three requests per row, one of
    *  them a listing that walks the whole artifact graph. The composition is on
-   *  the server now; this asks for it. `projectId` narrows it to one project. */
-  rollups: (token: string, projectId?: string) => {
-    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+   *  the server now; this asks for it. `projectId` narrows it to one project,
+   *  `workspaceId` to one workspace and its projects. */
+  rollups: (token: string, projectId?: string, workspaceId?: string) => {
+    const q = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : workspaceId
+        ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+        : "";
     return request<{ items: RollupRow[]; total: number }>(
       `/studio-organizations/v1/rollups${q}`,
       token,
