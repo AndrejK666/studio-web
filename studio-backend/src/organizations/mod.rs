@@ -124,6 +124,10 @@ impl RestApiCapability for StudioOrganizationsGear {
                         .client_hub()
                         .get::<dyn crate::artifact_ingest::port::ArtifactCounter>()
                         .ok(),
+                    signals: ctx
+                        .client_hub()
+                        .get::<dyn crate::artifact_ingest::port::ProjectSignalSource>()
+                        .ok(),
                 })
             });
         if sources.is_none() {
