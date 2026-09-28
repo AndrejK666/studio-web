@@ -16,6 +16,7 @@ import { IDENTITY_VIEWER_COMMAND_ID } from './portal-bridge-contribution';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 import { Organization, Tenant, projectsOf } from './desktop-projects';
 import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
+import { remoteGearCatalogueChanged } from './gearbox-remote-catalogue';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -112,6 +113,10 @@ export class DesktopStudioWidget extends ReactWidget {
             this.poll = undefined;
         }
         if (this.status?.state === 'signed-in' && before !== 'signed-in') {
+            // Signed in after the window loaded: what was listed signed out is stale.
+            if (before !== undefined) {
+                remoteGearCatalogueChanged.fire();
+            }
             await this.loadEntities();
         }
         this.update();

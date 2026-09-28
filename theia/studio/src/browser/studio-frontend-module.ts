@@ -33,7 +33,7 @@ import { ArtifactGraphWidget } from './artifact-graph-widget';
 import { WorkspaceGraphFrontendController, WorkspaceGraphWidget } from './workspace-graph-widget';
 import { WorkspaceGraphService, workspaceGraphServicePath } from '../common/graph-model';
 import { AnalyzeApplicationShellProvider, AnalyzeFrontendController } from './analyze-controller';
-import { GEARBOX_REMOTE_CATALOGUE, loadRemoteGearCatalogue } from './gearbox-remote-catalogue';
+import { GEARBOX_REMOTE_CATALOGUE, loadRemoteGearCatalogue, remoteGearCatalogueChanged } from './gearbox-remote-catalogue';
 import { AnalyzeContribution } from './analyze-contribution';
 import { AnalyzeStudioClient } from './analyze-studio-client';
 import { AnalyzeWidget } from './analyze-widget';
@@ -153,7 +153,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(AnalyzeFrontendController).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(AnalyzeFrontendController);
     // The Gearbox catalogue lists the backend's gear corpus when the workspace holds none.
-    bind(GEARBOX_REMOTE_CATALOGUE).toConstantValue({ load: () => loadRemoteGearCatalogue() });
+    bind(GEARBOX_REMOTE_CATALOGUE).toConstantValue({
+        load: () => loadRemoteGearCatalogue(),
+        onDidChange: (listener: () => void) => remoteGearCatalogueChanged.event(listener),
+    });
     bind(WorkspaceGraphService).toDynamicValue(ctx => {
         const provider = ctx.container.get(WebSocketConnectionProvider);
         return provider.createProxy<WorkspaceGraphService>(

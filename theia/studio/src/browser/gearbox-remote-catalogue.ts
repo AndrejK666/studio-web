@@ -1,3 +1,4 @@
+import { Emitter } from '@theia/core/lib/common/event';
 import { StudioApi } from './studio-api';
 
 /**
@@ -15,6 +16,13 @@ export interface RemoteGearCatalogue {
 }
 
 type Fetch = (path: string) => Promise<Response>;
+
+/**
+ * Fired when what the backend would answer may have changed. The desktop
+ * starts signed out, so the catalogue's first load gets nothing (the local
+ * `/studio-api` proxy answers 503); signing in is when to ask again.
+ */
+export const remoteGearCatalogueChanged = new Emitter<void>();
 
 /**
  * The gear corpus's catalogue, from the one checkout the Studio backend keeps.

@@ -138,6 +138,14 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   @postConstruct()
   protected init(): void {
     this.watchSelection();
+    // A catalogue listed from the backend -- or not listed, because the member
+    // was not signed in yet -- is read again when that source says it moved.
+    // A workspace with its own source roots never asked it, so it is left alone.
+    this.remote?.onDidChange?.(() => {
+      if (this.rootsById.size === 0) {
+        void this.load();
+      }
+    });
   }
 
   get current(): CatalogueState {
@@ -453,6 +461,17 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       }
       this.streaming = undefined;
       this.engine.markDisconnected(describe(error));
+      // Constructor Studio: an engine that would not start -- none installed,
+      // or one that refused `initialize` -- still leaves the corpus the Studio
+      // backend reads. Listing it beats an error with nothing under it.
+      if (this.remote !== undefined && (await this.installRemote(epoch, [])) === true) {
+        this.onLog(`the engine did not start (${describe(error)}); listing the Studio backend's corpus`);
+        this.onChangedEmitter.fire();
+        return;
+      }
+      if (epoch !== this.epoch) {
+        return;
+      }
       this.state = {
         ...this.state,
         status: "error",
@@ -519,8 +538,12 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
         carried?.kind === "projected" ? carried : { kind: "pending", gear },
       );
     }
+    // Nothing discovered is nothing to project, and no `$/progress done` will
+    // come to say so: an engine with no source root answers an empty tree and
+    // stops. Waiting for it left the panel on "projecting 0/0" for good.
+    const empty = loaded.total === 0 && loaded.pending.length === 0;
     this.state = {
-      status: "loading",
+      status: empty ? "ready" : "loading",
       rows: this.sorted(),
       diagnostics: loaded.diagnostics,
       failedRoots,
@@ -529,7 +552,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       completed: 0,
     };
     // The boundary is passed: projections for *this* load are now welcome.
-    this.streaming = epoch;
+    this.streaming = empty ? undefined : epoch;
     return true;
   }
 
