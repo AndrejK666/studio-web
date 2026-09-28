@@ -74,7 +74,10 @@ const BY_WORK: readonly Mode[] = [
         groups: [
             // Finding a document by what it says is how writing starts as often
             // as browsing is, so it sits in the ribbon, not only behind a rail tab.
-            { label: 'Find', actions: [{ command: 'search-in-workspace.open', icon: 'search', label: 'Search', title: 'Find text across the project\'s files' }] },
+            // The product's Search (product-ext), the same one as the rail button
+            // and Ctrl+Shift+F: it reads comments, proposed changes and history
+            // as well as the files.
+            { label: 'Find', actions: [{ command: 'studio.search.open', icon: 'search', label: 'Search', title: 'Search the project: documents, comments, proposed changes and history' }] },
             {
                 label: 'Specs',
                 actions: [
