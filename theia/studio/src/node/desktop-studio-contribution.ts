@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -7,6 +7,7 @@ import * as express from '@theia/core/shared/express';
 import { injectable } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
+import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
@@ -245,6 +246,9 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected status: DesktopStatus = this.describe('signed-out');
     protected readonly leases = new DesktopLeases();
 
+    /** The open in progress, or the last one, for the Studio view to draw. */
+    protected openProgress: OpenProgress | undefined;
+
     /** Where this desktop's leases go, while it is signed in. */
     protected leaseTarget(): LeaseTarget | undefined {
         const session = this.session;
@@ -345,6 +349,10 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             await this.signOut();
             res.json(this.status);
         });
+        // How far the open is: listing the sources, then each one's clone.
+        app.get('/studio-desktop/open-progress', (_req, res) => {
+            res.json(this.openProgress ?? null);
+        });
         // Open a workspace: clone what is not on disk yet, answer with the folder.
         app.post('/studio-desktop/open', express.json(), async (req, res) => {
             const config = this.config!;
@@ -353,13 +361,17 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 res.status(400).json({ error: this.session ? 'which workspace?' : 'not signed in' });
                 return;
             }
+            this.openProgress = { workspaceId, name: name ?? workspaceId, phase: 'listing', sources: [] };
             try {
                 const dir = path.join(config.workspacesDir, folderFor(name, workspaceId));
                 const cloned = await this.cloneSources(config, workspaceId, dir);
                 this.saveSettings(rememberOpened(this.settings, dir, config.studioUrl, workspaceId));
+                this.openProgress = { ...this.openProgress, phase: 'done' };
                 res.json({ path: dir, cloned });
             } catch (error) {
-                res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+                const message = error instanceof Error ? error.message : String(error);
+                this.openProgress = { ...this.openProgress, phase: 'failed', error: message };
+                res.status(502).json({ error: message });
             }
         });
         // Which tenant a folder is a checkout of — what the Analyze panel asks
@@ -558,26 +570,76 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         const { items } = await answer.json() as { items: SourceDto[] };
         fs.mkdirSync(root, { recursive: true });
         const cloned: string[] = [];
-        for (const source of items) {
-            const dir = path.resolve(root, source.target ?? source.name);
-            if (fs.existsSync(path.join(dir, '.git'))) {
+        const dirOf = (source: SourceDto) => path.resolve(root, source.target ?? source.name);
+        const states: SourceProgress[] = items.map(source => ({
+            name: source.name,
+            state: fs.existsSync(path.join(dirOf(source), '.git')) ? 'present' : 'waiting',
+        }));
+        const report = (index: number, change: Partial<SourceProgress>) => {
+            states[index] = { ...states[index], ...change };
+            if (this.openProgress?.workspaceId === workspaceId) {
+                this.openProgress = { ...this.openProgress, phase: 'cloning', sources: [...states] };
+            }
+        };
+        if (this.openProgress?.workspaceId === workspaceId) {
+            this.openProgress = { ...this.openProgress, phase: 'cloning', sources: [...states] };
+        }
+        for (const [index, source] of items.entries()) {
+            const dir = dirOf(source);
+            if (states[index].state === 'present') {
                 continue;
             }
+            report(index, { state: 'cloning', percent: 0 });
             const url = `${config.studioUrl}${config.gatewayPrefix}${source.clone_path}`;
             // `-c` on clone is written into the new repository's config: what
             // lands there is the helper's path, never a token.
             const helper = helperCommand(process.execPath, desktopGitHelper());
-            const args = ['clone', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
+            // --progress: git reports only to a terminal otherwise, and this is a pipe.
+            const args = ['clone', '--progress', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
             if (source.branch) {
                 args.push('--branch', source.branch);
             }
             args.push(url, dir);
-            await new Promise<void>((resolve, reject) =>
-                execFile('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, _out, stderr) =>
-                    error ? reject(new Error(`cloning ${source.name} failed: ${stderr.trim()}`)) : resolve()));
+            try {
+                await this.gitClone(args, (stage, percent) => report(index, { stage, percent }));
+            } catch (error) {
+                report(index, { state: 'failed' });
+                throw new Error(`cloning ${source.name} failed: ${error instanceof Error ? error.message : error}`);
+            }
+            report(index, { state: 'done', percent: 100, stage: undefined });
             console.info(`[studio-desktop] cloned ${source.name} into ${dir}`);
             cloned.push(source.name);
         }
         return cloned;
+    }
+
+    /**
+     * Run one `git clone`, handing each progress line on as the stage and the
+     * whole clone's percentage. Rejects with what git said last that was not
+     * progress — the reason, not a bar at 43%.
+     */
+    protected gitClone(args: string[], onProgress: (stage: string, percent: number) => void): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const child = spawn('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, windowsHide: true });
+            let said = '';
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk: string) => {
+                // Progress redraws one line with a carriage return; a chunk may
+                // end mid-line, which only costs one reading of the bar.
+                for (const line of chunk.split(/[\r\n]+/)) {
+                    const progress = parseGitProgress(line);
+                    const percent = progress && clonePercent(progress.stage, progress.percent);
+                    if (progress && percent !== undefined) {
+                        onProgress(progress.stage, percent);
+                    } else if (line.trim()) {
+                        said = `${said}\n${line.trim()}`.slice(-2000);
+                    }
+                }
+            });
+            child.on('error', reject);
+            child.on('close', code => code === 0
+                ? resolve()
+                : reject(new Error(said.trim().split('\n').slice(-3).join(' ') || `git exited with ${code}`)));
+        });
     }
 }
