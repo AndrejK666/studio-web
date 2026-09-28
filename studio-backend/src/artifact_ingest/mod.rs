@@ -21,6 +21,7 @@ pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
 mod ingest_task;
+pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
 pub mod port;
 mod rest;

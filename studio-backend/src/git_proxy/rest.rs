@@ -8,14 +8,18 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use axum::{Extension, Router};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
+use futures_util::StreamExt;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::refresh::{self, Upstream};
 use super::sources::{self, Service, Source};
+use crate::connectors::service::ConnectorService;
 use crate::pagination::{PageQuery, page_of};
 
 struct License;
@@ -57,6 +61,12 @@ pub struct GitProxy {
     pub authn: Arc<dyn AuthNResolverClient>,
     pub account_management: Arc<dyn AccountManagementClient>,
     pub credstore: Arc<dyn CredStoreClientV1>,
+    /// The connection catalogue, read (never written) to find what a pushed
+    /// repository syncs through.
+    pub connectors: Arc<ConnectorService>,
+    /// Where the task queue is found when a push has a sync to queue — per
+    /// push, so this gear does not care whether `studio-tasks` booted first.
+    pub hub: Arc<ClientHub>,
 }
 
 impl GitProxy {
@@ -82,6 +92,106 @@ impl GitProxy {
             .ok_or_else(|| format!("the token '{token_ref}' is not readable"))?;
         String::from_utf8(secret.value.as_bytes().to_vec())
             .map_err(|_| format!("the token '{token_ref}' is not UTF-8"))
+    }
+}
+
+impl GitProxy {
+    /// Queue a sync of every project source the push went to (ADR-0027 phase
+    /// 2). Best effort and after the fact: the push has already succeeded, so
+    /// a sync that cannot be queued is logged, never answered.
+    async fn refresh_after_push(&self, ctx: &SecurityContext, project_id: Uuid, pushed_url: &str) {
+        let Ok(entry) = self
+            .account_management
+            .get_metadata(
+                ctx,
+                project_id,
+                gts::GtsTypeId::new(refresh::PROJECT_CONFIG_TYPE),
+            )
+            .await
+        else {
+            // A workspace that is not a project was seeded from nothing.
+            return;
+        };
+        let sources = refresh::project_sources(&entry.value);
+        if !sources
+            .iter()
+            .any(|s| refresh::same_repository(&s.clone_url, pushed_url))
+        {
+            return;
+        }
+
+        // The portal reads the organization's connections, and a connection
+        // may also live on the workspace or the project. `resolve_metadata`
+        // stops at the nearest tenant that has a catalogue, so every level is
+        // read, the nearest first.
+        let mut connections = std::collections::HashMap::new();
+        let mut workspace_id = None;
+        let mut tenant = Some(project_id);
+        for level in 0..3 {
+            let Some(id) = tenant else { break };
+            if let Ok(found) = self.connectors.list(ctx, id).await {
+                for c in found {
+                    connections.entry(c.id).or_insert(Upstream {
+                        provider: c.provider,
+                        base_url: c.base_url,
+                        secret_ref: c.secret_ref,
+                    });
+                }
+            }
+            tenant = match self.account_management.get_tenant(ctx, id).await {
+                Ok(t) => t.parent_id.map(|p| p.0),
+                Err(_) => None,
+            };
+            if level == 0 {
+                workspace_id = tenant;
+            }
+        }
+
+        let runs =
+            refresh::runs_for_push(project_id, workspace_id, &sources, &connections, pushed_url);
+        if runs.is_empty() {
+            tracing::info!(%project_id, "studio-git: the pushed source's connection is not visible; nothing re-synced");
+            return;
+        }
+        let Ok(queue) = self
+            .hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+        else {
+            tracing::warn!(%project_id, "studio-git: no task queue, so a push cannot re-sync the server's checkout");
+            return;
+        };
+        for run in runs {
+            let partition_key = run.partition_key();
+            let repo = run.repo_full_path.clone();
+            let Ok(payload) = serde_json::to_value(run) else {
+                continue;
+            };
+            let queued = queue
+                .enqueue(
+                    ctx,
+                    crate::tasks::service::NewRun {
+                        tenant: ctx.subject_tenant_id(),
+                        task_type: crate::artifact_ingest::INGEST_TASK_TYPE,
+                        payload,
+                        partition_key: Some(&partition_key),
+                        idempotency_key: None,
+                        // The project's IDE session, if one is open, hears that
+                        // its sources moved — as after a Re-sync in the portal.
+                        notify_workspace_id: Some(project_id),
+                    },
+                )
+                .await;
+            match queued {
+                Ok(run_id) => {
+                    tracing::info!(%project_id, repo, %run_id, "studio-git: a push re-syncs the server's checkout");
+                }
+                Err(error) => {
+                    tracing::warn!(%project_id, repo, error = %format!("{error:#}"), "studio-git: a push could not queue its re-sync");
+                }
+            }
+        }
     }
 }
 
@@ -201,7 +311,7 @@ async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityC
 
 /// Authenticate, find the source, and send one protocol request upstream.
 async fn forward(
-    proxy: &GitProxy,
+    proxy: &Arc<GitProxy>,
     workspace_id: Uuid,
     source: &str,
     protocol_path: &str,
@@ -299,14 +409,33 @@ async fn forward(
             response = response.header(name, value.as_bytes());
         }
     }
-    response
-        .body(Body::from_stream(answer.bytes_stream()))
-        .unwrap_or_else(|_| {
-            refuse(
-                StatusCode::BAD_GATEWAY,
-                "The source host sent an unreadable answer.",
-            )
+    let stream = answer.bytes_stream();
+    let body = if matches!(service, Service::ReceivePack) && (200..300).contains(&status) {
+        // The push report is the last thing the source host sends, after its
+        // refs have moved, so the sync is queued once `git` has read it all:
+        // a sync queued any earlier could fetch the tree from before the push.
+        let proxy = Arc::clone(proxy);
+        let pushed_url = found.url.clone();
+        let reported = futures_util::stream::once(async move {
+            tokio::spawn(async move {
+                proxy
+                    .refresh_after_push(&ctx, workspace_id, &pushed_url)
+                    .await;
+            });
         })
+        .filter_map(|()| {
+            futures_util::future::ready(None::<Result<axum::body::Bytes, reqwest::Error>>)
+        });
+        Body::from_stream(stream.chain(reported))
+    } else {
+        Body::from_stream(stream)
+    };
+    response.body(body).unwrap_or_else(|_| {
+        refuse(
+            StatusCode::BAD_GATEWAY,
+            "The source host sent an unreadable answer.",
+        )
+    })
 }
 
 /// GET …/info/refs?service= — the first request of every clone, fetch and push.
