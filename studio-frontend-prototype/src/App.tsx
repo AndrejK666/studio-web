@@ -3307,6 +3307,14 @@ function WorkspaceProjects({
   const [projectQuery, setProjectQuery] = useState("");
   // Which row's "…" menu is open.
   const [rowMenu, setRowMenu] = useState<string | null>(null);
+  // Any click elsewhere closes it. Registered after the click that opened it
+  // has already been handled, so that click does not close it again.
+  useEffect(() => {
+    if (!rowMenu) return;
+    const close = () => setRowMenu(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [rowMenu]);
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
