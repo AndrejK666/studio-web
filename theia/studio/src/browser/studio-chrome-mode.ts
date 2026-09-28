@@ -89,8 +89,11 @@ body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex
  * else changes for the modes that name nothing.
  */
 export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
-    // Writing: the documents are files, found by browsing or by their text.
-    [DOCUMENTS_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
+    // Writing: the documents are files, found by browsing. Finding them by
+    // their text is the product's own Search (`studio.search.open`, in the rail
+    // and on the ribbon), which also reads comments, proposed changes and
+    // history; Theia's file search beside it was a second, lesser search.
+    [DOCUMENTS_PERSPECTIVE_ID]: ['explorer-view-container'],
 };
 
 /** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */

@@ -129,14 +129,15 @@ describe('the chrome a mode implies', () => {
 });
 
 describe('the rail tabs a mode brings back', () => {
-    it('gives writing a file tree and a search across files', () => {
+    it('gives writing a file tree, and leaves search to the product', () => {
         const { contribution } = chrome('studio.documents');
         contribution.onDidInitializeLayout();
         const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
 
         expect(document.body.dataset.studioPerspective).toBe('studio.documents');
         expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-explorer-view-container');
-        expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
+        // One search: the product's, not Theia's file search beside it.
+        expect(css).not.toContain('#shell-tab-search-view-container');
     });
 
     it('names the mode it is in, and follows a switch', async () => {
