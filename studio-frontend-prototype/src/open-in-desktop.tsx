@@ -1,4 +1,4 @@
-// "Open in desktop": the project, in the desktop Studio the member has
+// "Desktop IDE": the project, in the desktop Studio the member has
 // installed (ADR-0027 §6).
 //
 // The link names this Studio and the project, and carries no token -- the app
@@ -59,7 +59,7 @@ export function OpenInDesktop({ project }: { project: { id: string; name: string
         onClick={open}
         title="Open this project in the Constructor Studio app on your machine: it signs you in, clones the sources and opens them"
       >
-        Open in desktop
+        Desktop IDE
       </button>
       {missing && (
         <span className="hint" style={{ fontSize: 12 }}>
