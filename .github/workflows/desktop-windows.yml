@@ -130,7 +130,13 @@ jobs:
             rm -rf "plugins/${dir}"
             mkdir -p "plugins/${dir}"
             unzip -q "$RUNNER_TEMP/plugin.vsix" -d "plugins/${dir}"
-            echo "shipped ${dir}"
+            # Codex's win32 build also carries its linux binaries (361 MB of
+            # 958 MB unpacked), used only when the member turns on its "run in
+            # WSL" setting (off by default). The installer leaves them out.
+            if [ -d "plugins/${dir}/extension/bin" ] && ls -d "plugins/${dir}/extension/bin/windows-"* >/dev/null 2>&1; then
+              find "plugins/${dir}/extension/bin" -mindepth 1 -maxdepth 1 -type d -name 'linux-*' -print -exec rm -rf {} +
+            fi
+            echo "shipped ${dir} ($(du -sh "plugins/${dir}" | cut -f1))"
           done < "$RUNNER_TEMP/assistants.txt"
       - name: Rebuild native modules for Electron
         working-directory: theia/electron-app
