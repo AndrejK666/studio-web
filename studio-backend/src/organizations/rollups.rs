@@ -33,13 +33,13 @@
 
 use std::sync::Arc;
 
-use account_management_sdk::AccountManagementClient;
+use account_management_sdk::{AccountManagementClient, IdpUserPagination, ListUsersQuery};
 use toolkit_odata::ODataQuery;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::artifact_ingest::port::ArtifactCounter;
-use crate::documents::port::DocumentCounter;
+use crate::artifact_ingest::port::{ArtifactCounter, ProjectSignalSource, ProjectSignals};
+use crate::documents::port::{DocumentCounter, SpecSummary};
 
 /// Tenant type of a workspace, as account-management records it.
 pub const WORKSPACE_TENANT_TYPE: &str =
@@ -49,8 +49,16 @@ pub const PROJECT_TENANT_TYPE: &str = "gts.cf.core.am.tenant_type.v1~cf.studio.t
 /// Where a project's attached repositories are recorded.
 const SETTINGS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
+/// What a project is: its kind and its brief.
+const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 /// The node type a detector writes its verdicts as.
 const FINDING_TYPE_LEAF: &str = "spec_finding";
+/// The window a projects-table row draws its pull requests over.
+pub const ACTIVITY_DAYS: usize = 7;
+/// People counted for a project's team, at most: one page of the IdP's
+/// listing. A larger team reads as this many, which is still the right order
+/// of magnitude for a table cell.
+const TEAM_PAGE: u32 = 200;
 
 /// Which kind of row this is. A workspace is counted by what it holds; a
 /// project by what is in it.
@@ -90,6 +98,37 @@ pub struct Rollup {
     pub findings: Option<u32>,
     /// Projects only: repositories attached in the project's settings.
     pub repos: Option<u32>,
+    /// Projects only: the project's kind (`new_gears`, `product`,
+    /// `existing`) and its brief, from its own configuration.
+    pub project_kind: Option<String>,
+    pub brief: Option<String>,
+    /// Projects only: how its specs stand.
+    pub specs: Option<SpecSummary>,
+    /// Projects only: open findings and comments, pull requests over the last
+    /// [`ACTIVITY_DAYS`] days, and the last thing that happened.
+    pub signals: Option<ProjectSignals>,
+    /// Projects only: people in the project's tenant.
+    pub team: Option<u32>,
+}
+
+impl Rollup {
+    fn workspace(id: Uuid, name: String, projects: u32) -> Self {
+        Self {
+            id,
+            name,
+            kind: RollupKind::Workspace,
+            parent_id: None,
+            projects: Some(projects),
+            documents: None,
+            findings: None,
+            repos: None,
+            project_kind: None,
+            brief: None,
+            specs: None,
+            signals: None,
+            team: None,
+        }
+    }
 }
 
 /// The sources a rollup reads.
@@ -101,6 +140,7 @@ pub struct Sources {
     pub am: Arc<dyn AccountManagementClient>,
     pub documents: Option<Arc<dyn DocumentCounter>>,
     pub artifacts: Option<Arc<dyn ArtifactCounter>>,
+    pub signals: Option<Arc<dyn ProjectSignalSource>>,
 }
 
 impl Sources {
@@ -117,22 +157,25 @@ impl Sources {
             let projects = self
                 .children_of(ctx, workspace_id, PROJECT_TENANT_TYPE)
                 .await;
-            out.push(Rollup {
-                id: workspace_id,
-                name: workspace_name,
-                kind: RollupKind::Workspace,
-                parent_id: None,
-                // The children were listed in order to walk into them, so this
-                // count is what that listing already said — not a second
-                // question asked for the number alone.
-                projects: Some(u32::try_from(projects.len()).unwrap_or(u32::MAX)),
-                documents: None,
-                findings: None,
-                repos: None,
-            });
-            for (project_id, name) in projects {
-                out.push(self.project(ctx, workspace_id, project_id, name).await);
-            }
+            // The children were listed in order to walk into them, so this
+            // count is what that listing already said — not a second question
+            // asked for the number alone.
+            out.push(Rollup::workspace(
+                workspace_id,
+                workspace_name,
+                u32::try_from(projects.len()).unwrap_or(u32::MAX),
+            ));
+            // A workspace's projects at once: each row is a handful of
+            // independent reads, and a table waiting on them one after
+            // another is the slowness this endpoint exists to remove.
+            out.extend(
+                futures_util::future::join_all(
+                    projects.into_iter().map(|(project_id, name)| {
+                        self.project(ctx, workspace_id, project_id, name)
+                    }),
+                )
+                .await,
+            );
         }
         out
     }
@@ -176,7 +219,7 @@ impl Sources {
         }
     }
 
-    /// One project's three counts, each settled on its own.
+    /// One project's row, every part settled on its own.
     async fn project(
         &self,
         ctx: &SecurityContext,
@@ -184,19 +227,60 @@ impl Sources {
         project_id: Uuid,
         name: String,
     ) -> Rollup {
-        let documents = match &self.documents {
-            Some(counter) => counter
-                .count_bindings(ctx, workspace_id, project_id)
-                .await
-                .ok(),
-            None => None,
+        let documents = async {
+            match &self.documents {
+                Some(counter) => counter
+                    .count_bindings(ctx, workspace_id, project_id)
+                    .await
+                    .ok(),
+                None => None,
+            }
         };
-        let findings = match &self.artifacts {
-            Some(counter) => counter
-                .count_nodes(ctx, FINDING_TYPE_LEAF, &project_id.to_string())
-                .await
-                .ok(),
-            None => None,
+        let scope = project_id.to_string();
+        let findings = async {
+            match &self.artifacts {
+                Some(counter) => counter
+                    .count_nodes(ctx, FINDING_TYPE_LEAF, &scope)
+                    .await
+                    .ok(),
+                None => None,
+            }
+        };
+        let specs = async {
+            match &self.documents {
+                Some(counter) => counter
+                    .spec_summary(ctx, workspace_id, project_id)
+                    .await
+                    .ok(),
+                None => None,
+            }
+        };
+        let signals = async {
+            match &self.signals {
+                Some(source) => source
+                    .project_signals(ctx, &scope, ACTIVITY_DAYS)
+                    .await
+                    .ok(),
+                None => None,
+            }
+        };
+        let (documents, findings, specs, signals, repos, config, team) = tokio::join!(
+            documents,
+            findings,
+            specs,
+            signals,
+            self.repos(ctx, project_id),
+            self.config(ctx, project_id),
+            self.team(ctx, project_id),
+        );
+        let text = |key: &str| {
+            config
+                .as_ref()
+                .and_then(|c| c.get(key))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
         };
         Rollup {
             id: project_id,
@@ -206,8 +290,34 @@ impl Sources {
             projects: None,
             documents,
             findings,
-            repos: self.repos(ctx, project_id).await,
+            repos,
+            project_kind: text("kind"),
+            brief: text("brief"),
+            specs,
+            signals,
+            team,
         }
+    }
+
+    /// The project's own configuration, or `None` when it has none or it
+    /// could not be read -- its kind and brief are then simply not shown.
+    async fn config(&self, ctx: &SecurityContext, project_id: Uuid) -> Option<serde_json::Value> {
+        self.am
+            .get_metadata(ctx, project_id, gts::GtsTypeId::new(PROJECT_CONFIG_TYPE))
+            .await
+            .ok()
+            .map(|e| e.value)
+    }
+
+    /// People in the project's tenant: one page of the IdP's listing.
+    async fn team(&self, ctx: &SecurityContext, project_id: Uuid) -> Option<u32> {
+        let page = IdpUserPagination::new(TEAM_PAGE, None).ok()?;
+        let users = self
+            .am
+            .list_users(ctx, project_id, ListUsersQuery::new(page))
+            .await
+            .ok()?;
+        Some(u32::try_from(users.items.len()).unwrap_or(u32::MAX))
     }
 
     /// Repositories attached to a project.

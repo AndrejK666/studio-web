@@ -218,6 +218,45 @@ pub struct RollupDto {
     pub findings: Option<u32>,
     /// Projects: repositories attached in the project's settings.
     pub repos: Option<u32>,
+    /// Projects: `new_gears`, `product` or `existing`, from the project's
+    /// configuration; null when it records none.
+    pub project_kind: Option<String>,
+    /// Projects: what the project is for, in its owner's words.
+    pub brief: Option<String>,
+    /// Projects: findings whose verdict is still something to fix
+    /// (`high`, `gate-failed`, `some`). `findings` counts every verdict.
+    pub open_findings: Option<u32>,
+    /// Projects: unresolved threads the repositories report, on documents and
+    /// on pull requests under review. Null when no repository could say.
+    pub open_comments: Option<u32>,
+    /// Projects: specs — repository files bound to a type, and documents
+    /// written in Studio.
+    pub specs: Option<u32>,
+    /// Projects: of the specs, the ones written in Studio.
+    pub specs_authored: Option<u32>,
+    /// Projects: of the specs, the ones with a validation verdict.
+    pub specs_checked: Option<u32>,
+    /// Projects: of the checked specs, the ones that do not conform.
+    pub specs_failing: Option<u32>,
+    /// Projects: pull requests open now. Null when none was ever synced —
+    /// no activity to show, which is not the same as a quiet week.
+    pub pulls_open: Option<u32>,
+    /// Projects: pull requests merged over the last `activity_days` days.
+    pub pulls_merged: Option<u32>,
+    /// Projects: pull requests that moved, per day, oldest first, always
+    /// `activity_days` long.
+    pub pull_days: Option<Vec<u32>>,
+    /// The window `pulls_merged` and `pull_days` cover.
+    pub activity_days: Option<u32>,
+    /// Projects: people in the project's tenant.
+    pub team: Option<u32>,
+    /// Projects: the newest event the Activity feed lists, as it words it
+    /// (`Document checked`, `Comment`); null when nothing is recorded.
+    pub last_event: Option<String>,
+    /// What that event happened to.
+    pub last_subject: Option<String>,
+    /// When, RFC 3339.
+    pub last_at: Option<String>,
 }
 
 /// A page of rollups.
@@ -236,7 +275,30 @@ pub struct RollupQuery {
 }
 
 fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
+    let pulls = r
+        .signals
+        .as_ref()
+        .filter(|s| s.pulls_known)
+        .map(|s| &s.pulls);
+    let last = r.signals.as_ref().and_then(|s| s.last_event.as_ref());
     RollupDto {
+        project_kind: r.project_kind,
+        brief: r.brief,
+        open_findings: r.signals.as_ref().map(|s| s.open_findings),
+        open_comments: r.signals.as_ref().and_then(|s| s.open_comments),
+        specs: r.specs.map(|s| s.specs),
+        specs_authored: r.specs.map(|s| s.authored),
+        specs_checked: r.specs.map(|s| s.checked),
+        specs_failing: r.specs.map(|s| s.failing),
+        pulls_open: pulls.map(|p| p.open),
+        pulls_merged: pulls.map(|p| p.merged),
+        pull_days: pulls.map(|p| p.days.clone()),
+        activity_days: pulls
+            .map(|_| u32::try_from(super::rollups::ACTIVITY_DAYS).unwrap_or(u32::MAX)),
+        team: r.team,
+        last_event: last.map(|e| e.event.clone()),
+        last_subject: last.map(|e| e.subject.clone()),
+        last_at: last.and_then(|e| e.recorded.clone()),
         id: r.id.to_string(),
         name: r.name,
         kind: r.kind.as_str().to_string(),
