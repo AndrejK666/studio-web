@@ -151,6 +151,7 @@ installed build is pointed somewhere else for a test.
 | `STUDIO_DESKTOP_WORKSPACES` | where opened workspaces are cloned; default `~/ConstructorStudio/workspaces` |
 | `STUDIO_DESKTOP_BROWSER` | a command to open the sign-in page with, instead of the system browser |
 | `STUDIO_DESKTOP_AUTO_SIGN_IN` | `1` starts the sign-in at launch |
+| `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else `gearbox` on `PATH` |
 
 With none of the first three set, the IDE is an ordinary editor and the Studio
 view does not open.
@@ -235,6 +236,10 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
   and AppImage targets for macOS and Linux; only Windows has been built so far.
 - `--environments <file>` ships another list; `--studio-url <address>
   [--issuer <realm>]` ships exactly one Studio.
+- `--gearbox <path>` ships that `gearbox` executable as `resources/bin/gearbox.exe`,
+  the engine behind the gear catalogue, products and `.gdl`. Without it the
+  build still packages, and its catalogue says no engine is installed; a
+  developer's `theia start` needs `gearbox` on `PATH` or `GEARBOX_ENGINE`.
 - The app is staged without `node_modules`: the Theia bundle in `lib/` is
   self-contained (its only external is `electron`), so the installer carries
   the bundle, `desktop-main.js`, the git credential helper, the built-in
@@ -245,7 +250,9 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 
 `.github/workflows/desktop-windows.yml` builds and packages on `windows-2022`,
 where the native modules compile, and uploads the installer and the zip as the
-run's artifact. It runs when `theia/electron-app/**` or the workflow changes,
+run's artifact. It builds the `gearbox` engine too, from source, at the
+repository, revision and Rust that `theia/Dockerfile`'s `gearbox` stage pins for
+the session image — one pin for both — and caches the build per revision. It runs when `theia/electron-app/**` or the workflow changes,
 and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
 
 | Input | Default | Meaning |
