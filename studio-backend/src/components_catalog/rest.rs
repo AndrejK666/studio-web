@@ -296,6 +296,20 @@ pub struct ScaffoldRequest {
 /// Whether product previews can run here, and against which gear corpus.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
+pub struct GearboxCatalogueDto {
+    /// The source id the corpus's gears are joined on; every descriptor's
+    /// `source` names it.
+    pub source_id: String,
+    /// `owner/repo@ref` of the checkout, as a person reads it.
+    pub corpus: String,
+    pub corpus_commit: Option<String>,
+    /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
+    /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
+    pub catalogue: Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
 pub struct GearboxStatusDto {
     /// False when `STUDIO_GEARBOX_WORKDIR` is unset; nothing else is filled.
     pub enabled: bool,
@@ -1914,6 +1928,22 @@ async fn complete_product(
     }))
 }
 
+async fn gearbox_catalogue(
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<GearboxCatalogueDto>> {
+    let gearbox = catalog.gearbox()?;
+    let (raw, commit) = gearbox
+        .catalogue_json()
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(GearboxCatalogueDto {
+        source_id: CORPUS_SOURCE_ID.to_string(),
+        corpus: gearbox.corpus_label(),
+        corpus_commit: commit,
+        catalogue: Value::clone(&raw),
+    }))
+}
+
 async fn gearbox_status(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<GearboxStatusDto>> {
@@ -2760,6 +2790,21 @@ pub fn register_routes(
         .json_request::<CompleteProductRequest>(openapi, "Picked gears")
         .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
         .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/catalogue")
+        .operation_id("studio_components_catalog.get_gearbox_catalogue")
+        .summary("The gear corpus's catalogue, as the Gearbox engine reads it")
+        .description(
+            "Every gear the corpus describes, read by the engine from the one              checkout this backend keeps. An IDE whose workspace holds no gear              corpus lists the gears from here instead of cloning it.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(gearbox_catalogue)
+        .json_response_with_schema::<GearboxCatalogueDto>(openapi, StatusCode::OK, "Catalogue")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
