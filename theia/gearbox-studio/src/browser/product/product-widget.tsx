@@ -54,6 +54,7 @@ import { RevealPathLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { SelectionService, type Selection } from "../shell/selection-service";
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /**
  * The stages of a product, in the order they are worked through.
@@ -341,6 +342,20 @@ export class ProductWidget extends ReactWidget {
     this.session.dismissOpening();
     if (previous === undefined) return;
     void this.session.open(previous);
+  }
+
+  /**
+   * Take the focus when the shell activates this view. Theia waits up to two
+   * seconds for an activated widget to accept focus, and a mode switch
+   * activates its views one after another: without this, entering Building
+   * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
+   */
+  protected override onActivateRequest(msg: Message): void {
+    super.onActivateRequest(msg);
+    if (!this.node.hasAttribute("tabindex")) {
+      this.node.tabIndex = -1;
+    }
+    this.node.focus();
   }
 
   protected render(): React.ReactNode {

@@ -53,7 +53,7 @@ import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
-import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
+import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 
 const STYLE_ID = 'studio-chrome-mode';
 
@@ -74,8 +74,8 @@ body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: non
    is right for someone writing a document and wrong for someone who has just
    edited code and wants to commit it. The workbench is the mode that wants it.
 
-   Only this one is restored. Explorer stays hidden because Projects replaces
-   it, and Debug, Test and Search are not part of the question being answered. */
+   Only this one is restored here. Explorer comes back per mode (MODE_TABS),
+   and Debug, Test and Search are not part of the question being answered. */
 body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex !important; }
 `;
 
@@ -94,6 +94,11 @@ export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
     // and on the ribbon), which also reads comments, proposed changes and
     // history; Theia's file search beside it was a second, lesser search.
     [DOCUMENTS_PERSPECTIVE_ID]: ['explorer-view-container'],
+    // Development and FULL place the file tree too (studio-perspectives.ts),
+    // and product-ext hid its tab: the modes for working on code had no way
+    // to browse the code.
+    [WORKBENCH_PERSPECTIVE_ID]: ['explorer-view-container'],
+    [FULL_PERSPECTIVE_ID]: ['explorer-view-container'],
 };
 
 /** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */
