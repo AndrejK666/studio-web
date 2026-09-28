@@ -491,7 +491,10 @@ pub(crate) async fn send_upstream(
     };
     let status = answer.status().as_u16();
     if status == 401 || status == 403 {
-        tracing::warn!(status, "studio-git: the source host refused the stored token");
+        tracing::warn!(
+            status,
+            "studio-git: the source host refused the stored token"
+        );
         return Err(refuse(StatusCode::FORBIDDEN, refused));
     }
     let mut response =
@@ -505,7 +508,10 @@ pub(crate) async fn send_upstream(
 }
 
 /// The upstream answer streamed back as it arrives, nothing buffered.
-pub(crate) fn stream_back(response: axum::http::response::Builder, answer: reqwest::Response) -> Response {
+pub(crate) fn stream_back(
+    response: axum::http::response::Builder,
+    answer: reqwest::Response,
+) -> Response {
     response
         .body(Body::from_stream(answer.bytes_stream()))
         .unwrap_or_else(|_| {
