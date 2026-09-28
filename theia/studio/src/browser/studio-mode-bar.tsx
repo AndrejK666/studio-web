@@ -72,6 +72,9 @@ const BY_WORK: readonly Mode[] = [
         perspective: DOCUMENTS_PERSPECTIVE_ID,
         menus: ['File', 'Edit', 'View', 'Help'],
         groups: [
+            // Finding a document by what it says is how writing starts as often
+            // as browsing is, so it sits in the ribbon, not only behind a rail tab.
+            { label: 'Find', actions: [{ command: 'search-in-workspace.open', icon: 'search', label: 'Search', title: 'Find text across the project\'s files' }] },
             {
                 label: 'Specs',
                 actions: [
