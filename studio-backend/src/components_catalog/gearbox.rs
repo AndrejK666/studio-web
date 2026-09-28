@@ -1532,6 +1532,14 @@ impl Gearbox {
         self.current_source().label
     }
 
+    /// Where a client can clone the corpus itself: its URL and ref, and
+    /// whether reaching it takes the token this backend holds (which is never
+    /// handed out, so such a corpus cannot be cloned from a laptop directly).
+    pub fn corpus_origin(&self) -> (String, String, bool) {
+        let s = self.current_source();
+        (s.url, s.git_ref, !s.token.is_empty())
+    }
+
     /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
     /// Returns whether it did. A source with no descriptors — a gears
     /// repository before it adopted Gearbox — leaves the current corpus alone:

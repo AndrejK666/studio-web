@@ -275,6 +275,16 @@ export interface GearboxService {
     ref: { rev?: string | null; tag?: string | null; branch?: string | null },
   ): Promise<string | undefined>;
 
+  /**
+   * Constructor Studio: make the gear corpus `url` at commit `rev` a source
+   * root of every engine this backend starts, from the one copy kept per
+   * machine (`~/ConstructorStudio/corpus`). With `fetch` false it only adopts a
+   * copy already there and never touches the network; with `fetch` true it
+   * clones one, and rejects with git's reason when that fails. The directory,
+   * or `undefined` when there is none to adopt.
+   */
+  useSharedCorpus(id: string, url: string, rev: string, fetch: boolean): Promise<string | undefined>;
+
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */
   loadProduct(path: string): Promise<ProductLoadResult>;
@@ -658,4 +668,15 @@ export interface RemoteCatalogue {
   /** `owner/repo@ref`, as a person reads it. */
   readonly corpus: string;
   readonly gears: readonly GearDescriptor[];
+  /** Where the corpus can be had from, when the backend says. */
+  readonly origin?: CorpusOrigin;
+}
+export interface CorpusOrigin {
+  /** The source id its gears name, and the directory a copy is kept under. */
+  readonly sourceId: string;
+  readonly url: string;
+  /** The commit the listed gears were read at. */
+  readonly rev: string;
+  /** Cloning it takes a token the backend does not hand out. */
+  readonly needsToken: boolean;
 }
