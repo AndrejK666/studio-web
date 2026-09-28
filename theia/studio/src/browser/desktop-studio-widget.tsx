@@ -13,6 +13,7 @@ import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StudioApi } from './studio-api';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 import { Organization, Tenant, projectsOf } from './desktop-projects';
+import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -48,6 +49,11 @@ export class DesktopStudioWidget extends ReactWidget {
     /** The workspace being cloned and opened, and how that went. */
     protected opening: string | undefined;
     protected openError = '';
+    /** How far the open is, polled from the backend while it runs. */
+    protected progress: OpenProgress | undefined;
+    protected progressPoll: number | undefined;
+    /** The project this window has open, when Studio opened it. */
+    protected openedHere: string | undefined;
     protected organizations: Organization[] | undefined;
     protected loadError = '';
     protected poll: number | undefined;
@@ -69,6 +75,7 @@ export class DesktopStudioWidget extends ReactWidget {
 
     protected onBeforeDetach(msg: Message): void {
         window.clearInterval(this.poll);
+        window.clearInterval(this.progressPoll);
         super.onBeforeDetach(msg);
     }
 
@@ -179,7 +186,9 @@ export class DesktopStudioWidget extends ReactWidget {
     protected async openWorkspace(workspace: Tenant, folder: string = workspace.name): Promise<void> {
         this.opening = workspace.id;
         this.openError = '';
+        this.progress = undefined;
         this.update();
+        this.progressPoll = window.setInterval(() => void this.readProgress(workspace.id), 400);
         try {
             const answer = await fetch(desktopUrl('open'), {
                 method: 'POST',
@@ -194,9 +203,55 @@ export class DesktopStudioWidget extends ReactWidget {
         } catch (error) {
             this.openError = `${workspace.name} could not be opened: ${error instanceof Error ? error.message : error}`;
         } finally {
+            window.clearInterval(this.progressPoll);
+            this.progressPoll = undefined;
             this.opening = undefined;
+            this.progress = undefined;
             this.update();
         }
+    }
+
+    protected async readProgress(workspaceId: string): Promise<void> {
+        try {
+            const progress = await (await fetch(desktopUrl('open-progress'))).json() as OpenProgress | null;
+            if (this.opening === workspaceId && progress?.workspaceId === workspaceId) {
+                this.progress = progress;
+                this.update();
+            }
+        } catch {
+            // A backend from before this route: the spinner alone, as before.
+        }
+    }
+
+    /** Which project this window has open, asked of the backend for its folder. */
+    protected async readOpenedHere(): Promise<void> {
+        const root = this.workspaceService.tryGetRoots()[0]?.resource;
+        this.openedHere = undefined;
+        if (!root) {
+            return;
+        }
+        try {
+            const answer = await fetch(`${desktopUrl('opened')}?root=${encodeURIComponent(root.path.fsPath())}`);
+            this.openedHere = answer.ok ? (await answer.json() as { tenantId?: string }).tenantId : undefined;
+        } catch {
+            this.openedHere = undefined;
+        }
+    }
+
+    /** The name of the project this window has open, wherever it is in the list. */
+    protected openedHereName(): string | undefined {
+        for (const org of this.organizations ?? []) {
+            for (const ws of org.projects) {
+                if (ws.id === this.openedHere) {
+                    return ws.name;
+                }
+                const nested = ws.nested.find(p => p.id === this.openedHere);
+                if (nested) {
+                    return `${ws.name} › ${nested.name}`;
+                }
+            }
+        }
+        return undefined;
     }
 
     /** The member's projects, found the way the portals find them. */
@@ -210,6 +265,7 @@ export class DesktopStudioWidget extends ReactWidget {
                 return answer.json();
             });
             this.loadError = '';
+            await this.readOpenedHere();
         } catch (error) {
             this.loadError = `Your projects could not be loaded (${error instanceof Error ? error.message : error}).`;
         }
@@ -217,11 +273,35 @@ export class DesktopStudioWidget extends ReactWidget {
 
     /** One project to open: its name, and the spinner while it is being cloned. */
     protected renderProject(project: Tenant, icon: string, folder?: string): React.ReactNode {
-        return <div style={{ cursor: 'pointer' }}
-            title={`Open ${project.name} here — its sources are cloned through Studio`}
-            onClick={() => this.opening || void this.openWorkspace(project, folder)}>
-            <span className={this.opening === project.id ? 'codicon codicon-loading codicon-modifier-spin' : `codicon ${icon}`} />
-            {' '}<a>{project.name}</a>
+        const here = this.openedHere === project.id;
+        const opening = this.opening === project.id;
+        return <div>
+            <div style={{ cursor: 'pointer', fontWeight: here ? 600 : undefined }}
+                title={here ? `${project.name} is open in this window` : `Open ${project.name} here — its sources are cloned through Studio`}
+                onClick={() => this.opening || void this.openWorkspace(project, folder)}>
+                <span className={opening ? 'codicon codicon-loading codicon-modifier-spin' : `codicon ${here ? 'codicon-folder-opened' : icon}`} />
+                {' '}<a>{project.name}</a>
+                {here && <span style={{ marginLeft: 6, fontSize: '0.85em', opacity: 0.8 }}>· open here</span>}
+            </div>
+            {opening && this.renderProgress()}
+        </div>;
+    }
+
+    /** Under the project while it opens: what is being done, and a bar per clone. */
+    protected renderProgress(): React.ReactNode {
+        const progress = this.progress;
+        const bar = (percent: number | undefined) => <div style={{ height: 4, borderRadius: 2, marginTop: 2, overflow: 'hidden', background: 'var(--theia-editorWidget-border, rgba(128,128,128,0.3))' }}>
+            <div style={{ height: '100%', width: `${percent ?? 0}%`, background: 'var(--theia-progressBar-background, var(--theia-focusBorder))', transition: 'width 0.3s' }} />
+        </div>;
+        return <div style={{ paddingLeft: 20, fontSize: '0.85em', opacity: 0.85, marginTop: 2 }}>
+            <div>{progress ? describeOpenProgress(progress) : 'Starting…'}</div>
+            {progress?.sources.filter(s => s.state !== 'present').map(s => <div key={s.name} style={{ marginTop: 3 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{s.name}</span>
+                    <span>{s.state === 'done' ? 'done' : s.state === 'failed' ? 'failed' : s.state === 'waiting' ? 'waiting' : `${s.percent ?? 0}%`}</span>
+                </div>
+                {bar(s.state === 'done' ? 100 : s.percent)}
+            </div>)}
         </div>;
     }
 
@@ -270,6 +350,9 @@ export class DesktopStudioWidget extends ReactWidget {
                 </a>}
                 <a style={link} onClick={() => void this.signOut()}>Sign out</a>
             </div>
+            {this.openedHereName() && <p style={{ margin: '8px 0 0' }}>
+                <span className='codicon codicon-folder-opened' /> Open here: <b>{this.openedHereName()}</b>
+            </p>}
             {this.loadError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.loadError}</p>}
             {!this.organizations && !this.loadError && <p>Loading your projects…</p>}
             {this.organizations?.length === 0 && <p style={{ opacity: 0.7 }}>
