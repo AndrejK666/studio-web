@@ -44,6 +44,8 @@ use crate::documents::port::{DocumentCounter, SpecSummary};
 /// Tenant type of a workspace, as account-management records it.
 pub const WORKSPACE_TENANT_TYPE: &str =
     "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~";
+/// Tenant type of an organization, which holds workspaces.
+pub const ORGANIZATION_TENANT_TYPE: &str = super::service::ORGANIZATION_TENANT_TYPE;
 /// Tenant type of a project.
 pub const PROJECT_TENANT_TYPE: &str = "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~";
 /// Where a project's attached repositories are recorded.
@@ -150,33 +152,70 @@ impl Sources {
     /// parameter: a tenant somebody can type is not a scope (convention C1).
     pub async fn portfolio(&self, ctx: &SecurityContext) -> Vec<Rollup> {
         let root = ctx.subject_tenant_id();
+        // Workspaces sit under the caller's tenant, or one level down under an
+        // organization in it (ADR-0011): a platform tenant holds
+        // organizations, and they hold the workspaces. Walking only the
+        // direct children answered an empty portfolio for exactly that tree.
+        let mut parents = vec![root];
+        parents.extend(
+            self.children_of(ctx, root, ORGANIZATION_TENANT_TYPE)
+                .await
+                .into_iter()
+                .map(|(id, _)| id),
+        );
         let mut out = Vec::new();
-        for (workspace_id, workspace_name) in
-            self.children_of(ctx, root, WORKSPACE_TENANT_TYPE).await
-        {
-            let projects = self
-                .children_of(ctx, workspace_id, PROJECT_TENANT_TYPE)
-                .await;
-            // The children were listed in order to walk into them, so this
-            // count is what that listing already said — not a second question
-            // asked for the number alone.
-            out.push(Rollup::workspace(
-                workspace_id,
-                workspace_name,
-                u32::try_from(projects.len()).unwrap_or(u32::MAX),
-            ));
-            // A workspace's projects at once: each row is a handful of
-            // independent reads, and a table waiting on them one after
-            // another is the slowness this endpoint exists to remove.
-            out.extend(
-                futures_util::future::join_all(
-                    projects.into_iter().map(|(project_id, name)| {
-                        self.project(ctx, workspace_id, project_id, name)
-                    }),
-                )
-                .await,
-            );
+        for parent in parents {
+            for (workspace_id, workspace_name) in
+                self.children_of(ctx, parent, WORKSPACE_TENANT_TYPE).await
+            {
+                out.extend(self.workspace(ctx, workspace_id, workspace_name).await);
+            }
         }
+        out
+    }
+
+    /// One workspace and its projects, for the table that shows a workspace.
+    ///
+    /// Empty when the tenant is not a workspace or cannot be read: the same
+    /// answer a portfolio gives for a subtree it may not see.
+    pub async fn one_workspace(&self, ctx: &SecurityContext, workspace_id: Uuid) -> Vec<Rollup> {
+        match self.am.get_tenant(ctx, workspace_id).await {
+            Ok(t) if t.tenant_type.as_deref() == Some(WORKSPACE_TENANT_TYPE) => {
+                self.workspace(ctx, workspace_id, t.name).await
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A workspace's row, then one row per project in it.
+    async fn workspace(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        workspace_name: String,
+    ) -> Vec<Rollup> {
+        let projects = self
+            .children_of(ctx, workspace_id, PROJECT_TENANT_TYPE)
+            .await;
+        // The children were listed in order to walk into them, so this count
+        // is what that listing already said — not a second question asked for
+        // the number alone.
+        let mut out = vec![Rollup::workspace(
+            workspace_id,
+            workspace_name,
+            u32::try_from(projects.len()).unwrap_or(u32::MAX),
+        )];
+        // A workspace's projects at once: each row is a handful of independent
+        // reads, and a table waiting on them one after another is the slowness
+        // this endpoint exists to remove.
+        out.extend(
+            futures_util::future::join_all(
+                projects
+                    .into_iter()
+                    .map(|(project_id, name)| self.project(ctx, workspace_id, project_id, name)),
+            )
+            .await,
+        );
         out
     }
 

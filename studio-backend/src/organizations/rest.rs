@@ -267,11 +267,14 @@ pub struct RollupListDto {
     pub total: u32,
 }
 
-/// `?project_id=` narrows the answer to one project (convention C2).
+/// `?project_id=` narrows the answer to one project, `?workspace_id=` to one
+/// workspace and its projects (convention C2).
 #[derive(Debug, serde::Deserialize)]
 pub struct RollupQuery {
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
@@ -320,16 +323,30 @@ async fn list_rollups(
             .with_detail("account-management is not available, so nothing can be counted")
             .create()
     })?;
-    let items = match query.project_id.as_deref() {
-        Some(raw) => {
-            let id = Uuid::parse_str(raw.trim()).map_err(|_| {
-                OrganizationError::invalid_argument()
-                    .with_constraint("project_id must be a uuid")
-                    .create()
-            })?;
-            sources.one_project(&ctx, id).await.into_iter().collect()
+    let uuid = |raw: &str, field: &str| {
+        Uuid::parse_str(raw.trim()).map_err(|_| {
+            OrganizationError::invalid_argument()
+                .with_constraint(format!("{field} must be a uuid"))
+                .create()
+        })
+    };
+    let items = match (query.project_id.as_deref(), query.workspace_id.as_deref()) {
+        (Some(_), Some(_)) => {
+            return Err(OrganizationError::invalid_argument()
+                .with_constraint("give project_id or workspace_id, not both")
+                .create());
         }
-        None => sources.portfolio(&ctx).await,
+        (Some(raw), None) => sources
+            .one_project(&ctx, uuid(raw, "project_id")?)
+            .await
+            .into_iter()
+            .collect(),
+        (None, Some(raw)) => {
+            sources
+                .one_workspace(&ctx, uuid(raw, "workspace_id")?)
+                .await
+        }
+        (None, None) => sources.portfolio(&ctx).await,
     };
     let items: Vec<RollupDto> = items.into_iter().map(rollup_dto).collect();
     Ok(Json(RollupListDto {
@@ -441,15 +458,32 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .operation_id("studio_organizations.list_rollups")
         .summary("What each workspace and project contains")
         .description(
-            "One call for the whole portfolio: every workspace under the caller's tenant with              the number of projects it holds, and every project with its documents, detector              findings and attached repositories. `?project_id=` narrows it to one project.
-
-             Every count is NULLABLE, and the null is the point: it means that source could              not be asked, which is a different fact from a count of zero — render `—` for              null and the number, including a real `0`, otherwise. Counts are settled              independently, so one gear being unreachable costs one column rather than the              row.
-
-This composition used to live in the portal, which spent three requests              per row to build it, one of them a listing that walks the tenant's whole artifact              graph. Here it is one request, and the next portal inherits the rules instead of              rewriting them.",
+            "One call for the whole portfolio: every workspace under the caller's tenant, \
+             or under an organization in it, with the number of projects it holds, and every \
+             project with what its row in a projects table shows: documents, detector findings \
+             and attached repositories; its kind and brief; open findings and open comments; \
+             its specs, checked and failing; pull requests over the last `activity_days` days; \
+             its team; and the last event the Activity feed lists. `?project_id=` narrows it to \
+             one project, `?workspace_id=` to one workspace and its projects.\n\n\
+             Every count is NULLABLE, and the null is the point: it means that source could \
+             not be asked, which is a different fact from a count of zero -- render `-` for \
+             null and the number, including a real `0`, otherwise. Counts are settled \
+             independently, so one gear being unreachable costs one column rather than the \
+             row.\n\n\
+             This composition used to live in the portal, which spent several requests per \
+             row to build it, one of them a listing that walks the tenant's whole artifact \
+             graph. Here it is one request, and the next portal inherits the rules instead of \
+             rewriting them.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param("project_id", false, "Narrow the answer to this project")
+        .query_param(
+            "workspace_id",
+            false,
+            "Narrow the answer to this workspace and its projects",
+        )
         .handler(list_rollups)
         .json_response_with_schema::<RollupListDto>(openapi, StatusCode::OK, "The rollups")
         .error_400(openapi)
