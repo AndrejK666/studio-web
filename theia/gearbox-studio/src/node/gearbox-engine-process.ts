@@ -61,6 +61,18 @@ export interface EngineHandle {
   dispose(): void;
 }
 
+/**
+ * Why the engine did not start, finishing "the engine …". A missing binary is
+ * the common case outside the session image — a desktop build without one, a
+ * checkout with nothing on PATH — and a bare ENOENT does not say what to do.
+ */
+export function startFailure(enginePath: string, error: NodeJS.ErrnoException): string {
+  if (error.code === "ENOENT") {
+    return `is not installed here: ${enginePath} was not found (set GEARBOX_ENGINE to a gearbox executable)`;
+  }
+  return `could not be started (${enginePath}): ${error.message}`;
+}
+
 /** Spawn `gearbox rpc --stdio --root <root>` and wrap its stdio. */
 export function spawnEngine(
   enginePath: string,
@@ -101,8 +113,8 @@ export function spawnEngine(
   // ENOENT, EACCES, and every other spawn failure arrive here. With no listener
   // Node re-throws them on the event loop, which is an IDE-wide crash for a
   // missing `target/debug/gearbox`.
-  child.on("error", (error: Error) => {
-    die(`could not be started (${enginePath}): ${error.message}`);
+  child.on("error", (error: NodeJS.ErrnoException) => {
+    die(startFailure(enginePath, error));
   });
   // Same rule one level down: an unlistened `'error'` on a stream is also an
   // uncaught exception.

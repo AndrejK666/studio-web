@@ -10,6 +10,13 @@
 // default) and lets the member switch between them in the Studio view; the
 // build starts on --default. The second ships exactly one Studio.
 //
+// Either form takes `--gearbox <path to a gearbox executable>`: the engine
+// behind the gear catalogue, products and `.gdl`, shipped as
+// resources/bin/gearbox[.exe], where desktop-main.js points GEARBOX_ENGINE.
+// Without it the app still builds, and its catalogue says no engine is
+// installed. The desktop workflow builds one at the revision theia/Dockerfile
+// pins for the session image.
+//
 // Run it after `theia build`. The Theia bundle in lib/ is self-contained — its
 // only external is `electron` — so the app is staged without node_modules:
 // the bundle, the entry point that fills in what `theia start` would get from
@@ -41,8 +48,18 @@ const { values } = parseArgs({
         issuer: { type: 'string' },
         version: { type: 'string', default: ownVersion },
         out: { type: 'string', default: join(app, 'dist') },
+        gearbox: { type: 'string' },
     },
 });
+if (values.gearbox && !existsSync(values.gearbox)) {
+    console.error(`--gearbox ${values.gearbox}: no such file`);
+    process.exit(2);
+}
+if (!values.gearbox) {
+    console.warn('no --gearbox: this build ships no engine, so its gear catalogue will not load');
+}
+// The name desktop-main.js looks for: the engine is built for the platform it is packaged on.
+const engineName = process.platform === 'win32' ? 'gearbox.exe' : 'gearbox';
 const studioUrl = values['studio-url']?.replace(/\/+$/, '');
 const environments = studioUrl
     ? [{ id: 'default', label: studioUrl.replace(/^https?:\/\//, ''), studioUrl, issuer: values.issuer ?? `${studioUrl}/auth/realms/studio` }]
@@ -122,6 +139,7 @@ await build({
             // runtime; from resources/app/lib/backend that is resources/. The
             // session image ships the same file for the same reason.
             { from: join(app, '..', 'docker', 'cfs-map.schema.json'), to: '.cf-studio/.core/schemas/map.schema.json' },
+            ...(values.gearbox ? [{ from: values.gearbox, to: `bin/${engineName}` }] : []),
         ],
         // No asar: the bundle spawns executables by paths relative to its own
         // directory (rg.exe, windows-trash.exe, the node-pty agents, and the

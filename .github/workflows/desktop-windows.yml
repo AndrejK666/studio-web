@@ -107,11 +107,52 @@ jobs:
       - name: Build the app
         working-directory: theia/electron-app
         run: npx theia build --mode production
+      # The gearbox engine behind the gear catalogue, products and `.gdl`
+      # (gearbox-studio), built at the revision and with the Rust the session
+      # image uses: theia/Dockerfile's `gearbox` stage is the one pin. The
+      # repository publishes no release, so it is built from source here too.
+      - name: Gearbox engine revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
+          pin() { tr -d '\r' < Dockerfile | sed -n "$1"; }
+          repo=$(pin 's/^ARG STUDIO_GEARBOX_REPO=//p')
+          ref=$(pin 's/^ARG STUDIO_GEARBOX_REF=//p')
+          rust=$(pin 's/^FROM rust:\([0-9.]*\)-.* AS gearbox$/\1/p')
+          if [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$rust" ]; then
+            echo "::error::theia/Dockerfile no longer pins the gearbox engine the way this step reads it"
+            exit 1
+          fi
+          echo "GEARBOX_REPO=$repo" >> "$GITHUB_ENV"
+          echo "GEARBOX_REF=$ref" >> "$GITHUB_ENV"
+          echo "GEARBOX_RUST=$rust" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            gearbox-src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: gearbox-windows-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
+      - name: Build the gearbox engine
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gearbox-src && cd gearbox-src
+          [ -d .git ] || git init -q .
+          git fetch -q --depth 1 "$GEARBOX_REPO" "$GEARBOX_REF"
+          git checkout -q --force FETCH_HEAD
+          rustup toolchain install "$GEARBOX_RUST" --profile minimal
+          CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
+            cargo "+$GEARBOX_RUST" build --release --locked -p gearbox-cli
+          ./target/release/gearbox.exe --version
+          echo "GEARBOX_ENGINE_BUILT=$(cygpath -w "$PWD/target/release/gearbox.exe")" >> "$GITHUB_ENV"
       - name: Package
         working-directory: theia/electron-app
         shell: pwsh
         run: |
-          $packArgs = @('--version', $env:STUDIO_VERSION)
+          $packArgs = @('--version', $env:STUDIO_VERSION, '--gearbox', $env:GEARBOX_ENGINE_BUILT)
           if ($env:STUDIO_URL) {
             $packArgs += @('--studio-url', $env:STUDIO_URL)
             if ($env:STUDIO_ISSUER) { $packArgs += @('--issuer', $env:STUDIO_ISSUER) }

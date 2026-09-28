@@ -25,6 +25,12 @@ function preset() {
     }
 }
 
+/** `resources/bin/gearbox[.exe]`, where scripts/package.mjs puts it; absent from a build without one. */
+function shippedEngine() {
+    const file = path.join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'gearbox.exe' : 'gearbox');
+    return fs.existsSync(file) ? file : undefined;
+}
+
 const home = path.join(os.homedir(), 'ConstructorStudio');
 const workspace = path.join(home, 'workspace');
 const data = path.join(home, 'data');
@@ -48,6 +54,9 @@ const defaults = {
     STUDIO_DESKTOP_VERSION: require('electron').app.getVersion(),
     // The built-in VS Code plugins ship as a resource beside the app.
     THEIA_DEFAULT_PLUGINS: `local-dir:${path.join(process.resourcesPath, 'plugins')}`,
+    // The gearbox engine (gear catalogue, products, `.gdl`), when the build
+    // carries one; the session image has it on PATH instead.
+    GEARBOX_ENGINE: shippedEngine(),
 };
 for (const [name, value] of Object.entries(defaults)) {
     if (value && !process.env[name]) {
