@@ -263,9 +263,6 @@ and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
 
 ## Known limits
 
-- The app ships no `gearbox` engine, so the gear catalogue fails with
-  `spawn gearbox.exe ENOENT` unless `GEARBOX_ENGINE` points at one
-  ([#443](https://github.com/constructorfabric/studio-web/issues/443)).
 - The installer is not code-signed, so Windows SmartScreen asks before the
   first run.
 - There is no automatic update yet.
