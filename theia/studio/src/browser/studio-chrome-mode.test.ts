@@ -137,17 +137,29 @@ describe('the rail tabs a mode brings back', () => {
         expect(document.body.dataset.studioPerspective).toBe('studio.documents');
         expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-explorer-view-container');
         // One search: the product's, not Theia's file search beside it.
-        expect(css).not.toContain('#shell-tab-search-view-container');
+        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
     });
 
-    it('gives the code modes their file tree back', () => {
+    it('gives the code modes their file tree and their search across files', () => {
         for (const mode of ['default', 'studio.full']) {
             const { contribution } = chrome(mode);
             contribution.onDidInitializeLayout();
             const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
             expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-explorer-view-container`);
+            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-search-view-container`);
+            // ...and not the product's Search beside it: one magnifier per mode.
+            expect(css).toContain(`body[data-studio-perspective="${mode}"] #studio-search-rail`);
             contribution.onStop();
         }
+    });
+
+    it('keeps writing to one search and its bottom panel to Analyze', () => {
+        const { contribution } = chrome('studio.documents');
+        contribution.onDidInitializeLayout();
+        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
+        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #studio-search-rail');
+        expect(css).toContain('body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current):not([id="shell-tab-studio:analyze"])');
     });
 
     it('names the mode it is in, and follows a switch', async () => {
