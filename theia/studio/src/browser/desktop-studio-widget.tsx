@@ -10,7 +10,9 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
+import { CommandService } from '@theia/core/lib/common/command';
 import { StudioApi } from './studio-api';
+import { IDENTITY_VIEWER_COMMAND_ID } from './portal-bridge-contribution';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 import { Organization, Tenant, projectsOf } from './desktop-projects';
 
@@ -21,13 +23,30 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     studioUrl?: string;
     state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     error?: string;
-    user?: { sub: string; name?: string; tenantId?: string };
+    user?: { sub: string; name?: string; email?: string; tenantId?: string };
     /** Which updates the app takes; absent from a backend that predates it. */
     updates?: 'stable' | 'beta';
 }
 
 export function desktopUrl(path: string): string {
     return new Endpoint({ path: `studio-desktop/${path}` }).getRestUrl().toString();
+}
+
+/**
+ * Tell the product who is signed in, as the portal does in a session
+ * (portal-bridge-contribution's adoptPortalViewer): comments, change proposals
+ * and the Project page's "You" then carry the member's verified name instead
+ * of a self-declared one, or "You". Idempotent on the product's side, so it is
+ * safe on every status read; a build without the product extension answers an
+ * unknown command by throwing, which is caught.
+ */
+export function adoptDesktopUser(commands: CommandService, status: DesktopStatus | undefined): void {
+    const user = status?.state === 'signed-in' ? status.user : undefined;
+    if (!user?.sub) {
+        return;
+    }
+    commands.executeCommand(IDENTITY_VIEWER_COMMAND_ID, { sub: user.sub, name: user.name, email: user.email, kind: 'person' })
+        .catch(e => console.warn('[studio-desktop] signed-in member not adopted', e));
 }
 
 export async function desktopStatus(): Promise<DesktopStatus | undefined> {
@@ -43,6 +62,9 @@ export async function desktopStatus(): Promise<DesktopStatus | undefined> {
 export class DesktopStudioWidget extends ReactWidget {
     @inject(WorkspaceService)
     protected readonly workspaceService: WorkspaceService;
+
+    @inject(CommandService)
+    protected readonly commands: CommandService;
 
     protected status: DesktopStatus | undefined;
     /** The workspace being cloned and opened, and how that went. */
@@ -75,6 +97,7 @@ export class DesktopStudioWidget extends ReactWidget {
     protected async refresh(): Promise<void> {
         const before = this.status?.state;
         this.status = await desktopStatus();
+        adoptDesktopUser(this.commands, this.status);
         if (this.status?.state === 'signing-in') {
             this.poll ??= window.setInterval(() => void this.refresh(), 1000);
         } else {
