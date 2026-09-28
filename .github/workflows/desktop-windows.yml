@@ -101,6 +101,37 @@ jobs:
       - name: Download the built-in plugins
         working-directory: theia/electron-app
         run: npx theia download:plugins
+      # Claude Code and Codex, as the VS Code extensions product-ext drives
+      # (`claude-vscode.sidebar.open`, `chatgpt.openSidebar`, …). Without them
+      # the rail's assistants answer "… is not available here". They are not in
+      # `theiaPlugins` because they are platform-specific; theia/Dockerfile
+      # fetches the session's linux builds, and its `fetch_vsix` lines are the
+      # one pin this step reads. A pinned version with no win32 build ships the
+      # newest win32 build there is instead, and says so in the run.
+      - name: Assistant extensions (Claude Code, Codex)
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=win32-x64
+          tr -d '\r' < Dockerfile \
+            | sed -n 's/^[[:space:]]*fetch_vsix[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];\\]*\).*/\1 \2 \3 \4/p' \
+            > "$RUNNER_TEMP/assistants.txt"
+          if [ ! -s "$RUNNER_TEMP/assistants.txt" ]; then
+            echo "::error::theia/Dockerfile no longer names the assistant extensions the way this step reads them (fetch_vsix)"
+            exit 1
+          fi
+          vsix_url() { echo "https://open-vsx.org/api/$1/$2/${target}/$3/file/$1.$2-$3@${target}.vsix"; }
+          while read -r ns name version dir; do
+            if ! curl -fsSL "$(vsix_url "$ns" "$name" "$version")" -o "$RUNNER_TEMP/plugin.vsix"; then
+              latest=$(curl -fsSL "https://open-vsx.org/api/${ns}/${name}/${target}" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+              echo "::warning::${ns}.${name} ${version} has no ${target} build; shipping ${latest}, the newest that has one"
+              curl -fsSL "$(vsix_url "$ns" "$name" "$latest")" -o "$RUNNER_TEMP/plugin.vsix"
+            fi
+            rm -rf "plugins/${dir}"
+            mkdir -p "plugins/${dir}"
+            unzip -q "$RUNNER_TEMP/plugin.vsix" -d "plugins/${dir}"
+            echo "shipped ${dir}"
+          done < "$RUNNER_TEMP/assistants.txt"
       - name: Rebuild native modules for Electron
         working-directory: theia/electron-app
         run: npx theia rebuild:electron --cacheRoot ..
