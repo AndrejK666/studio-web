@@ -135,6 +135,12 @@ export class CatalogueWidget extends ReactWidget {
 
         {state.failedRoots.map((root) => this.renderFailedRoot(root))}
 
+        {state.remote !== undefined && (
+          <div className="gbx-empty">
+            Listed by Studio from {state.remote}. Add that repository to the workspace to open or edit a gear.
+          </div>
+        )}
+
         {state.rows.length === 0 && state.status === "ready" && (
           <div className="gbx-empty">No gear.gdl in this workspace's repositories.</div>
         )}

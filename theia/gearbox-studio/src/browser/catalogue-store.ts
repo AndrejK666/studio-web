@@ -28,6 +28,7 @@ import {
   CatalogueState,
   GearboxClient,
   GearboxService,
+  RemoteCatalogueSource,
   Row,
   type StudioSession,
   keyFor,
@@ -66,6 +67,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   /** What this window has open; the backend scans it where there is no `/workspace`. */
   @inject(WorkspaceService) @optional() protected readonly workspaceService?: WorkspaceService;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+  @inject(RemoteCatalogueSource) @optional() protected readonly remote?: RemoteCatalogueSource;
 
   protected readonly onChangedEmitter = new Emitter<void>();
   readonly onChanged: Event<void> = this.onChangedEmitter.event;
@@ -475,6 +477,15 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     failedRoots: CatalogueState["failedRoots"],
     keepProjected = false,
   ): Promise<boolean> {
+    // Constructor Studio: an engine with no source root has no gears to find.
+    // The Studio backend reads its own corpus checkout, so ask it instead of
+    // having every project clone the corpus.
+    if (this.rootsById.size === 0 && this.remote !== undefined) {
+      const installed = await this.installRemote(epoch, failedRoots);
+      if (installed !== undefined) {
+        return installed;
+      }
+    }
     // Resolves at the S1/S2 boundary: the whole tree, none of it projected.
     const loaded = await this.service.loadCatalogue();
     if (epoch !== this.epoch) {
@@ -519,6 +530,45 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     };
     // The boundary is passed: projections for *this* load are now welcome.
     this.streaming = epoch;
+    return true;
+  }
+
+  /**
+   * The corpus's gears as the Studio backend lists them, installed projected
+   * and complete: there is nothing for a local engine to stream. Undefined
+   * when the backend offers none, so the caller reads the (empty) engine.
+   */
+  protected async installRemote(
+    epoch: number,
+    failedRoots: CatalogueState["failedRoots"],
+  ): Promise<boolean | undefined> {
+    let remote;
+    try {
+      remote = await this.remote?.load();
+    } catch (error) {
+      this.onLog(`the Studio backend could not list the gear corpus: ${describe(error)}`);
+      return undefined;
+    }
+    if (epoch !== this.epoch) {
+      return false;
+    }
+    if (remote === undefined) {
+      return undefined;
+    }
+    this.rowsByKey = new Map(
+      remote.gears.map((gear) => [keyFor(gear.source, gear.gdl_path), { kind: "projected", gear }]),
+    );
+    this.streaming = undefined;
+    this.state = {
+      status: "ready",
+      rows: this.sorted(),
+      diagnostics: [],
+      failedRoots,
+      error: undefined,
+      total: remote.gears.length,
+      completed: remote.gears.length,
+      remote: remote.corpus,
+    };
     return true;
   }
 

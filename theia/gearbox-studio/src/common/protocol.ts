@@ -626,4 +626,30 @@ export interface CatalogueState {
   readonly error: string | undefined;
   readonly total: number;
   readonly completed: number;
+  /**
+   * Constructor Studio: set when the rows were listed by the Studio backend
+   * from its own corpus checkout, because this workspace holds none. Names
+   * that corpus (`owner/repo@ref`). Such rows have no file on this machine.
+   */
+  readonly remote?: string;
+}
+
+/**
+ * Constructor Studio: where the catalogue comes from when the workspace holds
+ * no gear corpus. The backend keeps one checkout for every project, so the
+ * gears are listed without cloning it here. Bound by the Studio extension,
+ * which holds the member's API token; absent in Gearbox Studio proper.
+ *
+ * A `Symbol.for` key, because the extension that binds it does not import
+ * this one.
+ */
+export const RemoteCatalogueSource = Symbol.for("gearbox-studio.RemoteCatalogueSource");
+export interface RemoteCatalogueSource {
+  /** Undefined when the backend has no corpus to offer. */
+  load(): Promise<RemoteCatalogue | undefined>;
+}
+export interface RemoteCatalogue {
+  /** `owner/repo@ref`, as a person reads it. */
+  readonly corpus: string;
+  readonly gears: readonly GearDescriptor[];
 }
