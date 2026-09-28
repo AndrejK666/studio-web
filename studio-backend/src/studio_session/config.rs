@@ -132,7 +132,10 @@ pub struct StudioSessionConfig {
     /// What a shared session acts as (`STUDIO_ACTOR_ID`): Studio's service
     /// identity, not the person who happened to launch it (ADR-0030). The same
     /// subject `studio-user` seeds as "Constructor Studio (service)".
-    #[serde(default = "default_service_actor")]
+    #[serde(
+        default = "default_service_actor",
+        deserialize_with = "crate::user_profile::service_subject_or_default"
+    )]
     pub service_actor: String,
     /// Inclusive host port range for sessions.
     #[serde(default = "default_port_start")]
@@ -384,5 +387,28 @@ mod tests {
         assert_eq!(cfg.k8s_session_cpu_limit, "2");
         assert_eq!(cfg.k8s_session_memory_request, "512Mi");
         assert_eq!(cfg.k8s_session_memory_limit, "2Gi");
+    }
+
+    /// The chart sets `STUDIO_SERVICE_SUBJECT` empty by default, and expansion
+    /// keeps an empty value, so an empty actor must mean the fixed subject.
+    /// Passed through, it gave every shared session `STUDIO_ACTOR_ID=` and an
+    /// IDE that would not start.
+    #[test]
+    fn a_blank_service_actor_is_the_fixed_subject() {
+        let fixed = crate::user_profile::STUDIO_SERVICE_SUBJECT;
+        for blank in ["", "  "] {
+            let cfg: StudioSessionConfig =
+                serde_json::from_value(serde_json::json!({ "service_actor": blank })).unwrap();
+            assert_eq!(cfg.service_actor, fixed);
+        }
+        let cfg: StudioSessionConfig =
+            serde_json::from_value(serde_json::json!({ "service_actor": " sa-42 " })).unwrap();
+        assert_eq!(cfg.service_actor, "sa-42");
+        let cfg: StudioSessionConfig = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(cfg.service_actor, fixed);
+
+        let account: crate::user_profile::ServiceAccount =
+            serde_json::from_value(serde_json::json!({ "subject": "" })).unwrap();
+        assert_eq!(account.subject, fixed);
     }
 }
