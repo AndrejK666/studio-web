@@ -6,10 +6,13 @@
 //! run its Re-sync button would queue, under the same partition key, so the two
 //! never race on one checkout.
 //!
-//! The project's sources and its connections are the portal's own records, and
-//! the run is built from them exactly as the portal builds it. A push to a
-//! repository no project names, or through a connection the member cannot
-//! see, refreshes nothing — the push itself has already succeeded.
+//! The run is built from the records the portal keeps, exactly as the portal
+//! builds it. The source pushed to is an entry of the workspace's settings, and
+//! its `token_ref` is its connection's `secret_ref`, so that entry alone says
+//! what to sync. A project created by the portal's wizard also lists the source
+//! in its config, with the connection by id, and that is read too. A push to a
+//! repository through a connection the member cannot see refreshes nothing. The
+//! push itself has already succeeded.
 
 use std::collections::HashMap;
 
@@ -109,20 +112,35 @@ pub fn runs_for_push(
         .filter(|source| same_repository(&source.clone_url, pushed_url))
         .filter_map(|source| {
             let upstream = connections.get(&source.connection_id)?;
-            Some(IngestPayload {
-                provider: upstream.provider.clone(),
-                base_url: Some(upstream.base_url.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned),
-                secret_ref: upstream.secret_ref.clone(),
-                repo_full_path: source.full_path.clone(),
-                since: None,
-                workspace_id: workspace_id.map(|id| id.to_string()),
-                project_id: Some(project_id.to_string()),
-                repo_dir: None,
-            })
+            Some(run_for(
+                project_id,
+                workspace_id,
+                &source.full_path,
+                upstream,
+            ))
         })
         .collect()
+}
+
+/// The sync the portal's Re-sync queues for one repository of a project.
+pub fn run_for(
+    project_id: Uuid,
+    workspace_id: Option<Uuid>,
+    repo_full_path: &str,
+    upstream: &Upstream,
+) -> IngestPayload {
+    IngestPayload {
+        provider: upstream.provider.clone(),
+        base_url: Some(upstream.base_url.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        secret_ref: upstream.secret_ref.clone(),
+        repo_full_path: repo_full_path.to_owned(),
+        since: None,
+        workspace_id: workspace_id.map(|id| id.to_string()),
+        project_id: Some(project_id.to_string()),
+        repo_dir: None,
+    }
 }
 
 #[cfg(test)]
