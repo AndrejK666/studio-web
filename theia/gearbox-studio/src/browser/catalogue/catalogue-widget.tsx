@@ -136,7 +136,7 @@ export class CatalogueWidget extends ReactWidget {
         {state.failedRoots.map((root) => this.renderFailedRoot(root))}
 
         {state.rows.length === 0 && state.status === "ready" && (
-          <div className="gbx-empty">No gear.gdl found under the source root.</div>
+          <div className="gbx-empty">No gear.gdl in this workspace's repositories.</div>
         )}
 
         {matching.length === 0 && state.rows.length > 0 && (
