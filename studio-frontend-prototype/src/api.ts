@@ -1857,9 +1857,14 @@ export const api = {
    *
    *  The portal used to compose this itself — three requests per row, one of
    *  them a listing that walks the whole artifact graph. The composition is on
-   *  the server now; this asks for it. `projectId` narrows it to one project. */
-  rollups: (token: string, projectId?: string) => {
-    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+   *  the server now; this asks for it. `projectId` narrows it to one project,
+   *  `workspaceId` to one workspace and its projects. */
+  rollups: (token: string, projectId?: string, workspaceId?: string) => {
+    const q = projectId
+      ? `?project_id=${encodeURIComponent(projectId)}`
+      : workspaceId
+        ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+        : "";
     return request<{ items: RollupRow[]; total: number }>(
       `/studio-organizations/v1/rollups${q}`,
       token,

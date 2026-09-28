@@ -171,7 +171,7 @@ export function teamText(r: RollupRow | undefined): string {
 /** The last update column: when, and what happened. */
 export function lastUpdate(
   r: RollupRow | undefined,
-  locale?: string,
+  locale = "en-US",
 ): { when: string; what: string } {
   const t = Date.parse(r?.last_at ?? "");
   if (Number.isNaN(t)) return { when: "Not recorded", what: "No recorded activity" };

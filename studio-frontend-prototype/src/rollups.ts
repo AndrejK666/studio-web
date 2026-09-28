@@ -59,13 +59,17 @@ export type PortfolioProject = ProjectRollup & {
  *  projects carry the rest and name their parent. A caller that wants a tree
  *  builds it from `parentId` rather than asking again for parentage this call
  *  already walked. */
-export async function portfolioRollups(token: string): Promise<{
+export async function portfolioRollups(
+  token: string,
+  /** Only this workspace and its projects — what one workspace's table needs. */
+  workspaceId?: string,
+): Promise<{
   workspaces: Map<string, WorkspaceRollup & { name: string }>;
   projects: Map<string, PortfolioProject>;
 }> {
   const workspaces = new Map<string, WorkspaceRollup & { name: string }>();
   const projects = new Map<string, PortfolioProject>();
-  const page = await api.rollups(token);
+  const page = await api.rollups(token, undefined, workspaceId);
   for (const row of page.items ?? []) {
     if (row.kind === "workspace") {
       workspaces.set(row.id, { name: row.name, projects: row.projects ?? null });

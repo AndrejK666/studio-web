@@ -3420,7 +3420,9 @@ function WorkspaceProjects({
     void (async () => {
       // One request for the whole table. It used to be three per project, and
       // one of those three walked the tenant's entire artifact graph.
-      const { projects } = await portfolioRollups(token);
+      const { projects } = await portfolioRollups(token, workspace.id).catch(() => ({
+        projects: new Map<string, import("./rollups").PortfolioProject>(),
+      }));
       const wanted = new Set(projectIds.split(","));
       const entries = [...projects.entries()]
         .filter(([id]) => wanted.has(id))
