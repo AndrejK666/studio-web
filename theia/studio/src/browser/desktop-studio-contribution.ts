@@ -48,10 +48,13 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
     }
 
     onStop(): void {
-        if (this.heartbeat !== undefined) {
-            clearInterval(this.heartbeat);
-            this.heartbeat = undefined;
+        // Only a desktop beats. A web session never started one, and must not
+        // send anything on its way out (docs/desktop-contributing.md, rule 1).
+        if (this.heartbeat === undefined) {
+            return;
         }
+        clearInterval(this.heartbeat);
+        this.heartbeat = undefined;
         const root = this.root();
         if (root) {
             // The page is going away: a beacon is the one request it still sends.

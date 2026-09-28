@@ -390,7 +390,14 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 return;
             }
             try {
+                const had = this.leases.open.includes(tenantId);
                 const held = await this.leases.renew(target, tenantId);
+                // Only a change is worth a line; a renewal every 30 s is not.
+                if (held && !had) {
+                    console.info(`[studio-desktop] ${target.studioUrl} sees workspace ${tenantId} open on this device`);
+                } else if (!held && had) {
+                    console.warn(`[studio-desktop] ${target.studioUrl} no longer holds workspace ${tenantId} open for this device`);
+                }
                 res.status(held ? 204 : 409).end();
             } catch (error) {
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
