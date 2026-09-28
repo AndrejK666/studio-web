@@ -102,42 +102,21 @@ jobs:
         working-directory: theia/electron-app
         run: npx theia download:plugins
       # Claude Code and Codex, as the VS Code extensions product-ext drives
-      # (`claude-vscode.sidebar.open`, `chatgpt.openSidebar`, …). Without them
-      # the rail's assistants answer "… is not available here". They are not in
-      # `theiaPlugins` because they are platform-specific; theia/Dockerfile
-      # fetches the session's linux builds, and its `fetch_vsix` lines are the
-      # one pin this step reads. A pinned version with no win32 build ships the
-      # newest win32 build there is instead, and says so in the run.
-      - name: Assistant extensions (Claude Code, Codex)
+      # (`claude-vscode.sidebar.open`, `chatgpt.openSidebar`, …). The installer
+      # does not carry them (#480): it carries their manifest, and the app
+      # fetches each one on first need, checks it against the SHA-256 recorded
+      # here, and deploys it live (studio/src/node/desktop-assistants.ts).
+      # theia/Dockerfile's `fetch_vsix` lines are the one pin; a pinned version
+      # with no win32 build takes the newest win32 build there is instead, and
+      # the run warns about it. The script downloads each VSIX once to check
+      # open-vsx's digest.
+      - name: Assistant extensions manifest (Claude Code, Codex)
         shell: bash
         run: |
           set -euo pipefail
-          target=win32-x64
-          tr -d '\r' < Dockerfile \
-            | sed -n 's/^[[:space:]]*fetch_vsix[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];]*\)[[:space:]]\{1,\}\([^[:space:];\\]*\).*/\1 \2 \3 \4/p' \
-            > "$RUNNER_TEMP/assistants.txt"
-          if [ ! -s "$RUNNER_TEMP/assistants.txt" ]; then
-            echo "::error::theia/Dockerfile no longer names the assistant extensions the way this step reads them (fetch_vsix)"
-            exit 1
-          fi
-          vsix_url() { echo "https://open-vsx.org/api/$1/$2/${target}/$3/file/$1.$2-$3@${target}.vsix"; }
-          while read -r ns name version dir; do
-            if ! curl -fsSL "$(vsix_url "$ns" "$name" "$version")" -o "$RUNNER_TEMP/plugin.vsix"; then
-              latest=$(curl -fsSL "https://open-vsx.org/api/${ns}/${name}/${target}" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
-              echo "::warning::${ns}.${name} ${version} has no ${target} build; shipping ${latest}, the newest that has one"
-              curl -fsSL "$(vsix_url "$ns" "$name" "$latest")" -o "$RUNNER_TEMP/plugin.vsix"
-            fi
-            rm -rf "plugins/${dir}"
-            mkdir -p "plugins/${dir}"
-            unzip -q "$RUNNER_TEMP/plugin.vsix" -d "plugins/${dir}"
-            # Codex's win32 build also carries its linux binaries (361 MB of
-            # 958 MB unpacked), used only when the member turns on its "run in
-            # WSL" setting (off by default). The installer leaves them out.
-            if [ -d "plugins/${dir}/extension/bin" ] && ls -d "plugins/${dir}/extension/bin/windows-"* >/dev/null 2>&1; then
-              find "plugins/${dir}/extension/bin" -mindepth 1 -maxdepth 1 -type d -name 'linux-*' -print -exec rm -rf {} +
-            fi
-            echo "shipped ${dir} ($(du -sh "plugins/${dir}" | cut -f1))"
-          done < "$RUNNER_TEMP/assistants.txt"
+          node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile --target win32-x64 \
+            --out "$RUNNER_TEMP/assistants.json"
+          echo "STUDIO_ASSISTANTS=$(cygpath -w "$RUNNER_TEMP/assistants.json")" >> "$GITHUB_ENV"
       - name: Rebuild native modules for Electron
         working-directory: theia/electron-app
         run: npx theia rebuild:electron --cacheRoot ..
@@ -189,7 +168,7 @@ jobs:
         working-directory: theia/electron-app
         shell: pwsh
         run: |
-          $packArgs = @('--version', $env:STUDIO_VERSION, '--gearbox', $env:GEARBOX_ENGINE_BUILT)
+          $packArgs = @('--version', $env:STUDIO_VERSION, '--gearbox', $env:GEARBOX_ENGINE_BUILT, '--assistants', $env:STUDIO_ASSISTANTS)
           if ($env:STUDIO_URL) {
             $packArgs += @('--studio-url', $env:STUDIO_URL)
             if ($env:STUDIO_ISSUER) { $packArgs += @('--issuer', $env:STUDIO_ISSUER) }

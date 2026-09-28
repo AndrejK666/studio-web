@@ -26,6 +26,7 @@ import { ObjectDetailsWidget } from './object-details-widget';
 import { bindAgentCredentials } from './agent-credentials';
 import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-widget';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
+import { DesktopAssistantsContribution } from './desktop-assistants-contribution';
 import { DesktopLinkHandler } from './desktop-link-handler';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
 import { ArtifactGraphContribution } from './artifact-graph-contribution';
@@ -225,6 +226,10 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     })).inSingletonScope();
     bindViewContribution(bind, DesktopStudioContribution);
     bind(FrontendApplicationContribution).toService(DesktopStudioContribution);
+    // #480: the assistants a desktop fetches on first need; inert in a session.
+    bind(DesktopAssistantsContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(DesktopAssistantsContribution);
+    bind(CommandContribution).toService(DesktopAssistantsContribution);
     // ADR-0027 §6: the portal's "Open in desktop" link, `cfstudio://open?...`,
     // which Theia delivers here from the operating system (`electron.uriScheme`).
     bind(DesktopLinkHandler).toSelf().inSingletonScope();

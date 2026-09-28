@@ -36,6 +36,32 @@ const workspace = path.join(home, 'workspace');
 const data = path.join(home, 'data');
 const { environments, defaultEnvironment } = preset();
 
+/*
+ * Claude Code and Codex (#480). The installer carries a manifest of the pinned
+ * builds, not the builds: the studio extension fetches each one into
+ * ~/ConstructorStudio/plugins/<id>-<version>/ on first need and deploys it
+ * live (studio/src/node/desktop-assistants.ts). A copy fetched on an earlier
+ * run loads at start like a built-in plugin: its folder is a plugin source.
+ * Only the pinned version's folder is, so an older one left behind by an
+ * update never loads.
+ */
+const assistantsManifest = path.join(process.resourcesPath, 'assistants.json');
+const plugins = process.env.STUDIO_DESKTOP_PLUGINS || path.join(home, 'plugins');
+
+function fetchedAssistants() {
+    let pins;
+    try {
+        pins = JSON.parse(fs.readFileSync(assistantsManifest, 'utf8')).assistants;
+    } catch {
+        return [];
+    }
+    return (Array.isArray(pins) ? pins : [])
+        .filter(pin => typeof pin?.id === 'string' && typeof pin?.version === 'string')
+        .map(pin => ({ id: pin.id.toLowerCase(), folder: path.join(plugins, `${pin.id.toLowerCase()}-${pin.version}`) }))
+        .filter(({ id, folder }) => fs.existsSync(path.join(folder, id, 'extension', 'package.json')))
+        .map(({ folder }) => `local-dir:${folder}`);
+}
+
 const defaults = {
     // A list, not STUDIO_DESKTOP_URL: that one pins a single Studio and hides
     // the choice, which is for a developer's `theia start`.
@@ -54,6 +80,11 @@ const defaults = {
     STUDIO_DESKTOP_VERSION: require('electron').app.getVersion(),
     // The built-in VS Code plugins ship as a resource beside the app.
     THEIA_DEFAULT_PLUGINS: `local-dir:${path.join(process.resourcesPath, 'plugins')}`,
+    // The assistants' manifest, where they go, and where a member may put a
+    // VSIX by hand on a machine that cannot reach open-vsx: beside the app.
+    STUDIO_DESKTOP_ASSISTANTS: fs.existsSync(assistantsManifest) ? assistantsManifest : undefined,
+    STUDIO_DESKTOP_PLUGINS: plugins,
+    STUDIO_DESKTOP_VSIX_DIRS: path.dirname(process.execPath),
     // The gearbox engine (gear catalogue, products, `.gdl`), when the build
     // carries one; the session image has it on PATH instead.
     GEARBOX_ENGINE: shippedEngine(),
@@ -62,6 +93,11 @@ for (const [name, value] of Object.entries(defaults)) {
     if (value && !process.env[name]) {
         process.env[name] = value;
     }
+}
+// Added to, not replaced: a THEIA_PLUGINS from the shell still counts.
+const fetched = fetchedAssistants();
+if (fetched.length) {
+    process.env.THEIA_PLUGINS = [process.env.THEIA_PLUGINS, ...fetched].filter(Boolean).join(',');
 }
 for (const dir of [workspace, data]) {
     fs.mkdirSync(dir, { recursive: true });

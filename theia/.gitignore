@@ -25,6 +25,8 @@ browser-app/scripts/*
 !electron-app/scripts/
 electron-app/scripts/*
 !electron-app/scripts/package.mjs
+!electron-app/scripts/assistants-manifest.mjs
+!electron-app/scripts/assistants-manifest.test.mjs
 
 # Generated plugin download and test output.
 /plugins/openai.chatgpt/

@@ -10,6 +10,10 @@
 // default) and lets the member switch between them in the Studio view; the
 // build starts on --default. The second ships exactly one Studio.
 //
+// Either form takes `--assistants <manifest>`: the pinned Claude Code and Codex
+// builds (scripts/assistants-manifest.mjs), shipped as resources/assistants.json
+// for the app to fetch on first need instead of the extensions themselves.
+//
 // Either form takes `--gearbox <path to a gearbox executable>`: the engine
 // behind the gear catalogue, products and `.gdl`, shipped as
 // resources/bin/gearbox[.exe], where desktop-main.js points GEARBOX_ENGINE.
@@ -49,6 +53,7 @@ const { values } = parseArgs({
         version: { type: 'string', default: ownVersion },
         out: { type: 'string', default: join(app, 'dist') },
         gearbox: { type: 'string' },
+        assistants: { type: 'string' },
     },
 });
 if (values.gearbox && !existsSync(values.gearbox)) {
@@ -57,6 +62,19 @@ if (values.gearbox && !existsSync(values.gearbox)) {
 }
 if (!values.gearbox) {
     console.warn('no --gearbox: this build ships no engine, so its gear catalogue will not load');
+}
+// Claude Code and Codex are fetched by the app on first need (#480); the
+// installer carries only their manifest (scripts/assistants-manifest.mjs).
+let assistantIds = [];
+if (values.assistants) {
+    try {
+        assistantIds = JSON.parse(readFileSync(values.assistants, 'utf8')).assistants.map(a => a.id);
+    } catch (error) {
+        console.error(`--assistants ${values.assistants}: not a manifest (${error.message})`);
+        process.exit(2);
+    }
+} else {
+    console.warn('no --assistants: this build ships no assistant manifest, so Claude Code and Codex never arrive');
 }
 // The name desktop-main.js looks for: the engine is built for the platform it is packaged on.
 const engineName = process.platform === 'win32' ? 'gearbox.exe' : 'gearbox';
@@ -115,6 +133,9 @@ const resources = join(app, 'dist-resources');
 rmSync(resources, { recursive: true, force: true });
 mkdirSync(resources, { recursive: true });
 writeFileSync(join(resources, 'studio-desktop.json'), JSON.stringify({ environments, defaultEnvironment }, null, 2));
+if (values.assistants) {
+    cpSync(values.assistants, join(resources, 'assistants.json'));
+}
 
 const electronPackage = require.resolve('electron/package.json');
 const { build } = require('electron-builder');
@@ -133,8 +154,11 @@ await build({
         nodeGypRebuild: false,
         files: ['**/*'],
         extraResources: [
-            { from: join(app, '..', 'plugins'), to: 'plugins' },
+            // Without the assistants, should a checkout's plugins/ still hold
+            // them from an older build: the app fetches its own.
+            { from: join(app, '..', 'plugins'), to: 'plugins', filter: ['**/*', ...assistantIds.map(id => `!${id}{,/**}`)] },
             { from: join(resources, 'studio-desktop.json'), to: 'studio-desktop.json' },
+            ...(values.assistants ? [{ from: join(resources, 'assistants.json'), to: 'assistants.json' }] : []),
             // cfs-map-adapter requires `__dirname/../../../.cf-studio/…` at
             // runtime; from resources/app/lib/backend that is resources/. The
             // session image ships the same file for the same reason.
