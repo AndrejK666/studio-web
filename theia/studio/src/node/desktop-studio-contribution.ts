@@ -204,7 +204,7 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly studioUrl?: string;
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     readonly error?: string;
-    readonly user?: { readonly sub: string; readonly name?: string; readonly tenantId?: string };
+    readonly user?: { readonly sub: string; readonly name?: string; readonly email?: string; readonly tenantId?: string };
     /** The update channel the member chose. */
     readonly updates: 'stable' | 'beta';
 }
@@ -525,6 +525,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 sub: String(claims.sub ?? ''),
                 name: typeof claims.name === 'string' ? claims.name
                     : typeof claims.preferred_username === 'string' ? claims.preferred_username : undefined,
+                email: typeof claims.email === 'string' ? claims.email : undefined,
                 tenantId: typeof claims.tenant_id === 'string' ? claims.tenant_id : undefined,
             },
         });

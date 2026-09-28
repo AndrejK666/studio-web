@@ -79,6 +79,29 @@ body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: non
 body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex !important; }
 `;
 
+/**
+ * The rail tabs each mode brings back, beyond what the product keeps.
+ *
+ * The product hides Theia's view containers wholesale (see the note above
+ * the Source Control rule), and "Projects replaces the explorer" stopped being
+ * true when the Projects panel went: without this, no mode had a file tree or
+ * a search across files. A mode names what its scenario needs, and nothing
+ * else changes for the modes that name nothing.
+ */
+export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
+    // Writing: the documents are files, found by browsing or by their text.
+    [DOCUMENTS_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
+};
+
+/** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */
+export function modeTabsCss(tabs: Readonly<Record<string, readonly string[]>> = MODE_TABS): string {
+    return Object.entries(tabs)
+        .filter(([, ids]) => ids.length > 0)
+        .map(([mode, ids]) => ids.map(id => `body[data-studio-perspective="${mode}"] #shell-tab-${id}`).join(',\n') +
+            ' { display: grid !important; }')
+        .join('\n');
+}
+
 @injectable()
 export class StudioChromeMode implements FrontendApplicationContribution {
 
@@ -96,7 +119,7 @@ export class StudioChromeMode implements FrontendApplicationContribution {
         }
         const style = document.createElement('style');
         style.id = STYLE_ID;
-        style.textContent = CHROME_CSS;
+        style.textContent = CHROME_CSS + modeTabsCss();
         document.head.appendChild(style);
         this.toDispose.push({ dispose: () => style.remove() });
 
@@ -109,7 +132,14 @@ export class StudioChromeMode implements FrontendApplicationContribution {
     }
 
     protected async apply(): Promise<void> {
-        const documents = this.perspectives?.getActivePerspectiveId() === DOCUMENTS_PERSPECTIVE_ID;
+        const active = this.perspectives?.getActivePerspectiveId();
+        const documents = active === DOCUMENTS_PERSPECTIVE_ID;
+        // Which mode exactly, for the rail tabs each one names (MODE_TABS).
+        if (active) {
+            document.body.dataset.studioPerspective = active;
+        } else {
+            delete document.body.dataset.studioPerspective;
+        }
         // The attribute drives the paint; the preference drives the layout, and
         // the layout is the same in both modes because both need the panel —
         // one for the menu bar, one for the collaboration strip. Only the paint

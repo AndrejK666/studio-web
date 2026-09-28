@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { StudioChromeMode } from './studio-chrome-mode';
+import { StudioChromeMode, modeTabsCss } from './studio-chrome-mode';
 
 function chrome(activeId: string) {
     const listeners: (() => void)[] = [];
@@ -21,6 +21,7 @@ function chrome(activeId: string) {
 afterEach(() => {
     document.getElementById('studio-chrome-mode')?.remove();
     delete document.body.dataset.studioMode;
+    delete document.body.dataset.studioPerspective;
 });
 
 describe('the chrome a mode implies', () => {
@@ -102,9 +103,10 @@ describe('the chrome a mode implies', () => {
         // Explorer. Right for a document, wrong for someone who just edited
         // code and wants to commit it.
         expect(css).toContain('body[data-studio-mode="workbench"] #shell-tab-scm-view-container');
-        // Explorer stays hidden — Projects replaces it — and the others are not
-        // part of this question.
-        expect(css).not.toContain('explorer-view-container');
+        // The workbench names no other tabs of its own yet (see MODE_TABS):
+        // Explorer comes back only for the modes that ask for it.
+        expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-explorer-view-container');
+        expect(css).not.toContain('body[data-studio-perspective="default"]');
         expect(css).not.toContain('shell-tab-debug');
     });
 
@@ -123,5 +125,36 @@ describe('the chrome a mode implies', () => {
         Object.defineProperty(contribution, 'perspectives', { value: undefined });
         contribution.onDidInitializeLayout();
         expect(document.getElementById('studio-chrome-mode')).toBeNull();
+    });
+});
+
+describe('the rail tabs a mode brings back', () => {
+    it('gives writing a file tree and a search across files', () => {
+        const { contribution } = chrome('studio.documents');
+        contribution.onDidInitializeLayout();
+        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+
+        expect(document.body.dataset.studioPerspective).toBe('studio.documents');
+        expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-explorer-view-container');
+        expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
+    });
+
+    it('names the mode it is in, and follows a switch', async () => {
+        const { contribution, perspectives, listeners } = chrome('default');
+        contribution.onDidInitializeLayout();
+        await Promise.resolve();
+        expect(document.body.dataset.studioPerspective).toBe('default');
+
+        perspectives.activeId = 'studio.documents';
+        listeners.forEach(fn => fn());
+        await Promise.resolve();
+        expect(document.body.dataset.studioPerspective).toBe('studio.documents');
+    });
+
+    it('writes nothing for a mode that names no tabs', () => {
+        expect(modeTabsCss({ quiet: [] })).toBe('');
+        expect(modeTabsCss({ m: ['a', 'b'] })).toBe(
+            'body[data-studio-perspective="m"] #shell-tab-a,\nbody[data-studio-perspective="m"] #shell-tab-b { display: grid !important; }',
+        );
     });
 });
