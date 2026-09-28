@@ -235,7 +235,10 @@ so the backend subscribes to the terminal on the runtime's WebSocket
 (`resources/app.asar.unpacked/out/shared`). That socket takes a paired device:
 the entrypoint lifts the pairing offer `serve --json` prints into
 `$STUDIO_ORCA_PAIRING_FILE`. Elsewhere, `STUDIO_ORCA_PAIRING_URL` takes an
-`orca://pair?code=…` offer directly.
+`orca://pair?code=…` offer directly. With neither, off a session (a desktop
+IDE beside the Orca app), the first **Open** asks for the link Orca
+generates under *Settings → Pair another Orca client → This computer*, and
+keeps it in `~/ConstructorStudio/orca-pairing`.
 
 ### Running the Orca runtime in a container (cluster notes)
 
