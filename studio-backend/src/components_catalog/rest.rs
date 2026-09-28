@@ -905,7 +905,9 @@ async fn conformance(
         .map_err(internal)?
     else {
         return Err(invalid(
-            "the project has no gear repository connected, so there is no code to compare".into(),
+            "the project has no gear repository and no GitHub source whose Cargo manifests \
+             could be read, so there is no code to compare"
+                .into(),
         ));
     };
 

@@ -810,6 +810,56 @@ impl CatalogCounts {
     }
 }
 
+/// Project attributes, including the repositories it was seeded from.
+const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
+
+/// `(connection_id, full_path)` of each source in a project config, as the
+/// portal writes them. An entry missing either is not one the portal could
+/// read either.
+fn project_sources(config: &Value) -> Vec<(Uuid, String)> {
+    config
+        .get("sources")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| {
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            };
+            Some((
+                Uuid::parse_str(text("connection_id")?).ok()?,
+                text("full_path")?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod project_source_tests {
+    use super::*;
+
+    #[test]
+    fn a_source_names_its_connection_and_repository() {
+        let id = Uuid::new_v4();
+        let config = json!({
+            "mode": "modernize",
+            "sources": [
+                { "connection_id": id.to_string(), "full_path": "acme/api", "clone_url": "https://github.com/acme/api.git" },
+                { "connection_id": "not-a-uuid", "full_path": "acme/x" },
+                { "connection_id": id.to_string(), "full_path": "  " },
+                { "full_path": "acme/y" }
+            ]
+        });
+        assert_eq!(project_sources(&config), [(id, "acme/api".to_owned())]);
+        assert!(project_sources(&json!({ "mode": "greenfield" })).is_empty());
+    }
+}
+
 pub struct CatalogService {
     crates: CratesIoClient,
     sink: Arc<dyn CatalogSink>,
@@ -819,6 +869,9 @@ pub struct CatalogService {
     /// knows about each gear into the gear's profile. Set once, after
     /// construction, because the engine is configured separately.
     gearbox: std::sync::OnceLock<Arc<super::gearbox::Gearbox>>,
+    /// Reads a project's own sources, for a project with no gear repository.
+    account_management:
+        std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,
 }
 
 impl CatalogService {
@@ -833,11 +886,19 @@ impl CatalogService {
             keyword,
             connectors,
             gearbox: std::sync::OnceLock::new(),
+            account_management: std::sync::OnceLock::new(),
         }
     }
 
     pub fn set_gearbox(&self, gearbox: Arc<super::gearbox::Gearbox>) {
         let _ = self.gearbox.set(gearbox);
+    }
+
+    pub fn set_account_management(
+        &self,
+        client: Arc<dyn account_management_sdk::AccountManagementClient>,
+    ) {
+        let _ = self.account_management.set(client);
     }
 
     /// The default crates.io keyword, used when a sync request omits one.
@@ -1661,15 +1722,16 @@ impl CatalogService {
         Ok(nodes.into_iter().find(|n| n.instance_id == want))
     }
 
-    /// The project's gear repository and every crate its Cargo manifests
-    /// depend on. `None` when the project has no gear repository connected.
+    /// The project's code and every crate its Cargo manifests depend on:
+    /// the gear repository when one is connected, the project's own sources
+    /// otherwise. `None` when there is neither.
     pub async fn project_dependencies(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
         let Some(node) = self.get_project_repo(ctx, project_id).await? else {
-            return Ok(None);
+            return self.source_dependencies(ctx, project_id).await;
         };
         let v = &node.value;
         let text = |k: &str| {
@@ -1699,6 +1761,65 @@ impl CatalogService {
         )
         .ok_or_else(|| anyhow!("invalid gear repository for the project"))?;
         Ok(Some((repo, enricher.cargo_dependencies(ctx).await?)))
+    }
+
+    /// A gear repository is what a `new_gears` project writes into; every
+    /// other project's code is the repositories it was seeded from, and those
+    /// are in its config. Read the same way, through the connection each one
+    /// names. A source that cannot be read is skipped and logged, so one
+    /// private repository does not hide what the others depend on.
+    async fn source_dependencies(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
+        let (Some(am), Some(connectors)) = (self.account_management.get(), &self.connectors) else {
+            return Ok(None);
+        };
+        let Ok(project) = Uuid::parse_str(project_id) else {
+            return Ok(None);
+        };
+        let Ok(config) = am
+            .get_metadata(ctx, project, ::gts::GtsTypeId::new(PROJECT_CONFIG_TYPE))
+            .await
+        else {
+            return Ok(None);
+        };
+        let mut read = Vec::new();
+        let mut deps = BTreeSet::new();
+        for (connection_id, repo) in project_sources(&config.value) {
+            let Some(tenant) = connectors.locate(ctx, project, connection_id).await else {
+                tracing::info!(
+                    project_id,
+                    repo,
+                    "studio-components-catalog: a project source's connection is not visible"
+                );
+                continue;
+            };
+            let Some(enricher) = RepoEnricher::new(
+                Arc::clone(connectors),
+                tenant,
+                Some(connection_id),
+                repo.clone(),
+                String::new(),
+                RepoMode::parse("gears"),
+            ) else {
+                continue;
+            };
+            match enricher.cargo_dependencies(ctx).await {
+                Ok(found) => {
+                    deps.extend(found);
+                    read.push(repo);
+                }
+                Err(e) => {
+                    tracing::warn!(project_id, repo, error = %format!("{e:#}"), "studio-components-catalog: a project source could not be read");
+                }
+            }
+        }
+        if read.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((read.join(", "), deps)))
     }
 
     /// Connect (or update) the gear repository for a project. `repo` is an open
