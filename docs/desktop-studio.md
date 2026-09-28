@@ -293,3 +293,16 @@ module talking to an `electronMain` one over Theia's Electron IPC
   what they push, and nothing before it.
 - Desktop sessions are not yet visible in the portal, and the portal cannot yet
   send a desktop a command (ADR-0027 phases 3–5).
+- Up to 0.3.0-beta.3, opening Codex on the desktop showed "Codex couldn't load
+  its resources." Its webview's resources did load. The Codex CLI behind it
+  exited at start because its `CODEX_HOME` did not exist. Two things caused
+  that. The credential home named the directory without creating it. On
+  Windows, linking the anonymous home to the member's home also failed: a
+  symlink needs a privilege, so the home was emptied and then removed. The
+  first cause also hit browser sessions whose home had no `.codex` yet. The
+  Codex output channel shows the CLI's error. Fixed by
+  `ensureAssistantHomes` and a junction on Windows
+  (`theia/product-ext/src/node/viewer-credentials-env.js`). An installed
+  beta.3 has no workaround: every start draws a new anonymous home and removes
+  it again. In a browser session, signing in to Codex from the product's
+  assistant sign-in creates the directory, and reloading the page then works.
