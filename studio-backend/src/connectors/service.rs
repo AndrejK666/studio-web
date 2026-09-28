@@ -392,6 +392,32 @@ impl ConnectorService {
         Ok(self.load(ctx, tenant).await?.items)
     }
 
+    /// The tenant, `from` or one of its ancestors, whose catalogue lists
+    /// connection `id`: where a project's record of "this connection" can be
+    /// resolved. Each level is read, because [`Self::list`] stops at the nearest
+    /// tenant that has a catalogue at all, and a project's source is usually
+    /// connected on its organization, above a workspace with catalogue of its own.
+    pub async fn locate(&self, ctx: &SecurityContext, from: Uuid, id: Uuid) -> Option<Uuid> {
+        let mut tenant = Some(from);
+        // Project → workspace → organization; nothing Studio keeps is deeper.
+        for _ in 0..3 {
+            let current = tenant?;
+            if let Ok(catalogue) = self.load(ctx, current).await
+                && catalogue.items.iter().any(|c| c.id == id)
+            {
+                return Some(current);
+            }
+            tenant = self
+                .am
+                .get_tenant(ctx, current)
+                .await
+                .ok()
+                .and_then(|t| t.parent_id)
+                .map(|p| p.0);
+        }
+        None
+    }
+
     async fn find(
         &self,
         ctx: &SecurityContext,
