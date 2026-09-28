@@ -810,6 +810,10 @@ impl CatalogCounts {
     }
 }
 
+/// A workspace's (or project's) repositories, as sessions clone them.
+const WORKSPACE_SETTINGS_TYPE: &str =
+    "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
+
 /// Project attributes, including the repositories it was seeded from.
 const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 
@@ -1765,7 +1769,7 @@ impl CatalogService {
 
     /// A gear repository is what a `new_gears` project writes into; every
     /// other project's code is the repositories it was seeded from, and those
-    /// are in its config. Read the same way, through the connection each one
+    /// are in its workspace settings (and, from the wizard, its config). Read the same way, through the connection each one
     /// names. A source that cannot be read is skipped and logged, so one
     /// private repository does not hide what the others depend on.
     async fn source_dependencies(
@@ -1779,29 +1783,63 @@ impl CatalogService {
         let Ok(project) = Uuid::parse_str(project_id) else {
             return Ok(None);
         };
-        let Ok(config) = am
+        // What to read: `(tenant of the connection, connection, repository,
+        // branch)`. The workspace's settings first -- both portals write them and
+        // every session clones from them, naming the connection by its token --
+        // then the config's `sources`, which only the portal's wizard writes.
+        let mut targets: Vec<(Uuid, Uuid, String, String)> = Vec::new();
+        if let Ok(settings) = am
+            .get_metadata(ctx, project, ::gts::GtsTypeId::new(WORKSPACE_SETTINGS_TYPE))
+            .await
+        {
+            for source in crate::git_proxy::sources::sources_in(&settings.value) {
+                let (Some(token_ref), Some(repo)) = (
+                    source.token_ref.as_deref(),
+                    crate::connectors::repo_path_of(&source.url),
+                ) else {
+                    continue;
+                };
+                match connectors.by_secret_ref(ctx, project, token_ref).await {
+                    Some((tenant, c)) => {
+                        targets.push((tenant, c.id, repo, source.branch.unwrap_or_default()))
+                    }
+                    None => tracing::info!(
+                        project_id,
+                        repo,
+                        "studio-components-catalog: a project source's connection is not visible"
+                    ),
+                }
+            }
+        }
+        if let Ok(config) = am
             .get_metadata(ctx, project, ::gts::GtsTypeId::new(PROJECT_CONFIG_TYPE))
             .await
-        else {
-            return Ok(None);
-        };
+        {
+            for (connection_id, repo) in project_sources(&config.value) {
+                match connectors.locate(ctx, project, connection_id).await {
+                    Some(tenant) => targets.push((tenant, connection_id, repo, String::new())),
+                    None => tracing::info!(
+                        project_id,
+                        repo,
+                        "studio-components-catalog: a project source's connection is not visible"
+                    ),
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        targets.retain(|(_, connection_id, repo, _)| {
+            seen.insert((*connection_id, repo.to_ascii_lowercase()))
+        });
+
         let mut read = Vec::new();
         let mut deps = BTreeSet::new();
-        for (connection_id, repo) in project_sources(&config.value) {
-            let Some(tenant) = connectors.locate(ctx, project, connection_id).await else {
-                tracing::info!(
-                    project_id,
-                    repo,
-                    "studio-components-catalog: a project source's connection is not visible"
-                );
-                continue;
-            };
+        for (tenant, connection_id, repo, branch) in targets {
             let Some(enricher) = RepoEnricher::new(
                 Arc::clone(connectors),
                 tenant,
                 Some(connection_id),
                 repo.clone(),
-                String::new(),
+                branch,
                 RepoMode::parse("gears"),
             ) else {
                 continue;

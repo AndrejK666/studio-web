@@ -99,8 +99,43 @@ impl GitProxy {
     /// Queue a sync of every project source the push went to (ADR-0027 phase
     /// 2). Best effort and after the fact: the push has already succeeded, so
     /// a sync that cannot be queued is logged, never answered.
-    async fn refresh_after_push(&self, ctx: &SecurityContext, project_id: Uuid, pushed_url: &str) {
-        let Ok(entry) = self
+    async fn refresh_after_push(&self, ctx: &SecurityContext, project_id: Uuid, pushed: &Source) {
+        let workspace_id = self
+            .account_management
+            .get_tenant(ctx, project_id)
+            .await
+            .ok()
+            .and_then(|t| t.parent_id)
+            .map(|p| p.0);
+        let mut runs = Vec::new();
+
+        // The source that was pushed to is in the workspace's settings, which
+        // both portals write and every session clones from: its URL names the
+        // repository and its `token_ref` names the connection.
+        if let (Some(token_ref), Some(repo_path)) = (
+            pushed.token_ref.as_deref(),
+            crate::connectors::repo_path_of(&pushed.url),
+        ) && let Some((_, c)) = self
+            .connectors
+            .by_secret_ref(ctx, project_id, token_ref)
+            .await
+        {
+            runs.push(refresh::run_for(
+                project_id,
+                workspace_id,
+                &repo_path,
+                &Upstream {
+                    provider: c.provider,
+                    base_url: c.base_url,
+                    secret_ref: c.secret_ref,
+                },
+            ));
+        }
+
+        // A project the portal created also records its sources in its config,
+        // with the connection by id. Read too, for a source whose settings entry
+        // carries no token reference.
+        if let Ok(entry) = self
             .account_management
             .get_metadata(
                 ctx,
@@ -108,49 +143,42 @@ impl GitProxy {
                 gts::GtsTypeId::new(refresh::PROJECT_CONFIG_TYPE),
             )
             .await
-        else {
-            // A workspace that is not a project was seeded from nothing.
-            return;
-        };
-        let sources = refresh::project_sources(&entry.value);
-        if !sources
-            .iter()
-            .any(|s| refresh::same_repository(&s.clone_url, pushed_url))
         {
-            return;
-        }
-
-        // The portal reads the organization's connections, and a connection
-        // may also live on the workspace or the project. `resolve_metadata`
-        // stops at the nearest tenant that has a catalogue, so every level is
-        // read, the nearest first.
-        let mut connections = std::collections::HashMap::new();
-        let mut workspace_id = None;
-        let mut tenant = Some(project_id);
-        for level in 0..3 {
-            let Some(id) = tenant else { break };
-            if let Ok(found) = self.connectors.list(ctx, id).await {
-                for c in found {
-                    connections.entry(c.id).or_insert(Upstream {
-                        provider: c.provider,
-                        base_url: c.base_url,
-                        secret_ref: c.secret_ref,
-                    });
+            let sources = refresh::project_sources(&entry.value);
+            let mut connections = std::collections::HashMap::new();
+            for source in sources
+                .iter()
+                .filter(|s| refresh::same_repository(&s.clone_url, &pushed.url))
+            {
+                if let Some((_, c)) = self
+                    .connectors
+                    .nearest_by_id(ctx, project_id, source.connection_id)
+                    .await
+                {
+                    connections.insert(
+                        c.id,
+                        Upstream {
+                            provider: c.provider,
+                            base_url: c.base_url,
+                            secret_ref: c.secret_ref,
+                        },
+                    );
                 }
             }
-            tenant = match self.account_management.get_tenant(ctx, id).await {
-                Ok(t) => t.parent_id.map(|p| p.0),
-                Err(_) => None,
-            };
-            if level == 0 {
-                workspace_id = tenant;
-            }
+            runs.extend(refresh::runs_for_push(
+                project_id,
+                workspace_id,
+                &sources,
+                &connections,
+                &pushed.url,
+            ));
         }
 
-        let runs =
-            refresh::runs_for_push(project_id, workspace_id, &sources, &connections, pushed_url);
+        // The same sync found both ways is one sync.
+        let mut seen = std::collections::HashSet::new();
+        runs.retain(|run| seen.insert(run.partition_key()));
         if runs.is_empty() {
-            tracing::info!(%project_id, "studio-git: the pushed source's connection is not visible; nothing re-synced");
+            tracing::info!(%project_id, source = %pushed.name, "studio-git: the pushed source names no connection this member can see; nothing re-synced");
             return;
         }
         let Ok(queue) = self
@@ -410,17 +438,15 @@ async fn forward(
         }
     }
     let stream = answer.bytes_stream();
-    let body = if matches!(service, Service::ReceivePack) && (200..300).contains(&status) {
+    let body = if refresh::reports_a_push(protocol_path, status) {
         // The push report is the last thing the source host sends, after its
         // refs have moved, so the sync is queued once `git` has read it all:
         // a sync queued any earlier could fetch the tree from before the push.
         let proxy = Arc::clone(proxy);
-        let pushed_url = found.url.clone();
+        let pushed = found.clone();
         let reported = futures_util::stream::once(async move {
             tokio::spawn(async move {
-                proxy
-                    .refresh_after_push(&ctx, workspace_id, &pushed_url)
-                    .await;
+                proxy.refresh_after_push(&ctx, workspace_id, &pushed).await;
             });
         })
         .filter_map(|()| {
