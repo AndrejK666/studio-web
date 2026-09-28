@@ -171,8 +171,12 @@ export class DesktopStudioWidget extends ReactWidget {
         await this.refresh();
     }
 
-    /** Clone the workspace's sources through Studio, then open the folder here. */
-    protected async openWorkspace(workspace: Tenant): Promise<void> {
+    /**
+     * Clone the project's sources through Studio, then open the folder here. A
+     * nested project is checked out under its workspace's name as well, so two
+     * workspaces' "api" projects do not share a folder.
+     */
+    protected async openWorkspace(workspace: Tenant, folder: string = workspace.name): Promise<void> {
         this.opening = workspace.id;
         this.openError = '';
         this.update();
@@ -180,7 +184,7 @@ export class DesktopStudioWidget extends ReactWidget {
             const answer = await fetch(desktopUrl('open'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workspaceId: workspace.id, name: workspace.name }),
+                body: JSON.stringify({ workspaceId: workspace.id, name: folder }),
             });
             const body = await answer.json() as { path?: string; error?: string };
             if (!answer.ok || !body.path) {
@@ -195,7 +199,7 @@ export class DesktopStudioWidget extends ReactWidget {
         }
     }
 
-    /** The member's projects, found the way the portal finds them. */
+    /** The member's projects, found the way the portals find them. */
     protected async loadEntities(): Promise<void> {
         try {
             this.organizations = await projectsOf(async path => {
@@ -209,6 +213,16 @@ export class DesktopStudioWidget extends ReactWidget {
         } catch (error) {
             this.loadError = `Your projects could not be loaded (${error instanceof Error ? error.message : error}).`;
         }
+    }
+
+    /** One project to open: its name, and the spinner while it is being cloned. */
+    protected renderProject(project: Tenant, icon: string, folder?: string): React.ReactNode {
+        return <div style={{ cursor: 'pointer' }}
+            title={`Open ${project.name} here — its sources are cloned through Studio`}
+            onClick={() => this.opening || void this.openWorkspace(project, folder)}>
+            <span className={this.opening === project.id ? 'codicon codicon-loading codicon-modifier-spin' : `codicon ${icon}`} />
+            {' '}<a>{project.name}</a>
+        </div>;
     }
 
     protected render(): React.ReactNode {
@@ -265,11 +279,12 @@ export class DesktopStudioWidget extends ReactWidget {
                 {/* Organizations are hidden in the portal (concept v2); named here only when there is a choice. */}
                 {this.organizations!.length > 1 && <div><span className='codicon codicon-organization' /> <b>{org.name}</b></div>}
                 {org.projects.length === 0 && <div style={{ opacity: 0.7 }}>No projects yet</div>}
-                {org.projects.map(project => <div key={project.id} style={{ paddingLeft: this.organizations!.length > 1 ? '20px' : 0, cursor: 'pointer' }}
-                    title={`Open ${project.name} here — its sources are cloned through Studio`}
-                    onClick={() => this.opening || void this.openWorkspace(project)}>
-                    <span className={this.opening === project.id ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-folder'} />
-                    {' '}<a>{project.name}</a>
+                {org.projects.map(workspace => <div key={workspace.id} style={{ paddingLeft: this.organizations!.length > 1 ? '20px' : 0 }}>
+                    {this.renderProject(workspace, 'codicon-folder')}
+                    {/* Its nested projects, each with sources of its own, as the portal lists them under it. */}
+                    {workspace.nested.map(project => <div key={project.id} style={{ paddingLeft: '20px' }}>
+                        {this.renderProject(project, 'codicon-symbol-namespace', `${workspace.name} - ${project.name}`)}
+                    </div>)}
                 </div>)}
             </div>)}
             {this.openError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.openError}</p>}
