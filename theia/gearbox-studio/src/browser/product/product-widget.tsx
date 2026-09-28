@@ -49,7 +49,7 @@ import {
   ProductSessionService,
   type OpeningState,
 } from "../shell/product-session-service";
-import { ADD_GEAR, NEW_GEAR, SHOW_CONFLICTS, SHOW_GENERATE } from "../shell/session-command-ids";
+import { ADD_GEAR, NEW_GEAR, NEW_PRODUCT, SHOW_CONFLICTS, SHOW_GENERATE } from "../shell/session-command-ids";
 import { RevealPathLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { SelectionService, type Selection } from "../shell/selection-service";
@@ -394,8 +394,22 @@ export class ProductWidget extends ReactWidget {
         <div className="gbx-product">
           {state.products.length === 0 ? (
             <div className="gbx-empty">
-              No <code>products/*/product.gdl</code> under the repository root. Open a product
-              description in the editor to resolve it.
+              <p>
+                This workspace has no product yet: none of its checkouts holds a{" "}
+                <code>product.gdl</code> (at <code>&lt;checkout&gt;/product.gdl</code> or{" "}
+                <code>&lt;checkout&gt;/products/&lt;name&gt;/product.gdl</code>). The gears in it are
+                in the catalogue either way.
+              </p>
+              <p>Create one from gears, or open a product description in the editor to resolve it.</p>
+              <div className="gbx-product-actions">
+                <button
+                  type="button"
+                  className="gbx-start-primary"
+                  onClick={() => void this.commands.executeCommand(NEW_PRODUCT.id)}
+                >
+                  New Product…
+                </button>
+              </div>
             </div>
           ) : (
             <div className="gbx-kv">
