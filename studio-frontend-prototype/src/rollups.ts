@@ -27,7 +27,7 @@
  *   * one failure costs one number, not the row;
  *   * counts come from the store's `total`, never from `length`.
  */
-import { api } from "./api";
+import { api, type RollupRow } from "./api";
 
 /** What one workspace contains. */
 export interface WorkspaceRollup {
@@ -45,6 +45,14 @@ export interface ProjectRollup {
   repos: number | null;
 }
 
+/** A project as the portfolio answer carries it: the three counts every screen
+ *  reads, and the whole row for the projects table, which reads the rest. */
+export type PortfolioProject = ProjectRollup & {
+  name: string;
+  parentId: string | null;
+  row: RollupRow;
+};
+
 /** Every workspace and project the caller can see, counted, in ONE request.
  *
  *  Returns the rows as the server groups them: workspaces carry `projects`,
@@ -53,10 +61,10 @@ export interface ProjectRollup {
  *  already walked. */
 export async function portfolioRollups(token: string): Promise<{
   workspaces: Map<string, WorkspaceRollup & { name: string }>;
-  projects: Map<string, ProjectRollup & { name: string; parentId: string | null }>;
+  projects: Map<string, PortfolioProject>;
 }> {
   const workspaces = new Map<string, WorkspaceRollup & { name: string }>();
-  const projects = new Map<string, ProjectRollup & { name: string; parentId: string | null }>();
+  const projects = new Map<string, PortfolioProject>();
   const page = await api.rollups(token);
   for (const row of page.items ?? []) {
     if (row.kind === "workspace") {
@@ -68,6 +76,7 @@ export async function portfolioRollups(token: string): Promise<{
         documents: row.documents ?? null,
         findings: row.findings ?? null,
         repos: row.repos ?? null,
+        row,
       });
     }
   }
