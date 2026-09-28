@@ -438,7 +438,7 @@ async fn forward(
         }
     }
     let stream = answer.bytes_stream();
-    let body = if matches!(service, Service::ReceivePack) && (200..300).contains(&status) {
+    let body = if refresh::reports_a_push(protocol_path, status) {
         // The push report is the last thing the source host sends, after its
         // refs have moved, so the sync is queued once `git` has read it all:
         // a sync queued any earlier could fetch the tree from before the push.

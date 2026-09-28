@@ -122,6 +122,15 @@ pub fn runs_for_push(
         .collect()
 }
 
+/// Whether an upstream answer is the report of a push that went through.
+///
+/// Only the `git-receive-pack` POST is: a push first asks for
+/// `info/refs?service=git-receive-pack`, which names the same service but
+/// moves nothing, and a sync queued on it would read the tree from before.
+pub fn reports_a_push(protocol_path: &str, status: u16) -> bool {
+    protocol_path == "git-receive-pack" && (200..300).contains(&status)
+}
+
 /// The sync the portal's Re-sync queues for one repository of a project.
 pub fn run_for(
     project_id: Uuid,
@@ -174,6 +183,15 @@ mod tests {
                 { "connection_id": CONNECTION, "full_path": "acme/y" }
             ]
         })
+    }
+
+    #[test]
+    fn only_the_pack_a_push_uploads_reports_one() {
+        assert!(reports_a_push("git-receive-pack", 200));
+        // The advertisement `git push` asks for first moves nothing.
+        assert!(!reports_a_push("info/refs", 200));
+        assert!(!reports_a_push("git-upload-pack", 200));
+        assert!(!reports_a_push("git-receive-pack", 500));
     }
 
     #[test]
