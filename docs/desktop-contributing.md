@@ -143,5 +143,7 @@ Electron or a Studio.
 - Titles use the `desktop` scope: `feat(desktop): …`, `fix(desktop): …`.
 - PRs are squash-merged, often quickly: check that a PR is still open before
   pushing more to its branch.
-- A change to `theia/electron-app/**` runs the **Desktop — Windows build**
-  workflow; its installer is the artifact to try before release.
+- A PR changing `theia/electron-app/**` runs **Desktop — Windows build** in the
+  upstream repository; its installer is the artifact to try before release.
+  A push to a fork feature branch does not build a second installer. For an
+  installer before opening a PR, run the workflow manually on that branch.

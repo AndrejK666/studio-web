@@ -170,10 +170,12 @@ The CI/CD promotion rules are in [`deploy/PIPELINES.md`](deploy/PIPELINES.md).
 
 Routine delivery flow:
 
-1. Push a branch or merge to `main`. The single **Studio Delivery** workflow
+1. Push a branch in `constructorfabric/studio-web` or merge to `main`. The single **Studio Delivery** workflow
    runs **Test changed components**, then **Build & Publish**, producing a
    complete immutable `sha-<commit>` image set while rebuilding only affected
-   components. It never deploys automatically.
+   components. It never deploys automatically. Pushes to a fork run tests but
+   do not publish images; use a manual **Build and publish** operation against
+   a branch in the upstream repository for a deployable dev snapshot.
 2. To publish and deploy in one reviewed run, choose **Build, publish and
    deploy**, select **Services** and the target environment. It tests first,
    publishes the changed components, then deploys those components while
@@ -193,9 +195,10 @@ Environment uses the namespace-scoped `studio-deployer` kubeconfig stored as
 
 ## CI/CD
 
-- **Studio Delivery** is the only user-facing Actions workflow. It runs tests
-  for every pull request and push; a push then publishes images only after its
-  tests succeed. Pull requests never publish or deploy.
+- **Studio Delivery** is the only user-facing service delivery workflow. It runs
+  tests for every pull request and push; only a push in the upstream repository
+  publishes images automatically after its tests succeed. Fork pushes and pull
+  requests never publish or deploy automatically.
 - Manual operations are **Build and publish** (tests followed by a build),
   **Build, publish and deploy** (tests, changed-image publishing and a
   deployment in one run), and **Deploy existing images**. Deployment
