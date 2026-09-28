@@ -37,6 +37,33 @@ export interface PlatformIdentity {
   organization_role?: "owner" | "member";
 }
 
+/** The roles a membership may carry (studio-user `MEMBERSHIP_ROLES`). Only an
+ *  active `owner` administers: the backend keeps its access-config grant in
+ *  step with the membership. */
+export type MembershipRole = "owner" | "admin" | "member";
+
+/** One member of an organization, from `GET /studio-user/v1/organizations/{id}/members`. */
+export interface OrgMember {
+  user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  role: MembershipRole | string;
+  status: "active" | "suspended";
+  /** creation | assignment | invitation | bootstrap | first_login | manual */
+  source: string;
+  created_at_epoch_ms: number;
+  updated_at_epoch_ms: number;
+}
+
+export interface OrgInvitation {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  expires_at_epoch_ms: number;
+  accepted_at_epoch_ms?: number | null;
+}
+
 /* ── studio-tasks / studio-scheduler ── */
 
 /** One unit of background work. `GET /studio-tasks/v1/runs`. */
@@ -2167,6 +2194,69 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+
+  /** An organization's members, from studio-user — the authority for who
+   *  belongs to it (ADR-0011 §2). `people.view`: an owner or a platform admin. */
+  orgMembers: (token: string, orgId: string) =>
+    requestAllPages<OrgMember>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/members`,
+      token,
+      "items",
+    ),
+
+  /** Add somebody, change their role, or suspend/resume them — one write. An
+   *  active `owner` also gets the organization's owner grant; anyone else loses it. */
+  putMembership: (
+    token: string,
+    userId: string,
+    orgId: string,
+    input: { role: MembershipRole; status?: "active" | "suspended"; source?: "assignment" | "manual" },
+  ) =>
+    request<OrgMember>(
+      `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(input) },
+    ),
+
+  removeMembership: (token: string, userId: string, orgId: string) =>
+    request<{ connections_removed: number }>(
+      `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
+      token,
+      { method: "DELETE" },
+    ),
+
+  /** The canonical Studio person behind a sign-in, created on first sight
+   *  (platform admin). The membership routes take this id, not the IdP's. */
+  resolvePerson: (
+    token: string,
+    input: { provider: "keycloak"; subject: string; display_name?: string; email?: string },
+  ) =>
+    request<{ user_id: string }>("/studio-user/v1/resolve", token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  orgInvitations: (token: string, orgId: string) =>
+    request<{ items: OrgInvitation[] }>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations`,
+      token,
+    ),
+
+  /** The person sees it when they sign in with this address proven, and
+   *  accepts it themselves (ADR-0018 §2) — no token to hand over. */
+  inviteToOrg: (token: string, orgId: string, input: { email: string; role: "member" | "admin" }) =>
+    request<{ invitation: OrgInvitation }>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations`,
+      token,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+
+  revokeInvitation: (token: string, orgId: string, invitationId: string) =>
+    request<void>(
+      `/studio-user/v1/organizations/${encodeURIComponent(orgId)}/invitations/${encodeURIComponent(invitationId)}`,
+      token,
+      { method: "DELETE" },
+    ),
 
   inviteUser: (
     token: string,

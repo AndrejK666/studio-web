@@ -21,6 +21,7 @@ import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
 import { PeopleView } from "./people";
+import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
@@ -1769,7 +1770,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           positioned inside it. */}
       <div
         className="shell-body"
-        data-sidebar={menuOpen ? "open" : "rail"}
+        /* The admin area is a settings sidebar, not transient navigation: it keeps
+           its full 240px track, or its open panel would lie over the page it
+           manages (and stay open over it while a nav button holds the focus). */
+        data-sidebar={menuOpen || adminOpen ? "open" : "rail"}
         /* "none" while a space is showing: the IDE is a whole application, and
            the product does not dock its own assistant beside somebody else's
            editor — that column belongs to Theia. */
@@ -1782,7 +1786,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               open so it survives the pointer leaving. */}
           <aside
             className="drawer"
-            data-expanded={menuOpen ? "true" : "false"}
+            data-expanded={menuOpen || adminOpen ? "true" : "false"}
             aria-label="Global navigation"
             onKeyDown={(e) => {
               if (e.key === "Escape") setMenuOpen(false);
@@ -2226,6 +2230,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             {adminView === "identities" && (
               <IdentityDirectory token={token} query={filters.query} />
             )}
+            {adminView === "tenants" && (showPlatform || orgs.length > 1) && adminOrgId !== "__new__" && (
+              <OrganizationsTable
+                token={token}
+                orgs={orgs}
+                workspaces={workspaces}
+                selectedId={adminOrg?.id ?? null}
+                onSelect={(id) => setAdminOrgId(id)}
+                onMembers={(id) => openAdmin("people", id)}
+                query={filters.query}
+              />
+            )}
             {adminView === "tenants" && (
               <OrganizationsView
                 token={token}
@@ -2240,19 +2255,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               />
             )}
             {adminView === "people" && (
-              <PeopleView
+              <OrgMembersView
                 token={token}
-                mode="org"
                 org={adminOrg ? { id: adminOrg.id, name: adminOrg.name } : activeOrg}
-                roots={workspaces.filter((w) =>
-                  adminOrg ? w.orgId === adminOrg.id : w.orgId === activeOrgResolvedId,
-                )}
+                isPlatformAdmin={showPlatform}
                 query={filters.query}
-                onOpenProject={(id) => {
-                  setAdminOpen(false);
-                  setCrumb({ projectId: id });
-                  setView("projects");
-                }}
               />
             )}
             {adminView === "access" && (
