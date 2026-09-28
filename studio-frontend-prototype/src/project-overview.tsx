@@ -742,7 +742,7 @@ export function ProjectOverview({
                   <button className="primary" onClick={onOpenStudio}>
                     Open in IDE
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             ) : (
@@ -758,7 +758,7 @@ export function ProjectOverview({
                   <button className="primary" onClick={onOpenStudio}>
                     Launch Studio
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             )}
