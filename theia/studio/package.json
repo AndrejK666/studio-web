@@ -47,6 +47,10 @@
     },
     {
       "backend": "lib/node/studio-backend-module"
+    },
+    {
+      "frontendElectron": "lib/electron-browser/studio-electron-frontend-module",
+      "electronMain": "lib/electron-main/studio-electron-main-module"
     }
   ]
 }

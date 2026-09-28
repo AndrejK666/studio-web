@@ -11,7 +11,10 @@
 //
 // What a member sees: nothing, until an update has downloaded; then one
 // question -- restart now, later, or read what changed. "Later" installs it
-// when the app next quits. No update is ever forced.
+// when the app next quits. No update is ever forced. Help → Check for Updates
+// checks now and says what it found (theia/studio/src/electron-main): the
+// updater hands itself over as `globalThis.__studioDesktopUpdater`, since the
+// Theia electron-main modules are bundled apart from this file.
 //
 // Which channel: stable, unless the member asked for betas in the Studio view,
 // which writes `updates: "beta"` into ~/ConstructorStudio/settings.json. The
@@ -73,11 +76,9 @@ function startUpdates({ settingsFile, log = console }) {
     };
 
     let asked = false;
-    autoUpdater.on('update-downloaded', async info => {
-        if (asked) {
-            return;
-        }
-        asked = true;
+    /** The update that has downloaded, once one has: the restart question is about it. */
+    let downloaded;
+    const offer = async info => {
         const { response } = await dialog.showMessageBox({
             type: 'info',
             title: 'Constructor Studio update',
@@ -94,6 +95,15 @@ function startUpdates({ settingsFile, log = console }) {
         } else if (response === 2) {
             void shell.openExternal(`${RELEASES}/desktop-v${info.version}`);
         }
+    };
+    autoUpdater.on('update-downloaded', async info => {
+        downloaded = info;
+        // Asked once on its own; Check for Updates asks again.
+        if (asked) {
+            return;
+        }
+        asked = true;
+        await offer(info);
     });
     autoUpdater.on('error', error => {
         // Offline, rate-limited, or a release in the middle of being uploaded:
@@ -105,11 +115,36 @@ function startUpdates({ settingsFile, log = console }) {
         const channel = channelFrom(settingsFile);
         autoUpdater.channel = channel;
         autoUpdater.allowPrerelease = channel === 'beta';
-        autoUpdater.checkForUpdates().catch(() => undefined);
+        return autoUpdater.checkForUpdates();
+    };
+
+    /**
+     * Check now, for Help → Check for Updates, and say what was found. A found
+     * update downloads as on any check, and the restart question follows it.
+     */
+    globalThis.__studioDesktopUpdater = {
+        async checkNow() {
+            const current = app.getVersion();
+            if (downloaded) {
+                void offer(downloaded);
+                return { state: 'ready', version: downloaded.version };
+            }
+            const channel = channelFrom(settingsFile) === 'beta' ? 'beta' : 'stable';
+            try {
+                const result = await check();
+                const version = result?.updateInfo?.version;
+                return result?.isUpdateAvailable && version
+                    ? { state: 'downloading', version, current }
+                    : { state: 'current', version: current, channel };
+            } catch (error) {
+                return { state: 'failed', message: error instanceof Error ? error.message : String(error) };
+            }
+        },
     };
     app.whenReady().then(() => {
-        setTimeout(check, FIRST_CHECK_MS);
-        setInterval(check, EVERY_MS).unref?.();
+        const quietly = () => check().catch(() => undefined);
+        setTimeout(quietly, FIRST_CHECK_MS);
+        setInterval(quietly, EVERY_MS).unref?.();
     });
 }
 

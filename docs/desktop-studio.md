@@ -266,11 +266,29 @@ and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
 | `studio_url`, `issuer` | empty | instead, ship exactly one Studio |
 | `version` | `0.1.0` | the version the installer carries |
 
+## Updates
+
+An installed app updates itself from the rolling `desktop-updates` release,
+which every `desktop-v*` release refreshes
+(`theia/electron-app/desktop-updater.js`). It checks on start and every six
+hours, downloads what it finds, and asks once it has: restart now, later (it
+installs on quit), or read what changed. Nothing is forced.
+
+**Help → Check for Updates…** checks now and says what it found — the latest
+already, an update downloading, one downloaded (and asks again), or why the
+check failed. Stable or beta is the Studio view's *Get beta versions of the
+app*. A checkout's `theia start` and an unpacked zip are not updated in place,
+and say so.
+
+The menu item exists only in the desktop app: it is a `frontendElectron`
+module talking to an `electronMain` one over Theia's Electron IPC
+(`theia/studio/src/electron-browser`, `src/electron-main`), and a session's
+`browser-app` loads neither.
+
 ## Known limits
 
 - The installer is not code-signed, so Windows SmartScreen asks before the
   first run.
-- There is no automatic update yet.
 - The workspace a member opens is cloned, not synchronised: the Studio sees
   what they push, and nothing before it.
 - Desktop sessions are not yet visible in the portal, and the portal cannot yet
