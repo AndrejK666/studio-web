@@ -199,6 +199,7 @@ export class GearboxServiceImpl implements GearboxService {
       session === undefined || session.roots.length === 0 ? this.defaultRoots() : [...session.roots];
     const engine = spawnEngine(enginePath(), roots_, this.logger);
     this.engine = engine;
+    this.openRoots = roots_;
 
     engine.connection.onNotification(method.CATALOGUE_CHANGED, (event: CatalogueChanged) =>
       this.client?.onCatalogueChanged(event),
@@ -299,10 +300,20 @@ export class GearboxServiceImpl implements GearboxService {
     return result;
   }
 
+  /** The source roots the running engine was started on. */
+  protected openRoots: readonly string[] = [];
+
   async loadCatalogue(): Promise<CatalogueLoadResult> {
     const engine = this.engine;
     if (!engine || engine.dead) {
       throw new Error("the engine is not running; reload the catalogue to start it");
+    }
+    // A workspace whose repositories hold no `gear.gdl` has no source root, and
+    // the engine answers that with `no source root is open; pass roots to
+    // initialize or --root to the CLI` -- advice for a command line, shown to a
+    // person who opened a project. Having no gears is an empty catalogue.
+    if (this.openRoots.length === 0) {
+      return { total: 0, pending: [], diagnostics: [] };
     }
     return engine.request<CatalogueLoadResult>(method.CATALOGUE_LOAD, {}, LOAD_TIMEOUT_MS);
   }
