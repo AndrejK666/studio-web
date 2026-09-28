@@ -597,7 +597,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     // A copy of this very commit may already be on this machine, brought by
     // another project. Then there is no reason to stay read-only: adopt it and
     // reload onto it. Only a copy already there -- nothing is fetched unasked.
-    if (remote.origin !== undefined && !remote.origin.needsToken) {
+    if (remote.origin !== undefined && (!remote.origin.needsToken || remote.origin.clonePath !== undefined)) {
       void this.adoptSharedCorpus(remote.origin, false);
     }
     return true;
@@ -613,8 +613,8 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    */
   get corpusBringable(): true | string | undefined {
     if (this.state.remote === undefined || this.remoteOrigin === undefined) return undefined;
-    if (this.remoteOrigin.needsToken) {
-      return "This corpus is private, and Studio does not hand its token to a laptop.";
+    if (this.remoteOrigin.needsToken && this.remoteOrigin.clonePath === undefined) {
+      return "This corpus is private, and this Studio does not relay it.";
     }
     return true;
   }
@@ -630,7 +630,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    */
   async bringCorpusHere(): Promise<void> {
     const origin = this.remoteOrigin;
-    if (origin === undefined || origin.needsToken || this.bringingState.busy) return;
+    if (origin === undefined || this.corpusBringable !== true || this.bringingState.busy) return;
     this.bringingState = { busy: true };
     this.onChangedEmitter.fire();
     await this.adoptSharedCorpus(origin, true);
@@ -639,7 +639,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   protected async adoptSharedCorpus(origin: CorpusOrigin, fetch: boolean): Promise<void> {
     let dir: string | undefined;
     try {
-      dir = await this.service.useSharedCorpus(origin.sourceId, origin.url, origin.rev, fetch);
+      dir = await this.service.useSharedCorpus(origin.sourceId, origin.url, origin.rev, fetch, origin.clonePath);
     } catch (error) {
       this.bringingState = { busy: false, error: describe(error) };
       this.onChangedEmitter.fire();

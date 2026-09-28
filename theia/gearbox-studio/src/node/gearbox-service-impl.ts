@@ -45,7 +45,7 @@ import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
 import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
 import { fileOnBranch } from "./product-branch";
-import { corpusCacheRoot, materializeGitSource, materializeSharedCorpus } from "./git-sources";
+import { corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
   folderOfWorkspaceUri,
@@ -379,10 +379,20 @@ export class GearboxServiceImpl implements GearboxService {
     }
   }
 
-  async useSharedCorpus(id: string, url: string, rev: string, fetch: boolean): Promise<string | undefined> {
+  async useSharedCorpus(
+    id: string,
+    url: string,
+    rev: string,
+    fetch: boolean,
+    clonePath?: string,
+  ): Promise<string | undefined> {
+    const via = clonePath === undefined ? undefined : corpusRelay(clonePath);
+    if (fetch && clonePath !== undefined && via === undefined) {
+      throw new Error("this corpus can only be cloned through Studio, from the desktop app while signed in");
+    }
     let dir: string | undefined;
     try {
-      dir = await materializeSharedCorpus(corpusCacheRoot(), id, url, rev, fetch);
+      dir = await materializeSharedCorpus(corpusCacheRoot(), id, url, rev, fetch, via);
     } catch (error) {
       this.logger.warn(`gearbox: could not bring the corpus ${url}@${rev} here: ${String(error)}`);
       throw new Error(`the corpus could not be cloned from ${url}: ${messageOfGit(error)}`);

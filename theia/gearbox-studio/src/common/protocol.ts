@@ -283,7 +283,13 @@ export interface GearboxService {
    * clones one, and rejects with git's reason when that fails. The directory,
    * or `undefined` when there is none to adopt.
    */
-  useSharedCorpus(id: string, url: string, rev: string, fetch: boolean): Promise<string | undefined>;
+  useSharedCorpus(
+    id: string,
+    url: string,
+    rev: string,
+    fetch: boolean,
+    clonePath?: string,
+  ): Promise<string | undefined>;
 
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */
@@ -679,4 +685,9 @@ export interface CorpusOrigin {
   readonly rev: string;
   /** Cloning it takes a token the backend does not hand out. */
   readonly needsToken: boolean;
+  /**
+   * For such a corpus, the gateway-rooted path the Studio backend relays it
+   * from, signed with the member's own token. `url` still names the copy.
+   */
+  readonly clonePath?: string;
 }
