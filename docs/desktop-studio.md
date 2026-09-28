@@ -257,8 +257,12 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 where the native modules compile, and uploads the installer and the zip as the
 run's artifact. It builds the `gearbox` engine too, from source, at the
 repository, revision and Rust that `theia/Dockerfile`'s `gearbox` stage pins for
-the session image — one pin for both — and caches the build per revision. It runs when `theia/electron-app/**` or the workflow changes,
-and on demand (**Actions → Desktop — Windows build → Run workflow**) with:
+the session image — one pin for both — and caches the build per revision. It runs
+for PRs changing `theia/electron-app/**` or the workflow, for matching pushes to
+`main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop — Windows build → Run workflow**).
+New commits cancel older PR/main builds; release tags and manual builds are not
+cancelled. Feature-branch pushes in forks do not trigger another installer build.
+Manual inputs are:
 
 | Input | Default | Meaning |
 |---|---|---|

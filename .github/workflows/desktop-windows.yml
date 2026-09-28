@@ -10,7 +10,8 @@ name: Desktop — Windows build
 #
 # Not on every pull request: a Windows runner costs several times a Linux one,
 # and the browser session image does not depend on this. It runs when the
-# desktop packaging itself changes, and on demand.
+# desktop packaging itself changes in a PR, on main, for a release tag, and
+# on demand. Fork feature pushes rely on the upstream PR check instead.
 #
 # A tag `desktop-v<version>` makes it a RELEASE: the tag must match
 # theia/electron-app/package.json's version, and the installer, its blockmap
@@ -38,16 +39,19 @@ on:
     paths:
       - theia/electron-app/**
       - .github/workflows/desktop-windows.yml
-  # A branch that changes the packaging builds it too — which is also the only
-  # way to run this before it exists on the default branch, since
-  # workflow_dispatch needs it there.
   push:
-    branches: ['**']
+    branches: [main]
     # Path filters do not apply to tag pushes, so a release tag always builds.
     tags: ['desktop-v*']
     paths:
       - theia/electron-app/**
       - .github/workflows/desktop-windows.yml
+
+concurrency:
+  # A newer PR or main push supersedes the earlier installer build. Tags and
+  # manual builds each get their own group so neither can be discarded.
+  group: desktop-windows-${{ (github.event_name == 'workflow_dispatch' || github.ref_type == 'tag') && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch') }}
 
 permissions:
   contents: read
