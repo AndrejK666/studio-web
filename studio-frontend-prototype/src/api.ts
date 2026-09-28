@@ -1052,6 +1052,20 @@ export interface Conversion {
   expires_at?: string;
 }
 
+/** A project open in somebody's desktop Studio: a lease the app renews. */
+export interface DesktopSession {
+  id: string;
+  workspace_id: string;
+  /** Token subject of whoever has it open. */
+  member_id: string;
+  device_id: string;
+  device_name?: string | null;
+  started_at_epoch_secs: number;
+  last_seen_epoch_secs: number;
+  expires_at_epoch_secs: number;
+  heartbeat_secs: number;
+}
+
 export interface StudioSession {
   id: string;
   workspace_id: string;
@@ -3344,6 +3358,13 @@ export const api = {
     })),
   deleteStudioSession: (token: string, id: string) =>
     request<void>(`/studio-session/v1/sessions/${id}`, token, { method: "DELETE" }),
+  /** The desktops this project is open on right now (ADR-0027 §4). */
+  desktopSessions: (token: string, projectId: string) =>
+    requestAllPages<DesktopSession>(
+      `/studio-session/v1/desktop-sessions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      "items",
+    ),
 
   /**
    * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.

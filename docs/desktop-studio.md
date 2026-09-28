@@ -63,10 +63,15 @@ The full rules, and the checks before a PR, are in
 | Studio's APIs | the IDE backend proxies `studio-api/*` to `<studio>/cf/*` and attaches the token | nothing: the frontend never sees the token |
 | Source code | `git` against `<studio>/cf/studio-git/v1/workspaces/{id}/sources/{name}`, a proxy that attaches the source host's token from credstore | a credential helper path in `.git/config`, no token |
 | `git` credentials | `theia/studio/scripts/desktop-git-credentials.mjs` asks the IDE backend's token broker, over loopback, for a fresh Studio token | a per-run secret in the environment, worthless once the app exits |
+| Where a project is open | each window beats every 30 s; the IDE backend renews a lease at `<studio>/cf/studio-session/v1/desktop-sessions` as this device, and ends it when the window closes (ADR-0027 §4) | a random device id in `settings.json` |
 
 Nothing is written to disk but the member's choice of Studio
 (`~/ConstructorStudio/settings.json`) and the clones
-(`~/ConstructorStudio/workspaces/<workspace>`).
+(`~/ConstructorStudio/workspaces/<workspace>`). `settings.json` also keeps
+`deviceId`, a random UUID drawn on the first lease, so that a restarted app renews
+the leases it had. It names the installation and nothing else. It is not a
+credential: every lease call is authorized by the member's token, and a copied
+id only makes two machines look like one in the portal's list.
 
 One more, when the member opens an Orca agent's terminal: the IDE streams it
 over the Orca runtime's WebSocket, which takes a paired device. A session is

@@ -742,7 +742,7 @@ export function ProjectOverview({
                   <button className="primary" onClick={onOpenStudio} title="Open the running session in this window">
                     Web IDE
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             ) : (
@@ -758,7 +758,7 @@ export function ProjectOverview({
                   <button className="primary" onClick={onOpenStudio} title="Start a session for this project and open it in this window">
                     Web IDE
                   </button>
-                  <OpenInDesktop project={project} />
+                  <OpenInDesktop token={token} project={project} />
                 </div>
               </>
             )}
