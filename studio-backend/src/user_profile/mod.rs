@@ -79,10 +79,31 @@ pub struct StudioUserConfig {
 /// knows it without asking Keycloak.
 pub const STUDIO_SERVICE_SUBJECT: &str = "00000000-0000-4000-8000-00000000057d";
 
+/// A configured service subject, where blank means the fixed one.
+///
+/// The config's `${STUDIO_SERVICE_SUBJECT:-…}` does not cover it: expansion
+/// treats a variable that is set but empty as a value (see `load_config`), and
+/// the Helm chart sets it empty by default. On studio-dev (2026-09-28) that
+/// handed every shared session `STUDIO_ACTOR_ID=`, and Theia refused to start
+/// (the IDE answered "Cannot GET /").
+pub fn service_subject_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let value = value.trim();
+    Ok(if value.is_empty() {
+        STUDIO_SERVICE_SUBJECT.to_owned()
+    } else {
+        value.to_owned()
+    })
+}
+
 /// Who Studio's service identity is, as the directory shows it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ServiceAccount {
+    #[serde(deserialize_with = "service_subject_or_default")]
     pub subject: String,
     pub display_name: String,
     /// The neutral git author's address too — one name for both.
