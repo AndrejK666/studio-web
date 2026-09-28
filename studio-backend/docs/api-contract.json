@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 247,
+  "open_violations": 248,
   "operations": [
     {
       "method": "DELETE",
@@ -1671,6 +1671,24 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/organizations/{org_id}/members",
+      "operation_id": "studio_user.list_organization_members",
+      "tag": "StudioUser",
+      "summary": "List an organization's members",
+      "authenticated": true,
+      "responses": [
+        "OrganizationMemberListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
