@@ -14,7 +14,13 @@ export interface RemoteGearCatalogue {
     /** Each a Gearbox `GearDescriptor`, passed through untouched. */
     readonly gears: readonly unknown[];
     /** Where a copy of the corpus can be cloned from, at the listed commit. */
-    readonly origin?: { readonly sourceId: string; readonly url: string; readonly rev: string; readonly needsToken: boolean };
+    readonly origin?: {
+        readonly sourceId: string;
+        readonly url: string;
+        readonly rev: string;
+        readonly needsToken: boolean;
+        readonly clonePath?: string;
+    };
 }
 
 type Fetch = (path: string) => Promise<Response>;
@@ -46,6 +52,7 @@ export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioAp
         corpus_url?: string;
         corpus_commit?: string | null;
         corpus_needs_token?: boolean;
+        corpus_clone_path?: string | null;
         catalogue?: { gears?: Record<string, unknown> };
     };
     const gears = Object.values(body.catalogue?.gears ?? {});
@@ -53,7 +60,13 @@ export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioAp
         return undefined;
     }
     const origin = body.source_id && body.corpus_url && body.corpus_commit
-        ? { sourceId: body.source_id, url: body.corpus_url, rev: body.corpus_commit, needsToken: body.corpus_needs_token === true }
+        ? {
+            sourceId: body.source_id,
+            url: body.corpus_url,
+            rev: body.corpus_commit,
+            needsToken: body.corpus_needs_token === true,
+            ...(body.corpus_clone_path ? { clonePath: body.corpus_clone_path } : {}),
+        }
         : undefined;
     return { corpus: body.corpus ?? 'the gear corpus', gears, ...(origin ? { origin } : {}) };
 }

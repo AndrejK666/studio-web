@@ -146,6 +146,30 @@ export async function materializeGitSource(
 // reads the same tree, and moving to a newer commit is a new directory rather
 // than a checkout switched under somebody's open editor.
 
+/**
+ * How to clone a corpus whose host needs a token Studio does not hand out:
+ * from the Studio backend, which relays it with that token, signed with the
+ * member's own token by the desktop's credential helper.
+ */
+export interface CorpusRelay {
+  /** `<gateway>/<clone path>`: what `git clone` is given. */
+  readonly url: string;
+  /** The `credential.helper` value that answers for the gateway. */
+  readonly helper: string;
+}
+
+/**
+ * The relay for `clonePath`, from what the desktop publishes while signed in
+ * (`STUDIO_DESKTOP_GIT_BASE`, `STUDIO_DESKTOP_GIT_HELPER`). Undefined off the
+ * desktop, or signed out: there is no token to sign with then.
+ */
+export function corpusRelay(clonePath: string, env: NodeJS.ProcessEnv = process.env): CorpusRelay | undefined {
+  const gateway = env.STUDIO_DESKTOP_GIT_BASE?.trim();
+  const helper = env.STUDIO_DESKTOP_GIT_HELPER?.trim();
+  if (!gateway || !helper || !clonePath.startsWith("/")) return undefined;
+  return { url: `${gateway.replace(/\/+$/, "")}${clonePath}`, helper };
+}
+
 /** Where the shared corpora live: `STUDIO_CORPUS_CACHE`, else `~/ConstructorStudio/corpus`. */
 export function corpusCacheRoot(env: NodeJS.ProcessEnv = process.env): string {
   const fromEnv = env.STUDIO_CORPUS_CACHE?.trim();
@@ -170,15 +194,21 @@ export async function materializeSharedCorpus(
   url: string,
   rev: string,
   fetch: boolean,
+  via?: CorpusRelay,
 ): Promise<string | undefined> {
   if (!isKebabId(id) || !isSafeUrl(url) || !/^[0-9a-f]{40}$/.test(rev)) return undefined;
   const target = sharedCorpusDir(root, id, url, rev);
   if (fs.existsSync(path.join(target, ".git"))) return target;
   if (!fetch) return undefined;
+  if (via !== undefined && !/^https?:\/\/[^\s]+$/.test(via.url)) return undefined;
   const partial = `${target}.partial`;
   fs.rmSync(partial, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  await run(["clone", "--quiet", "--filter=blob:none", "--no-checkout", url, partial]);
+  // Through the relay the helper is given for this one command (`-c` before
+  // `clone`), so nothing about it lands in the copy's config: the copy is a
+  // fixed commit and never fetches again.
+  const signed = via === undefined ? [] : ["-c", "credential.helper=", "-c", `credential.helper=${via.helper}`];
+  await run([...signed, "clone", "--quiet", "--filter=blob:none", "--no-checkout", via?.url ?? url, partial]);
   await run(["-C", partial, "checkout", "--quiet", "--detach", rev]);
   fs.renameSync(partial, target);
   return target;

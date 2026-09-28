@@ -10,7 +10,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, Request};
+use axum::response::Response;
 use axum::{Extension, Router};
 use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
@@ -309,6 +310,10 @@ pub struct GearboxCatalogueDto {
     /// Whether cloning it takes a token. This backend never hands one out, so
     /// an IDE cannot clone such a corpus itself.
     pub corpus_needs_token: bool,
+    /// Set when it does: the gateway-rooted path to clone the corpus through
+    /// this backend with the member's Studio token, the corpus's own token
+    /// attached upstream. Read-only.
+    pub corpus_clone_path: Option<String>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
@@ -1949,9 +1954,118 @@ async fn gearbox_catalogue(
         corpus_url,
         corpus_ref,
         corpus_commit: commit,
+        corpus_clone_path: corpus_needs_token.then(|| CORPUS_GIT_PATH.to_string()),
         corpus_needs_token,
         catalogue: Value::clone(&raw),
     }))
+}
+
+/// Where the corpus is cloned from through this backend; `git` appends the
+/// protocol paths (`/info/refs`, `/git-upload-pack`).
+const CORPUS_GIT_PATH: &str = "/studio-components-catalog/v1/gearbox/corpus";
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CorpusRefsQuery {
+    pub service: Option<String>,
+}
+
+/// The client that relays corpus packs. No overall timeout, because a clone
+/// streams for as long as it takes; the connect timeout keeps a dead host from
+/// hanging one.
+fn corpus_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// One smart-HTTP request for the gear corpus, relayed with the corpus's own
+/// token so a laptop can clone a private corpus without ever holding it
+/// (ADR-0027). Any signed-in member may read it: the catalogue it describes is
+/// already listed to them. Fetch only -- a push is refused here, whatever the
+/// token upstream would allow.
+async fn corpus_git(
+    catalog: &Catalog,
+    protocol_path: &str,
+    service: crate::git_proxy::sources::Service,
+    request: Request,
+) -> Response {
+    use crate::git_proxy::rest::{authenticate_member, refuse, send_upstream, stream_back};
+    use crate::git_proxy::sources::{Service, upstream_url};
+
+    let Ok(authn) = catalog
+        .hub
+        .get::<dyn authn_resolver_sdk::AuthNResolverClient>()
+    else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Studio cannot check sign-ins right now; try again.",
+        );
+    };
+    if let Err(refused) = authenticate_member(authn.as_ref(), request.headers()).await {
+        return refused;
+    }
+    let Some(gearbox) = catalog.gearbox.as_ref() else {
+        return refuse(StatusCode::NOT_FOUND, "This Studio keeps no gear corpus.");
+    };
+    if service != Service::UploadPack {
+        return refuse(
+            StatusCode::FORBIDDEN,
+            "The gear corpus is read-only through Studio.",
+        );
+    }
+    let (url, token) = gearbox.corpus_fetch();
+    let Some(url) = upstream_url(&url, protocol_path) else {
+        return refuse(
+            StatusCode::NOT_FOUND,
+            "The gear corpus is not an http(s) repository, so it cannot be cloned through Studio.",
+        );
+    };
+    let token = (!token.is_empty()).then_some(token.as_str());
+    match send_upstream(
+        corpus_client(),
+        &url,
+        protocol_path,
+        service,
+        token,
+        request,
+        "The corpus's host refused its token; ask an administrator to update the gears connection.",
+    )
+    .await
+    {
+        Ok((_, response, answer)) => stream_back(response, answer),
+        Err(refused) => refused,
+    }
+}
+
+/// GET …/gearbox/corpus/info/refs?service= — the first request of a clone.
+async fn corpus_refs(
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<CorpusRefsQuery>,
+    request: Request,
+) -> Response {
+    use crate::git_proxy::sources::Service;
+    let Some(service) = query.service.as_deref().and_then(Service::parse) else {
+        return crate::git_proxy::rest::refuse(
+            StatusCode::BAD_REQUEST,
+            "Only the smart HTTP protocol is served (service=git-upload-pack).",
+        );
+    };
+    corpus_git(&catalog, "info/refs", service, request).await
+}
+
+/// POST …/gearbox/corpus/git-upload-pack — the pack a clone downloads.
+async fn corpus_pack(Extension(catalog): Extension<Catalog>, request: Request) -> Response {
+    corpus_git(
+        &catalog,
+        "git-upload-pack",
+        crate::git_proxy::sources::Service::UploadPack,
+        request,
+    )
+    .await
 }
 
 async fn gearbox_status(
@@ -2818,6 +2932,55 @@ pub fn register_routes(
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    // The corpus Git relay. `.anonymous().exposed()` for the reason studio-git
+    // gives: `git` sends Basic credentials, which the gateway's Bearer-only
+    // layer would refuse before they arrive; `authenticate_member` is the check.
+    let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox/corpus/info/refs")
+        .operation_id("studio_components_catalog.get_corpus_refs")
+        .summary("Git smart-HTTP ref advertisement for the gear corpus")
+        .description(
+            "The first request of a clone of the gear corpus through this backend. \
+             Authenticated with the member's Studio token as the Basic password (or a \
+             Bearer token); the corpus's own token is attached upstream and never \
+             returned. Fetch only.",
+        )
+        .tag("StudioComponentsCatalog")
+        .anonymous()
+        .exposed()
+        .handler(corpus_refs)
+        .text_response(
+            StatusCode::OK,
+            "Ref advertisement",
+            "application/x-git-upload-pack-advertisement",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router =
+        OperationBuilder::post("/studio-components-catalog/v1/gearbox/corpus/git-upload-pack")
+            .operation_id("studio_components_catalog.pull_corpus_pack")
+            .summary("Git smart-HTTP upload-pack (clone and fetch) for the gear corpus")
+            .description(
+                "Streams the negotiation to the corpus's host with its token attached, \
+                 and streams the pack back.",
+            )
+            .tag("StudioComponentsCatalog")
+            .anonymous()
+            .exposed()
+            .handler(corpus_pack)
+            .text_response(
+                StatusCode::OK,
+                "Pack",
+                "application/x-git-upload-pack-result",
+            )
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/gearbox")
         .operation_id("studio_components_catalog.get_gearbox_status")

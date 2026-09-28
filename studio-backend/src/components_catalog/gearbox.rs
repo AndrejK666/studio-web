@@ -1540,6 +1540,13 @@ impl Gearbox {
         (s.url, s.git_ref, !s.token.is_empty())
     }
 
+    /// What the corpus Git relay sends upstream: the repository URL and the
+    /// token it is read with (empty for a public corpus). Server-side only.
+    pub(crate) fn corpus_fetch(&self) -> (String, String) {
+        let s = self.current_source();
+        (s.url, s.token)
+    }
+
     /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
     /// Returns whether it did. A source with no descriptors — a gears
     /// repository before it adopted Gearbox — leaves the current corpus alone:

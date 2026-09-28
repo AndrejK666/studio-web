@@ -298,7 +298,7 @@ async fn list_sources(
 
 /// A plain-text protocol failure. `git` prints the body to the user, so it says
 /// what to do rather than what went wrong inside.
-fn refuse(status: StatusCode, message: &str) -> Response {
+pub(crate) fn refuse(status: StatusCode, message: &str) -> Response {
     let mut response = Response::new(Body::from(format!("{message}\n")));
     *response.status_mut() = status;
     response.headers_mut().insert(
@@ -316,6 +316,16 @@ fn refuse(status: StatusCode, message: &str) -> Response {
 }
 
 async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityContext, Response> {
+    authenticate_member(proxy.authn.as_ref(), headers).await
+}
+
+/// The member a Git request comes from: the Studio token it carries (see
+/// [`sources::presented_token`]), resolved like any API token. A refusal is
+/// already the answer `git` needs, 401 with the Basic challenge.
+pub(crate) async fn authenticate_member(
+    authn: &dyn AuthNResolverClient,
+    headers: &HeaderMap,
+) -> Result<SecurityContext, Response> {
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -325,7 +335,7 @@ async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityC
             "Sign in to Constructor Studio: this remote takes your Studio token.",
         ));
     };
-    match proxy.authn.authenticate(&token).await {
+    match authn.authenticate(&token).await {
         Ok(result) => Ok(result.security_context),
         Err(error) => {
             tracing::debug!(%error, "studio-git: token refused");
@@ -382,61 +392,23 @@ async fn forward(
         },
     };
 
-    let (parts, body) = request.into_parts();
-    let method = if parts.method == axum::http::Method::POST {
-        reqwest::Method::POST
-    } else {
-        reqwest::Method::GET
-    };
-    let query = if protocol_path == "info/refs" {
-        format!("?service={}", service.as_str())
-    } else {
-        String::new()
-    };
-    let mut upstream = proxy.client.request(method, format!("{url}{query}"));
-    for name in &FORWARD_REQUEST {
-        if let Some(value) = parts.headers.get(name) {
-            upstream = upstream.header(name.as_str(), value.as_bytes());
-        }
-    }
-    if let Some(token) = &token {
-        upstream = upstream.header(
-            reqwest::header::AUTHORIZATION,
-            sources::upstream_authorization(token),
-        );
-    }
-    if parts.method == axum::http::Method::POST {
-        upstream = upstream.body(reqwest::Body::wrap_stream(body.into_data_stream()));
-    }
-
-    let answer = match upstream.send().await {
-        Ok(answer) => answer,
-        Err(error) => {
-            // The URL is not logged: a source URL may embed credentials of its own.
-            tracing::warn!(%workspace_id, source, error = %error.without_url(), "studio-git: upstream unreachable");
-            return refuse(
-                StatusCode::BAD_GATEWAY,
-                "The source host could not be reached.",
-            );
+    let (status, response, answer) = match send_upstream(
+        &proxy.client,
+        &url,
+        protocol_path,
+        service,
+        token.as_deref(),
+        request,
+        "The source host refused the workspace's token; ask an owner to update the connection.",
+    )
+    .await
+    {
+        Ok(sent) => sent,
+        Err(refused) => {
+            tracing::warn!(%workspace_id, source, "studio-git: the source host did not serve the request");
+            return refused;
         }
     };
-    let status = answer.status().as_u16();
-    if status == 401 || status == 403 {
-        // Passing a 401 through would make `git` ask for credentials to THIS
-        // host again, which cannot help: it is the stored token that failed.
-        tracing::warn!(%workspace_id, source, status, "studio-git: the source host refused the stored token");
-        return refuse(
-            StatusCode::FORBIDDEN,
-            "The source host refused the workspace's token; ask an owner to update the connection.",
-        );
-    }
-    let mut response =
-        Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
-    for name in &FORWARD_RESPONSE {
-        if let Some(value) = answer.headers().get(name.as_str()) {
-            response = response.header(name, value.as_bytes());
-        }
-    }
     let stream = answer.bytes_stream();
     let body = if refresh::reports_a_push(protocol_path, status) {
         // The push report is the last thing the source host sends, after its
@@ -462,6 +434,92 @@ async fn forward(
             "The source host sent an unreadable answer.",
         )
     })
+}
+
+/// Send one smart-HTTP request to `url` (the source's `…/info/refs` or
+/// `…/git-*-pack`), with `token` as the upstream credential, and hand back the
+/// answer's status, a response carrying its protocol headers, and the answer
+/// to stream. A source host that refuses the token is answered 403 with
+/// `refused`: passing its 401 through would make `git` ask for credentials to
+/// *this* host again, which cannot help.
+pub(crate) async fn send_upstream(
+    client: &reqwest::Client,
+    url: &str,
+    protocol_path: &str,
+    service: Service,
+    token: Option<&str>,
+    request: Request,
+    refused: &str,
+) -> Result<(u16, axum::http::response::Builder, reqwest::Response), Response> {
+    let (parts, body) = request.into_parts();
+    let method = if parts.method == axum::http::Method::POST {
+        reqwest::Method::POST
+    } else {
+        reqwest::Method::GET
+    };
+    let query = if protocol_path == "info/refs" {
+        format!("?service={}", service.as_str())
+    } else {
+        String::new()
+    };
+    let mut upstream = client.request(method, format!("{url}{query}"));
+    for name in &FORWARD_REQUEST {
+        if let Some(value) = parts.headers.get(name) {
+            upstream = upstream.header(name.as_str(), value.as_bytes());
+        }
+    }
+    if let Some(token) = token {
+        upstream = upstream.header(
+            reqwest::header::AUTHORIZATION,
+            sources::upstream_authorization(token),
+        );
+    }
+    if parts.method == axum::http::Method::POST {
+        upstream = upstream.body(reqwest::Body::wrap_stream(body.into_data_stream()));
+    }
+
+    let answer = match upstream.send().await {
+        Ok(answer) => answer,
+        Err(error) => {
+            // The URL is not logged: a source URL may embed credentials of its own.
+            tracing::warn!(error = %error.without_url(), "studio-git: upstream unreachable");
+            return Err(refuse(
+                StatusCode::BAD_GATEWAY,
+                "The source host could not be reached.",
+            ));
+        }
+    };
+    let status = answer.status().as_u16();
+    if status == 401 || status == 403 {
+        tracing::warn!(
+            status,
+            "studio-git: the source host refused the stored token"
+        );
+        return Err(refuse(StatusCode::FORBIDDEN, refused));
+    }
+    let mut response =
+        Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
+    for name in &FORWARD_RESPONSE {
+        if let Some(value) = answer.headers().get(name.as_str()) {
+            response = response.header(name, value.as_bytes());
+        }
+    }
+    Ok((status, response, answer))
+}
+
+/// The upstream answer streamed back as it arrives, nothing buffered.
+pub(crate) fn stream_back(
+    response: axum::http::response::Builder,
+    answer: reqwest::Response,
+) -> Response {
+    response
+        .body(Body::from_stream(answer.bytes_stream()))
+        .unwrap_or_else(|_| {
+            refuse(
+                StatusCode::BAD_GATEWAY,
+                "The source host sent an unreadable answer.",
+            )
+        })
 }
 
 /// GET …/info/refs?service= — the first request of every clone, fetch and push.

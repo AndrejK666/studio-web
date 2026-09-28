@@ -157,6 +157,11 @@ function openInBrowser(url: string, command?: string): void {
     spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
+/** The gateway a Studio Git remote is rooted at, while signed in (`https://studio.example/cf`). */
+export const GIT_BASE_ENV = 'STUDIO_DESKTOP_GIT_BASE';
+/** The `credential.helper` value that signs a request to it with the member's token. */
+export const GIT_HELPER_ENV = 'STUDIO_DESKTOP_GIT_HELPER';
+
 /**
  * The credential helper script. Resolved through the package, because in a
  * bundled app `__dirname` is the bundle's directory, not this package's.
@@ -497,6 +502,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         await this.broker?.close();
         this.broker = undefined;
         delete process.env[CREDENTIALS_ENV];
+        delete process.env[GIT_BASE_ENV];
+        delete process.env[GIT_HELPER_ENV];
         this.status = this.describe('signed-out');
     }
 
@@ -531,6 +538,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         this.broker = await startTokenBroker(new URL(config.studioUrl).host, () => session.accessToken());
         // Inherited by the plugin host, vscode.git, terminals and agents.
         process.env[CREDENTIALS_ENV] = this.broker.address;
+        // And where Studio's own Git remotes are, with the helper that signs
+        // them: for a clone this contribution does not start itself -- the gear
+        // corpus, which gearbox-studio brings once per machine.
+        process.env[GIT_BASE_ENV] = `${config.studioUrl}${config.gatewayPrefix}`;
+        process.env[GIT_HELPER_ENV] = helperCommand(process.execPath, desktopGitHelper());
         const claims = claimsOf(tokens.accessToken);
         this.status = this.describe('signed-in', {
             user: {

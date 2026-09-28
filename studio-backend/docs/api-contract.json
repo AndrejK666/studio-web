@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 248,
+  "open_violations": 250,
   "operations": [
     {
       "method": "DELETE",
@@ -530,6 +530,20 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/gearbox/corpus/info/refs",
+      "operation_id": "studio_components_catalog.get_corpus_refs",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Git smart-HTTP ref advertisement for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -1995,6 +2009,19 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/gearbox/corpus/git-upload-pack",
+      "operation_id": "studio_components_catalog.pull_corpus_pack",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Git smart-HTTP upload-pack (clone and fetch) for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
