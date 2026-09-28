@@ -52,7 +52,7 @@ import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
 import { OrcaTerminalService, orcaTerminalServicePath } from '../common/orca-terminal-protocol';
-import { OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
+import { OrcaPairingCommands, OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
 import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
@@ -203,6 +203,8 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         )
     ).inSingletonScope();
     bind(OrcaTerminalOpener).toSelf().inSingletonScope();
+    bind(OrcaPairingCommands).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(OrcaPairingCommands);
     bindViewContribution(bind, OrcaContribution);
     bind(OperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();

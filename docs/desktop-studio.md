@@ -32,6 +32,17 @@ Nothing is written to disk but the member's choice of Studio
 (`~/ConstructorStudio/settings.json`) and the clones
 (`~/ConstructorStudio/workspaces/<workspace>`).
 
+One more, when the member opens an Orca agent's terminal: the IDE streams it
+over the Orca runtime's WebSocket, which takes a paired device. A session is
+paired when Orca starts in it; on the desktop the Orca app is already running,
+and only its window can issue a pairing. So the first **Open** on an agent (or
+**Orca: Pair with Orca on This Computer**) asks for the link Orca generates —
+*Settings → Pair another Orca client → This computer → generate an access
+link* — and keeps it in `~/ConstructorStudio/orca-pairing`, readable by the
+member only. It is Orca's token for this machine's own runtime on
+`127.0.0.1`, not a Studio secret; revoking it in Orca, or deleting the file,
+undoes it.
+
 ## What a Studio deployment needs
 
 **1. The `studio-desktop` Keycloak client.** The client is in both realm files
