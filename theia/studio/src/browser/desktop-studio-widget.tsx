@@ -12,6 +12,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StudioApi } from './studio-api';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
+import { Organization, Tenant, projectsOf } from './desktop-projects';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -23,16 +24,6 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     user?: { sub: string; name?: string; tenantId?: string };
     /** Which updates the app takes; absent from a backend that predates it. */
     updates?: 'stable' | 'beta';
-}
-
-interface Tenant {
-    id: string;
-    name: string;
-    tenant_type?: string;
-}
-
-interface Organization extends Tenant {
-    workspaces: Tenant[];
 }
 
 export function desktopUrl(path: string): string {
@@ -47,8 +38,6 @@ export async function desktopStatus(): Promise<DesktopStatus | undefined> {
         return undefined;
     }
 }
-
-const kind = (tenant: Tenant): string => tenant.tenant_type?.match(/cf\.studio\.tenant\.(\w+)\.v1/)?.[1] ?? 'tenant';
 
 @injectable()
 export class DesktopStudioWidget extends ReactWidget {
@@ -67,7 +56,7 @@ export class DesktopStudioWidget extends ReactWidget {
         super();
         this.id = DESKTOP_STUDIO_WIDGET_ID;
         this.title.label = 'Constructor Studio';
-        this.title.caption = 'Your Constructor Studio account and workspaces';
+        this.title.caption = 'Your Constructor Studio account and projects';
         this.title.closable = true;
         this.title.iconClass = 'codicon codicon-account';
         this.addClass('studio-desktop-view');
@@ -206,28 +195,19 @@ export class DesktopStudioWidget extends ReactWidget {
         }
     }
 
-    /** The member's organizations and their workspaces, as the portal lists them. */
+    /** The member's projects, found the way the portal finds them. */
     protected async loadEntities(): Promise<void> {
-        const home = this.status?.user?.tenantId;
-        if (!home) {
-            return;
-        }
         try {
-            const children = async (id: string): Promise<Tenant[]> => {
-                const answer = await StudioApi.fetch(`/account-management/v1/tenants/${id}/children`);
+            this.organizations = await projectsOf(async path => {
+                const answer = await StudioApi.fetch(path);
                 if (!answer.ok) {
                     throw new Error(`HTTP ${answer.status}`);
                 }
-                return ((await answer.json()).items ?? []) as Tenant[];
-            };
-            const organizations = (await children(home)).filter(t => kind(t) === 'organization');
-            this.organizations = await Promise.all(organizations.map(async org => ({
-                ...org,
-                workspaces: (await children(org.id)).filter(t => kind(t) === 'workspace'),
-            })));
+                return answer.json();
+            });
             this.loadError = '';
         } catch (error) {
-            this.loadError = `Your workspaces could not be loaded (${error instanceof Error ? error.message : error}).`;
+            this.loadError = `Your projects could not be loaded (${error instanceof Error ? error.message : error}).`;
         }
     }
 
@@ -252,7 +232,7 @@ export class DesktopStudioWidget extends ReactWidget {
             return <div style={box}>
                 {status.switchable ? this.renderPicker(status) : header}
                 <h3 style={{ margin: '0 0 8px' }}>Sign in to Constructor Studio</h3>
-                <p>Your workspaces, their sources and the AI your organization provides are one sign-in away.
+                <p>Your projects, their sources and the AI your organization provides are one sign-in away.
                     Nothing is stored on this computer but that sign-in.</p>
                 {status.state === 'failed' && <p style={{ color: 'var(--theia-errorForeground)' }}>{status.error}</p>}
                 <button className='theia-button' style={button} onClick={() => void this.signIn()}>
@@ -277,15 +257,19 @@ export class DesktopStudioWidget extends ReactWidget {
                 <a style={link} onClick={() => void this.signOut()}>Sign out</a>
             </div>
             {this.loadError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.loadError}</p>}
-            {!this.organizations && !this.loadError && <p>Loading your workspaces…</p>}
+            {!this.organizations && !this.loadError && <p>Loading your projects…</p>}
+            {this.organizations?.length === 0 && <p style={{ opacity: 0.7 }}>
+                You are not a member of an organization on this Studio yet. Accept an invitation in the portal, then reopen this view.
+            </p>}
             {this.organizations?.map(org => <div key={org.id} style={{ marginTop: '12px' }}>
-                <div><span className='codicon codicon-organization' /> <b>{org.name}</b></div>
-                {org.workspaces.length === 0 && <div style={{ paddingLeft: '20px', opacity: 0.7 }}>No workspaces yet</div>}
-                {org.workspaces.map(ws => <div key={ws.id} style={{ paddingLeft: '20px', cursor: 'pointer' }}
-                    title={`Open ${ws.name} here — its sources are cloned through Studio`}
-                    onClick={() => this.opening || void this.openWorkspace(ws)}>
-                    <span className={this.opening === ws.id ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-folder'} />
-                    {' '}<a>{ws.name}</a>
+                {/* Organizations are hidden in the portal (concept v2); named here only when there is a choice. */}
+                {this.organizations!.length > 1 && <div><span className='codicon codicon-organization' /> <b>{org.name}</b></div>}
+                {org.projects.length === 0 && <div style={{ opacity: 0.7 }}>No projects yet</div>}
+                {org.projects.map(project => <div key={project.id} style={{ paddingLeft: this.organizations!.length > 1 ? '20px' : 0, cursor: 'pointer' }}
+                    title={`Open ${project.name} here — its sources are cloned through Studio`}
+                    onClick={() => this.opening || void this.openWorkspace(project)}>
+                    <span className={this.opening === project.id ? 'codicon codicon-loading codicon-modifier-spin' : 'codicon codicon-folder'} />
+                    {' '}<a>{project.name}</a>
                 </div>)}
             </div>)}
             {this.openError && <p style={{ color: 'var(--theia-errorForeground)' }}>{this.openError}</p>}

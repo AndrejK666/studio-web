@@ -8,6 +8,7 @@ with one difference that decides everything else: the backend did not start
 it, so nothing on the member's machine may hold a secret of the
 organization's. [ADR-0027](adr/0027-a-desktop-session-keeps-the-secrets-on-the-server.md)
 is the decision; this page is how to build, configure and run it.
+Changing it? [desktop-contributing.md](desktop-contributing.md) has the rules.
 
 What a member does:
 
@@ -16,8 +17,43 @@ What a member does:
    Constructor ID**.
 2. Signs in on the realm's own page, in the system browser. The app waits on a
    loopback port and takes the answer.
-3. Sees their organizations and workspaces, and clicks one to open it: its
-   sources are cloned through the Studio and the folder opens in the IDE.
+3. Sees the projects they can reach — found the way the portal finds them:
+   the organizations they are a **member** of (`studio-user`
+   `/me/memberships`), and each one's `workspace` tenants, which the portal
+   calls projects — and clicks one to open it: its sources are cloned through
+   the Studio and the folder opens in the IDE. The organization is named only
+   when there is more than one, as the portal hides it.
+
+## One IDE, two hosts
+
+`theia/studio` and `theia/product-ext` are the **same code** in the portal's
+session (`browser-app`, in a container, the portal hands it a token) and on the
+desktop (`electron-app`, the member signs in here). Every desktop change has to
+leave the web session exactly as it was. What keeps them apart today:
+
+- The backend's `DesktopStudioContribution` mounts `/studio-desktop/*` and its
+  `/studio-api` proxy **only** when a Studio is configured
+  (`STUDIO_DESKTOP_URL` / `_ENVIRONMENTS`). A session image sets neither, so
+  there the routes do not exist and the session gate keeps serving `studio-api`.
+- The frontend opens the Constructor Studio view only when
+  `studio-desktop/status` answers `enabled`; in a session that request 404s and
+  the view never shows.
+- Desktop-only logic lives in `desktop-*` files (`desktop-studio-widget.tsx`,
+  `desktop-projects.ts`, `node/desktop-*.ts`). Shared widgets call Studio
+  through `StudioApi.fetch('/<gear>/v1/...')` and must not care which host
+  answers it.
+
+So, when improving the desktop:
+
+1. Branch on the host by the status (`enabled`), never by `process.versions.electron`
+   or a build flag — the same bundle is tested in both.
+2. Do not change what a shared widget asks for to suit the desktop; add to the
+   desktop proxy instead.
+3. Before merging, open a portal session as well as the desktop app: the
+   Documents, Sources and Analyze views must behave as before.
+
+The full rules, and the checks before a PR, are in
+[desktop-contributing.md](desktop-contributing.md).
 
 ## How it connects, and what it never holds
 
@@ -135,6 +171,44 @@ runtime config requires; a packaged app sets them itself.
 `theia rebuild:electron` compiles the native modules (`node-pty`, `keytar`,
 `drivelist`, `native-keymap`) for Electron, which on Windows needs the C++
 build tools of Visual Studio.
+
+## Debugging
+
+Run it the way **Run it from a checkout** does, with Chromium's debugging port
+open and development bundles, so stack traces point at the TypeScript:
+
+```bash
+npx theia build --mode development
+STUDIO_DESKTOP_URL=... npx theia start --plugins=local-dir:../plugins --remote-debugging-port=9224
+```
+
+- **Frontend.** *Help → Toggle Developer Tools* in the app, or attach from
+  Chrome: `chrome://inspect` → *Configure* → `localhost:9224`. A script can
+  drive the same page over CDP: `GET http://127.0.0.1:9224/json/list`, take the
+  `page` target, `Runtime.evaluate`.
+- **Backend.** The Node backend logs to the terminal `theia start` runs in;
+  every line of the desktop's own is prefixed `[studio-desktop]` (sign-in
+  address, who signed in, each clone). Add `--log-level=debug` for Theia's own.
+  To step through it, `--inspect=9229` on `theia start` and attach VS Code or
+  `chrome://inspect`.
+- **What the Studio view sees.** From the DevTools console, the same calls the
+  view makes — the token is attached by the backend, never visible here:
+
+  ```js
+  await (await fetch('/studio-desktop/status')).json()               // state, user, current Studio
+  await (await fetch('/studio-api/account-management/v1/me')).json() // subject_tenant_id
+  await (await fetch('/studio-api/studio-user/v1/me/memberships')).json() // the organizations offered
+  ```
+
+  An empty `memberships` list is the "not a member of an organization yet"
+  message, not a desktop bug: accept an invitation in the portal.
+- **Sign-in.** `STUDIO_DESKTOP_BROWSER=<command>` opens the sign-in page with
+  another browser (a clean profile, say); `STUDIO_DESKTOP_AUTO_SIGN_IN=1` starts
+  it at launch. A local Keycloak on `https://localhost:8443` needs
+  `NODE_EXTRA_CA_CERTS=docker/keycloak/certs/dev-ca.pem`.
+- **Another Studio, same install.** Environment variables win over the build's
+  preset, so an installed app can be started from a terminal against a local
+  stack without rebuilding it.
 
 ## Build an installer
 
