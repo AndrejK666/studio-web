@@ -178,6 +178,21 @@ export function folderFor(name: string | undefined, id: string): string {
     return safe || id;
 }
 
+/**
+ * Why a project's sources could not be listed, from a 404 of `studio-git`:
+ * `named` when the gear itself answered (its problem names the project),
+ * `visible` when the member can read the project tenant nonetheless.
+ */
+export function missingSourcesMessage(studioUrl: string, named: boolean, visible: boolean): string {
+    if (!named) {
+        // Any other 404 is the gateway's: this Studio runs no studio-git.
+        return `${studioUrl} cannot clone for a desktop yet (it runs no studio-git)`;
+    }
+    return visible
+        ? 'it has no sources yet: add a repository to it in the portal (Sources), then open it again'
+        : 'you cannot see this project\'s settings';
+}
+
 /** What the IDE's Studio view shows; never a token. */
 export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly enabled: boolean;
@@ -445,12 +460,15 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             { headers: { Authorization: `Bearer ${await this.session!.accessToken()}` } }
         );
         if (answer.status === 404) {
-            // Our own gear answers 404 as a problem that names the workspace; any
-            // other 404 is the gateway's, meaning this Studio has no studio-git.
             const problem = await answer.json().catch(() => undefined) as { context?: { resource_name?: string } } | undefined;
-            throw new Error(problem?.context?.resource_name
-                ? 'you cannot see this workspace\'s settings'
-                : `${config.studioUrl} cannot clone for a desktop yet (it runs no studio-git)`);
+            const named = !!problem?.context?.resource_name;
+            // studio-git answers the same 404 for "no settings" and "not yours";
+            // whether the project tenant itself can be read tells the two apart.
+            const visible = named && (await fetch(
+                `${config.studioUrl}${config.gatewayPrefix}/account-management/v1/tenants/${encodeURIComponent(workspaceId)}`,
+                { headers: { Authorization: `Bearer ${await this.session!.accessToken()}` } }
+            ).catch(() => undefined))?.ok === true;
+            throw new Error(missingSourcesMessage(config.studioUrl, named, visible));
         }
         if (!answer.ok) {
             throw new Error(`the workspace's sources could not be listed (HTTP ${answer.status})`);
