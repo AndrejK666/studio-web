@@ -647,6 +647,12 @@ export const RemoteCatalogueSource = Symbol.for("gearbox-studio.RemoteCatalogueS
 export interface RemoteCatalogueSource {
   /** Undefined when the backend has no corpus to offer. */
   load(): Promise<RemoteCatalogue | undefined>;
+  /**
+   * Fires when the answer may have changed: a desktop starts signed out, so
+   * its first load finds nothing, and signing in is what makes the corpus
+   * reachable.
+   */
+  onDidChange?(listener: () => void): { dispose(): void };
 }
 export interface RemoteCatalogue {
   /** `owner/repo@ref`, as a person reads it. */
