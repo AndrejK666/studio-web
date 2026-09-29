@@ -127,10 +127,11 @@ run("opens a real product to `ready`", async () => {
   let lastCatalogueLog = 0;
   catalogue.onChanged(() => {
     const now = Date.now();
-    const state = catalogue.current as unknown as { status: string; rows: unknown[] };
+    const state = catalogue.current as unknown as { status: string; rows: Array<{ kind: string }> };
     if (now - lastCatalogueLog < 1000 && state.status !== "ready") return;
     lastCatalogueLog = now;
-    log("catalogue:", state.status, `${state.rows.length} rows`);
+    const projected = state.rows.filter((row) => row.kind === "projected").length;
+    log("catalogue:", state.status, `${state.rows.length} rows, ${projected} projected`);
   });
   const products = container.get(ProductStore);
   const session = container.get(ProductSessionService);
