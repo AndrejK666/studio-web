@@ -145,6 +145,23 @@ describe('the views a mode keeps on its rails', () => {
     });
 });
 
+describe('the Studio view', () => {
+    it('comes back to a mode whose layout was saved before it existed', async () => {
+        const { layout, on, widgets, shell } = setup(WORKBENCH_PERSPECTIVE_ID, { 'studio.desktop': 'left' });
+        const studio = widgets.tryGetWidget('studio.desktop')!;
+        studio.parent = null;                       // Theia's restore detached it
+        await layout.apply();
+        expect(on('left')).toContain('studio.desktop');
+        expect(shell.addWidget).toHaveBeenCalledWith(studio, { area: 'left', rank: 50 });
+    });
+
+    it('is never created where there is none (a session)', async () => {
+        const { layout, widgets } = setup(WORKBENCH_PERSPECTIVE_ID, {});
+        await layout.apply();
+        expect(widgets.getOrCreateWidget).not.toHaveBeenCalledWith('studio.desktop');
+    });
+});
+
 describe('what a mode sets aside on entering it', () => {
     it('takes the Gearbox Catalogue and the code rails out of Doc editing', async () => {
         const { layout, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {

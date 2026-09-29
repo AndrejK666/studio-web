@@ -110,6 +110,17 @@ export const ALWAYS_KEPT: ReadonlySet<string> = new Set([
     'plugin-view-container:workbench.view.extension.codexSecondaryViewContainer',
 ]);
 
+/**
+ * The Studio view, in every mode, once it exists. It is added when the desktop
+ * backend answers (DesktopStudioContribution), which can be after the first
+ * mode's layout was taken: measured on a fresh profile, leaving Development in
+ * the first seconds saved a layout without it, and Theia's restore then
+ * detached it from Development for good. It is only put back when it was
+ * detached, never created: a session, which has no Studio view, never makes one,
+ * and one the member closed is disposed, not detached.
+ */
+export const STUDIO_VIEW: ModeView = { id: 'studio.desktop', area: 'left', rank: 50 };
+
 /** Just enough of a perspective descriptor for this file. */
 export interface ModeDescriptor {
     readonly id: string;
@@ -193,6 +204,10 @@ export class StudioModeLayout implements FrontendApplicationContribution {
             return;
         }
         const descriptors = this.perspectives.getRegisteredPerspectives();
+        const studio = this.widgets.tryGetWidget(STUDIO_VIEW.id);
+        if (studio && !studio.isAttached && !studio.isDisposed) {
+            await this.shell.addWidget(studio, { area: STUDIO_VIEW.area, rank: STUDIO_VIEW.rank });
+        }
         for (const view of declaredViews(mode, descriptors.find(d => d.id === mode))) {
             await this.place(view);
         }
