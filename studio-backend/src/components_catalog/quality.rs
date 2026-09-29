@@ -79,7 +79,9 @@ pub fn attach(
 }
 
 /// The grade as a profile field: `b` the letter, `n` the share met, `s` the
-/// lamp, and `parts` every criterion with whether it passed.
+/// lamp, and `parts` every criterion with whether it passed and whether its
+/// input was known at all: a criterion fails on no answer too ("unknown
+/// fails"), and a reader has to tell a failed check from a missing one.
 pub fn grade(q: &Quality, values: &Map<String, Value>) -> Value {
     let parts: Vec<(&Criterion, bool)> =
         q.criteria.iter().map(|c| (c, passes(c, values))).collect();
@@ -123,6 +125,7 @@ pub fn grade(q: &Quality, values: &Map<String, Value>) -> Value {
             "area": title(&c.a),
             "label": c.label,
             "pass": ok,
+            "known": knows(c, values),
             "fix": c.fix,
         })).collect::<Vec<_>>(),
     })
@@ -142,6 +145,15 @@ fn number(values: &Map<String, Value>, key: &str) -> Option<f64> {
         .get(key)
         .and_then(|v| v.get("n"))
         .and_then(Value::as_f64)
+}
+
+/// Whether the criterion's input has an answer at all: its field is present
+/// and not cleared, or its derived input can be worked out.
+fn knows(c: &Criterion, values: &Map<String, Value>) -> bool {
+    if let Some(derived) = c.field.strip_prefix('@') {
+        return derive(derived, values).is_some();
+    }
+    values.get(&c.field).is_some_and(|v| !v.is_null())
 }
 
 /// Whether one criterion holds for these values.
