@@ -286,8 +286,13 @@ pub fn classify(e: &Evidence<'_>) -> Classified {
     if e.engine_roles.contains(&"service") {
         return classified(Kind::Gear, "described by a gear.gdl (a service gear)");
     }
+    // The toolkit is the platform's library, `cf-gears-toolkit-sdk` included:
+    // it is the SDK for writing gears, not the SDK of a gear.
+    if e.stored_kind == Some("toolkit") || name.contains("-toolkit") {
+        return classified(Kind::Library, "a toolkit crate");
+    }
     if name.ends_with("-sdk") || name.ends_with("-sdks") {
-        return classified(Kind::Sdk, "the crate name ends in -sdk");
+        return classified(Kind::Sdk, "the crate name ends in -sdk/-sdks");
     }
     if e.gear_toml {
         if e.gear_toml_plugin == Some(true) || name.ends_with("-plugin") {
@@ -306,9 +311,6 @@ pub fn classify(e: &Evidence<'_>) -> Classified {
     }
     if name.ends_with("-macros") || name.ends_with("-macro") {
         return classified(Kind::Library, "a procedural-macro crate");
-    }
-    if e.stored_kind == Some("toolkit") || name.contains("-toolkit") {
-        return classified(Kind::Library, "a toolkit crate");
     }
     classified(
         Kind::Library,
@@ -520,6 +522,7 @@ mod tests {
             "cf-gears-toolkit-db",
             "cf-gears-toolkit-db-macros",
             "cf-gears-toolkit-macros",
+            "cf-gears-toolkit-sdk",
         ] {
             assert_eq!(kind(&krate(name)), "library", "{name}");
         }
