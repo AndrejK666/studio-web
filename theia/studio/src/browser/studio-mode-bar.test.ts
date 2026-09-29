@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
-import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, ribbonAction, roleOf } from './studio-mode-bar';
+import * as fs from 'fs';
+import * as path from 'path';
+
+import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, keepsMenu, ribbonAction, roleOf } from './studio-mode-bar';
 
 describe('Studio modes', () => {
     it('names the modes by the work, one perspective each', () => {
@@ -51,6 +54,71 @@ describe('Studio modes', () => {
                 }
             }
         }
+    });
+});
+
+describe('the Gearbox menu and the Building ribbon', () => {
+    /** The label gearbox-studio registers its top-level menu under, read from its source. */
+    function gearboxMenuLabel(): string {
+        const menus = fs.readFileSync(path.join(__dirname, '../../../gearbox-studio/src/browser/menus.ts'), 'utf8');
+        const match = /export const GEARBOX_MENU_LABEL = "([^"]+)";/.exec(menus);
+        if (!match) {
+            throw new Error('gearbox-studio no longer exports GEARBOX_MENU_LABEL');
+        }
+        return match[1];
+    }
+
+    it('keeps the menu gearbox-studio labels, in Building and FULL SUPER POWER only', () => {
+        const label = gearboxMenuLabel();
+        expect(label).toBe('Gearbox');
+        expect(keepsMenu(ARCHITECT_PERSPECTIVE_ID, label)).toBe(true);
+        expect(keepsMenu(FULL_PERSPECTIVE_ID, label)).toBe(true);
+        expect(keepsMenu(WORKBENCH_PERSPECTIVE_ID, label)).toBe(false);
+        expect(keepsMenu(DOCUMENTS_PERSPECTIVE_ID, label)).toBe(false);
+        expect(keepsMenu(ORCA_PERSPECTIVE_ID, label)).toBe(false);
+    });
+
+    it('keeps what it kept before, and drops a menu no mode names', () => {
+        expect(keepsMenu(ARCHITECT_PERSPECTIVE_ID, 'File')).toBe(true);
+        expect(keepsMenu(ARCHITECT_PERSPECTIVE_ID, 'Terminal')).toBe(false);
+        expect(keepsMenu(undefined, 'Terminal')).toBe(true);
+        expect(keepsMenu(FULL_PERSPECTIVE_ID, 'Anything a plugin adds')).toBe(true);
+    });
+
+    it('puts Resolve and Lock in Building\'s Check group, beside Conflicts and Generate', () => {
+        const building = MODES.find(m => m.role === 'building');
+        const check = building?.groups.find(g => g.label === 'Check');
+        expect(check?.actions.map(a => a.command)).toEqual([
+            'gearbox.product.resolve',
+            'gearbox.conflicts.show',
+            'gearbox.lock.show',
+            'gearbox.generate.show',
+        ]);
+    });
+
+    it('draws Resolve and Lock disabled with the reason gearbox-studio gives, before a product is open', () => {
+        const building = MODES.find(m => m.role === 'building');
+        const actions = building?.groups.flatMap(g => g.actions) ?? [];
+        const reasons: Record<string, string> = {
+            'gearbox.product.resolve': 'Open or create a product first',
+            'gearbox.lock.show': 'Open or create a product first',
+        };
+        const commands: RibbonCommands = {
+            getCommand: id => ({ id }),
+            isEnabled: () => false,
+            getAllHandlers: id => [{ execute: () => undefined, disabledReason: () => reasons[id] }],
+        };
+        for (const id of Object.keys(reasons)) {
+            const action = actions.find(a => a.command === id);
+            expect(action).toBeDefined();
+            expect(ribbonAction(commands, action!)).toEqual({ enabled: false, title: `${action!.title} — Open or create a product first` });
+        }
+    });
+
+    it('draws Resolve enabled once the handler says it can run', () => {
+        const resolve = MODES.find(m => m.role === 'building')?.groups.flatMap(g => g.actions).find(a => a.command === 'gearbox.product.resolve');
+        const commands: RibbonCommands = { getCommand: id => ({ id }), isEnabled: () => true, getAllHandlers: () => [] };
+        expect(ribbonAction(commands, resolve!)).toEqual({ enabled: true, title: resolve!.title });
     });
 });
 

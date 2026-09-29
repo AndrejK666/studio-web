@@ -7,7 +7,10 @@
 // `Cargo.lock` (~100k) across for a preview nobody asked to read.
 
 import { codicon, ReactWidget } from "@theia/core/lib/browser";
+import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
+import { MessageService } from "@theia/core/lib/common/message-service";
+import type { Message } from "@theia/core/shared/@lumino/messaging";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 import React from "@theia/core/shared/react";
 import * as monaco from "@theia/monaco-editor-core";
@@ -22,6 +25,22 @@ import { SelectionService } from "../shell/selection-service";
 import { ProductStore } from "../product-store";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GenerateService } from "./generate-service";
+import { GearboxService } from "../../common/protocol";
+import {
+  LOCAL_POSTGRES,
+  LOCAL_POSTGRES_PASSWORD,
+  buildCommand,
+  dbNameOf,
+  linkedGearsCommand,
+  plainPath,
+  runCommand,
+  runTargetsOf,
+  toolchainVerdict,
+  type BuildToolchain,
+  type RunTarget,
+} from "../../common/run-product";
+import { ProductTerminals } from "./product-terminals";
+import { RunPanel, type PostgresState } from "./run-panel";
 
 const ACTION_ICON: Record<FileAction, string> = {
   create: "new-file",
@@ -97,6 +116,17 @@ export class GenerateWidget extends ReactWidget {
   @inject(CommandService) protected readonly commands!: CommandService;
   // For the trip from a blocked generation to the object that blocked it.
   @inject(SelectionService) protected readonly selection!: SelectionService;
+  // Constructor Studio: Build and Run -- see `run-panel.tsx`.
+  @inject(GearboxService) protected readonly service!: GearboxService;
+  @inject(ProductTerminals) protected readonly terminals!: ProductTerminals;
+  @inject(WindowService) protected readonly windows!: WindowService;
+  @inject(MessageService) protected readonly messages!: MessageService;
+
+  protected toolchain: BuildToolchain | undefined;
+  protected askingToolchain = false;
+  protected runApp: string | undefined;
+  protected postgres: PostgresState = "unknown";
+  protected startingPostgres = false;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -120,6 +150,142 @@ export class GenerateWidget extends ReactWidget {
     this.toDispose.push(this.generate.onChanged(() => this.update()));
     this.toDispose.push(this.catalogue.onChanged(() => this.update()));
     this.update();
+  }
+
+  /**
+   * Constructor Studio: ask again what the machine has each time the view is
+   * shown -- someone who just installed cargo reopens it and expects to see so.
+   */
+  protected override onAfterShow(msg: Message): void {
+    super.onAfterShow(msg);
+    this.toolchain = undefined;
+    void this.askToolchain();
+  }
+
+  protected async askToolchain(): Promise<void> {
+    if (this.askingToolchain) return;
+    this.askingToolchain = true;
+    try {
+      this.toolchain = await this.service.buildToolchain();
+    } catch {
+      this.toolchain = { cargo: undefined, msvcLinker: "n/a", docker: false, pgPasswordSet: false };
+    } finally {
+      this.askingToolchain = false;
+    }
+    await this.probePostgres();
+    this.update();
+  }
+
+  /** The applications Run can start, for the resolution on screen. */
+  protected runTargets(): RunTarget[] {
+    const product = this.product.current.resolution?.product;
+    if (product === undefined || product === null) return [];
+    const hasDb = (gear: string): boolean =>
+      this.catalogue.current.rows.some(
+        (row) => row.kind === "projected" && row.gear.id === gear && (row.gear.runtime_caps ?? []).includes("db"),
+      );
+    return runTargetsOf(product, hasDb);
+  }
+
+  protected chosenTarget(targets: readonly RunTarget[]): RunTarget | undefined {
+    return targets.find((target) => target.app === this.runApp) ?? targets[0];
+  }
+
+  protected async probePostgres(): Promise<void> {
+    const chosen = this.chosenTarget(this.runTargets());
+    if (chosen === undefined || chosen.dbGears.length === 0) {
+      this.postgres = "unknown";
+      return;
+    }
+    this.postgres = (await this.service.localPortAnswers(LOCAL_POSTGRES.port).catch(() => false)) ? "answers" : "none";
+  }
+
+  /** The product id the terminals are named by, and the folder they open in. */
+  protected runContext(): { product: string; cwd: string } | undefined {
+    const plan = this.generate.current.plan;
+    const product = this.product.current.intent?.id ?? this.product.current.resolution?.product?.product?.id;
+    if (plan === undefined || product === undefined) return undefined;
+    return { product, cwd: plainPath(plan.out_root) };
+  }
+
+  protected async build(target: RunTarget): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined) return;
+    await this.terminals.send("build", context.product, context.cwd, buildCommand(target));
+  }
+
+  protected async linkedGears(target: RunTarget): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined) return;
+    await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target));
+  }
+
+  protected async run(target: RunTarget): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined) return;
+    let config = target.config;
+    try {
+      const written = await this.service.writeRunConfig(context.cwd, target.app, [...target.dbGears]);
+      config = written.config;
+      if (written.missing.length > 0) {
+        this.messages.warn(`${written.missing.join(", ")} not found in ${target.config}; no database was added for ${written.missing.length === 1 ? "it" : "them"}.`);
+      }
+    } catch (error) {
+      this.messages.error(`The run configuration could not be written: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    // The local Postgres Studio starts has a known password; a member who runs
+    // their own sets GEARS_PG_PASSWORD, and then the terminal inherits it.
+    const env: Record<string, string> =
+      target.dbGears.length > 0 && this.toolchain?.pgPasswordSet !== true
+        ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
+        : {};
+    await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), env);
+  }
+
+  protected async startPostgres(target: RunTarget): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined || this.startingPostgres) return;
+    this.startingPostgres = true;
+    this.update();
+    try {
+      const result = await this.service.startLocalPostgres(context.product, target.dbGears.map(dbNameOf));
+      if (result.ok) this.messages.info(result.message);
+      else this.messages.error(result.message);
+    } finally {
+      this.startingPostgres = false;
+      await this.probePostgres();
+      this.update();
+    }
+  }
+
+  protected renderRun(plans: readonly FilePlan[]): React.ReactNode {
+    const gen = this.generate.current;
+    const generated =
+      gen.written !== undefined || (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"));
+    if (generated && this.toolchain === undefined) void this.askToolchain();
+    const targets = this.runTargets();
+    const chosen = this.chosenTarget(targets);
+    return (
+      <RunPanel
+        generated={generated}
+        verdict={this.toolchain === undefined ? undefined : toolchainVerdict(this.toolchain)}
+        targets={targets}
+        chosen={chosen}
+        postgres={this.postgres}
+        docker={this.toolchain?.docker === true}
+        startingPostgres={this.startingPostgres}
+        onChoose={(app) => {
+          this.runApp = app;
+          void this.probePostgres().then(() => this.update());
+        }}
+        onBuild={() => chosen !== undefined && void this.build(chosen)}
+        onRun={() => chosen !== undefined && void this.run(chosen)}
+        onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
+        onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
+        onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
+      />
+    );
   }
 
   /**
@@ -312,6 +478,8 @@ export class GenerateWidget extends ReactWidget {
             </ul>
           )}
         </div>
+        {/* Constructor Studio: what comes after Apply -- see `run-panel.tsx`. */}
+        {this.renderRun(plans)}
         <div className="gbx-generate-body">
           <div className="gbx-generate-tree" role="tree">
             {treeOf(plans).map((node) => this.renderNode(node, 0))}

@@ -38,12 +38,11 @@ import type { LockResult } from "../common/generated/LockResult";
 import type { LogParams } from "../common/generated/LogParams";
 import type { ProductEdit } from "../common/generated/ProductEdit";
 import type { ProductLoadResult } from "../common/generated/ProductLoadResult";
-import type { AiConnectivityResult, GitCloneReview, StudioSession } from "../common/protocol";
+import type { GitCloneReview, StudioSession } from "../common/protocol";
 import type { ResolveResult } from "../common/generated/ResolveResult";
 import type { ValidateResult } from "../common/generated/ValidateResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
-import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
 import { fileOnBranch } from "./product-branch";
 import { cachedCorpora, corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
@@ -55,6 +54,9 @@ import {
   workspaceDir,
 } from "./gearbox-environment";
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
+import { closeSourcesList } from "./sources-list";
+import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
+import { buildToolchain, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 
 /**
  * How long the engine gets to answer before the request is abandoned.
@@ -531,12 +533,67 @@ export class GearboxServiceImpl implements GearboxService {
     dryRun: boolean,
     expectedBefore?: string,
   ): Promise<EditGearResult> {
+    // Constructor Studio: before a batch that appends a source, give the list
+    // the trailing comma the engine's append needs -- see `closeSourcesListFor`
+    // and https://github.com/MikeFalcon77/gearbox/issues/1. On the dry run too:
+    // the dry run is where the engine would otherwise write the broken text,
+    // and the preview a person confirms is computed from it.
+    if (edits.some((edit) => edit.kind === "add_source")) {
+      await this.closeSourcesListFor(path);
+    }
     return this.request(method.PRODUCT_APPLY_EDITS, {
       path,
       edits: [...edits],
       expected_before: expectedBefore,
       dry_run: dryRun,
     });
+  }
+
+  /**
+   * Constructor Studio: close `productPath`'s `sources` list with a comma, and
+   * keep the change only if the product still reads the same.
+   *
+   * The workaround for https://github.com/MikeFalcon77/gearbox/issues/1 (see
+   * `sources-list.ts`): a product `product/create` wrote has no comma after its
+   * last source, and `add_source` appends without adding one, so the product
+   * becomes unreadable (GBX0101). This is the one place Studio asks the engine
+   * to append a source, so it is the one place the list is closed first.
+   *
+   * **Guarded by the engine's own reading, before and after.** Nothing is
+   * touched when the product does not read now (the engine's refusal of the
+   * batch will say why), and the old text is put back when the new one does not
+   * read, or reads with different sources. The file is written only when the
+   * list needs the comma; a product that already has one, or a one-line list,
+   * is left as it is. Remove with the pin that fixes the engine.
+   */
+  protected async closeSourcesListFor(productPath: string): Promise<boolean> {
+    let original: string;
+    try {
+      original = await fs.promises.readFile(productPath, "utf8");
+    } catch {
+      return false;
+    }
+    const closed = closeSourcesList(original);
+    if (closed === undefined) return false;
+    let before: ProductLoadResult;
+    try {
+      before = await this.loadProduct(productPath);
+    } catch {
+      return false;
+    }
+    await fs.promises.writeFile(productPath, closed, "utf8");
+    try {
+      const after = await this.loadProduct(productPath);
+      if (JSON.stringify(after.intent?.sources ?? null) === JSON.stringify(before.intent?.sources ?? null)) {
+        this.logger.info(`gearbox: closed the sources list of ${productPath} with a comma before adding a source`);
+        return true;
+      }
+    } catch {
+      // Falls through to the restore.
+    }
+    await fs.promises.writeFile(productPath, original, "utf8");
+    this.logger.warn(`gearbox: left the sources list of ${productPath} as it was: the closed list did not read the same`);
+    return false;
   }
 
   async createProduct(params: {
@@ -548,6 +605,8 @@ export class GearboxServiceImpl implements GearboxService {
     profileKind: string;
     profileId: string;
     cloneFrom?: string;
+    /** Re-base the clone's relative paths onto its new folder: Clone Local only. */
+    rebaseRelativePaths?: boolean;
     dryRun: boolean;
   }): Promise<EditGearResult> {
     return this.request(method.PRODUCT_CREATE, {
@@ -559,6 +618,7 @@ export class GearboxServiceImpl implements GearboxService {
       profile_kind: params.profileKind,
       profile_id: params.profileId,
       clone_from: params.cloneFrom,
+      rebase_relative_paths: params.rebaseRelativePaths ?? false,
       dry_run: params.dryRun,
     });
   }
@@ -702,6 +762,41 @@ export class GearboxServiceImpl implements GearboxService {
     return this.request(method.GENERATE_FILE, { path, profile, out, file });
   }
 
+  // Constructor Studio: Build and Run -- see `run-support.ts`. Independent of
+  // the engine, like the checks they make.
+
+  async buildToolchain(): Promise<BuildToolchain> {
+    return buildToolchain();
+  }
+
+  async localPortAnswers(port: number): Promise<boolean> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+    return portAnswers(LOCAL_POSTGRES.host, port);
+  }
+
+  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }> {
+    // Only inside a generated tree, and only an application's own file: the
+    // frontend names both, and this writes to disk.
+    const normalized = outRoot.replace(/\\/g, "/");
+    if (!/\/\.gearbox\//.test(normalized) || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(app)) {
+      throw new Error(`refusing to write a run configuration for ${app} under ${outRoot}`);
+    }
+    if (dbGears.some((gear) => !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(gear))) {
+      throw new Error("refusing a gear id that is not one");
+    }
+    return writeRunConfig(outRoot, app, dbGears, LOCAL_POSTGRES);
+  }
+
+  async startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }> {
+    const id = product.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    if (id === "" || databases.some((db) => !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(db))) {
+      return { ok: false, message: "refusing a product or database name that is not an identifier" };
+    }
+    const result = await startLocalPostgres({ container: `gbx-pg-${id}`, port: LOCAL_POSTGRES.port, databases });
+    this.logger.info(`gearbox: local Postgres for ${product}: ${result.message}`);
+    return result;
+  }
+
   /**
    * One place that refuses when the engine is not up, and one that always
    * settles when it is.
@@ -817,29 +912,6 @@ export class GearboxServiceImpl implements GearboxService {
     engine.connection.sendNotification(method, params).catch((error: unknown) => {
       this.logger.warn(`gearbox: cannot send ${method}: ${String(error)}`);
     });
-  }
-
-  /**
-   * Whether this backend can reach the model provider.
-   *
-   * Independent of the engine on purpose: it neither calls `request` nor checks
-   * that a session exists, so it still answers when the engine is dead or was
-   * never initialized. A connectivity check that needs the rest of the system
-   * healthy is a check you cannot run when you need it.
-   */
-  async checkAiConnectivity(): Promise<AiConnectivityResult> {
-    const result = await probeAiConnectivity();
-    // Logged as well as returned: the backend log is where somebody debugging a
-    // start-up problem is already looking, and the chat is not up yet.
-    if (result.ok) {
-      this.logger.info(`gearbox: AI endpoint ${result.url} answered ${result.status}`);
-    } else {
-      this.logger.warn(
-        `gearbox: AI endpoint ${result.url} unreachable: ${result.code ?? "unknown"} ` +
-          `(${(result.detail ?? []).join(" <- ")})`,
-      );
-    }
-    return result;
   }
 
   dispose(): void {

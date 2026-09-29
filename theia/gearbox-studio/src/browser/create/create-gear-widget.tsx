@@ -18,7 +18,8 @@ import { CommandRegistry } from "@theia/core/lib/common";
 import type { GearKind } from "../../common/generated/GearKind";
 import type { ProductEdit } from "../../common/generated/ProductEdit";
 import { placeNewGear, type HostStanding } from "./gear-edits";
-import { relativeTo } from "./paths";
+import { relativeTo, volumeOf } from "./paths";
+import { UPSTREAM_SCAFFOLD_ISSUE, createGearGuidance } from "./create-gear-guidance";
 import { pluginLocatorFor, type HostPoint, type LocatorOutcome } from "./plugin-locator";
 import type { ScaffoldGearResult } from "../../common/generated/ScaffoldGearResult";
 import { pointsOf } from "../../common/extension-points";
@@ -29,6 +30,7 @@ import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
 import { repaintNow } from "../widgets/repaint";
 import { ProductStore } from "../product-store";
+import { ProfileScope } from "../product/profile-scope";
 import { GearLocator } from "../shell/gear-locator";
 import { GearSessionService } from "../shell/gear-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
@@ -123,6 +125,17 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
    * The same guard `AddGearWidget` documents, for the same reason.
    */
   protected previewToken = 0;
+  /**
+   * A preview has been asked for and not yet answered.
+   *
+   * `plan === undefined` held Create only until the first answer; after that a
+   * plan for the previous field values kept it live through the debounce and the
+   * round trip, so a Create in that window acted on a preview the pane was about
+   * to replace.
+   */
+  protected previewPending = false;
+  /** The profiles a plugin created for a product is attached under; empty is all. */
+  protected pluginProfiles: string[] = [];
   protected product: { path: string; label: string } | undefined;
   protected applying = false;
 
@@ -176,6 +189,9 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     if (state?.version !== undefined) this.version = state.version;
     this.kind = state?.kind ?? "service";
     this.product = state?.product === undefined ? undefined : { ...state.product };
+    // A scope names one product's profiles; carried into another product's
+    // wizard it would write a connection scoped to profiles that product lacks.
+    this.pluginProfiles = [];
     this.destinationTouched = state?.destinationDir !== undefined;
     this.destination = state?.destinationDir ?? this.defaultDestination();
     void this.refreshPreview();
@@ -256,6 +272,11 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
    * so it is certainly worth showing.
    */
   protected schedulePreview(): void {
+    // Bumped here as well as in `refreshPreview`: an answer still in flight when
+    // a field changes is already stale, and must not clear `previewPending`
+    // during the debounce with a plan for the old values.
+    this.previewToken += 1;
+    this.previewPending = true;
     // Sent, not posted -- see `repaintNow`. `update()` posted the repaint, and
     // React put each controlled field back before it landed, so real typing
     // lost its keystrokes.
@@ -268,6 +289,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     if (!this.engine.isConnected) {
       this.plan = undefined;
       this.planError = "";
+      this.previewPending = false;
       this.update();
       return;
     }
@@ -294,6 +316,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
       this.plan = undefined;
       this.planError = error instanceof Error ? error.message : String(error);
     }
+    this.previewPending = false;
     this.update();
   }
 
@@ -319,6 +342,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
                 source: chosen.host.source,
                 standing: this.standingOf(chosen.host.id),
               },
+              profiles: this.pluginProfiles,
             }
           : {}),
       },
@@ -362,6 +386,30 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
       this.product.label,
     );
     return placed.ok ? undefined : placed.reason;
+  }
+
+  /**
+   * Constructor Studio: the two things New Gear has to say before Create -- a
+   * scaffold is not catalogued until its code carries `#[toolkit::gear]`, and a
+   * plugin for a corpus host has to be moved into that corpus by hand.
+   */
+  protected renderGuidance(): React.ReactNode {
+    const chosen = this.kind === "plugin" ? this.hosts().find((entry) => entry.key === this.point) : undefined;
+    const gdl = chosen === undefined ? undefined : this.catalogue.absolutePath(chosen.host.source, chosen.host.gdl_path);
+    const notes = createGearGuidance({
+      kind: this.kind,
+      addingToProduct: this.product !== undefined,
+      gearId: this.gearId,
+      destinationDir: this.destinationDir(),
+      ...(chosen === undefined
+        ? {}
+        : { host: { id: chosen.host.id, dir: gdl === undefined ? undefined : gdl.replace(/[\\/][^\\/]*$/, "") } }),
+    });
+    return notes.map((note) => (
+      <p key={note.id} className="gbx-create-note" data-create-gear-guidance={note.id}>
+        {note.text}
+      </p>
+    ));
   }
 
   /**
@@ -424,6 +472,9 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
           disabled={!connected}
           onChange={(e) => {
             this.point = e.target.value;
+            // A scope belongs to one connection, and a different host is a
+            // different connection.
+            this.pluginProfiles = [];
             this.schedulePreview();
           }}
         >
@@ -449,8 +500,8 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
             that do. */}
         {locator.kind === "none" && (
           <span className="gbx-create-note">
-            Without a host the sdk locator is written as a comment, because a locator pointing
-            nowhere makes the gear fail to load.
+            Without a host, `fills` is written as a comment: a spec no described gear declares
+            is refused (GBX0519), so the declaration waits until you know what it fills.
           </span>
         )}
         {locator.kind === "ready" && (
@@ -458,6 +509,24 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
             The locator is written from this host, and this plugin is attached to it in the
             product.
           </span>
+        )}
+        {/* **The same control the Add Gear dialog's two routes carry.** Attaching
+            is writing a connection, and a connection is scoped; without this the
+            plugin went in under every profile, beside whatever the host already
+            runs there. */}
+        {locator.kind === "ready" && this.product !== undefined && (
+          <ProfileScope
+            legend="Profiles for the new plugin's connection"
+            profiles={this.pluginProfiles}
+            available={Object.keys(this.products.current.intent?.profiles ?? {})}
+            {...(this.products.current.profile === undefined
+              ? {}
+              : { viewing: this.products.current.profile })}
+            onChange={(profiles) => {
+              this.pluginProfiles = profiles;
+              this.update();
+            }}
+          />
         )}
         {/* Beside the control that promised the locator, which is this one, and
             before anything is written. An engine refusal would arrive on the
@@ -516,6 +585,15 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     const versionProblem = gearVersionProblem(this.version);
     const placement = this.placementProblem();
     const locator = this.locatorOutcome();
+    // Every kind, not only a plugin's locator: the engine joins a relative
+    // destination to its own working directory, so a service or minimal gear
+    // with one was written somewhere nobody chose. Refused there too.
+    const destinationProblem =
+      this.destinationDir() === ""
+        ? "Choose a destination folder."
+        : volumeOf(this.destinationDir()) === undefined
+          ? `\`${this.destinationDir()}\` is not an absolute path. Choose a folder, or give its full path.`
+          : undefined;
     return (
       <div className="gbx-create gbx-create-gear">
         <div className="gbx-create-form">
@@ -643,6 +721,21 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
             Writes <code>{this.destinationDir()}/{this.gearId}/</code> (gear.gdl, Cargo.toml,
             src/lib.rs). Must stay under the workspace and outside source roots.
           </p>
+          {/* Constructor Studio: what the engine does not say until after the
+              crate exists -- see `create-gear-guidance.ts`. */}
+          {this.renderGuidance()}
+          <p className="gbx-create-note gbx-create-note-upstream">
+            These are engine limits, reported at{" "}
+            <a href={UPSTREAM_SCAFFOLD_ISSUE} target="_blank" rel="noreferrer">
+              gearbox#2
+            </a>
+            .
+          </p>
+          {destinationProblem !== undefined && (
+            <p className="gbx-inline-error" role="alert" data-create-gear-destination-refusal>
+              {destinationProblem}
+            </p>
+          )}
           <div className="gbx-create-actions">
             <button
               type="button"
@@ -660,10 +753,12 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
               disabled={
               !connected ||
               this.applying ||
+              this.previewPending ||
               this.plan === undefined ||
               idProblem !== undefined ||
               versionProblem !== undefined ||
               placement !== undefined ||
+              destinationProblem !== undefined ||
               locator.kind === "blocked"
             }
               onClick={() => void this.create()}
@@ -693,7 +788,10 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
         </div>
         <div
           className="gbx-file-plan gbx-create-preview"
-          data-preview-ready={connected && this.plan !== undefined ? "true" : "false"}
+          data-preview-ready={
+            connected && this.plan !== undefined && !this.previewPending ? "true" : "false"
+          }
+          aria-busy={this.previewPending}
         >
           {!connected && "Preview unavailable while the engine is disconnected."}
           {connected && this.planError !== "" && <div className="gbx-error">{this.planError}</div>}

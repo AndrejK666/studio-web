@@ -17,6 +17,7 @@ import { FrontendApplicationContribution, LabelProviderContribution, bindViewCon
 import { Agent, AIVariableContribution, bindToolProvider } from "@theia/ai-core";
 import { ChatAgent } from "@theia/ai-chat";
 import { GearboxChatAgent } from "./ai/gearbox-chat-agent";
+import { GearboxMenuContribution } from "./menus";
 import { GearboxContextContribution } from "./ai/gearbox-context";
 import { GearboxSelectionChip, GearboxVariableLabelProvider } from "./ai/gearbox-selection-chip";
 import { GEARBOX_TOOLS } from "./ai/gearbox-tools";
@@ -32,6 +33,7 @@ import { LanguageGrammarDefinitionContribution } from "@theia/monaco/lib/browser
 import { GEARBOX_SERVICE_PATH, GearboxClient, GearboxService } from "../common/protocol";
 import { CatalogueStore } from "./catalogue-store";
 import { GenerateService } from "./generate/generate-service";
+import { ProductTerminals } from "./generate/product-terminals";
 import { ProductEditService } from "./product-edit-service";
 import { ProductStore } from "./product-store";
 import { ResolutionMarkers } from "./resolution-markers";
@@ -78,6 +80,7 @@ import { SessionCommands } from "./shell/session-commands";
 import { FocusModeService } from "./shell/focus-mode-service";
 import { DescriptionWatchService } from "./shell/description-watch-service";
 import { ScreenScopeService } from "./shell/screen-scope-service";
+import { StudioScreenScopeService } from "./shell/studio-screen-scope";
 import { StudioContextService } from "./shell/studio-context-service";
 import { StudioGearboxPerspective } from "./shell/studio-gearbox-perspective";
 import { GearLocator } from "./shell/gear-locator";
@@ -111,6 +114,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(PendingCreate).toSelf().inSingletonScope();
   bind(PendingCreateGear).toSelf().inSingletonScope();
   bind(GenerateService).toSelf().inSingletonScope();
+  // Build and Run's two terminals per product, under Generate.
+  bind(ProductTerminals).toSelf().inSingletonScope();
   bind(RevealService).toSelf().inSingletonScope();
   bind(GearboxClient).toService(CatalogueStore);
 
@@ -134,6 +139,10 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(ProductSessionService).toSelf().inSingletonScope();
   bind(GearSessionService).toSelf().inSingletonScope();
 
+  // The Gearbox top-level menu's label -- see `GearboxMenuContribution`.
+  bind(GearboxMenuContribution).toSelf().inSingletonScope();
+  bind(MenuContribution).toService(GearboxMenuContribution);
+
   // Open, New and Close Product under File.
   bind(SessionCommands).toSelf().inSingletonScope();
   bind(CommandContribution).toService(SessionCommands);
@@ -148,11 +157,16 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(DescriptionWatchService).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(DescriptionWatchService);
 
-  // Injected by the views; neither acts outside a Gearbox perspective, and
-  // neither is an application contribution until P6, so nothing reconciles
-  // Studio's layout on its own.
+  // Injected by the views; neither acts outside a Gearbox perspective.
+  // `FocusModeService` is not an application contribution, so it folds panels
+  // only when a focus screen asks. The screen scope is started (P6b), as
+  // Studio's subclass: it withdraws a closed or replaced product's screens, only
+  // while a Gearbox perspective is active, and neither folds panels nor opens
+  // Start -- see `studio-screen-scope.ts`.
   bind(FocusModeService).toSelf().inSingletonScope();
-  bind(ScreenScopeService).toSelf().inSingletonScope();
+  bind(StudioScreenScopeService).toSelf().inSingletonScope();
+  bind(ScreenScopeService).toService(StudioScreenScopeService);
+  bind(FrontendApplicationContribution).toService(StudioScreenScopeService);
 
   // The Gearbox perspective beside Workbench and Documents, and the command
   // the portal's `studio.openProduct` runs to land in it with a product open.

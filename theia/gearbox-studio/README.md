@@ -5,7 +5,7 @@ resolution, the lock, conflicts and generation, as Theia views beside
 Studio's own.
 
 **Provenance.** Ported from Gearbox Studio,
-[`MikeFalcon77/gearbox@3b64969`](https://github.com/MikeFalcon77/gearbox/tree/3b64969f4ed01558d6e0697edc5cd5477e041cef/ide/gearbox-studio),
+[`MikeFalcon77/gearbox@55f7015`](https://github.com/MikeFalcon77/gearbox/tree/55f7015a95f0564ecccb6bbb73fbe586102bce82/ide/gearbox-studio),
 the same commit the session image builds the engine from
 (`STUDIO_GEARBOX_REF` in `theia/Dockerfile`). That repository carries no
 licence yet. Its owner's permission is needed before this ships beyond
@@ -59,11 +59,53 @@ collab strip, Orca and the Explorer stay as they are.
   `git(url, rev)` opens anywhere: the commit is brought into the same
   per-machine cache (through the Studio relay for a private corpus), never
   into the project. Add gear with no product open opens New Product.
+- **The header's product half is a strip on the Product view.** Gearbox
+  Studio's shell header (`ToolbarWidget`) carried the product's resolved
+  state, the draft's **Apply changes / Discard** and Resolve / Close. Studio's
+  top panel is the menu, the mode tabs and the ribbon, so those live in the
+  Product view's head instead (`product/product-status-strip.tsx`), on every
+  stage, beside the pending-changes count.
+- **The Gearbox menu** is labelled here (`menus.ts`, `GearboxMenuContribution`):
+  Gearbox Studio labelled it from `ShellPolicy`, which is not ported, and
+  Theia 1.75 draws only labelled top-level menus. Studio's mode allow-list keeps
+  it in Building and FULL SUPER POWER; its entries appear with a product open.
+  Building's ribbon also carries Resolve and Lock.
+- **With no product open**, the Product view offers New, Open, Continue, the
+  workspace's products and Recent (`product/product-empty-state.tsx`): the
+  Start screen is not opened at start-up, and on the desktop product-ext's
+  start page stands where it stood.
+- **The screen scope is started, inside Building only**
+  (`shell/studio-screen-scope.ts`): a closed or replaced product's Add Gear,
+  Lock and Generate are withdrawn. It folds no panel and opens no Start
+  screen; the Product view and Conflicts are the perspective's frame and stay.
+- **Build and Run** under Generate's Apply (`generate/run-panel.tsx`,
+  `common/run-product.ts`, `node/run-support.ts`): `cargo build` and `cargo run
+  -- --config config/<app>.yaml run` in two named terminals per product, the
+  REST address with Open, and the linked-gears check. Cargo missing, or the
+  MSVC linker on Windows, is said with a link instead of a terminal error (the
+  session image has no Rust, so it says so there). A product whose gears need
+  a database runs with `config/<app>.local.yaml`, the generated file plus a
+  Postgres server (`127.0.0.1:5432`, user `postgres`, password from
+  `GEARS_PG_PASSWORD`) and one database per gear; **Start a local Postgres**
+  runs `postgres:18-alpine` in docker and creates them, only when asked.
+- **Engine workarounds, each to go with the pin that fixes it:**
+  - `node/sources-list.ts`: a product `product/create` wrote has no comma
+    after its last source, and `add_source` appends without one (GBX0101).
+    The list is closed first, guarded by the engine reading the product the
+    same before and after. [gearbox#1](https://github.com/MikeFalcon77/gearbox/issues/1)
+  - New Gear says that a scaffold is not catalogued until its code carries
+    `#[toolkit::gear]` (GBX0211, then GBX0301 in a product), and where a
+    corpus host's plugin has to be moved.
+    [gearbox#2](https://github.com/MikeFalcon77/gearbox/issues/2)
+  - The run configuration's database section.
+    [gearbox#4](https://github.com/MikeFalcon77/gearbox/issues/4)
 - **Tests:** `npm test` in this package runs the unit tests of the rules
-  (`src/**/*.test.ts`, jest, Node).
+  (`src/**/*.test.ts`, jest, Node; `*.test.tsx` under jsdom).
 - **Not ported:** everything under Gearbox Studio's `browser/theia/` except
   the read-only `product.lock` editor, its layout migration, the Anthropic key
-  settings and `@theia/ai-anthropic`.
+  settings and `@theia/ai-anthropic`, the AI connectivity check, the Fabric
+  theme and fonts, the shell header, and Switch Product (never registered in
+  Gearbox Studio either).
 
 ## Phases
 
@@ -76,4 +118,5 @@ collab strip, Orca and the Explorer stay as they are.
 | P5 | the `@Gearbox` chat agent and tools, through Studio's model (by mention; Codex stays the default) | done |
 | P6a | the Gearbox perspective beside Workbench and Documents; `studio.openProduct` lands a portal product in it; the Inspector links a gear to its page in the portal's component catalogue (`studio.openComponent`) | done |
 | P6c | gear projects: `new_gears` scaffolds carry the engine's `gear.gdl`, `studio.openGear` opens the project's gear, New Gear writes into the project's repository | done |
-| P6b | toolbar actions on the Product view, screen scope inside the Gearbox perspective, the optional Fabric themes | |
+| P6b | the header's product half on the Product view (Apply/Discard, state, Resolve, Close), the Gearbox menu, screen scope inside the Gearbox perspective; the Fabric themes dropped | done |
+| P7 | engine pin 55f7015 and the IDE changes since 3b64969; Build and Run after Generate | done |

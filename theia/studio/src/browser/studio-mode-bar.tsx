@@ -147,6 +147,8 @@ const BY_WORK: readonly Mode[] = [
         label: 'Building',
         title: 'Compose the product out of gears, and generate it',
         perspective: ARCHITECT_PERSPECTIVE_ID,
+        // 'Gearbox' is the label gearbox-studio gives its top-level menu
+        // (`GEARBOX_MENU_LABEL`); the menu itself appears only with a product open.
         menus: ['File', 'Edit', 'Gearbox', 'View', 'Help'],
         groups: [
             {
@@ -164,7 +166,9 @@ const BY_WORK: readonly Mode[] = [
             {
                 label: 'Check',
                 actions: [
+                    { command: 'gearbox.product.resolve', icon: 'sync', label: 'Resolve', title: 'Resolve the product again, for the profile shown' },
                     { command: 'gearbox.conflicts.show', icon: 'warning', label: 'Conflicts', title: 'What the engine says cannot resolve' },
+                    { command: 'gearbox.lock.show', icon: 'lock', label: 'Lock', title: 'The resolution lock: what this resolution pins, and whether the copy on disk matches' },
                     { command: 'gearbox.generate.show', icon: 'run-all', label: 'Generate', title: 'Generate the product\'s code from its description' },
                 ],
             },
@@ -245,6 +249,12 @@ function developer(): Mode {
 function modeFor(perspectiveId: string | undefined): Mode {
     const role = roleOf(perspectiveId);
     return MODES.find((m) => m.role === role) ?? developer();
+}
+
+/** Whether the mode of this perspective keeps the top-level menu labelled `label`. */
+export function keepsMenu(perspectiveId: string | undefined, label: string): boolean {
+    const allowed = modeFor(perspectiveId).menus;
+    return allowed.includes('*') || allowed.includes(label);
 }
 
 /** What both halves of the header share: the active mode, kept current. */
@@ -680,11 +690,10 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
     }
 
     protected pruneMenus(): void {
-        const allowed = modeFor(this.perspectives?.getActivePerspectiveId()).menus;
-        const all = allowed.includes('*');
+        const perspective = this.perspectives?.getActivePerspectiveId();
         document.querySelectorAll<HTMLElement>('#theia-top-panel .lm-MenuBar-item').forEach((item) => {
             const label = item.querySelector('.lm-MenuBar-itemLabel')?.textContent?.trim() ?? '';
-            const display = all || allowed.includes(label) ? '' : 'none';
+            const display = keepsMenu(perspective, label) ? '' : 'none';
             if (item.style.display !== display) {
                 item.style.display = display;
             }

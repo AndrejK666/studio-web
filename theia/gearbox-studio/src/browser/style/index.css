@@ -828,52 +828,34 @@
 .gbx-lock-changes li[data-lock-change="-"] { color: var(--theia-editorError-foreground); }
 .gbx-lock-changes li[data-lock-change="~"] { color: var(--theia-editorWarning-foreground); }
 
-/* --- Shell toolbar ------------------------------------------------------- */
+/* --- Product status strip ------------------------------------------------ */
 
-/* Shares the top row with the menu. Theia already shows that panel in the
-   browser target (`window.menuBarVisibility` is classic); we grow to fill the
-   rest of the row so the actions can sit on the right without overlapping
-   File / Edit / Gearbox. */
-.gbx-widget-toolbar {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.gbx-toolbar {
+/* Constructor Studio: the header's product half, in the Product view's head
+   (product/product-status-strip.tsx). One row that wraps on a narrow panel
+   rather than pushing Resolve / Close out of sight. */
+.gbx-product-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  height: 100%;
-  padding: 0 8px;
-  box-sizing: border-box;
+  gap: 6px 12px;
+  margin: 0 0 8px;
 }
-.gbx-toolbar-subject, .gbx-toolbar-actions {
+.gbx-product-status-state, .gbx-product-status-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.gbx-toolbar-actions { margin-left: auto; flex: 0 0 auto; }
-
-/* The product's name is the subject of the sentence, so it carries the weight;
-   everything beside it is a qualifier. Truncated rather than wrapped: the header
-   is one row and a long label must not push the actions off it. */
-.gbx-toolbar-name {
-  font-weight: 600;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.gbx-toolbar-empty { opacity: 0.6; font-style: italic; }
-.gbx-toolbar-status { flex: 0 0 auto; }
+.gbx-product-status-actions { margin-left: auto; }
+.gbx-product-status-badge { flex: 0 0 auto; }
+.gbx-product-status-badge[data-status="working"] { opacity: 0.7; font-style: italic; }
+.gbx-product-status-draft[data-draft-state="saved"] { opacity: 0.6; }
 /* Apply carries the weight of the pair, because Discard is the safe one and the
    asymmetry should be visible before the click rather than after it. */
-.gbx-toolbar-draft {
+.gbx-product-status-apply {
   border-color: var(--theia-focusBorder);
   font-weight: 600;
-}
-.gbx-toolbar-status[data-status="working"] { opacity: 0.7; }
-.gbx-toolbar .gbx-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* --- Start: the Home screen ---------------------------------------------- */
@@ -1300,7 +1282,6 @@
 .gbx-composition-slot h4 { margin: 6px 0; overflow-wrap: anywhere; }
 .gbx-composition-connection { display: flex; flex-direction: column; align-items: flex-start; margin: 8px 0; }
 .gbx-composition-settings { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; }
-.gbx-composition-draft { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
 .gbx-composition fieldset, .gbx-add-dialog fieldset { margin: 12px 0; border: 1px solid var(--theia-panel-border); }
 .gbx-composition fieldset label, .gbx-add-dialog fieldset label { display: block; margin: 6px 0; }
 .gbx-composition pre, .gbx-add-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1333,3 +1314,7 @@
      full-width block, which reads as a quote rather than as a division. */
   .gbx-composition-tree { border-right: none; padding-right: 0; border-bottom: 1px solid var(--theia-panel-border); padding-bottom: 12px; }
 }
+
+/* A preview that no longer matches the fields: kept on screen, so the pane does
+   not flash on every keystroke, but visibly not the answer Create would act on. */
+.gbx-create-preview-stale { opacity: 0.55; }
