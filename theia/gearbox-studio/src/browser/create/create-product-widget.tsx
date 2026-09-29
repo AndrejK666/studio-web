@@ -180,7 +180,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   protected async refreshCorpus(): Promise<void> {
     let copy: CorpusCopy | undefined;
     try {
-      copy = await this.service.adoptedCorpus();
+      copy = await this.service.corpusCopy();
     } catch {
       copy = undefined;
     }

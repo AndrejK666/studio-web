@@ -422,6 +422,49 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     }
   }
 
+  /**
+   * Constructor Studio: start an engine on `session` without reading the
+   * catalogue. Undefined when it started, else why it did not.
+   *
+   * For the first step of opening a product, which only needs the product's
+   * description evaluated with the right write boundary. `load` would also
+   * start a catalogue load, and the engine answers one request at a time: the
+   * `product/load` sent next waits behind the whole projection pass (measured
+   * 7 s warm on the 44-gear corpus against 17 ms without it; a cold desktop
+   * took longer than the 60 s allowance), and the open then scans the same
+   * roots again in step 3. Queued with the loads, so it never respawns an
+   * engine one of them is still using. The rows are cleared: they belonged to
+   * the engine this replaces.
+   */
+  async prepare(session: StudioSession): Promise<string | undefined> {
+    let failure: string | undefined;
+    // Not remembered as `this.session`, unlike `load`: this engine is a step,
+    // and a `load()` after an open that stops here -- the recovery below it --
+    // has to go back to the session there was, not to this one.
+    await this.queued(async () => {
+      const epoch = ++this.epoch;
+      this.streaming = undefined;
+      this.rowsByKey.clear();
+      this.state = { ...EMPTY, status: "loading" };
+      this.onChangedEmitter.fire();
+      try {
+        await this.announceOpenedWorkspace();
+        const init = await this.service.initialize(session);
+        if (epoch !== this.epoch) return;
+        this.engine.markConnected();
+        this.capabilities = init.capabilities;
+        this.rootsById = new Map((init.roots ?? []).map((r) => [r.id, r.path]));
+      } catch (error) {
+        if (epoch !== this.epoch) return;
+        failure = describe(error);
+        this.engine.markDisconnected(failure);
+        this.state = { ...this.state, status: "error", error: failure };
+        this.onChangedEmitter.fire();
+      }
+    });
+    return failure;
+  }
+
   protected async announceOpenedWorkspace(): Promise<void> {
     await announceOpenedWorkspace(this.service, this.workspaceService);
   }

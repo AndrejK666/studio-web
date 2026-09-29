@@ -281,10 +281,12 @@ export interface GearboxService {
   ): Promise<string | undefined>;
 
   /**
-   * Constructor Studio: the corpus copy `useSharedCorpus` adopted, with the
-   * source id the engine names it by. `undefined` when none is adopted.
+   * Constructor Studio: the corpus copy on this machine, with the source id the
+   * engine names it by -- the one `useSharedCorpus` adopted, else the newest
+   * finished copy in the per-machine cache, which needs no backend (signed
+   * out). `undefined` when there is none.
    */
-  adoptedCorpus(): Promise<{ id: string; path: string } | undefined>;
+  corpusCopy(): Promise<{ id: string; path: string } | undefined>;
 
   /**
    * Constructor Studio: make the gear corpus `url` at commit `rev` a source

@@ -1,4 +1,9 @@
-import { loadRemoteGearCatalogue } from './gearbox-remote-catalogue';
+import {
+    loadRemoteGearCatalogue,
+    remoteGearCatalogueChanged,
+    remoteGearCatalogueRefused,
+    remoteGearCatalogueSignedIn,
+} from './gearbox-remote-catalogue';
 
 function answer(status: number, body: unknown): () => Promise<Response> {
     return async () => ({ ok: status >= 200 && status < 300, status, json: async () => body } as Response);
@@ -51,5 +56,44 @@ describe('loadRemoteGearCatalogue', () => {
     it('offers nothing when the backend has no corpus, so the catalogue stays empty rather than failing', async () => {
         expect(await loadRemoteGearCatalogue(answer(500, {}))).toBeUndefined();
         expect(await loadRemoteGearCatalogue(answer(200, { corpus: 'x', catalogue: { gears: {} } }))).toBeUndefined();
+    });
+});
+
+describe('asking again once signed in', () => {
+    const listed = { source_id: 'gears-rust', corpus: 'o/gears-rust@main', catalogue: { gears: { g: { id: 'g' } } } };
+
+    it('asks again after a refusal signed out, once, however the sign-in was seen', async () => {
+        const changed = jest.fn();
+        const sub = remoteGearCatalogueChanged.event(changed);
+        try {
+            await loadRemoteGearCatalogue(answer(401, {}));
+            expect(remoteGearCatalogueRefused()).toBe(true);
+            // The Studio view seeing the member signed in on its first look,
+            // and the heartbeat's backstop, both call this.
+            remoteGearCatalogueSignedIn();
+            remoteGearCatalogueSignedIn();
+            expect(changed).toHaveBeenCalledTimes(1);
+        } finally {
+            sub.dispose();
+        }
+    });
+
+    it('treats "no Studio behind the proxy yet" as a refusal too, and a missing Gearbox as an answer', async () => {
+        await loadRemoteGearCatalogue(answer(503, {}));
+        expect(remoteGearCatalogueRefused()).toBe(true);
+        await loadRemoteGearCatalogue(answer(404, {}));
+        expect(remoteGearCatalogueRefused()).toBe(false);
+    });
+
+    it('does not load a catalogue twice that was listed at start', async () => {
+        const changed = jest.fn();
+        const sub = remoteGearCatalogueChanged.event(changed);
+        try {
+            await loadRemoteGearCatalogue(answer(200, listed));
+            remoteGearCatalogueSignedIn();
+            expect(changed).not.toHaveBeenCalled();
+        } finally {
+            sub.dispose();
+        }
     });
 });

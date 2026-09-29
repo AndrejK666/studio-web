@@ -237,6 +237,17 @@ export class ProductSessionService {
    * panel that was showing the steps can show which one stopped instead of
    * reverting to a picker as though nothing had been attempted.
    */
+  /**
+   * Constructor Studio: stop at `describe`, and give the catalogue back. Step 1
+   * started an engine for reading the description only (`CatalogueStore.prepare`),
+   * so an open that stops here would otherwise leave the catalogue empty on an
+   * engine nobody meant to keep. `load()` goes back to the session there was.
+   */
+  protected failDescribing(reason: string, generation: number): false {
+    if (this.current(generation)) void this.catalogue.load();
+    return this.failStage("describe", reason, generation);
+  }
+
   protected failStage(stage: OpeningStage, reason: string, generation: number): false {
     // Nor must it complain. A reconnect abandoned because somebody opened
     // another product did not fail; saying so would put A's refusal in front of
@@ -470,18 +481,26 @@ export class ProductSessionService {
     // After a page reload `rootPaths()` can still be empty while the boot catalogue
     // load has not finished. `initialize` treats that empty list as "use defaults"
     // rather than "open nothing", so this step stays safe in that window.
-    await this.catalogue.load({ roots: this.catalogue.rootPaths(), workspace });
+    //
+    // Constructor Studio: `prepare`, not `load` -- the engine is started without
+    // a catalogue load. Evaluating a description needs none, and the engine
+    // answers one request at a time, so `loadProduct` below used to wait behind
+    // the whole projection pass of a catalogue step 4 reads again anyway. On a
+    // desktop's cold first open that wait alone ran past the product methods'
+    // allowance, and the open failed with the engine ended.
+    // With no root open at all (a repository with no gears, nothing adopted)
+    // the product's own folder stands in: the engine refuses `product/load`
+    // with no root, and this engine is only asked to read the description.
+    const open = this.catalogue.rootPaths();
+    const notStarted = await this.catalogue.prepare({ roots: open.length > 0 ? open : [directory], workspace });
     if (!this.current(generation)) return false;
-    // **`load` does not reject, and that is the whole reason this line exists.**
-    // `CatalogueStore.load` records a failure as `status: "error"` on its own
-    // state -- the panel renders it -- and returns normally. So awaiting it and
-    // carrying on attributed an engine that would not start to whichever step
-    // failed next: `describe` here, `resolve` after the second load.
-    const spawned = catalogueUsable(
-      this.catalogue.current,
-      `The engine could not be started on ${ref.label}'s folder`,
-    );
-    if (!spawned.ok) return this.failStage("workspace", spawned.reason, generation);
+    if (notStarted !== undefined) {
+      return this.failStage(
+        "workspace",
+        `The engine could not be started on ${ref.label}'s folder: ${notStarted}`,
+        generation,
+      );
+    }
 
     // Step 2: read what the description declares. `loadProduct` is evaluation
     // only -- nothing is joined against the catalogue -- which is exactly why it
@@ -491,8 +510,7 @@ export class ProductSessionService {
     try {
       intent = (await this.service.loadProduct(ref.path)).intent;
     } catch (error) {
-      return this.failStage(
-        "describe",
+      return this.failDescribing(
         `${ref.label} could not be evaluated, so it cannot be opened: ${messageOf(error)}`,
         generation,
       );
@@ -524,7 +542,7 @@ export class ProductSessionService {
     if (!this.current(generation)) return false;
     const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at), gitRoots);
     const usable = sourcesUsable(ref.label, sources, gitFailures);
-    if (!usable.ok) return this.failStage("describe", usable.reason, generation);
+    if (!usable.ok) return this.failDescribing(usable.reason, generation);
     const roots = [...sources.roots];
 
     // Step 3 and 4: the real session, then the catalogue and the product.

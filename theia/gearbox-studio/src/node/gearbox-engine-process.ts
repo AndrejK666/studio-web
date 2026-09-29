@@ -55,7 +55,8 @@ export interface EngineHandle {
    * to cancel the work -- the load runs on the engine's request thread -- so the
    * only way to make the abandonment real is to end the process.
    *
-   * @throws when the engine dies first, or does not answer within `timeoutMs`.
+   * @throws when the engine dies first, sends nothing at all for `timeoutMs`
+   * (see `silenceVerdict`), or has not answered after `CEILING_FACTOR` times that.
    */
   request<T>(method: string, params: unknown, timeoutMs: number): Promise<T>;
   dispose(): void;
@@ -104,6 +105,40 @@ export function startFailure(enginePath: string, error: NodeJS.ErrnoException): 
   return `could not be started (${enginePath}): ${error.message}`;
 }
 
+/**
+ * Constructor Studio: whether a request has waited too long, judged by the
+ * engine's silence rather than by the clock alone.
+ *
+ * `timeoutMs` used to be a flat deadline, and a flat deadline cannot tell a
+ * wedged engine from a busy one. The engine answers one request at a time:
+ * `product/load` sent while a catalogue load is still projecting waits for all
+ * of it, and on a cold file cache (a desktop's first open, Defender scanning
+ * some 6000 files of the corpus) that projection alone took longer than the 60 s
+ * the product methods get. The engine was talking the whole time --
+ * `catalogueChanged` per gear, `$/progress`, log lines -- and was ended as
+ * wedged anyway, taking the session with it.
+ *
+ * So `timeoutMs` is how long the engine may stay **silent**: any output
+ * restarts it. A wedged engine says nothing and is still ended at `timeoutMs`,
+ * as before. `ceilingMs` bounds a request that the engine keeps busy forever.
+ */
+export function silenceVerdict(
+  startedAt: number,
+  lastHeard: number,
+  now: number,
+  timeoutMs: number,
+  ceilingMs: number,
+): { readonly expired: true; readonly reason: string } | { readonly expired: false; readonly recheckInMs: number } {
+  const waited = now - startedAt;
+  if (waited >= ceilingMs) return { expired: true, reason: `in ${ceilingMs}ms` };
+  const quiet = now - Math.max(startedAt, lastHeard);
+  if (quiet >= timeoutMs) return { expired: true, reason: `and sent nothing for ${timeoutMs}ms` };
+  return { expired: false, recheckInMs: Math.max(1, Math.min(timeoutMs - quiet, ceilingMs - waited)) };
+}
+
+/** How much longer than its silence allowance one request may take in all. */
+export const CEILING_FACTOR = 10;
+
 /** Spawn `gearbox rpc --stdio --root <root>` and wrap its stdio. */
 export function spawnEngine(
   enginePath: string,
@@ -115,8 +150,14 @@ export function spawnEngine(
     stdio: ["pipe", "pipe", "pipe"],
   });
 
+  // When the engine last said anything, on either stream. See `silenceVerdict`.
+  let lastHeard = Date.now();
+  child.stdout?.on("data", () => {
+    lastHeard = Date.now();
+  });
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
+    lastHeard = Date.now();
     for (const line of chunk.split("\n").filter((l) => l.trim())) {
       void logger.info(`[gearbox engine] ${line}`);
     }
@@ -223,8 +264,14 @@ export function spawnEngine(
         throw new Error(`the engine is not running (${await exited})`);
       }
       let timer: NodeJS.Timeout | undefined;
+      const startedAt = Date.now();
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
+        const check = (): void => {
+          const verdict = silenceVerdict(startedAt, lastHeard, Date.now(), timeoutMs, timeoutMs * CEILING_FACTOR);
+          if (!verdict.expired) {
+            timer = setTimeout(check, verdict.recheckInMs);
+            return;
+          }
           // **Rejected first, then ended, and the order is the message.**
           // `dispose()` disposes the connection, which rejects the pending
           // `sendRequest` synchronously with `vscode-jsonrpc`'s own
@@ -235,12 +282,13 @@ export function spawnEngine(
           // and the deadline. Measured against a real engine held past a real
           // cap; no test read this text before, so it had been wrong for as long
           // as it had existed.
-          reject(new Error(`the engine did not answer \`${requestMethod}\` in ${timeoutMs}ms`));
+          reject(new Error(`the engine did not answer \`${requestMethod}\` ${verdict.reason}`));
           // Ended, not merely abandoned. See `EngineHandle.request`: a wedged
           // engine that later finishes its load would otherwise overwrite the
           // error the client is already showing.
           handle.dispose();
-        }, timeoutMs);
+        };
+        timer = setTimeout(check, timeoutMs);
       });
       const died = exited.then((reason): never => {
         throw new Error(`the engine ${reason} while answering \`${requestMethod}\``);

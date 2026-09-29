@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import {
+  cachedCorpora,
   commitFromLsRemote,
   corpusRelay,
   materializeGitSource,
@@ -97,6 +98,32 @@ describe("a product's git source", () => {
     expect(
       await materializeGitSource(workspace, "gears-rust", URL, { rev: first }, { cacheRoot, via: { url: "file:///x", helper: "h" } }),
     ).toBeUndefined();
+  });
+});
+
+describe("cachedCorpora", () => {
+  it("finds the copies already on disk, newest first, with no backend to ask", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gbx-cache-"));
+    try {
+      const older = sharedCorpusDir(root, "gears-rust", URL, "a".repeat(40));
+      const newer = sharedCorpusDir(root, "gears-rust", URL, "b".repeat(40));
+      const partial = `${sharedCorpusDir(root, "gears-rust", URL, "c".repeat(40))}.partial`;
+      const empty = sharedCorpusDir(root, "gears-rust", URL, "d".repeat(40));
+      for (const dir of [older, newer, partial]) fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+      fs.mkdirSync(empty, { recursive: true });
+      fs.utimesSync(older, new Date(1_000_000), new Date(1_000_000));
+
+      expect(cachedCorpora(root).map((c) => [c.id, c.path])).toEqual([
+        ["gears-rust", newer],
+        ["gears-rust", older],
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("answers nothing for a cache that is not there", () => {
+    expect(cachedCorpora(path.join(os.tmpdir(), "gbx-no-cache-here"))).toEqual([]);
   });
 });
 

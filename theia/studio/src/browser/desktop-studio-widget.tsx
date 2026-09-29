@@ -27,7 +27,7 @@ import {
     parseCollapsed, portalUrl, pruneCollapsed, sourcesStateOf, studioLabel, toggleCollapsed, treeKey, treeRows,
 } from './desktop-studio-tree';
 import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
-import { remoteGearCatalogueChanged } from './gearbox-remote-catalogue';
+import { remoteGearCatalogueChanged, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -162,6 +162,10 @@ export class DesktopStudioWidget extends ReactWidget {
             // Signed in after the window loaded: what was listed signed out is stale.
             if (before !== undefined) {
                 remoteGearCatalogueChanged.fire();
+            } else {
+                // First seen already signed in -- the sign-in finished before
+                // this view looked. Ask again only if the catalogue was refused.
+                remoteGearCatalogueSignedIn();
             }
             await this.loadCollapsed();
             await this.loadEntities();
