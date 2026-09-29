@@ -38,6 +38,7 @@ on:
   pull_request:
     paths:
       - theia/electron-app/**
+      - theia/cfs.json
       - .github/workflows/desktop-windows.yml
   push:
     branches: [main]
@@ -45,6 +46,7 @@ on:
     tags: ['desktop-v*']
     paths:
       - theia/electron-app/**
+      - theia/cfs.json
       - .github/workflows/desktop-windows.yml
 
 concurrency:
@@ -113,12 +115,16 @@ jobs:
       # theia/Dockerfile's `fetch_vsix` lines are the one pin; a pinned version
       # with no win32 build takes the newest win32 build there is instead, and
       # the run warns about it. The script downloads each VSIX once to check
-      # open-vsx's digest.
+      # open-vsx's digest. The Constructor Studio CLI (`cfs`) comes the same
+      # way, from the release studio-cli.yml publishes for the version
+      # theia/cfs.json pins; until that release exists the build warns and
+      # ships without it.
       - name: Assistant extensions manifest (Claude Code, Codex)
         shell: bash
         run: |
           set -euo pipefail
           node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile --target win32-x64 \
+            --studio-cli "https://github.com/$GITHUB_REPOSITORY/releases/download" \
             --out "$RUNNER_TEMP/assistants.json"
           echo "STUDIO_ASSISTANTS=$(cygpath -w "$RUNNER_TEMP/assistants.json")" >> "$GITHUB_ENV"
       - name: Rebuild native modules for Electron

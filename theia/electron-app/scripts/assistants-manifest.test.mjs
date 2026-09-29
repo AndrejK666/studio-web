@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { manifestEntry, metadataUrl, parseDigest, parseFetchVsixPins, shortLabel } from './assistants-manifest.mjs';
+import { manifestEntry, metadataUrl, parseDigest, parseFetchVsixPins, shortLabel, studioCliUrl, studioCliVersion } from './assistants-manifest.mjs';
 
 const theia = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -58,4 +58,16 @@ test('writes an entry the app accepts', () => {
 test('reads a .sha256 file in either shape', () => {
     assert.equal(parseDigest('ABCDEF\n'), 'abcdef');
     assert.equal(parseDigest('abcdef  openai.chatgpt.vsix\n'), 'abcdef');
+});
+
+test('versions the Constructor Studio CLI by its pins, as build_vsix.py does', () => {
+    const pin = JSON.parse(readFileSync(join(theia, 'cfs.json'), 'utf8'));
+    const version = studioCliVersion(pin);
+    assert.equal(version, `${pin.engine.replace(/^v/, '')}-${pin.ref.slice(0, 7)}.${pin.extension.build}`);
+    // A version the desktop's manifest check accepts, and a folder name.
+    assert.match(version, /^[0-9A-Za-z][0-9A-Za-z.+-]*$/);
+    assert.equal(
+        studioCliUrl('https://github.com/o/r/releases/download/', '1.6.2-ca55c66.1', 'win32-x64'),
+        'https://github.com/o/r/releases/download/studio-cli-v1.6.2-ca55c66.1/constructorfabric.studio-cli-1.6.2-ca55c66.1-win32-x64.vsix'
+    );
 });
