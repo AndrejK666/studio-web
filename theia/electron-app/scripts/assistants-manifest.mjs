@@ -2,7 +2,8 @@
 // The assistants' manifest for a desktop installer (#480).
 //
 //   node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile \
-//       [--target win32-x64] [--studio-cli <repository>/releases/download] --out assistants.json
+//       [--target win32-x64] [--studio-cli <repository>/releases/download] \
+//       [--gearbox-engine <repository>/releases/download] --out assistants.json
 //
 // `--studio-cli` adds the Constructor Studio CLI (theia/studio-cli), which the
 // app fetches and deploys the same way: the version theia/cfs.json pins, from
@@ -82,16 +83,52 @@ export function studioCliUrl(releases, version, target) {
  */
 async function studioCliEntry(cfsJson, releases, target) {
     const version = studioCliVersion(JSON.parse(readFileSync(cfsJson, 'utf8')));
-    const url = studioCliUrl(releases, version, target);
+    return releaseEntry(STUDIO_CLI_ID, 'Constructor Studio CLI', version, target, studioCliUrl(releases, version, target), 'studio-cli');
+}
+
+export const GEARBOX_ENGINE_ID = 'constructorfabric.gearbox-engine';
+
+/** The engine's pinned revision, as theia/Dockerfile's gearbox stage names it. */
+export function gearboxRef(dockerfile) {
+    return /^ARG STUDIO_GEARBOX_REF=([0-9a-f]{7,40})\s*$/m.exec(dockerfile.replace(/\r/g, ''))?.[1];
+}
+
+/** The engine extension's version: gearbox-engine/build_vsix.py's `engine_version`. */
+export function gearboxEngineVersion(packageVersion, ref) {
+    return `${packageVersion}-${ref.slice(0, 7)}`;
+}
+
+/** Where the gearbox-engine workflow publishes one target's VSIX: a release per version. */
+export function gearboxEngineUrl(releases, version, target) {
+    return `${releases.replace(/\/+$/, '')}/gearbox-engine-v${version}/${GEARBOX_ENGINE_ID}-${version}-${target}.vsix`;
+}
+
+/**
+ * The gearbox engine (theia/gearbox-engine), at the revision theia/Dockerfile
+ * pins, from `releases`. A release the gearbox-engine workflow has not
+ * published yet is a warning: the build goes on without it, and its gear
+ * catalogue says no engine is installed.
+ */
+async function gearboxEngineEntry(dockerfile, packageJson, releases, target) {
+    const ref = gearboxRef(readFileSync(dockerfile, 'utf8'));
+    if (!ref) {
+        throw new Error(`${dockerfile} no longer pins the gearbox engine as ARG STUDIO_GEARBOX_REF`);
+    }
+    const version = gearboxEngineVersion(JSON.parse(readFileSync(packageJson, 'utf8')).version, ref);
+    return releaseEntry(GEARBOX_ENGINE_ID, 'Gearbox engine', version, target, gearboxEngineUrl(releases, version, target), 'gearbox-engine');
+}
+
+/** A VSIX the app fetches from a release: pinned by the digest of what this build downloaded. */
+async function releaseEntry(id, label, version, target, url, workflow) {
     const response = await fetch(url);
     if (!response.ok) {
-        console.log(`::warning::${url} answered ${response.status}: this build ships no Constructor Studio CLI (run the studio-cli workflow)`);
+        console.log(`::warning::${url} answered ${response.status}: this build ships no ${label} (run the ${workflow} workflow)`);
         return undefined;
     }
     const bytes = Buffer.from(await response.arrayBuffer());
     const sha256 = createHash('sha256').update(bytes).digest('hex');
-    console.log(`${STUDIO_CLI_ID} ${version} (${target}): ${(bytes.length / 1048576).toFixed(0)} MB, sha256 ${sha256}`);
-    return { id: STUDIO_CLI_ID, label: 'Constructor Studio CLI', version, target, url, sha256 };
+    console.log(`${id} ${version} (${target}): ${(bytes.length / 1048576).toFixed(0)} MB, sha256 ${sha256}`);
+    return { id, label, version, target, url, sha256 };
 }
 
 async function main() {
@@ -104,6 +141,9 @@ async function main() {
             // publishes the CLI extension; the version comes from cfs.json.
             'studio-cli': { type: 'string' },
             'cfs-json': { type: 'string' },
+            // The same, for the gearbox engine (gearbox-engine workflow); the
+            // revision comes from the Dockerfile.
+            'gearbox-engine': { type: 'string' },
         },
     });
     if (!values.dockerfile || !values.out) {
@@ -133,6 +173,13 @@ async function main() {
         const cli = await studioCliEntry(cfsJson, values['studio-cli'], values.target);
         if (cli) {
             assistants.push(cli);
+        }
+    }
+    if (values['gearbox-engine']) {
+        const packageJson = resolvePath(values.dockerfile, '..', 'gearbox-engine', 'package.json');
+        const engine = await gearboxEngineEntry(values.dockerfile, packageJson, values['gearbox-engine'], values.target);
+        if (engine) {
+            assistants.push(engine);
         }
     }
     writeFileSync(values.out, `${JSON.stringify({ assistants }, null, 2)}\n`);

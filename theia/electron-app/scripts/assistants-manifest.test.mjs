@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { metadataUrl, openVsxEntry, parseFetchVsixPins, shortLabel, studioCliUrl, studioCliVersion } from './assistants-manifest.mjs';
+import { gearboxEngineUrl, gearboxEngineVersion, gearboxRef, metadataUrl, openVsxEntry, parseFetchVsixPins, shortLabel, studioCliUrl, studioCliVersion } from './assistants-manifest.mjs';
 
 const theia = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -58,5 +58,17 @@ test('versions the Constructor Studio CLI by its pins, as build_vsix.py does', (
     assert.equal(
         studioCliUrl('https://github.com/o/r/releases/download/', '1.6.2-ca55c66.1', 'win32-x64'),
         'https://github.com/o/r/releases/download/studio-cli-v1.6.2-ca55c66.1/constructorfabric.studio-cli-1.6.2-ca55c66.1-win32-x64.vsix'
+    );
+});
+
+test('versions the gearbox engine by its packaging and the revision theia/Dockerfile pins, as build_vsix.py does', () => {
+    const ref = gearboxRef(readFileSync(join(theia, 'Dockerfile'), 'utf8'));
+    assert.match(ref, /^[0-9a-f]{40}$/);
+    const packaging = JSON.parse(readFileSync(join(theia, 'gearbox-engine', 'package.json'), 'utf8')).version;
+    assert.equal(gearboxEngineVersion(packaging, ref), `${packaging}-${ref.slice(0, 7)}`);
+    assert.equal(gearboxRef('ARG STUDIO_GEARBOX_REF=3b64969f4ed01558d6e0697edc5cd5477e041cef\r\nRUN x'), '3b64969f4ed01558d6e0697edc5cd5477e041cef');
+    assert.equal(
+        gearboxEngineUrl('https://github.com/o/r/releases/download/', '0.1.0-3b64969', 'win32-x64'),
+        'https://github.com/o/r/releases/download/gearbox-engine-v0.1.0-3b64969/constructorfabric.gearbox-engine-0.1.0-3b64969-win32-x64.vsix'
     );
 });

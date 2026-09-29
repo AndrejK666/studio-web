@@ -469,3 +469,4 @@ electron-app/scripts/*
 *.har
 studio-cli/dist/
 studio-cli/__pycache__/
+gearbox-engine/dist/
