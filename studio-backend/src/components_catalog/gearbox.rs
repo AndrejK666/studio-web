@@ -1547,14 +1547,17 @@ impl Gearbox {
         (s.url, s.token)
     }
 
-    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
-    /// Returns whether it did. A source with no descriptors — a gears
-    /// repository before it adopted Gearbox — leaves the current corpus alone:
-    /// switching to it would empty every preview.
-    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
+    /// Check `source` out (or bring its checkout up to date) under the engine's
+    /// working directory, and say where.
+    ///
+    /// The component catalogue reads its gears' files from here too, so one
+    /// clone serves the catalogue, the previews and the IDE: the key namespaces
+    /// the directory by source, and a second call for the same source is a
+    /// fetch, not a download.
+    pub async fn checkout(&self, source: &CorpusSource) -> anyhow::Result<PathBuf> {
         let workdir = self.cfg.workdir.clone();
         let s = source.clone();
-        let dir = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             crate::artifact_ingest::clone::clone_or_update(
                 &workdir,
                 &s.key,
@@ -1567,7 +1570,15 @@ impl Gearbox {
             .map(|c| c.dir)
         })
         .await
-        .context("catalogue source checkout task")??;
+        .context("catalogue source checkout task")?
+    }
+
+    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
+    /// Returns whether it did. A source with no descriptors — a gears
+    /// repository before it adopted Gearbox — leaves the current corpus alone:
+    /// switching to it would empty every preview.
+    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
+        let dir = self.checkout(&source).await?;
         let described = tokio::task::spawn_blocking(move || holds_description(&dir, 0))
             .await
             .unwrap_or(false);

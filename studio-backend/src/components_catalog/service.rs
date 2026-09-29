@@ -21,6 +21,7 @@ use super::cratesio::{CrateDetail, CratesIoClient};
 use super::field_schema::{self, TypeFieldSchema};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
+use super::roadmap::{self, RoadmapSource};
 use crate::connectors::service::ConnectorService;
 use crate::tasks::registry::SyncReporter;
 
@@ -774,6 +775,10 @@ pub struct SyncSources {
     /// Repository sources (gears repo, FrontX repo, …).
     #[serde(default)]
     pub repos: Vec<RepoSource>,
+    /// Roadmap boards whose items say what stage each gear is at, when it is
+    /// due and who is waiting for it.
+    #[serde(default)]
+    pub roadmaps: Vec<RoadmapSource>,
 }
 
 /// What a catalog sync has counted.
@@ -999,6 +1004,87 @@ impl CatalogService {
         }
     }
 
+    /// Write what each roadmap board says about a gear into its profile.
+    ///
+    /// Best-effort, like the Gearbox facts: a board this connection cannot see
+    /// costs the profiles their plan fields, never the sync. Every plan field is
+    /// cleared first, so a gear that stopped matching an item stops showing a
+    /// plan it no longer has.
+    async fn apply_roadmaps(
+        &self,
+        ctx: &SecurityContext,
+        roadmaps: &[RoadmapSource],
+        profiles: &mut [GtsNode],
+        progress: &SyncReporter,
+    ) {
+        let Some(connectors) = self.connectors.clone() else {
+            tracing::warn!("components-catalog: no connector service; roadmap boards skipped");
+            return;
+        };
+        let today = time::OffsetDateTime::now_utc().date().to_string();
+        for node in profiles.iter_mut() {
+            if let Some(Value::Object(auto)) = node.value.get_mut("auto") {
+                for key in roadmap::ROADMAP_KEYS {
+                    auto.remove(key);
+                }
+            }
+        }
+        for source in roadmaps {
+            progress.set(format!(
+                "reading roadmap {}/{}",
+                source.owner, source.number
+            ));
+            let board = match roadmap::fetch(connectors.clone(), ctx, source).await {
+                Ok(board) => board,
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), owner = %source.owner, number = source.number, "components-catalog: roadmap board unreadable");
+                    continue;
+                }
+            };
+            let gears: Vec<(String, Vec<String>, Option<u64>)> = profiles
+                .iter()
+                .filter_map(|n| {
+                    let name = n.value.get("gear_name")?.as_str()?.to_string();
+                    let pinned = n
+                        .value
+                        .pointer("/values/roadmap_item/v")
+                        .and_then(Value::as_str)
+                        .and_then(roadmap::pinned_number);
+                    let words = roadmap::gear_words(&name);
+                    Some((name, words, pinned))
+                })
+                .collect();
+            let matches = roadmap::match_items(&gears, &board.items);
+            tracing::info!(board = %board.title, items = board.items.len(), gears = gears.len(), matched = matches.len(), "components-catalog: roadmap board read");
+            for node in profiles.iter_mut() {
+                let Some(name) = node
+                    .value
+                    .get("gear_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let Some((ix, how)) = matches.get(&name) else {
+                    continue;
+                };
+                let mut add = roadmap::item_fields(&board, &board.items[*ix], *how, source, &today);
+                let lifecycle = node
+                    .value
+                    .pointer("/auto/lifecycle/b")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                roadmap::check_release(&mut add, lifecycle.as_deref());
+                let Some(prof) = node.value.as_object_mut() else {
+                    continue;
+                };
+                if let Value::Object(auto) = prof.entry("auto").or_insert_with(|| json!({})) {
+                    auto.extend(add);
+                }
+            }
+        }
+    }
+
     /// Discover gears from a repository source (best-effort at the call site).
     async fn repo_gears(
         &self,
@@ -1009,15 +1095,31 @@ impl CatalogService {
             .connectors
             .clone()
             .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
-        let enricher = RepoEnricher::new(
+        let mode = RepoMode::parse(&source.mode);
+        let mut enricher = RepoEnricher::new(
             connectors,
             source.tenant,
             source.connection_id,
             source.repo.clone(),
             source.git_ref.clone(),
-            RepoMode::parse(&source.mode),
+            mode,
         )
         .ok_or_else(|| anyhow!("invalid repository source"))?;
+        // A gears repository is read from the engine's checkout of it when
+        // there is an engine: one download, shared with the previews, and
+        // every file readable -- the source-code fields need all of them.
+        // Without one, the scan reads through the API as it always has.
+        if mode == RepoMode::Gears
+            && let Some(gearbox) = self.gearbox.get()
+            && let Some(corpus) = self.corpus_source(ctx, source).await
+        {
+            match gearbox.checkout(&corpus).await {
+                Ok(dir) => enricher = enricher.with_checkout(dir),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), repo = %source.repo, "components-catalog: no checkout of the gears repository; reading it through the API")
+                }
+            }
+        }
         enricher.enrich(ctx).await
     }
 
@@ -1240,6 +1342,25 @@ impl CatalogService {
                     auto.extend(add);
                 }
             }
+        }
+
+        // ── what the roadmap boards plan ─────────────────────────────────────
+        // A run that rebuilt no profile from a repository updates the profiles
+        // the graph already holds: the plan moves weekly, the tree less often,
+        // and refreshing one should not cost a full scan of the other.
+        if !sources.roadmaps.is_empty() {
+            if profile_nodes.is_empty() {
+                profile_nodes = self
+                    .sink
+                    .list(ctx, Some("gear_profile"))
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|n| n.value.get("gear_name").is_some())
+                    .collect();
+            }
+            self.apply_roadmaps(ctx, &sources.roadmaps, &mut profile_nodes, progress)
+                .await;
         }
 
         // ── upsert ───────────────────────────────────────────────────────────
@@ -2712,7 +2833,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 73);
+        assert_eq!(gear.fields().count(), 81);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }

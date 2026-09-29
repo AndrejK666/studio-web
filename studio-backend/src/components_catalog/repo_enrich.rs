@@ -28,6 +28,7 @@ use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::repo_facts::{self, CommitFacts, SpecStats, Version};
 use crate::connectors::driver::ConnectionAuth;
 use crate::connectors::service::ConnectorService;
 
@@ -119,6 +120,10 @@ pub struct RepoEnricher {
     repo: String,
     git_ref: String,
     mode: RepoMode,
+    /// A local checkout of `repo` at `git_ref`, when the sync has one: every
+    /// file is then read from disk, and the source-code fields -- which need
+    /// every file -- are filled too.
+    checkout: Option<std::path::PathBuf>,
 }
 
 impl RepoEnricher {
@@ -146,7 +151,26 @@ impl RepoEnricher {
             repo,
             git_ref,
             mode,
+            checkout: None,
         })
+    }
+
+    /// Read files from this checkout instead of the API. The tree listing
+    /// comes from it too, so every number is one commit's.
+    pub fn with_checkout(mut self, dir: std::path::PathBuf) -> Self {
+        self.checkout = Some(dir);
+        self
+    }
+
+    /// How many files of one kind a gear may cost. Over the API every file is
+    /// a request, so a gear with a hundred documents is capped; on disk it is
+    /// not.
+    fn cap(&self, api: usize) -> usize {
+        if self.checkout.is_some() {
+            usize::MAX
+        } else {
+            api
+        }
     }
 
     /// Read the repository and return one [`RepoGear`] per component. What counts
@@ -154,19 +178,29 @@ impl RepoEnricher {
     /// `packages/*/package.json` package (FrontX micro-frontends).
     pub async fn enrich(&self, ctx: &SecurityContext) -> Result<Vec<RepoGear>> {
         let auth = self.resolve_auth(ctx).await?;
-        let tree = self.tree(&auth).await?;
-        if tree.truncated {
-            warn!(
-                repo = %self.repo,
-                "studio-gears-catalog: repository tree was truncated — some counts may be low"
-            );
-        }
-        let paths: Vec<&str> = tree
-            .tree
-            .iter()
-            .filter(|e| e.kind == "blob" || e.kind == "tree")
-            .map(|e| e.path.as_str())
-            .collect();
+        let listing: Vec<String> = match &self.checkout {
+            Some(dir) => {
+                let dir = dir.clone();
+                tokio::task::spawn_blocking(move || local_tree(&dir))
+                    .await
+                    .context("listing the checkout")?
+            }
+            None => {
+                let tree = self.tree(&auth).await?;
+                if tree.truncated {
+                    warn!(
+                        repo = %self.repo,
+                        "studio-gears-catalog: repository tree was truncated — some counts may be low"
+                    );
+                }
+                tree.tree
+                    .into_iter()
+                    .filter(|e| e.kind == "blob" || e.kind == "tree")
+                    .map(|e| e.path)
+                    .collect()
+            }
+        };
+        let paths: Vec<&str> = listing.iter().map(String::as_str).collect();
         match self.mode {
             RepoMode::Gears => self.discover_gears(&auth, &paths).await,
             RepoMode::Frontx => self.discover_frontx(&auth, &paths).await,
@@ -254,7 +288,10 @@ impl RepoEnricher {
             }
         }
         let codeowners = self.read_codeowners(auth).await;
+        let wide = self.repo_wide(auth).await;
         let mut out: Vec<RepoGear> = Vec::with_capacity(gear_dirs.len());
+        // Each gear's own crate names, for the reverse walk below.
+        let mut own: Vec<std::collections::BTreeSet<String>> = Vec::with_capacity(gear_dirs.len());
         for dir in &gear_dirs {
             let slug = dir.rsplit('/').next().unwrap_or(dir).to_string();
             // The crates this gear directory declares, read from their own
@@ -267,7 +304,7 @@ impl RepoEnricher {
             let mut manifests: Vec<(String, String)> = Vec::new();
             for rel in gear_manifests(dir, &gear_dirs, paths)
                 .into_iter()
-                .take(MAX_GEAR_MANIFESTS)
+                .take(self.cap(MAX_GEAR_MANIFESTS))
             {
                 if let Some(body) = self.read_file(auth, &format!("{dir}/{rel}")).await {
                     manifests.push((rel, body));
@@ -294,8 +331,16 @@ impl RepoEnricher {
                     &manifests,
                     paths,
                     codeowners.as_deref(),
+                    &wide,
                 )
                 .await;
+            own.push(
+                named
+                    .iter()
+                    .map(|(_, n)| n.strip_suffix("-sdk").unwrap_or(n).to_string())
+                    .chain(std::iter::once(crate_name.clone()))
+                    .collect(),
+            );
             let description = brief_of(&fields, "description");
             let category = brief_of(&fields, "category");
             // A gear that declares `is_plugin = true` IS a plugin, whatever it
@@ -322,8 +367,59 @@ impl RepoEnricher {
                 crates: if named.is_empty() { Vec::new() } else { crates },
             });
         }
+        attach_consumers(&mut out, &own);
         info!(gears = out.len(), "studio-gears-catalog: gears discovered");
         Ok(out)
+    }
+
+    /// What the repository says once for every gear in it: its release tags
+    /// and the version and licence its workspace hands down.
+    ///
+    /// Tags are listed rather than searched: gears-rust carries over two
+    /// thousand of them, which is two dozen pages read once, against a search
+    /// per gear that GitHub rate-limits to thirty a minute.
+    async fn repo_wide(&self, auth: &ConnectionAuth) -> RepoWide {
+        const MAX_PAGES: usize = 40;
+        let mut tags: Vec<String> = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let url = self.api(
+                auth,
+                &format!("/repos/{}/tags?per_page=100&page={page}", self.repo),
+            );
+            let Ok(resp) = self
+                .http
+                .get(&url)
+                .bearer_auth(&auth.token)
+                .header("Accept", "application/vnd.github+json")
+                .send()
+                .await
+            else {
+                break;
+            };
+            if !resp.status().is_success() {
+                break;
+            }
+            let Ok(batch) = resp.json::<Vec<TagEntry>>().await else {
+                break;
+            };
+            let n = batch.len();
+            tags.extend(batch.into_iter().map(|t| t.name));
+            if n < 100 {
+                break;
+            }
+        }
+        let root = self.read_file(auth, "Cargo.toml").await.unwrap_or_default();
+        let changelog = self
+            .read_file(auth, "CHANGELOG.md")
+            .await
+            .map(|b| repo_facts::changelog_releases(&b))
+            .unwrap_or_default();
+        RepoWide {
+            tags: repo_facts::tag_index(tags.iter().map(String::as_str)),
+            version: repo_facts::workspace_package(&root, "version"),
+            license: repo_facts::workspace_package(&root, "license"),
+            changelog,
+        }
     }
 
     /// FrontX: one component per package in the monorepo.
@@ -594,6 +690,9 @@ impl RepoEnricher {
 
     /// Fetch one text file's raw content, or `None` when it is absent.
     async fn read_file(&self, auth: &ConnectionAuth, path: &str) -> Option<String> {
+        if let Some(dir) = &self.checkout {
+            return tokio::fs::read_to_string(dir.join(path)).await.ok();
+        }
         let url = self.api(
             auth,
             &format!(
@@ -651,6 +750,56 @@ impl RepoEnricher {
             .and_then(|c| c.commit.committer.and_then(|a| a.date))
     }
 
+    /// A directory's recent history: the last change, and up to a hundred
+    /// commits' authors and messages -- enough to name who works on it and
+    /// how much of it is signed off, in the one call the last-change date
+    /// already cost.
+    async fn history(
+        &self,
+        auth: &ConnectionAuth,
+        dir: &str,
+    ) -> (Option<String>, Vec<CommitFacts>) {
+        let url = self.api(
+            auth,
+            &format!(
+                "/repos/{}/commits?path={}&per_page=100&sha={}",
+                self.repo, dir, self.git_ref
+            ),
+        );
+        let Ok(resp) = self
+            .http
+            .get(&url)
+            .bearer_auth(&auth.token)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+        else {
+            return (None, Vec::new());
+        };
+        if !resp.status().is_success() {
+            return (None, Vec::new());
+        }
+        let Ok(entries) = resp.json::<Vec<HistoryEntry>>().await else {
+            return (None, Vec::new());
+        };
+        let last = entries
+            .first()
+            .and_then(|e| e.commit.committer.as_ref())
+            .and_then(|c| c.date.clone());
+        let facts = entries
+            .into_iter()
+            .map(|e| CommitFacts {
+                author: e
+                    .author
+                    .map(|a| a.login)
+                    .or_else(|| e.commit.author.and_then(|a| a.name))
+                    .unwrap_or_default(),
+                message: e.commit.message,
+            })
+            .collect();
+        (last, facts)
+    }
+
     // ── field extraction ─────────────────────────────────────────────────────
 
     #[allow(clippy::too_many_arguments)]
@@ -663,6 +812,7 @@ impl RepoEnricher {
         manifests: &[(String, String)],
         paths: &[&str],
         codeowners: Option<&str>,
+        wide: &RepoWide,
     ) -> (Value, Vec<Value>) {
         let mut uml: Vec<Value> = Vec::new();
         let prefix = format!("{dir}/");
@@ -775,21 +925,49 @@ impl RepoEnricher {
             boolean(rel.iter().any(|p| p.to_lowercase().contains("openapi"))),
         );
 
-        // dependencies on other gears, read from this gear's own Cargo
-        // manifests (already fetched, capped by the caller).
+        // The Cargo manifests (already read by the caller): dependencies on
+        // other gears, this gear's own crates, its version, features and
+        // databases.
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let own: std::collections::BTreeSet<String> = manifests
-            .iter()
-            .filter_map(|(_, body)| cargo_package_name(body))
-            .map(|n| n.strip_suffix("-sdk").map(str::to_string).unwrap_or(n))
-            .chain(std::iter::once(self_crate.to_string()))
-            .collect();
-        for (_, body) in manifests {
-            for d in cargo_gear_deps(body) {
-                if !own.contains(&d) {
-                    deps.insert(d);
-                }
+        let mut features: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut crates: Vec<(String, String, Option<String>, Option<String>)> = Vec::new();
+        let mut bodies: Vec<&str> = Vec::new();
+        for (pth, body) in manifests {
+            if let Some((name, version)) = repo_facts::cargo_package(body) {
+                crates.push((
+                    pth.clone(),
+                    name,
+                    version,
+                    repo_facts::package_license(body),
+                ));
             }
+            features.extend(repo_facts::feature_names(body));
+            deps.extend(cargo_gear_deps(body));
+            bodies.push(body);
+        }
+        let packages: Vec<String> = crates.iter().map(|c| c.1.clone()).collect();
+        // Its own crates are not dependencies, under either name.
+        for p in &packages {
+            deps.remove(p.strip_suffix("-sdk").unwrap_or(p));
+        }
+        deps.remove(self_crate);
+        // The gear's crate: the one the caller keyed the component on.
+        let main = crates
+            .iter()
+            .find(|c| c.1 == self_crate)
+            .or_else(|| crates.iter().find(|c| !c.1.ends_with("-sdk")));
+        if !features.is_empty() {
+            f.insert("flags".into(), metric(features.len(), None));
+        }
+        let dbs = repo_facts::db_engines(bodies.iter().copied());
+        if !dbs.is_empty() {
+            f.insert("dbs".into(), text(&dbs.join(", "), None, None));
+        }
+        if let Some(licence) = main
+            .and_then(|c| c.3.clone())
+            .or_else(|| wide.license.clone())
+        {
+            f.insert("licence".into(), text(&licence, None, None));
         }
         if !deps.is_empty() {
             f.insert("deps".into(), metric(deps.len(), None));
@@ -804,6 +982,68 @@ impl RepoEnricher {
             .iter()
             .any(|p| p.contains(&format!("testing/e2e/suites/{}", slug.replace('-', "_"))));
         f.insert("e2e".into(), boolean(e2e));
+
+        // Version, release and lifecycle. The version is the crate's own, or
+        // the workspace's when the crate inherits it.
+        if let Some((_, name, own_version, _)) = main {
+            let version = own_version.clone().or_else(|| wide.version.clone());
+            if let Some(v) = &version {
+                f.insert("version".into(), text(v, None, None));
+            }
+            let released = repo_facts::latest_release(&wide.tags, name);
+            let sdk_released = packages
+                .iter()
+                .filter(|p| p.ends_with("-sdk"))
+                .any(|p| repo_facts::latest_release(&wide.tags, p).is_some());
+            match &released {
+                Some(r) => {
+                    let tag = format!("{name}-v{r}");
+                    let link = format!("https://github.com/{}/releases/tag/{tag}", self.repo);
+                    let released_on = wide
+                        .changelog
+                        .iter()
+                        .find(|e| {
+                            repo_facts::release_names(name).contains(&e.crate_name)
+                                && e.version == r.to_string()
+                        })
+                        .and_then(|e| e.date.clone());
+                    f.insert(
+                        "lastrelease".into(),
+                        text(&format!("v{r}"), Some(&link), released_on.as_deref()),
+                    );
+                    let mut v = status("yes", "good");
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert("v".into(), Value::String(format!("released as {name}")));
+                    }
+                    f.insert("published".into(), v);
+                }
+                None if sdk_released => {
+                    f.insert("published".into(), status("sdk only", "watch"));
+                }
+                None => {
+                    f.insert("published".into(), status("no", "none"));
+                }
+            }
+            let judged = released
+                .clone()
+                .or_else(|| version.as_deref().and_then(Version::parse));
+            f.insert(
+                "lifecycle".into(),
+                text(
+                    repo_facts::lifecycle(judged.as_ref(), released.is_some(), e2e),
+                    None,
+                    None,
+                ),
+            );
+        } else if !packages.is_empty() {
+            let sdk_released = packages
+                .iter()
+                .any(|p| repo_facts::latest_release(&wide.tags, p).is_some());
+            if sdk_released {
+                f.insert("published".into(), status("sdk only", "watch"));
+            }
+            f.insert("lifecycle".into(), text("in development", None, None));
+        }
 
         // Whether the gear registers GTS types, by the presence of a `gts.rs`
         // module.
@@ -829,6 +1069,88 @@ impl RepoEnricher {
         );
         f.insert("migrations_present".into(), boolean(has_migrations));
 
+        // The specification documents, each read once: size, traceability,
+        // requirement progress, and -- below -- the per-document state and
+        // the diagrams. Capped, so one gear with a hundred documents costs a
+        // hundred reads and not the sync.
+        let mut docs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut spec = SpecStats::default();
+        for p in rel
+            .iter()
+            .filter(|p| p.starts_with("docs/") && p.ends_with(".md"))
+            .take(self.cap(80))
+        {
+            if let Some(body) = self.read_file(auth, &format!("{dir}/{p}")).await {
+                spec.add(&body);
+                docs.insert(p.to_string(), body);
+            }
+        }
+        if spec.lines > 0 {
+            f.insert("specloc".into(), metric(spec.lines, None));
+        }
+        if !spec.ids.is_empty() {
+            f.insert("cpt".into(), metric(spec.ids.len(), None));
+        }
+        if let Some(pct) = (spec.ticked * 100).checked_div(spec.markers) {
+            let mut v = text(
+                &format!("{} / {} ticked", spec.ticked, spec.markers),
+                None,
+                None,
+            );
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("n".into(), json!(pct));
+            }
+            f.insert("progress".into(), v);
+        }
+
+        // Source code: size by kind, health probes, GTS types. Every `.rs` of
+        // the gear is read, which only a checkout makes affordable.
+        if self.checkout.is_some() {
+            let mut code = repo_facts::CodeStats::default();
+            for p in rel
+                .iter()
+                .filter(|p| p.ends_with(".rs") && !p.starts_with("plugins/"))
+            {
+                if let Some(body) = self.read_file(auth, &format!("{dir}/{p}")).await {
+                    code.add(p, &body);
+                }
+            }
+            let suite = format!("testing/e2e/suites/{}/", slug.replace('-', "_"));
+            let mut e2e_lines = 0usize;
+            for p in paths.iter().filter(|p| p.starts_with(&suite)) {
+                if let Some(body) = self.read_file(auth, p).await {
+                    e2e_lines += body.lines().count();
+                }
+            }
+            if code.code > 0 {
+                f.insert("codeloc".into(), metric(code.code, None));
+            }
+            if code.unit > 0 {
+                f.insert("unitloc".into(), metric(code.unit, None));
+            }
+            if code.integration > 0 {
+                f.insert("integloc".into(), metric(code.integration, None));
+            }
+            if e2e_lines > 0 {
+                f.insert("e2eloc".into(), metric(e2e_lines, None));
+            }
+            if let Some(r) = repo_facts::spec_to_code(spec.lines, code.code) {
+                f.insert("ratio".into(), text(&r, None, None));
+            }
+            if code.code > 0 {
+                f.insert("health".into(), boolean(code.health));
+            }
+            if !code.gts_types.is_empty() {
+                let names: Vec<String> = code.gts_types.into_iter().collect();
+                let mut v = text(&format!("{} types", names.len()), None, None);
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("v".into(), Value::String(names.join(", ")));
+                    obj.insert("n".into(), json!(names.len()));
+                }
+                f.insert("gtstypes".into(), v);
+            }
+        }
+
         // spec docstates (presence + TBD/TODO scan)
         for (key, file) in [
             ("prd", "docs/PRD.md"),
@@ -845,7 +1167,7 @@ impl RepoEnricher {
                     "https://github.com/{}/blob/{}/{full}",
                     self.repo, self.git_ref
                 );
-                let content = self.read_file(auth, &full).await.unwrap_or_default();
+                let content = docs.get(file).cloned().unwrap_or_default();
                 let state = if content.contains("TBD") || content.contains("TODO") {
                     "in progress"
                 } else {
@@ -856,6 +1178,22 @@ impl RepoEnricher {
             f.insert(key.into(), value);
         }
 
+        // No crate yet: the stage is the furthest document written. The rule's
+        // enum starts before code, and a gear that is only a design is in
+        // design, not "unknown".
+        if !f.contains_key("lifecycle") {
+            let stage = if rel.contains(&"docs/DESIGN.md") {
+                Some("in design")
+            } else if rel.contains(&"docs/PRD.md") {
+                Some("in requirements")
+            } else {
+                None
+            };
+            if let Some(stage) = stage {
+                f.insert("lifecycle".into(), text(stage, None, None));
+            }
+        }
+
         // diagrams + UML: read DESIGN.md once, count mermaid fences and lift them.
         if rel.contains(&"docs/DESIGN.md") {
             let full = format!("{dir}/docs/DESIGN.md");
@@ -863,12 +1201,12 @@ impl RepoEnricher {
                 "https://github.com/{}/blob/{}/{full}",
                 self.repo, self.git_ref
             );
-            if let Some(content) = self.read_file(auth, &full).await {
+            if let Some(content) = docs.get("docs/DESIGN.md") {
                 let n = content.matches("```mermaid").count();
                 if n > 0 {
                     f.insert("diagrams".into(), metric(n, Some(&link)));
                 }
-                uml = extract_uml(&content, &link);
+                uml = extract_uml(content, &link);
             }
         }
 
@@ -930,8 +1268,10 @@ impl RepoEnricher {
             f.insert("owner".into(), v);
         }
 
-        // last change date for the directory
-        if let Some(date) = self.last_change(auth, dir).await {
+        // History: the last change, who writes this gear, and how much of it
+        // carries a sign-off.
+        let (last, commits) = self.history(auth, dir).await;
+        if let Some(date) = last {
             let day = date.get(0..10).unwrap_or(&date).to_string();
             let mut v = text(&day, None, None);
             if let Some(obj) = v.as_object_mut() {
@@ -939,8 +1279,163 @@ impl RepoEnricher {
             }
             f.insert("lastchange".into(), v);
         }
+        let experts = repo_facts::experts(&commits, 3);
+        if !experts.is_empty() {
+            f.insert("experts".into(), text(&experts.join(", "), None, None));
+        }
+        let (signed, human) = repo_facts::sign_off(&commits);
+        if human > 0 {
+            let lamp = if signed == human {
+                "good"
+            } else if signed * 5 >= human * 4 {
+                "watch"
+            } else {
+                "bad"
+            };
+            let mut v = status(&format!("{signed}/{human}"), lamp);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(
+                    "v".into(),
+                    Value::String(format!(
+                        "{signed} of the last {human} human commits signed off"
+                    )),
+                );
+            }
+            f.insert("dco".into(), v);
+        }
+
+        // Changelog: this gear's crates' releases in the repository's one
+        // changelog, under their current or former names.
+        let names: Vec<String> = packages
+            .iter()
+            .flat_map(|p| repo_facts::release_names(p))
+            .collect();
+        let entries = wide
+            .changelog
+            .iter()
+            .filter(|e| names.contains(&e.crate_name))
+            .count();
+        if entries > 0 {
+            let link = format!(
+                "https://github.com/{}/blob/{}/CHANGELOG.md",
+                self.repo, self.git_ref
+            );
+            f.insert("changelog".into(), metric(entries, Some(&link)));
+        }
 
         (Value::Object(f), uml)
+    }
+}
+
+/// Every file and directory under a checkout, relative and with `/`, the way
+/// the Git tree API lists them. `.git` and symlinks are not followed.
+fn local_tree(root: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() || entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(rel) = path.strip_prefix(root) else {
+                continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if kind.is_dir() {
+                stack.push(path);
+            }
+            out.push(rel);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Repository-wide facts read once per scan.
+#[derive(Default)]
+struct RepoWide {
+    tags: std::collections::BTreeMap<String, Vec<Version>>,
+    version: Option<String>,
+    license: Option<String>,
+    /// The repository's one changelog, every crate's releases in it.
+    changelog: Vec<repo_facts::ChangelogEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagEntry {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryEntry {
+    commit: HistoryCommit,
+    /// The GitHub account, when the commit's e-mail maps to one.
+    #[serde(default)]
+    author: Option<HistoryLogin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryCommit {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    author: Option<HistoryName>,
+    #[serde(default)]
+    committer: Option<CommitActor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryName {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryLogin {
+    login: String,
+}
+
+/// Every gear's dependents, read backwards off every gear's dependencies.
+///
+/// `own[i]` is gear `i`'s crate names with any `-sdk` dropped, the same way
+/// `deps_names` records them, so a gear consumed through its SDK counts.
+fn attach_consumers(gears: &mut [RepoGear], own: &[std::collections::BTreeSet<String>]) {
+    let deps: Vec<Vec<String>> = gears
+        .iter()
+        .map(|g| {
+            g.fields
+                .get("deps_names")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
+    let names: Vec<String> = gears.iter().map(|g| g.crate_name.clone()).collect();
+    for (i, gear) in gears.iter_mut().enumerate() {
+        let users: Vec<String> = deps
+            .iter()
+            .enumerate()
+            .filter(|(j, d)| *j != i && d.iter().any(|x| own[i].contains(x)))
+            .map(|(j, _)| names[j].clone())
+            .collect();
+        if let Some(obj) = gear.fields.as_object_mut() {
+            obj.insert("consumers".into(), metric(users.len(), None));
+            obj.insert(
+                "consumers_names".into(),
+                Value::Array(users.into_iter().map(Value::String).collect()),
+            );
+        }
     }
 }
 

@@ -23,6 +23,7 @@ use toolkit_security::SecurityContext;
 
 use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
 use super::reference::ComponentReferenceListDto;
+use super::roadmap::{RoadmapFields, RoadmapSource};
 use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -577,6 +578,50 @@ pub struct RepoSourceDto {
     pub mode: Option<String>,
 }
 
+/// A roadmap board: a GitHub Project whose items plan the gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RoadmapSourceDto {
+    /// Tenant that owns the GitHub connection.
+    pub tenant: Uuid,
+    /// Connection to use; when omitted the first GitHub connection is taken.
+    /// It needs to read organization projects (`read:project`).
+    pub connection_id: Option<Uuid>,
+    /// Organization or user that owns the board.
+    pub owner: String,
+    /// The board's number, as in `/orgs/<owner>/projects/<number>`.
+    pub number: u32,
+    /// What each letter of the priority field stands for, e.g. `{"A": "Acronis"}`.
+    pub consumers: Option<std::collections::BTreeMap<String, String>>,
+    /// The single-select holding the stage (default `Status`).
+    pub stage_field: Option<String>,
+    /// The single-select saying whether the date is committed (default `Commitment`).
+    pub commitment_field: Option<String>,
+    /// The per-consumer priority (default: the field named like `Prio (A.C.V)`).
+    pub priority_field: Option<String>,
+    /// The effort estimate (default: a field with `effort` in its name).
+    pub effort_field: Option<String>,
+}
+
+impl RoadmapSourceDto {
+    fn into_source(self) -> RoadmapSource {
+        let named = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        RoadmapSource {
+            tenant: self.tenant,
+            connection_id: self.connection_id,
+            owner: self.owner.trim().to_string(),
+            number: self.number,
+            consumers: self.consumers.unwrap_or_default(),
+            fields: RoadmapFields {
+                stage: named(self.stage_field),
+                commitment: named(self.commitment_field),
+                priority: named(self.priority_field),
+                effort: named(self.effort_field),
+            },
+        }
+    }
+}
+
 /// Which sources one sync should read. Omit the body to sync crates.io with the
 /// default keyword (back-compatible).
 #[derive(Debug)]
@@ -586,6 +631,8 @@ pub struct SyncRequestDto {
     pub crates_io: Option<String>,
     /// Repository sources (gears repo, FrontX repo, …).
     pub repositories: Option<Vec<RepoSourceDto>>,
+    /// Roadmap boards to read each gear's stage, due date and demand from.
+    pub roadmaps: Option<Vec<RoadmapSourceDto>>,
 }
 
 impl SyncRequestDto {
@@ -603,18 +650,29 @@ impl SyncRequestDto {
                 mode: r.mode.unwrap_or_else(|| "gears".to_string()),
             })
             .collect();
+        let roadmaps: Vec<RoadmapSource> = self
+            .roadmaps
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| !r.owner.trim().is_empty())
+            .map(RoadmapSourceDto::into_source)
+            .collect();
         let crates_io = match self.crates_io {
             Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
             Some(_) => None,
             None => {
-                if repos.is_empty() {
+                if repos.is_empty() && roadmaps.is_empty() {
                     Some(default_keyword.to_string())
                 } else {
                     None
                 }
             }
         };
-        SyncSources { crates_io, repos }
+        SyncSources {
+            crates_io,
+            repos,
+            roadmaps,
+        }
     }
 }
 
@@ -635,7 +693,7 @@ async fn sync(
         Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
         None => SyncSources {
             crates_io: Some(catalog.service.default_keyword().to_string()),
-            repos: Vec::new(),
+            ..SyncSources::default()
         },
     };
     let payload = serde_json::to_value(&sources)
