@@ -38,6 +38,7 @@ import type { GearDescriptor } from "./generated/GearDescriptor";
 import type { InitializeResult } from "./generated/InitializeResult";
 import type { PendingGear } from "./generated/PendingGear";
 import type { ProgressParams } from "./generated/ProgressParams";
+import type { BuildToolchain } from "./run-product";
 
 export const GEARBOX_SERVICE_PATH = "/services/gearbox";
 
@@ -446,6 +447,25 @@ export interface GearboxService {
     profile?: string,
     out?: string,
   ): Promise<GenerateFileResult>;
+
+  /**
+   * Constructor Studio: what the IDE's machine has for Build and Run -- cargo,
+   * the MSVC linker on Windows, docker -- answered without the engine.
+   */
+  buildToolchain(): Promise<BuildToolchain>;
+
+  /** Constructor Studio: whether something answers on 127.0.0.1:`port` (a Postgres for Run). */
+  localPortAnswers(port: number): Promise<boolean>;
+
+  /**
+   * Constructor Studio: write `config/<app>.local.yaml` under a generated tree,
+   * the generated configuration plus a Postgres section for `dbGears`, and say
+   * which configuration Run should use (relative to `outRoot`).
+   */
+  writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }>;
+
+  /** Constructor Studio: start (or reuse) a local Postgres container and create the databases. */
+  startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }>;
 
   /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.

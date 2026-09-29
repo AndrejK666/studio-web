@@ -55,6 +55,8 @@ import {
 } from "./gearbox-environment";
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
+import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
+import { buildToolchain, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 
 /**
  * How long the engine gets to answer before the request is abandoned.
@@ -758,6 +760,41 @@ export class GearboxServiceImpl implements GearboxService {
     out?: string,
   ): Promise<GenerateFileResult> {
     return this.request(method.GENERATE_FILE, { path, profile, out, file });
+  }
+
+  // Constructor Studio: Build and Run -- see `run-support.ts`. Independent of
+  // the engine, like the checks they make.
+
+  async buildToolchain(): Promise<BuildToolchain> {
+    return buildToolchain();
+  }
+
+  async localPortAnswers(port: number): Promise<boolean> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+    return portAnswers(LOCAL_POSTGRES.host, port);
+  }
+
+  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }> {
+    // Only inside a generated tree, and only an application's own file: the
+    // frontend names both, and this writes to disk.
+    const normalized = outRoot.replace(/\\/g, "/");
+    if (!/\/\.gearbox\//.test(normalized) || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(app)) {
+      throw new Error(`refusing to write a run configuration for ${app} under ${outRoot}`);
+    }
+    if (dbGears.some((gear) => !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(gear))) {
+      throw new Error("refusing a gear id that is not one");
+    }
+    return writeRunConfig(outRoot, app, dbGears, LOCAL_POSTGRES);
+  }
+
+  async startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }> {
+    const id = product.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    if (id === "" || databases.some((db) => !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(db))) {
+      return { ok: false, message: "refusing a product or database name that is not an identifier" };
+    }
+    const result = await startLocalPostgres({ container: `gbx-pg-${id}`, port: LOCAL_POSTGRES.port, databases });
+    this.logger.info(`gearbox: local Postgres for ${product}: ${result.message}`);
+    return result;
   }
 
   /**

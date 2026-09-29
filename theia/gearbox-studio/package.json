@@ -20,6 +20,7 @@
     "@theia/markers": "1.75.0",
     "@theia/monaco": "1.75.0",
     "@theia/monaco-editor-core": "1.108.201",
+    "@theia/terminal": "1.75.0",
     "@theia/workspace": "1.75.0",
     "vscode-jsonrpc": "8.2.0"
   },

@@ -33,6 +33,7 @@ import { LanguageGrammarDefinitionContribution } from "@theia/monaco/lib/browser
 import { GEARBOX_SERVICE_PATH, GearboxClient, GearboxService } from "../common/protocol";
 import { CatalogueStore } from "./catalogue-store";
 import { GenerateService } from "./generate/generate-service";
+import { ProductTerminals } from "./generate/product-terminals";
 import { ProductEditService } from "./product-edit-service";
 import { ProductStore } from "./product-store";
 import { ResolutionMarkers } from "./resolution-markers";
@@ -113,6 +114,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(PendingCreate).toSelf().inSingletonScope();
   bind(PendingCreateGear).toSelf().inSingletonScope();
   bind(GenerateService).toSelf().inSingletonScope();
+  // Build and Run's two terminals per product, under Generate.
+  bind(ProductTerminals).toSelf().inSingletonScope();
   bind(RevealService).toSelf().inSingletonScope();
   bind(GearboxClient).toService(CatalogueStore);
 
