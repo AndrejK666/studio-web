@@ -2303,7 +2303,7 @@ fn gear_status(fields: &Value) -> Option<&'static str> {
 
 /// Classify a crate by name so the UI can group them: gear / sdk / plugin /
 /// toolkit. Purely cosmetic — the graph keeps the full name.
-fn classify_kind(name: &str) -> &'static str {
+pub(crate) fn classify_kind(name: &str) -> &'static str {
     if name.contains("toolkit") {
         "toolkit"
     } else if name.ends_with("-sdk") {

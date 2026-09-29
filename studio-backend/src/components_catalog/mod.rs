@@ -13,6 +13,7 @@ mod cratesio;
 pub(crate) mod field_schema;
 mod gearbox;
 pub(crate) mod gts;
+mod reference;
 mod repo_enrich;
 mod rest;
 mod scaffold;

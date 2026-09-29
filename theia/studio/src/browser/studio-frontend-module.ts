@@ -64,12 +64,15 @@ import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
+import { ComponentsReferenceContribution } from './components-reference-contribution';
+import { ComponentsReferenceWidget } from './components-reference-widget';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
 import '../../src/browser/workspace-sources.css';
 import '../../src/browser/orca.css';
 import '../../src/browser/desktop-studio.css';
+import '../../src/browser/components-reference.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // ADR-0030: each window's agents run on that window's person.
@@ -251,6 +254,14 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: WorkspaceGraphWidget.ID,
         createWidget: () => ctx.container.get<WorkspaceGraphWidget>(WorkspaceGraphWidget)
+    })).inSingletonScope();
+    // The components reference: the portal's catalogue joined with the Gearbox
+    // engine's gears, from one backend read. Host-agnostic (StudioApi.fetch).
+    bindViewContribution(bind, ComponentsReferenceContribution);
+    bind(ComponentsReferenceWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: ComponentsReferenceWidget.ID,
+        createWidget: () => ctx.container.get<ComponentsReferenceWidget>(ComponentsReferenceWidget)
     })).inSingletonScope();
     bindViewContribution(bind, ArtifactGraphContribution);
     bind(ArtifactGraphWidget).toSelf();
