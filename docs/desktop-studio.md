@@ -24,6 +24,35 @@ What a member does:
    the Studio and the folder opens in the IDE. The organization is named only
    when there is more than one, as the portal hides it.
 
+### The Constructor Studio view
+
+Top to bottom (`theia/studio/src/browser/desktop-studio-widget.tsx`; what it
+decides is in `desktop-studio-tree.ts`, with its tests):
+
+- **Account**: which Studio (the environment's name and host), who is signed
+  in, **Switch Studio** and **Sign out**.
+- **The project this window has open**, as a card: its name, its organization
+  and workspace, how many repositories it has, and **Open in portal**, which
+  opens `<studio>/?screen=projects;org=…;workspace=…[;project=…]` in the
+  browser. While a project opens, the card shows the clone progress instead.
+- **Projects**: organizations → workspaces → nested projects as a tree, with a
+  filter by name. Rows fold with the chevron or the arrow keys (Up/Down,
+  Left/Right, Home/End, Enter/Space opens); which rows are folded is kept per
+  Studio in the IDE's local storage (`studio.desktop.tree.collapsed:<studio>`,
+  a list of tenant ids, no secret). Organizations that share a name show the
+  start of their tenant id, and the member's role in each where the roles
+  differ.
+- Once the tree is loaded, the view asks `studio-git` `GET /sources` for each
+  workspace and project, four at a time — the same listing an open starts
+  with. A project with none is muted and says **No repositories yet**, with a
+  link to it in the portal; clicking it asks again, and opens it if a
+  repository has been added since. When the listing cannot say (a Studio
+  without `studio-git`, a 5xx), the row stays clickable, and a failed open is
+  shown under that row.
+- **App**: *Get beta versions of the app*, and **Check for Updates** (the same
+  command as *Help → Check for Updates…*, shown only where the desktop app
+  registers it).
+
 ## One IDE, two hosts
 
 `theia/studio` and `theia/product-ext` are the **same code** in the portal's
