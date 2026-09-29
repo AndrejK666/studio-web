@@ -17,7 +17,7 @@ import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DESKTOP_LINK_OPEN, DESKTOP_LINK_SCHEME, DesktopLink, environmentFor, isCurrent, parseDesktopLink } from '../common/desktop-link';
 import { customEnvironment } from '../common/desktop-environments';
-import { DesktopStatus, desktopStatus, desktopUrl } from './desktop-studio-widget';
+import { DesktopStatus, desktopStatus, desktopUrl } from './desktop-studio-client';
 
 /** How long a link waits for the member to finish signing in, in the browser. */
 const SIGN_IN_BUDGET_MS = 5 * 60_000;

@@ -6,47 +6,43 @@
 // Top to bottom: the account (which Studio, who, switch, sign out), the project
 // this window has open as a card, the member's organizations → workspaces →
 // projects as a tree with a filter. What decides anything about the tree is in
-// desktop-studio-tree.ts, with its tests. The app's own settings -- which
-// updates it takes -- are in Settings (studio.desktop.updateChannel), and
-// Help → Check for Updates checks now: electron-browser/, desktop app only.
+// desktop-studio-tree.ts, with its tests; the routes it calls, and the Studio
+// picker, are desktop-studio-client.ts and desktop-studio-picker.tsx, the same
+// ones the landing page uses. The app's own settings -- which updates it
+// takes -- are in Settings (studio.desktop.updateChannel), and Help → Check
+// for Updates checks now: electron-browser/, desktop app only.
 
 import * as React from '@theia/core/shared/react';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { CommandService } from '@theia/core/lib/common/command';
-import { StudioApi } from './studio-api';
 import { IDENTITY_VIEWER_COMMAND_ID } from './portal-bridge-contribution';
-import { DesktopEnvironmentChoice } from '../common/desktop-environments';
-import { Organization, Tenant, projectsOf } from './desktop-projects';
+import { Organization, Tenant } from './desktop-projects';
 import {
     SourcesState, TreeRow, collapsedStorageKey, filteredOutEverything, locate, openableIds, organizationHints,
-    parseCollapsed, portalUrl, pruneCollapsed, sourcesStateOf, studioLabel, toggleCollapsed, treeKey, treeRows,
+    parseCollapsed, portalUrl, pruneCollapsed, studioLabel, toggleCollapsed, treeKey, treeRows,
 } from './desktop-studio-tree';
 import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
 import { remoteGearCatalogueChanged, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
+import {
+    DesktopChange, DesktopStatus, announceDesktopChange, desktopStatus, loadProjects, onDesktopChange, openStudioProject,
+    openedProject, signOut, sourcesOf, startSignIn,
+} from './desktop-studio-client';
+import { StudioPicker } from './desktop-studio-picker';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
 /** How many sources listings are asked at once after the tree loads. */
 const SOURCES_CONCURRENCY = 4;
 
-export interface DesktopStatus extends DesktopEnvironmentChoice {
-    enabled: boolean;
-    studioUrl?: string;
-    state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
-    error?: string;
-    user?: { sub: string; name?: string; email?: string; tenantId?: string };
-}
-
-export function desktopUrl(path: string): string {
-    return new Endpoint({ path: `studio-desktop/${path}` }).getRestUrl().toString();
-}
+/** Who is signed in to which Studio; `undefined` while no one is. */
+const accountOf = (status: DesktopStatus | undefined) =>
+    status?.state === 'signed-in' ? `${status.studioUrl}|${status.user?.sub}` : undefined;
 
 /**
  * Tell the product who is signed in, as the portal does in a session
@@ -63,15 +59,6 @@ export function adoptDesktopUser(commands: CommandService, status: DesktopStatus
     }
     commands.executeCommand(IDENTITY_VIEWER_COMMAND_ID, { sub: user.sub, name: user.name, email: user.email, kind: 'person' })
         .catch(e => console.warn('[studio-desktop] signed-in member not adopted', e));
-}
-
-export async function desktopStatus(): Promise<DesktopStatus | undefined> {
-    try {
-        const answer = await fetch(desktopUrl('status'));
-        return answer.ok ? await answer.json() as DesktopStatus : undefined;
-    } catch {
-        return undefined;
-    }
 }
 
 const ICONS: Record<TreeRow['kind'], string> = {
@@ -101,9 +88,8 @@ export class DesktopStudioWidget extends ReactWidget {
     protected opening: string | undefined;
     /** Why an open failed, per row, shown on that row. */
     protected openErrors = new Map<string, string>();
-    /** How far the open is, polled from the backend while it runs. */
+    /** How far the open is, as the backend reports it while it runs. */
     protected progress: OpenProgress | undefined;
-    protected progressPoll: number | undefined;
     /** The project this window has open, when Studio opened it. */
     protected openedHere: string | undefined;
     protected organizations: Organization[] | undefined;
@@ -133,17 +119,40 @@ export class DesktopStudioWidget extends ReactWidget {
 
     protected onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
+        this.toDisposeOnDetach.push(onDesktopChange(change => this.onOtherViewChanged(change)));
         void this.refresh();
     }
 
     protected onBeforeDetach(msg: Message): void {
         window.clearInterval(this.poll);
-        window.clearInterval(this.progressPoll);
+        this.poll = undefined;
         super.onBeforeDetach(msg);
     }
 
-    protected async refresh(): Promise<void> {
-        const before = this.status?.state;
+    /** What another view did (the landing page signed in, switched, opened): read it here too. */
+    protected async onOtherViewChanged(change: DesktopChange): Promise<void> {
+        if (change.origin === this) {
+            return;
+        }
+        await this.refresh(false);
+        if (change.kind === 'opened') {
+            await this.readOpenedHere();
+            this.update();
+        }
+    }
+
+    /** One read of the sign-in at a time: the view's own poll and another view's news may ask together. */
+    protected reading: Promise<void> = Promise.resolve();
+
+    /** Read the sign-in; `announce` tells the other views of a sign-in seen here. */
+    protected refresh(announce = true): Promise<void> {
+        const next = this.reading.then(() => this.readStatus(announce));
+        this.reading = next.catch(() => undefined);
+        return next;
+    }
+
+    protected async readStatus(announce: boolean): Promise<void> {
+        const before = this.status;
         this.status = await desktopStatus();
         adoptDesktopUser(this.commands, this.status);
         if (this.status?.state === 'signing-in') {
@@ -152,25 +161,35 @@ export class DesktopStudioWidget extends ReactWidget {
             window.clearInterval(this.poll);
             this.poll = undefined;
         }
-        if (this.status?.state === 'signed-in' && before !== 'signed-in') {
-            // Signed in after the window loaded: what was listed signed out is stale.
-            if (before !== undefined) {
-                remoteGearCatalogueChanged.fire();
-            } else {
-                // First seen already signed in -- the sign-in finished before
-                // this view looked. Ask again only if the catalogue was refused.
-                remoteGearCatalogueSignedIn();
+        const account = accountOf(this.status);
+        if (account !== accountOf(before)) {
+            if (accountOf(before)) {
+                // Signed out, or into another Studio, elsewhere: what was listed is someone else's.
+                this.forgetStudio();
             }
-            await this.loadCollapsed();
-            await this.loadEntities();
+            if (account) {
+                // Signed in after the window loaded: what was listed signed out is stale.
+                if (before !== undefined) {
+                    remoteGearCatalogueChanged.fire();
+                    if (announce) {
+                        announceDesktopChange(this, 'signed-in');
+                    }
+                } else {
+                    // First seen already signed in -- the sign-in finished before
+                    // this view looked. Ask again only if the catalogue was refused.
+                    remoteGearCatalogueSignedIn();
+                }
+                await this.loadCollapsed();
+                await this.loadEntities();
+            }
         }
         this.update();
     }
 
     /** Whether the "which Studio" picker is open while signed in. */
     protected choosing = false;
-    protected customUrl = '';
-    protected switchError = '';
+    /** Why signing in or out was refused, in the account block. */
+    protected accountError = '';
 
     /** Forget everything that belonged to the Studio being left. */
     protected forgetStudio(): void {
@@ -183,59 +202,48 @@ export class DesktopStudioWidget extends ReactWidget {
         this.focusedId = undefined;
     }
 
-    /** Connect to another Studio: the backend signs out of this one first. */
-    protected async switchTo(target: { id: string } | { studioUrl: string }): Promise<void> {
-        this.switchError = '';
-        const answer = await fetch(desktopUrl('environment'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(target),
-        });
-        if (!answer.ok) {
-            this.switchError = ((await answer.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${answer.status}`;
-            this.update();
-            return;
-        }
+    /** The backend has connected to another Studio (and signed out of this one). */
+    protected async switched(): Promise<void> {
         this.choosing = false;
+        this.accountError = '';
         this.forgetStudio();
         await this.refresh();
+        announceDesktopChange(this, 'switched');
     }
 
     protected async signOut(): Promise<void> {
-        await fetch(desktopUrl('sign-out'), { method: 'POST' });
+        this.accountError = '';
+        const refused = await signOut();
+        if (refused) {
+            // Still signed in: the list stays, and the reason is said.
+            this.accountError = `Could not sign out: ${refused}`;
+            this.update();
+            return;
+        }
         this.forgetStudio();
         await this.refresh();
+        announceDesktopChange(this, 'signed-out');
     }
 
     /** Which Studio this IDE connects to: the build's list, or an address. */
     protected renderPicker(status: DesktopStatus): React.ReactNode {
-        if (!status.switchable) {
-            return undefined;
-        }
-        const current = status.current;
-        const value = current?.id === 'custom' ? 'custom' : current?.id ?? '';
-        return <div className='studio-desktop__picker'>
-            <label className='studio-desktop__label' htmlFor='studio-desktop-picker'>Studio</label>
-            <select id='studio-desktop-picker' className='theia-select' value={value}
-                onChange={e => e.target.value === 'custom'
-                    ? (this.customUrl = current?.id === 'custom' ? current.studioUrl : '', this.choosing = true, this.update())
-                    : void this.switchTo({ id: e.target.value })}>
-                {status.environments.map(env => <option key={env.id} value={env.id}>{env.label} — {env.studioUrl.replace(/^https?:\/\//, '')}</option>)}
-                <option value='custom'>{current?.id === 'custom' ? `Other — ${current.label}` : 'Other…'}</option>
-            </select>
-            {(this.choosing || current?.id === 'custom') && <div className='studio-desktop__picker-custom'>
-                <input className='theia-input' placeholder='https://studio.example.com' aria-label='Studio address'
-                    value={this.customUrl} onChange={e => { this.customUrl = e.target.value; this.update(); }}
-                    onKeyDown={e => e.key === 'Enter' && void this.switchTo({ studioUrl: this.customUrl })} />
-                <button className='theia-button secondary' onClick={() => void this.switchTo({ studioUrl: this.customUrl })}>Use</button>
-            </div>}
-            {this.switchError && <p className='studio-desktop__error' role='alert'>{this.switchError}</p>}
-        </div>;
+        return <StudioPicker choice={status} block='studio-desktop' id='studio-desktop-picker' onSwitched={() => void this.switched()} />;
     }
 
     protected async signIn(): Promise<void> {
-        await fetch(desktopUrl('sign-in'), { method: 'POST' });
-        await this.refresh();
+        this.accountError = '';
+        try {
+            const refused = await startSignIn();
+            if (refused) {
+                this.accountError = `Could not start the sign-in: ${refused}`;
+            }
+        } finally {
+            await this.refresh();
+        }
+    }
+
+    protected renderAccountError(): React.ReactNode {
+        return this.accountError ? <p className='studio-desktop__error' role='alert'>{this.accountError}</p> : undefined;
     }
 
     /**
@@ -248,38 +256,21 @@ export class DesktopStudioWidget extends ReactWidget {
         this.openErrors.delete(workspace.id);
         this.progress = undefined;
         this.update();
-        this.progressPoll = window.setInterval(() => void this.readProgress(workspace.id), 400);
         try {
-            const answer = await fetch(desktopUrl('open'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workspaceId: workspace.id, name: folder }),
+            const path = await openStudioProject(workspace.id, folder, progress => {
+                if (this.opening === workspace.id) {
+                    this.progress = progress;
+                    this.update();
+                }
             });
-            const body = await answer.json() as { path?: string; error?: string };
-            if (!answer.ok || !body.path) {
-                throw new Error(body.error ?? `HTTP ${answer.status}`);
-            }
-            await this.workspaceService.open(URI.fromFilePath(body.path), { preserveWindow: true });
+            await this.workspaceService.open(URI.fromFilePath(path), { preserveWindow: true });
+            announceDesktopChange(this, 'opened');
         } catch (error) {
             this.openErrors.set(workspace.id, `Could not open ${workspace.name}: ${error instanceof Error ? error.message : error}`);
         } finally {
-            window.clearInterval(this.progressPoll);
-            this.progressPoll = undefined;
             this.opening = undefined;
             this.progress = undefined;
             this.update();
-        }
-    }
-
-    protected async readProgress(workspaceId: string): Promise<void> {
-        try {
-            const progress = await (await fetch(desktopUrl('open-progress'))).json() as OpenProgress | null;
-            if (this.opening === workspaceId && progress?.workspaceId === workspaceId) {
-                this.progress = progress;
-                this.update();
-            }
-        } catch {
-            // A backend from before this route: the spinner alone, as before.
         }
     }
 
@@ -287,14 +278,8 @@ export class DesktopStudioWidget extends ReactWidget {
     protected async readOpenedHere(): Promise<void> {
         const root = this.workspaceService.tryGetRoots()[0]?.resource;
         this.openedHere = undefined;
-        if (!root) {
-            return;
-        }
-        try {
-            const answer = await fetch(`${desktopUrl('opened')}?root=${encodeURIComponent(root.path.fsPath())}`);
-            this.openedHere = answer.ok ? (await answer.json() as { tenantId?: string }).tenantId : undefined;
-        } catch {
-            this.openedHere = undefined;
+        if (root) {
+            this.openedHere = await openedProject(root.path.fsPath());
         }
     }
 
@@ -304,13 +289,7 @@ export class DesktopStudioWidget extends ReactWidget {
         this.loadError = '';
         this.update();
         try {
-            this.organizations = await projectsOf(async path => {
-                const answer = await StudioApi.fetch(path);
-                if (!answer.ok) {
-                    throw new Error(`HTTP ${answer.status}`);
-                }
-                return answer.json();
-            });
+            this.organizations = await loadProjects();
             await this.readOpenedHere();
             this.collapsed = pruneCollapsed(this.collapsed, this.organizations);
             void this.loadSources(this.organizations);
@@ -333,7 +312,7 @@ export class DesktopStudioWidget extends ReactWidget {
         const queue = openableIds(organizations);
         const worker = async () => {
             for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-                const state = await this.sourcesOf(id);
+                const state = await sourcesOf(id);
                 if (generation !== this.sourcesGeneration) {
                     return;
                 }
@@ -342,15 +321,6 @@ export class DesktopStudioWidget extends ReactWidget {
             }
         };
         await Promise.all(Array.from({ length: SOURCES_CONCURRENCY }, worker));
-    }
-
-    protected async sourcesOf(id: string): Promise<SourcesState> {
-        try {
-            const answer = await StudioApi.fetch(`/studio-git/v1/sources?project_id=${encodeURIComponent(id)}`);
-            return sourcesStateOf(answer.status, await answer.json().catch(() => undefined));
-        } catch {
-            return { state: 'unknown' };
-        }
     }
 
     /** Collapse state is kept per Studio: two Studios have different trees. */
@@ -399,7 +369,7 @@ export class DesktopStudioWidget extends ReactWidget {
         }
         if (this.sources.get(row.id)?.state === 'empty') {
             // A repository may have been added in the portal since: ask again, and open if so.
-            const state = await this.sourcesOf(row.id);
+            const state = await sourcesOf(row.id);
             this.sources.set(row.id, state);
             this.update();
             if (state.state === 'empty') {
@@ -472,6 +442,7 @@ export class DesktopStudioWidget extends ReactWidget {
                 <p>Your projects, their sources and the AI your organization provides are one sign-in away.
                     Nothing is stored on this computer but that sign-in.</p>
                 {status.state === 'failed' && <p className='studio-desktop__error' role='alert'>{status.error}</p>}
+                {this.renderAccountError()}
                 <button className='theia-button studio-desktop__wide-button' onClick={() => void this.signIn()}>
                     Sign in with Constructor ID
                 </button>
@@ -501,6 +472,7 @@ export class DesktopStudioWidget extends ReactWidget {
                 <button className='studio-desktop__link' onClick={() => void this.signOut()}>Sign out</button>
             </div>
             {this.choosing && this.renderPicker(status)}
+            {this.renderAccountError()}
         </header>;
     }
 

@@ -1,7 +1,7 @@
-// The desktop Studio view, rendered against a fake Studio: the account block,
-// the open project's card, organizations told apart, a project with no
-// repositories said so on its row, a failed open said on its row, the filter,
-// the remembered collapse -- and no app settings: those are in Settings.
+// The desktop Studio view, rendered against the fake desktop client: the
+// account block, the open project's card, organizations told apart, a project
+// with no repositories said so on its row, a failed open said on its row, the
+// filter, the remembered collapse -- and no app settings: those are in Settings.
 
 import 'reflect-metadata';
 // The real module imports the @theia/core/lib/browser barrel, whose
@@ -15,6 +15,7 @@ jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
 jest.mock('./portal-bridge-contribution', () => ({
     IDENTITY_VIEWER_COMMAND_ID: 'studio.identity.viewer'
 }));
+jest.mock('./desktop-studio-client', () => jest.requireActual('./desktop-studio-client.fake'));
 import * as fs from 'fs';
 import * as React from '@theia/core/shared/react';
 import { Container, ContainerModule } from '@theia/core/shared/inversify';
@@ -25,8 +26,10 @@ import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DesktopStudioWidget } from './desktop-studio-widget';
 import { TENANT_TYPES } from './desktop-projects';
+import { fakeStudio } from './desktop-studio-client.fake';
 
 const STUDIO = 'https://studio-dev.cfabric.org';
+const ROOT = '/home/me/ConstructorStudio/workspaces/Gears workspace - Studio-web';
 /** Help → Check for Updates, registered by the desktop app's electron module. */
 const CHECK_FOR_UPDATES_COMMAND_ID = 'studio.desktop.checkForUpdates';
 const ORG = TENANT_TYPES.organization;
@@ -38,60 +41,44 @@ const FABRIC_B = { id: '7d41aa90-2222-4000-8000-000000000002', name: 'Constructo
 const FABRIC_C = { id: 'c31da936-3333-4000-8000-000000000003', name: 'Constructor Fabric', tenant_type: ORG };
 const TYPO = { id: 'e5e5e5e5-4444-4000-8000-000000000004', name: 'Constractor Fabric', tenant_type: ORG };
 
-interface Answer { status: number; body: unknown }
-type Routes = Record<string, Answer | (() => Answer | Promise<Answer>)>;
+const DEV = { id: 'dev', label: 'Dev', studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio` };
+const TEST = { id: 'test', label: 'Test', studioUrl: 'https://studio-test.cfabric.org', issuer: 'https://studio-test.cfabric.org/auth/realms/studio' };
 
-function studioRoutes(): Routes {
-    const children = (id: string) => `/studio-api/account-management/v1/tenants/${id}/children`;
-    const tenant = (id: string) => `/studio-api/account-management/v1/tenants/${id}`;
-    const ok = (body: unknown): Answer => ({ status: 200, body });
-    return {
-        '/studio-desktop/status': ok({
-            enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: true,
-            environments: [{ id: 'dev', label: 'Dev', studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio` }],
-            current: { id: 'dev', label: 'Dev', studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio` },
-            user: { sub: 'u-1', name: 'ANDREI KUCHMA', email: 'andrei@example.com' },
-        }),
-        '/studio-desktop/opened': ok({ tenantId: 'p-web' }),
-        '/studio-api/account-management/v1/me': ok({ subject_tenant_id: 'home' }),
-        '/studio-api/studio-user/v1/me/memberships': ok({
-            items: [
-                { org_id: FABRIC_A.id, role: 'owner' }, { org_id: FABRIC_B.id, role: 'member' },
-                { org_id: FABRIC_C.id, role: 'member' }, { org_id: TYPO.id, role: 'member' },
-            ],
-        }),
-        [tenant(FABRIC_A.id)]: ok(FABRIC_A),
-        [tenant(FABRIC_B.id)]: ok(FABRIC_B),
-        [tenant(FABRIC_C.id)]: ok(FABRIC_C),
-        [tenant(TYPO.id)]: ok(TYPO),
-        [children(FABRIC_A.id)]: ok({ items: [{ id: 'ws-gears', name: 'Gears workspace', tenant_type: WS }] }),
-        [children('ws-gears')]: ok({
-            items: [
-                { id: 'p-web', name: 'Studio-web', tenant_type: PRJ },
-                { id: 'p-2', name: 'project 2', tenant_type: PRJ },
-                { id: 'p-odd', name: 'Odd one', tenant_type: PRJ },
-            ],
-        }),
-        [children(FABRIC_B.id)]: ok({ items: [{ id: 'ws-docs', name: 'Docs', tenant_type: WS }] }),
-        [children('ws-docs')]: ok({ items: [] }),
-        [children(FABRIC_C.id)]: ok({ items: [] }),
-        [children(TYPO.id)]: ok({ items: [] }),
-        '/studio-api/studio-git/v1/sources?project_id=ws-gears': ok({ items: [{ name: 'a' }], total: 1 }),
-        '/studio-api/studio-git/v1/sources?project_id=p-web': ok({ items: [{ name: 'studio-web' }, { name: 'gears-rust' }], total: 2 }),
-        // What studio-git answers for a project with no settings yet.
-        '/studio-api/studio-git/v1/sources?project_id=p-2': { status: 404, body: { status: 404, context: { resource_name: 'p-2' } } },
-        // An answer that says nothing about the project: the click stays.
-        '/studio-api/studio-git/v1/sources?project_id=p-odd': { status: 502, body: {} },
-        '/studio-api/studio-git/v1/sources?project_id=ws-docs': ok({ items: [], total: 0 }),
-        '/studio-desktop/open-progress': ok(null),
-        '/studio-desktop/open': { status: 400, body: { error: 'the workspace\'s sources could not be listed (HTTP 502)' } },
+/** The Studio the view is shown against: four organizations, three of one name, and a project of each kind of sources. */
+function studio(): void {
+    fakeStudio.reset();
+    fakeStudio.status = {
+        enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: true, environments: [DEV, TEST], current: DEV,
+        user: { sub: 'u-1', name: 'ANDREI KUCHMA', email: 'andrei@example.com' },
     };
+    fakeStudio.opened = { [ROOT]: 'p-web' };
+    fakeStudio.projects = [
+        {
+            ...FABRIC_A, role: 'owner', projects: [{
+                id: 'ws-gears', name: 'Gears workspace', tenant_type: WS, nested: [
+                    { id: 'p-web', name: 'Studio-web', tenant_type: PRJ },
+                    { id: 'p-2', name: 'project 2', tenant_type: PRJ },
+                    { id: 'p-odd', name: 'Odd one', tenant_type: PRJ },
+                ],
+            }],
+        },
+        { ...FABRIC_B, role: 'member', projects: [{ id: 'ws-docs', name: 'Docs', tenant_type: WS, nested: [] }] },
+        { ...FABRIC_C, role: 'member', projects: [] },
+        { ...TYPO, role: 'member', projects: [] },
+    ];
+    fakeStudio.sources = {
+        'ws-gears': { state: 'ready', repositories: 1 },
+        'p-web': { state: 'ready', repositories: 2 },
+        // What studio-git answers for a project with no settings yet.
+        'p-2': { state: 'empty' },
+        // p-odd: an answer that says nothing about the project, so the click stays.
+        'ws-docs': { state: 'empty' },
+    };
+    fakeStudio.open = async () => { throw new Error('the workspace\'s sources could not be listed (HTTP 502)'); };
 }
 
 describe('the desktop Studio view', () => {
     let widget: DesktopStudioWidget;
-    let routes: Routes;
-    let asked: Array<{ path: string; method: string }>;
     let stored: Map<string, unknown>;
     let external: string[];
     let executed: string[];
@@ -108,31 +95,18 @@ describe('the desktop Studio view', () => {
     const text = () => widget.node.textContent ?? '';
     const row = (name: string) => Array.from(widget.node.querySelectorAll<HTMLElement>('[role="treeitem"]'))
         .find(el => el.querySelector('.studio-desktop__row-name')?.textContent === name)!;
+    const opens = () => fakeStudio.calls.filter(c => c.startsWith('open '));
 
     beforeAll(() => { act.IS_REACT_ACT_ENVIRONMENT = true; });
 
     beforeEach(async () => {
-        routes = studioRoutes();
-        asked = [];
+        studio();
         stored = new Map([[`studio.desktop.tree.collapsed:${STUDIO}`, [FABRIC_B.id]]]);
         external = [];
         executed = [];
-        (globalThis as { fetch?: unknown }).fetch = jest.fn(async (input: string, init?: RequestInit) => {
-            const url = new URL(String(input), 'http://localhost');
-            const path = url.pathname + url.search;
-            asked.push({ path, method: init?.method ?? 'GET' });
-            const key = Object.keys(routes).find(route => path === route || (!route.includes('?') && url.pathname === route));
-            const found = key ? routes[key] : { status: 404, body: {} };
-            const answer = typeof found === 'function' ? await found() : found;
-            return {
-                ok: answer.status >= 200 && answer.status < 300,
-                status: answer.status,
-                json: async () => answer.body,
-            } as Response;
-        });
         const module = new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue({
-                tryGetRoots: () => [{ resource: { path: { fsPath: () => '/home/me/ConstructorStudio/workspaces/Gears workspace - Studio-web' } } }],
+                tryGetRoots: () => [{ resource: { path: { fsPath: () => ROOT } } }],
                 open: jest.fn(),
             } as never);
             const commands = {
@@ -182,6 +156,54 @@ describe('the desktop Studio view', () => {
         expect(account.textContent).toContain('Sign out');
     });
 
+    it('switches the Studio through the shared picker, in the view\'s own classes, and forgets the old tree', async () => {
+        await React.act(async () => { widget.node.querySelector<HTMLButtonElement>('.studio-desktop__links button')!.click(); });
+        await settle();
+        const picker = widget.node.querySelector<HTMLSelectElement>('.studio-desktop__picker select')!;
+        expect(picker.id).toBe('studio-desktop-picker');
+        await React.act(async () => {
+            const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+            setValue.call(picker, 'test');
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await settle();
+        expect(fakeStudio.calls).toContain('switch test');
+        expect(text()).toContain('Sign in to Constructor Studio');
+        expect(text()).not.toContain('Studio-web');
+    });
+
+    it('says why a switch was refused, under the picker', async () => {
+        fakeStudio.refuse.switch = 'that Studio is not reachable';
+        await React.act(async () => { widget.node.querySelector<HTMLButtonElement>('.studio-desktop__links button')!.click(); });
+        await settle();
+        const picker = widget.node.querySelector<HTMLSelectElement>('.studio-desktop__picker select')!;
+        await React.act(async () => {
+            const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+            setValue.call(picker, 'test');
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await settle();
+        expect(widget.node.querySelector('.studio-desktop__picker .studio-desktop__error')!.textContent).toBe('that Studio is not reachable');
+        expect(text()).toContain('Studio-web');
+    });
+
+    it('keeps the list and says why when signing out is refused', async () => {
+        fakeStudio.refuse['sign-out'] = 'HTTP 500';
+        const signOut = Array.from(widget.node.querySelectorAll<HTMLButtonElement>('.studio-desktop__links button')).find(b => b.textContent === 'Sign out')!;
+        await React.act(async () => { signOut.click(); });
+        await settle();
+        expect(widget.node.querySelector('.studio-desktop__account [role="alert"]')!.textContent).toBe('Could not sign out: HTTP 500');
+        expect(row('Studio-web')).toBeDefined();
+    });
+
+    it('signs out, and says how to sign in again', async () => {
+        const signOut = Array.from(widget.node.querySelectorAll<HTMLButtonElement>('.studio-desktop__links button')).find(b => b.textContent === 'Sign out')!;
+        await React.act(async () => { signOut.click(); });
+        await settle();
+        expect(fakeStudio.calls).toContain('sign-out');
+        expect(text()).toContain('Sign in to Constructor Studio');
+    });
+
     it('shows the project open here as a card with its path, repositories and a portal link', async () => {
         const card = widget.node.querySelector('.studio-desktop__card')!;
         expect(card.textContent).toContain('Studio-web');
@@ -220,18 +242,18 @@ describe('the desktop Studio view', () => {
         expect(note.textContent).toContain('No repositories yet');
         await React.act(async () => { row('project 2').click(); });
         await settle();
-        expect(asked.filter(a => a.path === '/studio-desktop/open')).toHaveLength(0);
+        expect(opens()).toHaveLength(0);
         // It asked again, in case a repository was added in the portal meanwhile.
-        expect(asked.filter(a => a.path.endsWith('project_id=p-2'))).toHaveLength(2);
+        expect(fakeStudio.calls.filter(c => c === 'sources p-2')).toHaveLength(2);
         await React.act(async () => { note.querySelector<HTMLButtonElement>('button')!.click(); });
         expect(external).toEqual([`${STUDIO}/?screen=projects;org=${FABRIC_A.id};workspace=ws-gears;project=p-2`]);
     });
 
     it('opens a project added a repository to since, on the next click', async () => {
-        routes['/studio-api/studio-git/v1/sources?project_id=p-2'] = { status: 200, body: { items: [{ name: 'x' }], total: 1 } };
+        fakeStudio.sources['p-2'] = { state: 'ready', repositories: 1 };
         await React.act(async () => { row('project 2').click(); });
         await settle();
-        expect(asked.filter(a => a.path === '/studio-desktop/open' && a.method === 'POST')).toHaveLength(1);
+        expect(opens()).toEqual(['open p-2 Gears workspace - project 2']);
     });
 
     it('shows a failed open on the row that failed, not at the bottom', async () => {
@@ -247,19 +269,14 @@ describe('the desktop Studio view', () => {
     });
 
     it('shows the clone progress in the card at the top while a project opens', async () => {
-        let finish!: (a: Answer) => void;
-        const pending = new Promise<Answer>(resolve => { finish = resolve; });
-        routes['/studio-desktop/open'] = () => pending;
-        routes['/studio-desktop/open-progress'] = {
-            status: 200,
-            body: {
-                workspaceId: 'p-odd', name: 'Gears workspace - Odd one', phase: 'cloning',
-                sources: [{ name: 'studio-web', state: 'cloning', stage: 'Receiving objects', percent: 42 }, { name: 'docs', state: 'waiting' }],
-            },
-        };
+        let finish!: (e: Error) => void;
+        fakeStudio.open = () => new Promise<string>((_, reject) => { finish = reject; });
         await React.act(async () => { row('Odd one').click(); });
         await React.act(async () => {
-            await (widget as unknown as { readProgress(id: string): Promise<void> }).readProgress('p-odd');
+            fakeStudio.progress!({
+                workspaceId: 'p-odd', name: 'Gears workspace - Odd one', phase: 'cloning',
+                sources: [{ name: 'studio-web', state: 'cloning', stage: 'Receiving objects', percent: 42 }, { name: 'docs', state: 'waiting' }],
+            } as never);
             MessageLoop.flush();
         });
         await settle();
@@ -274,7 +291,7 @@ describe('the desktop Studio view', () => {
             fs.mkdirSync(process.env.DESKTOP_PANEL_HTML, { recursive: true });
             fs.writeFileSync(`${process.env.DESKTOP_PANEL_HTML}/opening.html`, widget.node.innerHTML);
         }
-        finish({ status: 400, body: { error: 'stopped by the test' } });
+        finish(new Error('stopped by the test'));
         await settle();
     });
 
@@ -331,13 +348,8 @@ describe('the desktop Studio view', () => {
 
 describe('the desktop Studio view, before anything is known', () => {
     it('says so honestly: no organization is a state with its own message', async () => {
-        (globalThis as { fetch?: unknown }).fetch = jest.fn(async (input: string) => {
-            const url = new URL(String(input), 'http://localhost');
-            const body = url.pathname.endsWith('/status')
-                ? { enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: false, environments: [], user: { sub: 'u' } }
-                : url.pathname.endsWith('/memberships') ? { items: [] } : {};
-            return { ok: true, status: 200, json: async () => body } as Response;
-        });
+        fakeStudio.reset();
+        fakeStudio.status = { enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: false, environments: [], user: { sub: 'u' } };
         const container = new Container();
         container.load(new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue({ tryGetRoots: () => [], open: jest.fn() } as never);

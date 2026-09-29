@@ -14,7 +14,7 @@ import { CommandContribution, CommandRegistry, CommandService, MessageService, P
 import {
     AssistantStatus, AssistantsStatus, DESKTOP_ASSISTANT_MESSAGE_COMMAND, assistantUnavailableMessage, progressLine
 } from '../common/desktop-assistants';
-import { desktopStatus, desktopUrl } from './desktop-studio-widget';
+import { desktopStatus, desktopUrl } from './desktop-studio-client';
 
 const POLL_MS = 1000;
 

@@ -17,16 +17,18 @@ import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
-import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { CommandRegistry } from '@theia/core/lib/common/command';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { DESKTOP_STUDIO_WIDGET_ID, DesktopStatus, adoptDesktopUser, desktopStatus } from './desktop-studio-widget';
+import { adoptDesktopUser } from './desktop-studio-widget';
 import type { Organization } from './desktop-projects';
 import {
     SourcesState, TreeRow, filteredOutEverything, locate, openableIds, portalUrl, studioLabel, treeRows,
 } from './desktop-studio-tree';
 import { describeOpenProgress, type OpenProgress } from '../common/desktop-open-progress';
-import { loadProjects, openStudioProject, sourcesOf, startSignIn } from './desktop-studio-client';
+import {
+    DesktopChange, DesktopStatus, announceDesktopChange, desktopStatus, loadProjects, onDesktopChange, openStudioProject,
+    sourcesOf, startSignIn,
+} from './desktop-studio-client';
 import { StudioPicker } from './desktop-studio-picker';
 import {
     LandingStatus, LandingView, ModeCard, ONBOARDING_STORAGE_KEY, RecentFolder, landingView, modeCards,
@@ -67,9 +69,6 @@ export class DesktopLandingWidget extends ReactWidget {
     @inject(WindowService)
     protected readonly windowService: WindowService;
 
-    @inject(WidgetManager) @optional()
-    protected readonly widgets: WidgetManager | undefined;
-
     @inject(PerspectiveService) @optional()
     protected readonly perspectives: PerspectiveService | undefined;
 
@@ -108,6 +107,7 @@ export class DesktopLandingWidget extends ReactWidget {
 
     protected onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
+        this.toDisposeOnDetach.push(onDesktopChange(change => this.onOtherViewChanged(change)));
         void this.refresh();
         void this.loadRecent();
         void this.loadOnboarding();
@@ -132,8 +132,18 @@ export class DesktopLandingWidget extends ReactWidget {
         (this.node.querySelector<HTMLElement>('.studio-landing__primary') ?? this.node).focus();
     }
 
-    /** Read the sign-in state; on a change of Studio or of who is signed in, load the projects again. */
-    async refresh(): Promise<void> {
+    /** What the Studio view did (signed in or out, switched, opened): read it here too. */
+    protected onOtherViewChanged(change: DesktopChange): void {
+        if (change.origin !== this) {
+            void this.refresh(false);
+        }
+    }
+
+    /**
+     * Read the sign-in state; on a change of Studio or of who is signed in, load
+     * the projects again. `announce` tells the other views of a sign-in seen here.
+     */
+    async refresh(announce = true): Promise<void> {
         const before = this.status;
         const status = await desktopStatus() as Status | undefined;
         this.statusKnown = true;
@@ -148,8 +158,9 @@ export class DesktopLandingWidget extends ReactWidget {
             this.projectsFor = key;
             this.forgetProjects();
             if (key) {
-                if (before && before.state !== 'signed-in') {
-                    this.nudgeStudioView();
+                if (announce && before && before.state !== 'signed-in') {
+                    // The Studio view polls only while it started a sign-in itself.
+                    announceDesktopChange(this, 'signed-in');
                 }
                 void this.loadEntities();
             }
@@ -157,13 +168,10 @@ export class DesktopLandingWidget extends ReactWidget {
         this.update();
     }
 
-    /**
-     * The Studio view reads the sign-in when it is shown, and polls only while
-     * it started one itself: a sign-in finished from here is news to it.
-     */
-    protected nudgeStudioView(): void {
-        const view = this.widgets?.tryGetWidget(DESKTOP_STUDIO_WIDGET_ID) as unknown as { refresh?: () => Promise<void> } | undefined;
-        void view?.refresh?.call(view).catch(() => undefined);
+    /** The picker switched the Studio: read it here, then tell the Studio view. */
+    protected async switched(): Promise<void> {
+        await this.refresh(false);
+        announceDesktopChange(this, 'switched');
     }
 
     protected forgetProjects(): void {
@@ -281,6 +289,7 @@ export class DesktopLandingWidget extends ReactWidget {
                 }
             });
             await this.workspaceService.open(URI.fromFilePath(path), { preserveWindow: true });
+            announceDesktopChange(this, 'opened');
         } catch (error) {
             this.openError = { id: row.id, message: `Could not open ${row.name}: ${error instanceof Error ? error.message : error}` };
         } finally {
@@ -372,7 +381,7 @@ export class DesktopLandingWidget extends ReactWidget {
                         and use the AI your organization provides. Nothing but that sign-in is stored on this computer.</p>
                     <div className='studio-landing__account'>
                         {status && (status.switchable
-                            ? <StudioPicker choice={status} onSwitched={() => void this.refresh()} />
+                            ? <StudioPicker choice={status} onSwitched={() => void this.switched()} />
                             : this.studioLine(status))}
                     </div>
                     {view.error && (view.unreachable

@@ -1,31 +1,70 @@
-// The desktop backend's routes, as one module the landing page calls
-// (ADR-0027). The same routes the Studio view (desktop-studio-widget.tsx) and
-// the `cfstudio://` link handler call: sign in, pick a Studio, list the
-// member's projects, clone one and follow its progress. The backend decides
-// everything; these only ask it.
+// The desktop backend's routes, as the one module the desktop's views call
+// (ADR-0027): the Studio view (desktop-studio-widget.tsx), the landing page
+// (desktop-landing-widget.tsx) and the contributions next to them. Read the
+// sign-in, sign in and out, pick a Studio, list the member's projects, clone
+// one and follow its progress. The backend decides everything; these only ask
+// it. And one event, so that what one view did is news to the other.
 
+import { Emitter, Event } from '@theia/core/lib/common/event';
+import { Endpoint } from '@theia/core/lib/browser/endpoint';
 import { StudioApi } from './studio-api';
-import { desktopUrl } from './desktop-studio-widget';
+import { DesktopEnvironmentChoice } from '../common/desktop-environments';
 import { Organization, projectsOf } from './desktop-projects';
 import { SourcesState, sourcesStateOf } from './desktop-studio-tree';
 import type { OpenProgress } from '../common/desktop-open-progress';
 
-/** Start the sign-in: the backend opens the Constructor ID page in the browser. */
-export async function startSignIn(): Promise<void> {
-    await fetch(desktopUrl('sign-in'), { method: 'POST' });
+export interface DesktopStatus extends DesktopEnvironmentChoice {
+    enabled: boolean;
+    studioUrl?: string;
+    state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
+    error?: string;
+    user?: { sub: string; name?: string; email?: string; tenantId?: string };
+}
+
+export function desktopUrl(path: string): string {
+    return new Endpoint({ path: `studio-desktop/${path}` }).getRestUrl().toString();
+}
+
+/** The sign-in state, or `undefined` when this IDE has no desktop backend (a session) or it cannot be reached. */
+export async function desktopStatus(): Promise<DesktopStatus | undefined> {
+    try {
+        const answer = await fetch(desktopUrl('status'));
+        return answer.ok ? await answer.json() as DesktopStatus : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/** POST to a route; `undefined` when done, else why not: the backend's reason, its status, or the network's. */
+async function post(path: string, body?: unknown): Promise<string | undefined> {
+    try {
+        const answer = await fetch(desktopUrl(path), body === undefined ? { method: 'POST' } : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (answer.ok) {
+            return undefined;
+        }
+        return ((await answer.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${answer.status}`;
+    } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+    }
+}
+
+/** Start the sign-in: the backend opens the Constructor ID page in the browser. The error, if refused. */
+export function startSignIn(): Promise<string | undefined> {
+    return post('sign-in');
+}
+
+/** Sign out of this Studio; the error, if refused. */
+export function signOut(): Promise<string | undefined> {
+    return post('sign-out');
 }
 
 /** Connect to another Studio (the backend signs out of this one first); the error, if refused. */
-export async function switchStudio(target: { id: string } | { studioUrl: string }): Promise<string | undefined> {
-    const answer = await fetch(desktopUrl('environment'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target),
-    });
-    if (answer.ok) {
-        return undefined;
-    }
-    return ((await answer.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${answer.status}`;
+export function switchStudio(target: { id: string } | { studioUrl: string }): Promise<string | undefined> {
+    return post('environment', target);
 }
 
 /** The member's organizations, workspaces and projects, through the backend's Studio proxy. */
@@ -49,18 +88,29 @@ export async function sourcesOf(id: string): Promise<SourcesState> {
     }
 }
 
+/** Which Studio project the folder `root` is the clone of, if Studio opened it. */
+export async function openedProject(root: string): Promise<string | undefined> {
+    try {
+        const answer = await fetch(`${desktopUrl('opened')}?root=${encodeURIComponent(root)}`);
+        return answer.ok ? (await answer.json() as { tenantId?: string }).tenantId : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 /**
  * Clone a project's sources through Studio into `folder` and answer the local
- * path to open, calling `onProgress` while the backend reports it. Throws
- * with the backend's reason.
+ * path to open, calling `onProgress` while the backend reports it and never
+ * after. Throws with the backend's reason.
  */
 export async function openStudioProject(
     workspaceId: string, folder: string, onProgress: (progress: OpenProgress) => void, pollMs = 400,
 ): Promise<string> {
+    let done = false;
     const poll = setInterval(async () => {
         try {
             const progress = await (await fetch(desktopUrl('open-progress'))).json() as OpenProgress | null;
-            if (progress?.workspaceId === workspaceId) {
+            if (!done && progress?.workspaceId === workspaceId) {
                 onProgress(progress);
             }
         } catch {
@@ -79,6 +129,30 @@ export async function openStudioProject(
         }
         return body.path;
     } finally {
+        done = true;
         clearInterval(poll);
     }
+}
+
+/** What a view did that the other views should read again. */
+export type DesktopChangeKind = 'signed-in' | 'signed-out' | 'switched' | 'opened';
+
+export interface DesktopChange {
+    readonly kind: DesktopChangeKind;
+    /** The view that did it: it has read the new state already, and ignores its own news. */
+    readonly origin: object;
+}
+
+const changes = new Emitter<DesktopChange>();
+
+/**
+ * Fired when a view saw a sign-in finish, signed out, switched the Studio or
+ * opened a project. Each view reads the sign-in when it is shown and polls
+ * only while it has reason to, so without this a sign-in finished in the
+ * landing page would be news to the Studio view, and the other way round.
+ */
+export const onDesktopChange: Event<DesktopChange> = changes.event;
+
+export function announceDesktopChange(origin: object, kind: DesktopChangeKind): void {
+    changes.fire({ kind, origin });
 }
