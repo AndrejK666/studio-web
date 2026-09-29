@@ -626,6 +626,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/roadmap-report",
+      "operation_id": "studio_components_catalog.get_roadmap_report",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The roadmap report: what the board plans, and whether the plan holds",
+      "authenticated": true,
+      "responses": [
+        "RoadmapReportDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/tasks/{id}",
       "operation_id": "studio_components_catalog.task_status",
       "tag": "StudioComponentsCatalog",

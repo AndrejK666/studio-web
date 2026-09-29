@@ -1,4 +1,5 @@
 import { parseProblem, type Problem } from "./problem";
+import type { RoadmapReport } from "./roadmap-report";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is served by the backend at /cf/docs.
@@ -3210,6 +3211,12 @@ export const api = {
       "/studio-components-catalog/v1/component-values",
       token,
     ),
+
+  /** The roadmap report: every component the roadmap board plans, and the
+   *  summary per stage, milestone, consumer and plan state
+   *  (`components_catalog/roadmap_report.rs`). */
+  roadmapReport: (token: string) =>
+    request<RoadmapReport>("/studio-components-catalog/v1/roadmap-report", token),
 
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>

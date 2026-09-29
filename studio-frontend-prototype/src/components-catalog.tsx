@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { RoadmapReportDialog } from "./roadmap-report-view";
 import { ViewToggle, useViewMode } from "./view-mode";
 import {
   ACTIVITY_CSS,
@@ -475,6 +476,7 @@ export function ComponentsCatalog({
   const [sync, setSync] = useState("");
   const [sources, setSources] = useState<Sources>(() => loadSources());
   const [showSources, setShowSources] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   // Which component kind the list shows (a `component-kinds` filter value).
   // Empty means every component.
@@ -835,11 +837,16 @@ export function ComponentsCatalog({
               >
                 Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
               </button>
+              <button className="iconbtn" onClick={() => setShowReport(true)}>
+                Roadmap report
+              </button>
               <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
                 {syncing ? "Syncing…" : "Sync"}
               </button>
             </div>
           </div>
+
+          {showReport && <RoadmapReportDialog token={token} onClose={() => setShowReport(false)} />}
 
           {showSources && (
             <SourcesPanel
