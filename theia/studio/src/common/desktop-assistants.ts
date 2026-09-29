@@ -22,6 +22,18 @@ export interface AssistantPin {
     readonly sha256: string;
 }
 
+/**
+ * One extension the desktop installs from open-vsx the first time it starts,
+ * at whatever version open-vsx has then: `{ id, label, source: 'open-vsx' }`
+ * in the manifest. From then on it is the member's, like anything installed
+ * from the Extensions view: they update or remove it there, and a removed one
+ * is not installed again.
+ */
+export interface OpenVsxAssistant {
+    readonly id: string;
+    readonly label: string;
+}
+
 export type AssistantState = 'missing' | 'downloading' | 'installing' | 'ready' | 'failed';
 
 export interface AssistantStatus {
@@ -48,35 +60,46 @@ const SHA256 = /^[0-9a-f]{64}$/;
  * download of something else or a folder outside the plugins directory.
  * Entries that do not pass are dropped and named in `rejected`.
  */
-export function parseAssistantsManifest(value: unknown): { pins: AssistantPin[]; rejected: string[] } {
+export function parseAssistantsManifest(value: unknown): { pins: AssistantPin[]; openVsx: OpenVsxAssistant[]; rejected: string[] } {
     const list = Array.isArray(value) ? value : (value as { assistants?: unknown })?.assistants;
     const pins: AssistantPin[] = [];
+    const openVsx: OpenVsxAssistant[] = [];
     const rejected: string[] = [];
     if (!Array.isArray(list)) {
-        return { pins, rejected: ['the manifest has no list of assistants'] };
+        return { pins, openVsx, rejected: ['the manifest has no list of assistants'] };
     }
+    const taken = (id: string): boolean => pins.some(p => p.id === id) || openVsx.some(o => o.id === id);
     for (const entry of list) {
         const e = (entry ?? {}) as Record<string, unknown>;
         const id = typeof e.id === 'string' ? e.id.toLowerCase() : '';
+        const label = typeof e.label === 'string' && e.label.trim() ? e.label.trim() : id;
+        if (e.source === 'open-vsx') {
+            if (!ID.test(id) || taken(id)) {
+                rejected.push(typeof e.id === 'string' ? e.id : JSON.stringify(entry));
+                continue;
+            }
+            openVsx.push({ id, label });
+            continue;
+        }
         const ok = ID.test(id)
             && typeof e.version === 'string' && VERSION.test(e.version)
             && typeof e.target === 'string' && VERSION.test(e.target)
             && typeof e.url === 'string' && /^https:\/\//.test(e.url)
             && typeof e.sha256 === 'string' && SHA256.test(e.sha256.toLowerCase());
-        if (!ok || pins.some(p => p.id === id)) {
+        if (!ok || taken(id)) {
             rejected.push(typeof e.id === 'string' ? e.id : JSON.stringify(entry));
             continue;
         }
         pins.push({
             id,
-            label: typeof e.label === 'string' && e.label.trim() ? e.label.trim() : id,
+            label,
             version: e.version as string,
             target: e.target as string,
             url: e.url as string,
             sha256: (e.sha256 as string).toLowerCase(),
         });
     }
-    return { pins, rejected };
+    return { pins, openVsx, rejected };
 }
 
 /** The folder one pinned version lives in, under the plugins directory. */
