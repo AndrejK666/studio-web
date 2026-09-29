@@ -122,6 +122,42 @@ export function unpackVsix(vsix: string, dest: string, skip: (name: string) => b
     });
 }
 
+/** The errors Windows gives a rename while something still holds a file under the folder. */
+const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * `fs.rename`, tried again while Windows says the folder is busy. An unpacked
+ * extension holding an executable (the Gearbox engine's `gearbox.exe`) is
+ * opened by the antivirus the moment it is written, and a rename of the folder
+ * around it fails with EPERM until that scan lets go — a second or several.
+ * graceful-fs retries the same way. Anything else fails at once.
+ */
+export async function renameWhenFree(
+    from: string, to: string,
+    { budgetMs = 30_000, rename = fs.promises.rename, wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)) }: {
+        budgetMs?: number;
+        rename?: (from: string, to: string) => Promise<void>;
+        wait?: (ms: number) => Promise<void>;
+    } = {},
+): Promise<void> {
+    let delay = 100;
+    let spent = 0;
+    for (;;) {
+        try {
+            await rename(from, to);
+            return;
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code;
+            if (!code || !BUSY.has(code) || spent >= budgetMs) {
+                throw error;
+            }
+            await wait(delay);
+            spent += delay;
+            delay = Math.min(delay * 2, 2_000);
+        }
+    }
+}
+
 /** The default download: Node's fetch, streamed, abandoned when nothing arrives for a minute. */
 export const fetchDownload: Download = async (url, file, progress) => {
     const controller = new AbortController();
@@ -272,7 +308,7 @@ export class AssistantStore {
             }
             const folder = this.folderOf(pin);
             fs.rmSync(folder, { recursive: true, force: true });
-            fs.renameSync(partial, folder);
+            await renameWhenFree(partial, folder);
             await this.options.deploy(`local-dir:${folder}`);
             this.set(entry, { state: 'ready' });
             this.log(`${pin.label} ${pin.version}: installed in ${folder}`);
