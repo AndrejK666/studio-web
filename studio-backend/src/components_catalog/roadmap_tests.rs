@@ -445,3 +445,20 @@ fn a_source_round_trips_with_only_the_required_parts() {
     assert_eq!(s.fields.stage(), "Status");
     assert_eq!(s.fields.commitment(), "Commitment");
 }
+
+#[test]
+fn the_board_a_plan_came_from_is_recorded_beside_it_and_cleared_with_it() {
+    let f = board_field(&board(), &source());
+    assert_eq!(f["b"], "BACKEND ROADMAP");
+    assert_eq!(f["v"], "o/projects/48");
+    assert_eq!(f["l"], "https://github.com/orgs/o/projects/48");
+    // An untitled board is named by its address, not left blank.
+    let mut untitled = board();
+    untitled.title = "  ".into();
+    untitled.url = String::new();
+    let f = board_field(&untitled, &source());
+    assert_eq!(f["b"], "o/projects/48");
+    assert!(f.get("l").is_none());
+    // Cleared with the plan fields when a gear stops matching.
+    assert!(ROADMAP_KEYS.contains(&"roadmap_board"));
+}

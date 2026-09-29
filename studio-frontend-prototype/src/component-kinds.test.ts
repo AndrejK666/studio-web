@@ -73,4 +73,21 @@ describe("synced sources", () => {
     expect(syncedSources(nodes)).toEqual(["gears-frontx", "gears-rust", "crates.io"]);
     expect(syncedSources([])).toEqual([]);
   });
+
+  it("name the roadmap board that planned the gears, once", () => {
+    const planned = { auto: { roadmap_board: { b: "BACKEND ROADMAP", v: "constructorfabric/projects/48" } } };
+    const profiles = {
+      "cf-gears-event-broker": planned,
+      "cf-gears-account-management": planned,
+      "cf-gears-oagw": { auto: { lifecycle: { b: "mature" } } },
+      untitled: { auto: { roadmap_board: { v: "o/projects/7" } } },
+    };
+    expect(syncedSources(nodes, profiles)).toEqual([
+      "gears-frontx",
+      "gears-rust",
+      "crates.io",
+      "roadmap (BACKEND ROADMAP)",
+      "roadmap (o/projects/7)",
+    ]);
+  });
 });

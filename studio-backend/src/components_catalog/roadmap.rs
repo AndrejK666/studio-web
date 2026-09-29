@@ -63,7 +63,7 @@ const MAX_PAGES: usize = 20;
 
 /// Every profile field this module writes. A roadmap-only sync clears these
 /// before writing, so a gear that stopped matching stops claiming a plan.
-pub const ROADMAP_KEYS: [&str; 9] = [
+pub const ROADMAP_KEYS: [&str; 10] = [
     "stage",
     "milestone",
     "commitment",
@@ -73,7 +73,30 @@ pub const ROADMAP_KEYS: [&str; 9] = [
     "roadmap_owner",
     "effort",
     "roadmap_item",
+    "roadmap_board",
 ];
+
+/// The board a gear's plan fields were read from, as a profile field:
+/// `b` the board's title, `v` `owner/projects/<number>`, `l` its page.
+///
+/// It is the only record of which boards filled the catalogue, and it sits
+/// where the plan fields themselves sit, so the two cannot disagree: a gear
+/// that stops matching a board loses both in the same sync (it is one of
+/// [`ROADMAP_KEYS`]). The Components page names the boards in its Sources
+/// label from this field, beside the repositories `synced_from` names.
+pub fn board_field(board: &Roadmap, source: &RoadmapSource) -> Value {
+    let id = format!("{}/projects/{}", source.owner, source.number);
+    let title = if board.title.trim().is_empty() {
+        id.clone()
+    } else {
+        board.title.trim().to_string()
+    };
+    let mut out = json!({ "b": title, "v": id });
+    if !board.url.is_empty() {
+        out["l"] = Value::String(board.url.clone());
+    }
+    out
+}
 
 /// A roadmap board a sync reads. Half of a `catalog.sync` run's payload, so it
 /// round-trips through the queue.

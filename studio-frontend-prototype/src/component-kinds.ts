@@ -108,7 +108,10 @@ export function kindChips(nodes: readonly CatalogNode[]): KindChip[] {
  *  carries registry figures. Not the source picker's saved state, which is a
  *  browser's preference for the NEXT sync and said "crates.io" over a
  *  catalogue three sources had filled. */
-export function syncedSources(nodes: readonly CatalogNode[]): string[] {
+export function syncedSources(
+  nodes: readonly CatalogNode[],
+  profiles: Record<string, Record<string, unknown>> = {},
+): string[] {
   const repos = new Set<string>();
   let crates = false;
   for (const g of nodes) {
@@ -116,7 +119,18 @@ export function syncedSources(nodes: readonly CatalogNode[]): string[] {
     if (typeof v.synced_from === "string" && v.synced_from) repos.add(v.synced_from.split("/").pop() ?? v.synced_from);
     if (typeof v.downloads === "number" || typeof v.max_version === "string") crates = true;
   }
+  // A roadmap board leaves its name on each profile it planned
+  // (`auto.roadmap_board`, written with the plan fields and cleared with
+  // them), because readiness comes from there and not from the node.
+  const boards = new Set<string>();
+  for (const p of Object.values(profiles)) {
+    const auto = p?.auto as Record<string, unknown> | undefined;
+    const board = auto?.roadmap_board as { b?: unknown; v?: unknown } | undefined;
+    const name = typeof board?.b === "string" && board.b ? board.b : typeof board?.v === "string" ? board.v : "";
+    if (name) boards.add(name);
+  }
   const out = [...repos].sort();
   if (crates) out.push("crates.io");
+  for (const b of [...boards].sort()) out.push(`roadmap (${b})`);
   return out;
 }
