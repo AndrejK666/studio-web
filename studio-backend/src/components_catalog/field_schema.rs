@@ -146,6 +146,11 @@ pub struct TypeFieldSchema {
     /// position rather than the answer.
     #[serde(default)]
     pub component: bool,
+    /// The criteria a component of this type is graded against, when the
+    /// type is graded at all. Data, like the fields: an organization changes
+    /// what "good" means without a release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<super::quality::Quality>,
 }
 
 fn builtin_owner() -> String {
@@ -223,6 +228,9 @@ fn schema_from(describes: &str, gear: &TypeFieldSchema, groups: Vec<Group>) -> T
         // A type this deployment shipped a component page for is a component
         // out of the box. An organization can still unmark it.
         component: true,
+        // The criteria are the gear's; another type is not graded until
+        // somebody writes criteria that fit it.
+        quality: None,
     }
 }
 
@@ -386,6 +394,7 @@ impl TypeFieldSchema {
             owner: builtin_owner(),
             hidden: self.hidden,
             component: self.component,
+            quality: None,
         }
     }
 
@@ -401,6 +410,7 @@ impl TypeFieldSchema {
             owner: builtin_owner(),
             hidden: false,
             component: false,
+            quality: None,
         }
     }
 }
@@ -437,7 +447,7 @@ mod tests {
         let gear = gear_schema();
         assert_eq!(gear.describes, GEAR_TYPE);
         assert_eq!(gear.groups.len(), 11);
-        assert_eq!(gear.fields().count(), 81);
+        assert_eq!(gear.fields().count(), 82);
         assert!(gear.source_classes.contains_key("repo"));
         assert!(gear.status_legend.contains_key("good"));
     }
@@ -536,7 +546,7 @@ mod tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear survives");
-        assert_eq!(gear.fields().count(), 81, "the mark blanked the layout");
+        assert_eq!(gear.fields().count(), 82, "the mark blanked the layout");
         assert!(!gear.component, "the mark was not taken");
         assert_eq!(gear.owner, "builtin", "nobody authored a layout here");
     }

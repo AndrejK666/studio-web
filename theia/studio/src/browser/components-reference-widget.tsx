@@ -17,6 +17,7 @@ import {
     kindLabel,
     emptyMessage,
     filterEntries,
+    gradeTone,
     kindCounts,
     loadComponentsReference,
     monthText,
@@ -249,6 +250,9 @@ export class ComponentsReferenceWidget extends ReactWidget {
                     <span className='scr-kind' title={e.kind_reason}>{kindLabel(e.kind)}</span>
                     {e.category && <span className='scr-kind scr-cat' title={e.category_reason ?? undefined}>{e.category}</span>}
                     {e.engine.length > 0 && <span className='scr-engine' title='The Gearbox engine describes it'>gear.gdl</span>}
+                    {e.readiness?.grade && (
+                        <span className={`scr-grade ${gradeTone(e.readiness.grade) ?? ''}`} title='Quality grade'>{e.readiness.grade}</span>
+                    )}
                     {e.readiness?.stage && (
                         <span className={`scr-stage ${stageTone(e.readiness)}`}>
                             <span className='scr-dot' />{e.readiness.stage}
@@ -446,6 +450,17 @@ export class ComponentsReferenceWidget extends ReactWidget {
                     {r.lifecycle && <><dt>In the repository</dt><dd>{r.lifecycle}</dd></>}
                     {r.last_release && <><dt>Last release</dt><dd>{r.last_release}{r.released_on ? ` · ${r.released_on}` : ''}</dd></>}
                     {typeof r.used_by === 'number' && <><dt>Used by</dt><dd>{r.used_by} component{r.used_by === 1 ? '' : 's'}</dd></>}
+                    {r.grade && <>
+                        <dt>Quality</dt>
+                        <dd>
+                            <span className={`scr-grade ${gradeTone(r.grade) ?? ''}`}>{r.grade}</span>
+                            {(r.grade_fixes ?? []).length > 0 && (
+                                <ul className='scr-fixes'>
+                                    {(r.grade_fixes ?? []).map(f => <li key={f}>{f}</li>)}
+                                </ul>
+                            )}
+                        </dd>
+                    </>}
                     {r.roadmap_item && <><dt>Roadmap item</dt><dd><a href={r.roadmap_item} target='_blank' rel='noreferrer'>{r.roadmap_item.replace(/^https?:\/\/github\.com\//, '')}</a></dd></>}
                 </dl>
             </section>

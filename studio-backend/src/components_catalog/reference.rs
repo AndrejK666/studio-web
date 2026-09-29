@@ -182,6 +182,10 @@ pub struct ReferenceReadinessDto {
     pub used_by: Option<u32>,
     /// The board item, a link.
     pub roadmap_item: Option<String>,
+    /// The quality grade (`A`…`E`) and what would raise it: the fixes of
+    /// every criterion it fails.
+    pub grade: Option<String>,
+    pub grade_fixes: Vec<String>,
 }
 
 /// One component of the reference.
@@ -518,7 +522,10 @@ fn yes_no(values: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
 
 /// The schema a component's profile is counted against: its type's, or the
 /// gear schema for a type nobody described (the rule the portal renders by).
-fn schema_for<'s>(schemas: &'s [TypeFieldSchema], type_id: &str) -> Option<&'s TypeFieldSchema> {
+pub(crate) fn schema_for<'s>(
+    schemas: &'s [TypeFieldSchema],
+    type_id: &str,
+) -> Option<&'s TypeFieldSchema> {
     schemas
         .iter()
         .find(|s| s.describes == type_id)
@@ -785,7 +792,8 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             continue;
         }
         let profile = profile_of(i);
-        let values = super::values::resolve(v, profile);
+        let mut values = super::values::resolve(v, profile);
+        super::quality::attach(&mut values, schema_for(inputs.schemas, &node.type_id));
         let engine: Vec<ReferenceEngineGearDto> = inputs
             .engine
             .map(|e| {
@@ -1153,6 +1161,18 @@ fn readiness_of(values: &serde_json::Map<String, Value>) -> Option<ReferenceRead
             .and_then(Value::as_u64)
             .and_then(|n| u32::try_from(n).ok()),
         roadmap_item: part("roadmap_item", "l"),
+        grade: brief("grade"),
+        grade_fixes: field("grade")
+            .and_then(|g| g.get("parts"))
+            .and_then(Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter(|p| p.get("pass") == Some(&Value::Bool(false)))
+                    .filter_map(|p| p.get("fix").and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     let empty = out.stage.is_none()
         && out.lifecycle.is_none()
@@ -1160,7 +1180,8 @@ fn readiness_of(values: &serde_json::Map<String, Value>) -> Option<ReferenceRead
         && out.plan.is_none()
         && out.demand.is_empty()
         && out.progress.is_empty()
-        && out.last_release.is_none();
+        && out.last_release.is_none()
+        && out.grade.is_none();
     (!empty).then_some(out)
 }
 

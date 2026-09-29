@@ -86,6 +86,9 @@ export interface ReferenceReadiness {
     readonly released_on: string | null;
     readonly used_by: number | null;
     readonly roadmap_item: string | null;
+    /** `A`…`E`, and the fixes of every criterion it fails. */
+    readonly grade?: string | null;
+    readonly grade_fixes?: readonly string[];
 }
 
 export interface ReferenceEntry {
@@ -404,6 +407,14 @@ export function demandText(r: ReferenceReadiness | null | undefined): string | n
         .sort((a, b) => a.priority - b.priority || a.consumer.localeCompare(b.consumer))
         .map(d => `${d.consumer} P${d.priority}`)
         .join(' · ');
+}
+
+/** How a grade reads at a glance: A and B are fine, C wants a look. */
+export function gradeTone(grade: string | null | undefined): 'good' | 'watch' | 'bad' | null {
+    if (!grade) {
+        return null;
+    }
+    return grade === 'A' || grade === 'B' ? 'good' : grade === 'C' ? 'watch' : 'bad';
 }
 
 /** The plan lamp, when it says something: amber or red. */

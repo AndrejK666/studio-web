@@ -1571,7 +1571,9 @@ function GearListCard({
   const committed = values.commitment?.b;
 
   // Findings: the worst one named, the rest counted.
+  // The grade sums the findings up; it is the badge, not one of them.
   const judged = fields
+    .filter((f) => f.key !== "grade")
     .map((f) => ({ f, lamp: lampOf(f, values) }))
     .filter((x): x is { f: Field; lamp: Lamp } => !!x.lamp);
   // The plan speaks first: the card is about readiness, and a missed date
@@ -1595,7 +1597,14 @@ function GearListCard({
   return (
     <button className="ccard" onClick={onOpen} title={`Open ${name}`}>
       <div className="ccard-top">
-        <span className="ccard-cat">{categoryLabel(String(category))}</span>
+        <span className="ccard-cat-row">
+          <span className="ccard-cat">{categoryLabel(String(category))}</span>
+          {values.grade?.b && (
+            <span className={`ccard-grade ${values.grade.s ?? ""}`} title={values.grade.v}>
+              {values.grade.b}
+            </span>
+          )}
+        </span>
         <span className={`ccard-stage ${tone}`}>
           {stage && <span className="dot" />}
           {stage}
@@ -1913,6 +1922,8 @@ function GearDetail({
         />
       )}
 
+      {view === "filled" && <QualityPanel values={values} />}
+
       <div className="grid">
         {(view === "filled" ? answeredGroups(schema, values) : schema.groups).map((group) => (
           <Panel key={group.id} group={group} values={values} view={view} />
@@ -1944,6 +1955,56 @@ function GearDetail({
 }
 
 // ── panel + rows ─────────────────────────────────────────────────────────────
+
+interface GradePart {
+  area: string;
+  label: string;
+  pass: boolean;
+  fix: string;
+}
+
+/** The grade, criterion by criterion: what it meets, and for what it does
+ *  not, what to do. Grouped by area, failures first within each. */
+function QualityPanel({ values }: { values: Values }) {
+  const g = values.grade as (FieldVal & { parts?: GradePart[]; capped?: boolean }) | null | undefined;
+  if (!g?.b || !g.parts?.length) return null;
+  const areas: string[] = [];
+  for (const p of g.parts) if (!areas.includes(p.area)) areas.push(p.area);
+  return (
+    <section className="panel quality" id="panel-quality">
+      <header>
+        <span className={`qgrade ${g.s ?? ""}`}>{g.b}</span>
+        <h2>Quality</h2>
+        <span className="cnt">{g.v}</span>
+      </header>
+      <div className="qareas">
+        {areas.map((area) => {
+          const parts = g.parts!.filter((p) => p.area === area).sort((a, b) => Number(a.pass) - Number(b.pass));
+          const met = parts.filter((p) => p.pass).length;
+          return (
+            <div key={area} className="qarea">
+              <div className="qarea-head">
+                <b>{area}</b>
+                <span>
+                  {met} / {parts.length}
+                </span>
+              </div>
+              <ul>
+                {parts.map((p) => (
+                  <li key={p.label} className={p.pass ? "pass" : "fail"}>
+                    <span className={`tl ${p.pass ? "good" : "bad"}`} />
+                    <span className="qlabel">{p.label}</span>
+                    {!p.pass && <span className="qfix">{p.fix}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 /** The groups with at least one answered field, each cut down to those fields.
  *
@@ -2970,6 +3031,23 @@ const GCAT_CSS = `
 .gcat .ccard:hover { border-color:var(--studio-accent); box-shadow:0 4px 14px var(--studio-shadow); }
 .gcat .ccard .dot { width:6px; height:6px; border-radius:50%; background:currentColor; display:inline-block; flex:none; }
 .gcat .ccard-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.gcat .ccard-cat-row { display:inline-flex; align-items:center; gap:6px; }
+.gcat .ccard-grade { font-size:11.5px; font-weight:700; min-width:20px; text-align:center; padding:1px 6px; border-radius:6px; border:1px solid currentColor; color:var(--studio-muted); }
+.gcat .ccard-grade.good { color:var(--studio-verified); }
+.gcat .ccard-grade.watch { color:var(--studio-warning); }
+.gcat .ccard-grade.bad { color:var(--studio-danger); }
+.gcat .panel.quality { margin-bottom:14px; }
+.gcat .qgrade { font-weight:700; font-size:15px; min-width:26px; text-align:center; padding:1px 7px; border-radius:7px; border:1px solid currentColor; }
+.gcat .qgrade.good { color:var(--studio-verified); }
+.gcat .qgrade.watch { color:var(--studio-warning); }
+.gcat .qgrade.bad { color:var(--studio-danger); }
+.gcat .qareas { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px 18px; padding:10px 14px 14px; }
+.gcat .qarea-head { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
+.gcat .qarea-head span { color:var(--studio-muted); font-variant-numeric:tabular-nums; }
+.gcat .qarea ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.gcat .qarea li { display:grid; grid-template-columns:auto 1fr; column-gap:7px; align-items:baseline; font-size:12.5px; }
+.gcat .qarea li.pass .qlabel { color:var(--studio-muted); }
+.gcat .qfix { grid-column:2; font-size:11.5px; color:var(--studio-muted); }
 .gcat .ccard-cat { font-size:12px; padding:2px 9px; border-radius:999px; color:var(--studio-accent); background:color-mix(in srgb, var(--studio-accent) 12%, transparent); border:1px solid color-mix(in srgb, var(--studio-accent) 25%, transparent); }
 .gcat .ccard-stage { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--studio-muted); }
 .gcat .ccard-stage.done { color:var(--studio-verified); }

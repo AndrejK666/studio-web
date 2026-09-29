@@ -7,6 +7,7 @@ import {
     activityText,
     demandText,
     emptyMessage,
+    gradeTone,
     filterEntries,
     kindCounts,
     loadComponentsReference,
@@ -185,6 +186,14 @@ describe('components reference model', () => {
         expect(demandText({ ...ready, demand: [] })).toBeNull();
         expect(planWarning(ready)).toEqual({ lamp: 'watch', text: 'P1 for Acronis, but the date is not a commitment' });
         expect(planWarning({ ...ready, plan_lamp: 'good' })).toBeNull();
+    });
+
+    it('reads a grade at a glance', () => {
+        expect(gradeTone('A')).toBe('good');
+        expect(gradeTone('B')).toBe('good');
+        expect(gradeTone('C')).toBe('watch');
+        expect(gradeTone('E')).toBe('bad');
+        expect(gradeTone(null)).toBeNull();
     });
 
     it('explains an empty list by why it is empty', () => {

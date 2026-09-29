@@ -1473,13 +1473,26 @@ async fn component_values(
         }
     }
 
+    // The schemas, for the grade: a component is graded by its type's rules.
+    // Without them the values are still answered, only ungraded.
+    let schemas = catalog
+        .service
+        .list_field_schemas(&ctx)
+        .await
+        .unwrap_or_default();
+
     let items: Vec<ComponentValuesDto> = nodes
         .into_iter()
         .filter_map(|node| {
             let name = node.value.get("name").and_then(Value::as_str)?.to_owned();
             let profile = profiles.get(&name);
+            let mut values = super::values::resolve(&node.value, profile);
+            super::quality::attach(
+                &mut values,
+                super::reference::schema_for(&schemas, &node.type_id),
+            );
             Some(ComponentValuesDto {
-                values: Value::Object(super::values::resolve(&node.value, profile)),
+                values: Value::Object(values),
                 category: super::values::category_of(&node.value, profile),
                 name,
             })

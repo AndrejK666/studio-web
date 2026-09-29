@@ -1079,7 +1079,17 @@ impl CatalogService {
                         .pointer("/values/roadmap_item/v")
                         .and_then(Value::as_str)
                         .and_then(roadmap::pinned_number);
-                    let words = roadmap::gear_words(&name);
+                    // Board titles name the gear the way its directory does
+                    // (`gears/bss/ledger` is "Billing Ledger"), while the crate
+                    // may carry more (`cf-gears-bss-ledger`); the directory is
+                    // the better key, the crate the fallback.
+                    let words = n
+                        .value
+                        .pointer("/auto/path/b")
+                        .and_then(Value::as_str)
+                        .and_then(|p| p.rsplit('/').next())
+                        .filter(|slug| !slug.is_empty())
+                        .map_or_else(|| roadmap::gear_words(&name), roadmap::gear_words);
                     Some((name, words, pinned))
                 })
                 .collect();
@@ -2866,7 +2876,7 @@ mod field_schema_tests {
             .iter()
             .find(|s| s.describes == GEAR_TYPE)
             .expect("gear schema survives");
-        assert_eq!(gear.fields().count(), 81);
+        assert_eq!(gear.fields().count(), 82);
         assert!(!gear.component);
         assert_eq!(gear.owner, "builtin");
     }
