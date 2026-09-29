@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
 import { RoadmapReportDialog } from "./roadmap-report-view";
 import { ViewToggle, useViewMode } from "./view-mode";
 import {
@@ -897,6 +898,7 @@ export function ComponentsCatalog({
                     <th>Release</th>
                     <th className="gcat-num">Downloads</th>
                     <th>Activity · {activityDays} days</th>
+                    <th>Review</th>
                     <th>Profile</th>
                     <th>Source</th>
                   </tr>
@@ -1371,6 +1373,9 @@ function GearListRow({
              whether we measured at all. */
           activity ? <span className="gcat-absent">No commits in {activityDays} days</span> : null
         )}
+      </td>
+      <td>
+        <ReviewCell parts={(values.grade as { parts?: ReviewPart[] } | null | undefined)?.parts} />
       </td>
       <td>
         {fields.length === 0 ? (
@@ -1967,7 +1972,42 @@ interface GradePart {
   area: string;
   label: string;
   pass: boolean;
+  /** Whether its input had an answer; a failure without one is missing data, not a finding. */
+  known?: boolean;
   fix: string;
+}
+
+/**
+ * The Components table's Review column: the one check to look at first, and
+ * how many more there are, told apart by what they need -- a fix in the
+ * component, or data connected or recorded (review-summary.ts). Opening it
+ * lists them with what to do, without opening the component.
+ */
+function ReviewCell({ parts }: { parts: ReviewPart[] | undefined }) {
+  const summary = reviewOf(parts);
+  if (!summary) return <span className="gcat-absent">Not graded</span>;
+  const counts = reviewCounts(summary);
+  if (!summary.top || !counts) return <span className="gcat-review-clear">No open checks</span>;
+  const items = [...summary.toReview, ...summary.noData];
+  return (
+    <details className="gcat-review" onClick={(e) => e.stopPropagation()}>
+      <summary title={summary.top.fix}>
+        <span className={`gcat-review-top${summary.top.known === false ? " nodata" : ""}`}>{summary.top.label}</span>
+        <span className="gcat-sub">{counts}</span>
+      </summary>
+      <ul>
+        {items.map((p) => (
+          <li key={`${p.area}:${p.label}`} className={p.known === false ? "nodata" : ""}>
+            <b>{p.label}</b>
+            <span className="gcat-sub">
+              {p.known === false ? "No data · " : ""}
+              {p.fix}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 }
 
 /** The grade, criterion by criterion: what it meets, and for what it does
@@ -1998,10 +2038,17 @@ function QualityPanel({ values }: { values: Values }) {
               </div>
               <ul>
                 {parts.map((p) => (
-                  <li key={p.label} className={p.pass ? "pass" : "fail"}>
-                    <span className={`tl ${p.pass ? "good" : "bad"}`} />
+                  <li key={p.label} className={p.pass ? "pass" : p.known === false ? "fail nodata" : "fail"}>
+                    {/* No answer is not a red finding: it is data nobody
+                        connected yet, and says so in words too. */}
+                    <span className={`tl ${p.pass ? "good" : p.known === false ? "watch" : "bad"}`} />
                     <span className="qlabel">{p.label}</span>
-                    {!p.pass && <span className="qfix">{p.fix}</span>}
+                    {!p.pass && (
+                      <span className="qfix">
+                        {p.known === false ? "No data · " : ""}
+                        {p.fix}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -3121,6 +3168,15 @@ const GCAT_CSS = `
 /* A missing value says WHICH missing it is, so it reads as a finding rather
    than as a gap in the rendering. Muted and italic: present, not shouting. */
 .gcat .gcat-absent { color:var(--muted-foreground); font-style:italic; font-size:12px; white-space:nowrap; }
+/* Review: the top check, and a list that opens in place without opening the row. */
+.gcat .gcat-review summary { list-style:none; cursor:pointer; display:flex; flex-direction:column; gap:2px; }
+.gcat .gcat-review summary::-webkit-details-marker { display:none; }
+.gcat .gcat-review-top { font-size:12.5px; font-weight:600; color:var(--studio-danger); }
+.gcat .gcat-review-top.nodata { color:var(--studio-warning); }
+.gcat .gcat-review ul { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; max-width:320px; }
+.gcat .gcat-review li { display:flex; flex-direction:column; font-size:12px; border-left:2px solid var(--studio-danger); padding-left:6px; }
+.gcat .gcat-review li.nodata { border-left-color:var(--studio-warning); }
+.gcat .gcat-review-clear { font-size:12px; color:var(--studio-verified); white-space:nowrap; }
 .gcat .gcat-profile { display:flex; align-items:center; gap:8px; }
 .gcat .gcat-bar { width:64px; height:6px; border-radius:999px; background:var(--border); overflow:hidden; flex:none; }
 .gcat .gcat-bar-fill { display:block; height:100%; background:var(--primary); }

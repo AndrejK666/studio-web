@@ -121,3 +121,53 @@ fn the_committed_gear_schema_carries_the_playgrounds_criteria() {
             .all(|c| q.areas.iter().any(|a| a.id == c.a))
     );
 }
+
+#[test]
+fn a_failed_check_is_told_apart_from_one_with_no_answer() {
+    // The PRD is known and not done; coverage has no answer; the test ratio
+    // can be worked out from the lines; spec freshness never can.
+    let v = values(json!({
+        "prd": { "b": "draft" },
+        "coverage": null,
+        "codeloc": { "n": 1000 },
+        "unitloc": { "n": 100 },
+    }));
+    let g = grade(&quality(), &v);
+    let part = |label: &str| {
+        g["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["label"] == label)
+            .unwrap()
+            .clone()
+    };
+
+    assert_eq!(
+        (
+            part("PRD is written")["pass"].clone(),
+            part("PRD is written")["known"].clone()
+        ),
+        (json!(false), json!(true))
+    );
+    assert_eq!(
+        part("Coverage is published")["known"],
+        json!(false),
+        "a cleared answer is no answer"
+    );
+    assert_eq!(
+        part("E2E suite exists")["known"],
+        json!(false),
+        "an absent field is no answer"
+    );
+    assert_eq!(
+        part("Tests are proportionate")["known"],
+        json!(true),
+        "derived from the lines it has"
+    );
+    assert_eq!(
+        part("Specs track the code")["known"],
+        json!(false),
+        "nothing can answer it yet"
+    );
+}
