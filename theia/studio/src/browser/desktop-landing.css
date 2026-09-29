@@ -1,0 +1,259 @@
+/* The desktop landing page (desktop-landing-widget.tsx). Every rule is scoped
+   to `.studio-landing`, which only the desktop renders. It follows the
+   product's start page (product-ext welcome-view.js): its tokens (`--studio-*`)
+   where product-ext defines them, the IDE theme's otherwise; sections parted by
+   a hairline and space, not boxes; the accent only on what can be acted on. */
+
+.studio-landing-view {
+    overflow: auto;
+    background: var(--studio-bg, var(--theia-editor-background));
+    container-type: inline-size;
+}
+.studio-landing-view:focus { outline: none; }
+
+.studio-landing {
+    --sl-text: var(--studio-text, var(--theia-foreground));
+    --sl-muted: var(--studio-muted, var(--theia-descriptionForeground));
+    --sl-line: var(--studio-line, var(--theia-panel-border, rgba(128, 128, 128, 0.35)));
+    --sl-accent: var(--studio-accent, var(--theia-button-background));
+    --sl-on-accent: var(--studio-on-accent, var(--theia-button-foreground, #fff));
+    --sl-hover: var(--studio-surface-sunken, var(--theia-list-hoverBackground));
+    --sl-raised: var(--studio-surface-raised, var(--theia-editorWidget-background));
+    --sl-focus: var(--studio-focus, var(--theia-focusBorder));
+    display: flex;
+    min-height: 100%;
+    box-sizing: border-box;
+    padding: 40px 34px;
+    color: var(--sl-text);
+    font-size: 13px;
+    line-height: 1.5;
+}
+/* margin:auto, as the start page does: centred, and still scrolls back to its top. */
+.studio-landing__body { margin: auto; width: 100%; max-width: 760px; }
+.studio-landing p { margin: 0; }
+.studio-landing .codicon { vertical-align: text-bottom; }
+.studio-landing__muted { color: var(--sl-muted); }
+.studio-landing__error { color: var(--theia-errorForeground, #d1242f); overflow-wrap: anywhere; }
+
+/* --- the head ------------------------------------------------------------- */
+.studio-landing__head { padding-bottom: 22px; border-bottom: 1px solid var(--sl-line); }
+.studio-landing__eyebrow {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--sl-muted);
+    font-weight: 600; font-size: 10.5px; line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.studio-landing__title {
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+    font-size: clamp(22px, 4.2cqi, 34px);
+    overflow-wrap: anywhere;
+}
+.studio-landing__sub { margin-top: 10px !important; max-width: 56ch; color: var(--sl-muted); font-size: 13.5px; line-height: 1.6; }
+
+/* --- sections ------------------------------------------------------------- */
+.studio-landing__section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--sl-line);
+}
+.studio-landing__section:last-child { border-bottom: none; padding-bottom: 0; }
+.studio-landing__section-head { margin: 0; font-weight: 600; font-size: 14px; line-height: 1.35; letter-spacing: -0.005em; }
+.studio-landing__subhead {
+    margin: 8px 0 0;
+    color: var(--sl-muted);
+    font-weight: 600; font-size: 10.5px; line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.studio-landing__lead { max-width: 60ch; color: var(--sl-muted); line-height: 1.6; }
+.studio-landing__projects-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+.studio-landing__account {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+    min-width: 0;
+}
+.studio-landing__studio,
+.studio-landing__who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.studio-landing__studio .codicon,
+.studio-landing__who .codicon { color: var(--sl-muted); }
+.studio-landing__who { font-weight: 600; overflow-wrap: anywhere; }
+
+.studio-landing__picker { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 380px; }
+.studio-landing__picker .theia-select { width: 100%; }
+.studio-landing__picker-custom { display: flex; gap: 4px; }
+.studio-landing__picker-custom .theia-input { flex: 1; min-width: 0; }
+.studio-landing__label { color: var(--sl-muted); font-size: 11.5px; }
+
+/* --- buttons: the start page's, primary in the one accent ---------------- */
+.studio-landing__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.studio-landing__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--sl-line);
+    border-radius: 6px;
+    background: var(--sl-raised);
+    color: var(--sl-text);
+    font-family: inherit; font-weight: 600; font-size: 12px; line-height: 1;
+    cursor: pointer;
+}
+.studio-landing__btn:hover { border-color: var(--sl-accent); }
+.studio-landing__btn--primary { background: var(--sl-accent); border-color: var(--sl-accent); color: var(--sl-on-accent); }
+.studio-landing__btn--primary:hover { filter: brightness(1.08); }
+.studio-landing__btn:focus-visible,
+.studio-landing__link:focus-visible,
+.studio-landing__icon-button:focus-visible,
+.studio-landing__row:focus-visible,
+.studio-landing__card:focus-visible { outline: 2px solid var(--sl-focus); outline-offset: 2px; }
+.studio-landing__note { font-size: 12px; }
+.studio-landing__link {
+    all: unset;
+    cursor: pointer;
+    color: var(--sl-accent);
+    font-size: 12px;
+    font-weight: 500;
+}
+.studio-landing__link:hover { text-decoration: underline; }
+.studio-landing__icon-button {
+    all: unset;
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 3px;
+    color: var(--sl-muted);
+}
+.studio-landing__icon-button:hover { background: var(--sl-hover); color: var(--sl-text); }
+.studio-landing__icon-button[disabled] { opacity: 0.4; cursor: default; }
+
+/* --- projects ------------------------------------------------------------- */
+.studio-landing__filter { position: relative; max-width: 380px; }
+.studio-landing__filter > .codicon {
+    position: absolute;
+    left: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--sl-muted);
+    pointer-events: none;
+}
+.studio-landing__filter .theia-input { width: 100%; box-sizing: border-box; padding-left: 26px; }
+
+.studio-landing__list { list-style: none; margin: 0 -8px; padding: 0; }
+.studio-landing__org {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 4px;
+    font-weight: 600;
+}
+.studio-landing__org .codicon { color: var(--sl-muted); }
+.studio-landing__row {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 30px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.studio-landing__row:hover:not([disabled]) { background: var(--sl-hover); }
+.studio-landing__row[disabled] { cursor: default; opacity: 0.55; }
+.studio-landing__row .codicon { flex: none; color: var(--sl-muted); }
+.studio-landing__row-name {
+    flex: 0 1 auto;
+    min-width: 3em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+.studio-landing__hint {
+    color: var(--sl-muted);
+    font-size: 11.5px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.studio-landing__row-meta,
+.studio-landing__row-path {
+    margin-left: auto;
+    padding-left: 8px;
+    color: var(--sl-muted);
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.studio-landing__row-path { flex: 0 1000 auto; min-width: 0; }
+.studio-landing__row-go { opacity: 0; transition: opacity 120ms; }
+.studio-landing__row:hover .studio-landing__row-go,
+.studio-landing__row:focus-visible .studio-landing__row-go { opacity: 1; color: var(--sl-accent); }
+.studio-landing__row--empty .studio-landing__row-name { color: var(--sl-muted); font-weight: 400; }
+.studio-landing__row-note { padding: 0 8px 6px; color: var(--sl-muted); font-size: 12px; }
+
+.studio-landing__opening {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 0 10px 12px;
+    border-left: 2px solid var(--sl-accent);
+}
+.studio-landing__opening-title { font-weight: 600; }
+.studio-landing__progress { font-size: 12px; color: var(--sl-muted); max-width: 420px; }
+.studio-landing__progress-line { display: flex; justify-content: space-between; gap: 8px; }
+.studio-landing__bar {
+    height: 3px;
+    margin-top: 2px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--sl-line);
+}
+.studio-landing__bar > div { height: 100%; background: var(--sl-accent); transition: width 0.3s; }
+
+/* --- onboarding: the modes ---------------------------------------------- */
+.studio-landing__cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 8px;
+    margin-top: 4px;
+}
+.studio-landing__card {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--sl-line);
+    border-radius: 8px;
+    cursor: pointer;
+    min-width: 0;
+}
+.studio-landing__card:hover { border-color: var(--sl-accent); background: var(--sl-hover); }
+.studio-landing__card--current { border-color: var(--sl-accent); }
+.studio-landing__card-icon { flex: none; font-size: 18px !important; color: var(--sl-accent); margin-top: 1px; }
+.studio-landing__card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.studio-landing__card-text b { font-weight: 600; font-size: 12.5px; }
+.studio-landing__card-text span { color: var(--sl-muted); font-size: 12px; line-height: 1.45; }
+
+/* --- narrow: a side-by-side editor, or a small window --------------------- */
+@container (max-width: 520px) {
+    .studio-landing { padding: 24px 16px; }
+    .studio-landing__cards { grid-template-columns: 1fr; }
+    .studio-landing__row-path { display: none; }
+}

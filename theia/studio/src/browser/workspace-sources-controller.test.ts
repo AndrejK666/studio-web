@@ -151,6 +151,23 @@ describe('WorkspaceSourcesFrontendController', () => {
         });
     });
 
+    it('raises no suggestion a host gate suppresses, and raises it once the gate lets it through', async () => {
+        const suggestion = containingSuggestion('candidate-a', '/workspace/opened-root');
+        const harness = createHarness({ snapshot: snapshotWith({ suggestions: [suggestion] }) });
+        const suppresses = jest.fn(async () => true);
+        Object.assign(harness.controller as object, { suggestionGate: { suppresses } });
+
+        await harness.controller.onStart();
+        await flushPromises();
+        expect(suppresses).toHaveBeenCalledWith(suggestion);
+        expect(harness.messageService.info).not.toHaveBeenCalled();
+
+        suppresses.mockResolvedValue(false);
+        harness.controller.onWorkspaceSnapshotChanged(snapshotWith({ suggestions: [suggestion] }));
+        await flushPromises();
+        expect(harness.messageService.info).toHaveBeenCalledTimes(1);
+    });
+
     it('suppresses ignored or configured suggestions and skips containing detection for saved workspaces', async () => {
         const harness = createHarness({
             workspace: createWorkspaceState({

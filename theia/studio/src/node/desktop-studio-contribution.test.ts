@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import {
-    chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand, missingSourcesMessage, openedTenant, rememberOpened
+    chooseEnvironment, desktopConfigFrom, environmentsFrom, folderFor, helperCommand, missingSourcesMessage, openedTenant, rememberOpened, startFolderOf
 } from './desktop-studio-contribution';
 import { customEnvironment, parseEnvironments } from '../common/desktop-environments';
 
@@ -96,6 +96,13 @@ describe('desktop studio contribution', () => {
         }, '/here')!;
         expect(openedTenant({}, config, '/srv/checkout')).toBe('ws-1');
         expect(openedTenant({}, config, '/srv')).toBeUndefined();
+    });
+
+    it('names the start folder a placeholder only while no workspace is pinned there', () => {
+        const env = { STUDIO_DESKTOP_URL: 'https://studio.example.com', STUDIO_WORKSPACE_ROOT: '/home/me/ConstructorStudio/workspace' };
+        expect(startFolderOf(desktopConfigFrom(env, '/here'))).toBe('/home/me/ConstructorStudio/workspace');
+        expect(startFolderOf(desktopConfigFrom({ ...env, STUDIO_DESKTOP_WORKSPACE_ID: 'ws-1' }, '/here'))).toBeUndefined();
+        expect(startFolderOf(undefined)).toBeUndefined();
     });
 
     it('runs the credential helper with the app itself, not a Node on PATH', () => {

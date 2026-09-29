@@ -1,5 +1,5 @@
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
-import { inject, injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { CommandContribution, CommandRegistry, CommandService } from '@theia/core/lib/common/command';
 import { Disposable, DisposableCollection, Emitter, Event } from '@theia/core/lib/common';
 import URI from '@theia/core/lib/common/uri';
@@ -33,6 +33,7 @@ import type {
 } from '../common/workspace-protocol';
 import { StudioRuntimeService, type StudioRuntimeSession } from '../common/studio-protocol';
 import { WorkspaceSourceRootService } from './workspace-source-root-decorator';
+import { WorkspaceSuggestionGate } from './workspace-suggestion-gate';
 
 export const WorkspaceSourcesToggleCommand = {
     id: 'studio.workspace-sources:toggle',
@@ -117,6 +118,10 @@ export class WorkspaceSourcesFrontendController implements FrontendApplicationCo
 
     @inject(WorkspaceSourceRootService)
     protected readonly sourceRootService!: WorkspaceSourceRootService;
+
+    /** Bound only by a host that knows a folder needs no suggestion (the desktop's placeholder). */
+    @inject(WorkspaceSuggestionGate) @optional()
+    protected readonly suggestionGate: WorkspaceSuggestionGate | undefined;
 
     protected runtime: WorkspaceRuntimeProxyLike | undefined;
     protected session: StudioRuntimeSession | undefined;
@@ -568,6 +573,9 @@ export class WorkspaceSourcesFrontendController implements FrontendApplicationCo
         const revision = this.snapshot?.config.revision ?? 'unknown';
         const notificationKey = `${revision}:${suggestion.suggestionId}:${suggestion.candidateId}`;
         if (this.notifiedSuggestionKeys.has(notificationKey)) {
+            return;
+        }
+        if (this.suggestionGate && await this.suggestionGate.suppresses(suggestion)) {
             return;
         }
         this.notifiedSuggestionKeys.add(notificationKey);
