@@ -4,6 +4,7 @@ import {
   STILL_OPENING,
   addGearEntrance,
   productCommandRefusal,
+  resolveRefusal,
 } from "./command-availability";
 
 const state = (productOpen: boolean, opening = false, engineConnected = true) => ({ productOpen, opening, engineConnected });
@@ -37,5 +38,17 @@ describe("a command about the open product", () => {
     expect(productCommandRefusal(state(true))).toBeUndefined();
     expect(productCommandRefusal(state(true, false, false))).toBeUndefined();
     expect(productCommandRefusal(state(true, false, false), true)).toBe(ENGINE_DOWN);
+  });
+});
+
+describe("Resolve, on the ribbon", () => {
+  it("needs a product, and says which step is missing", () => {
+    expect(resolveRefusal(state(false))).toBe(NO_PRODUCT);
+    expect(resolveRefusal(state(false, true))).toBe(STILL_OPENING);
+  });
+
+  it("needs the engine, since resolving asks it again", () => {
+    expect(resolveRefusal(state(true, false, false))).toBe(ENGINE_DOWN);
+    expect(resolveRefusal(state(true))).toBeUndefined();
   });
 });

@@ -251,6 +251,12 @@ function modeFor(perspectiveId: string | undefined): Mode {
     return MODES.find((m) => m.role === role) ?? developer();
 }
 
+/** Whether the mode of this perspective keeps the top-level menu labelled `label`. */
+export function keepsMenu(perspectiveId: string | undefined, label: string): boolean {
+    const allowed = modeFor(perspectiveId).menus;
+    return allowed.includes('*') || allowed.includes(label);
+}
+
 /** What both halves of the header share: the active mode, kept current. */
 @injectable()
 abstract class ModeAware extends ReactWidget {
@@ -684,11 +690,10 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
     }
 
     protected pruneMenus(): void {
-        const allowed = modeFor(this.perspectives?.getActivePerspectiveId()).menus;
-        const all = allowed.includes('*');
+        const perspective = this.perspectives?.getActivePerspectiveId();
         document.querySelectorAll<HTMLElement>('#theia-top-panel .lm-MenuBar-item').forEach((item) => {
             const label = item.querySelector('.lm-MenuBar-itemLabel')?.textContent?.trim() ?? '';
-            const display = all || allowed.includes(label) ? '' : 'none';
+            const display = keepsMenu(perspective, label) ? '' : 'none';
             if (item.style.display !== display) {
                 item.style.display = display;
             }
