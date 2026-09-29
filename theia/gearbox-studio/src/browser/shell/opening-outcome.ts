@@ -38,6 +38,25 @@ export const OPENING_LABEL: Readonly<Record<OpeningStage, string>> = {
   resolve: "resolving the default profile",
 };
 
+/**
+ * Constructor Studio: how far the catalogue's projection has got, as the
+ * opening checklist words it: "12 of 44 gears".
+ */
+export function projectionProgress(progress: { readonly completed: number; readonly total: number } | undefined): string {
+  if (progress === undefined || progress.total === 0) return "";
+  return `${progress.completed} of ${progress.total} gears`;
+}
+
+/**
+ * Constructor Studio: why an open stops when the projection stops moving.
+ */
+export function projectionStalled(label: string, completed: number, total: number, seconds: number): string {
+  return (
+    `${label}'s gears stopped loading: ${completed} of ${total} read, and nothing more for ` +
+    `${seconds} s. Reload the catalogue (View › Reload Catalogue), then open the product again.`
+  );
+}
+
 /** Either carry on, or stop at a step with a reason. */
 export type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
