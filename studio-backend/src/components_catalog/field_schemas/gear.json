@@ -955,6 +955,17 @@
      }
     },
     {
+     "key": "impl_trace",
+     "label": "Requirements in code",
+     "kind": "metric",
+     "lamp": false,
+     "source": {
+      "class": "repo",
+      "ref": "cpt-* the gear's production code cites"
+     },
+     "example": "7 of 9 requirement IDs in code"
+    },
+    {
      "key": "issues",
      "label": "GitHub issues",
      "source": {
