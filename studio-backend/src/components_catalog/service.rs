@@ -1147,6 +1147,20 @@ impl CatalogService {
                                     "synced_from".to_string(),
                                     Value::String(rg.source_repo.clone()),
                                 );
+                                // Where in that repository, and which crates
+                                // the directory declares: read, not derived
+                                // from the name (see `RepoGear::dir`).
+                                if let Some(dir) = &rg.dir {
+                                    obj.insert("repo_path".to_string(), Value::String(dir.clone()));
+                                }
+                                if !rg.crates.is_empty() {
+                                    obj.insert(
+                                        "crate_names".to_string(),
+                                        Value::Array(
+                                            rg.crates.iter().cloned().map(Value::String).collect(),
+                                        ),
+                                    );
+                                }
                                 if let Some(status) = status {
                                     obj.insert(
                                         "status".to_string(),
@@ -1304,7 +1318,15 @@ impl CatalogService {
                         continue;
                     }
                 };
-                for node in stale(&existing, &produced, &read_repos, scan_only) {
+                let mut condemned = stale(&existing, &produced, &read_repos, scan_only);
+                if type_id == gts::GEAR_TYPE && read_modes.contains("frontx") {
+                    for node in misfiled_frontx(&existing, &produced) {
+                        if !condemned.iter().any(|n| n.instance_id == node.instance_id) {
+                            condemned.push(node);
+                        }
+                    }
+                }
+                for node in condemned {
                     let from = node
                         .value
                         .get("synced_from")
@@ -2208,6 +2230,32 @@ fn stale<'a>(
         .collect()
 }
 
+/// Micro-frontends still filed as GEARS by a scan that predates their own
+/// node type, and that this run did not produce.
+///
+/// Before `catalog.frontx.v1~` existed a FrontX package was written as a gear
+/// node with `kind: "frontx"` and no `synced_from`, and [`stale`] must leave a
+/// gear with no recorded source alone (that is the crates.io half). So those
+/// nodes outlived every later scan: the catalogue showed each FrontX package
+/// twice, once per type, plus the template placeholder
+/// `@gears-frontx/{{mfeName}}-mfe` the old scan took for a package. crates.io
+/// never produces `kind: "frontx"` (see [`classify_kind`]), so such a node can
+/// only have come from a FrontX scan, and the run that reads FrontX is the one
+/// that clears it.
+fn misfiled_frontx<'a>(existing: &'a [GtsNode], produced: &BTreeSet<&str>) -> Vec<&'a GtsNode> {
+    existing
+        .iter()
+        .filter(|node| !produced.contains(node.instance_id.as_str()))
+        .filter(|node| node.value.get("kind").and_then(Value::as_str) == Some("frontx"))
+        .filter(|node| {
+            node.value
+                .get("synced_from")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+        })
+        .collect()
+}
+
 /// Whether a scanned component is a gear or a request for one.
 ///
 /// `draft` means a directory of documents: a `gear.toml`, maybe a PRD and a
@@ -2385,6 +2433,31 @@ mod prune_tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_frontx_package_left_filed_as_a_gear_is_misfiled() {
+        let mut old = node("@gears-frontx/ui-kit", None);
+        old.value["kind"] = json!("frontx");
+        let mut placeholder = node("@gears-frontx/{{mfeName}}-mfe", None);
+        placeholder.value["kind"] = json!("frontx");
+        let crate_row = node("cf-gears-api-gateway", None);
+        let mut scanned = node("@gears-frontx/api", Some("constructorfabric/gears-frontx"));
+        scanned.value["kind"] = json!("frontx");
+        let existing = vec![old, placeholder, crate_row, scanned];
+        let out: Vec<&str> = misfiled_frontx(&existing, &BTreeSet::new())
+            .into_iter()
+            .map(|n| n.instance_id.as_str())
+            .collect();
+        assert_eq!(out, ["@gears-frontx/ui-kit", "@gears-frontx/{{mfeName}}-mfe"]);
+    }
+
+    #[test]
+    fn a_frontx_node_this_run_produced_is_not_misfiled() {
+        let mut n = node("@gears-frontx/ui-kit", None);
+        n.value["kind"] = json!("frontx");
+        let existing = vec![n];
+        assert!(misfiled_frontx(&existing, &BTreeSet::from(["@gears-frontx/ui-kit"])).is_empty());
     }
 
     #[test]
