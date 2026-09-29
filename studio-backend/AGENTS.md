@@ -37,8 +37,12 @@ For it to work, every artifact read and write has to go through its API:
 - **The test to run** is `cargo test -- artifact_ingest::index`. It needs
   Docker, because the suite starts its own Postgres.
 
-When graph-storage gains payload `$filter`/`$orderby`, delete the index rather
-than keep two mirrors in step.
+graph-storage has payload `$filter`/`$orderby` since weftgraph 0.1.1, and that
+is still not enough to delete the index: the projection has no count, no
+offset, and no index behind a payload ordering, and the in-process client
+cannot update a stored type to declare the paths. The gaps and the migration
+are in `docs/graph-storage-requests.md`, item 5, "Status". When they close,
+delete the index rather than keep two mirrors in step.
 
 ## Gear databases
 

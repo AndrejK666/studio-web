@@ -90,8 +90,11 @@ unscoped listings.
   into the file. Nothing lists it (`gts::is_listed`), so it has no row here,
   and a file row is metadata only.
 
-When request 5 lands in graph-storage this table becomes redundant, and the
-thing to do is delete it rather than keep two mirrors in step.
+Request 5 has partly landed (weftgraph 0.1.1 filters and orders on declared
+payload paths), but without a count, offsets or an indexed payload ordering,
+so the table stays; what is still missing is listed under request 5's
+"Status". Once it is there, delete this table rather than keep two mirrors in
+step.
 
 ## Reading relations back is bounded, and the bound is not a speed limit
 

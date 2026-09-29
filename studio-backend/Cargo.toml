@@ -1,5 +1,5 @@
 # Constructor Studio Backend — assembly of CF/Gears into the Studio backend server.
-# Standalone crate: consumes gears-rust via path dependencies (sibling checkout ../../gears-rust).
+# Standalone crate: every gears-rust crate comes from crates.io (see the note on [dependencies]).
 
 [package]
 name = "cf-studio-backend"

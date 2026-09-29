@@ -579,6 +579,36 @@ mod tests {
         }
     }
 
+    /// pgvector filters after the approximate HNSW scan, and every
+    /// graph-storage query is filtered, so without iterative scanning a small
+    /// tenant sharing the index with a large one gets an empty search page
+    /// while its vectors are in the table. The gear cannot set it per query
+    /// (gears-rust #4871), so each profile sets it per connection -- and a
+    /// profile that loses it degrades search silently, with nothing at boot to
+    /// say so.
+    #[test]
+    fn every_profile_lets_graph_storage_filter_vector_search() {
+        for (name, text) in PROFILES {
+            let profile: serde_yaml::Value =
+                serde_yaml::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let params = &profile["gears"]["graph-storage"]["database"]["params"];
+            let iterative = params["hnsw.iterative_scan"].as_str();
+            assert!(
+                matches!(iterative, Some("relaxed_order" | "strict_order")),
+                "{name}: graph-storage database params set hnsw.iterative_scan to \
+                 {iterative:?}; without it filtered vector search returns empty pages"
+            );
+            let ef_search = params["hnsw.ef_search"]
+                .as_str()
+                .and_then(|v| v.parse::<u32>().ok());
+            assert!(
+                ef_search.is_some_and(|v| v >= 100),
+                "{name}: graph-storage hnsw.ef_search is {ef_search:?}; the gear's \
+                 README asks for well above the default 40 (200 is the shipped value)"
+            );
+        }
+    }
+
     #[test]
     fn every_profile_declares_the_types_the_code_expects() {
         for (name, text) in PROFILES {
