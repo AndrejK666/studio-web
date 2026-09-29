@@ -56,6 +56,38 @@ export interface ReferenceActivity {
     readonly authors: number;
 }
 
+export interface ReferenceDemand {
+    readonly consumer: string;
+    /** 1 is the most urgent. */
+    readonly priority: number;
+}
+
+export interface ReferenceAxis {
+    readonly label: string;
+    readonly value: string;
+    readonly pct: number | null;
+}
+
+/** Where a component is and whether its plan meets the demand for it. */
+export interface ReferenceReadiness {
+    readonly stage: string | null;
+    readonly stage_at: number | null;
+    readonly stage_of: number | null;
+    readonly lifecycle: string | null;
+    readonly milestone: string | null;
+    readonly due: string | null;
+    readonly committed: boolean | null;
+    readonly plan: string | null;
+    readonly plan_lamp: 'good' | 'watch' | 'bad' | 'none' | string | null;
+    readonly plan_reasons: readonly string[];
+    readonly demand: readonly ReferenceDemand[];
+    readonly progress: readonly ReferenceAxis[];
+    readonly last_release: string | null;
+    readonly released_on: string | null;
+    readonly used_by: number | null;
+    readonly roadmap_item: string | null;
+}
+
 export interface ReferenceEntry {
     readonly name: string;
     readonly title: string | null;
@@ -77,6 +109,8 @@ export interface ReferenceEntry {
     readonly profile_filled: number | null;
     readonly profile_fields: number | null;
     readonly activity: ReferenceActivity | null;
+    /** Null from a backend older than readiness, or when nothing answers. */
+    readonly readiness?: ReferenceReadiness | null;
     readonly engine: readonly ReferenceEngineGear[];
     readonly related: readonly ReferenceRelatedCrate[];
 }
@@ -200,10 +234,14 @@ export function countText(n: number | null | undefined): string {
     return typeof n === 'number' ? n.toLocaleString('en-US') : '—';
 }
 
-/** The release cell: what the version is and where it was read. */
-export function releaseText(e: ReferenceEntry): string {
+/**
+ * The release cell: what the version is and where it was read. Null when
+ * there is none to show -- the view leaves the cell out rather than print
+ * that it is empty. A draft is a fact about the gear, so it is said.
+ */
+export function releaseText(e: ReferenceEntry): string | null {
     if (!e.version) {
-        return e.status === 'draft' ? 'Draft — documents only, no crate' : 'Not published';
+        return e.status === 'draft' ? 'Draft — documents only, no crate' : null;
     }
     if (e.version_source === 'declared') {
         return `${e.version} (declared, not on a registry)`;
@@ -212,10 +250,13 @@ export function releaseText(e: ReferenceEntry): string {
     return `${e.version}${n}`;
 }
 
-/** The activity cell, telling "not measured" from "measured, nothing moved". */
-export function activityText(e: ReferenceEntry, sources: ReferenceSources): string {
+/**
+ * The activity cell. "Measured, nothing moved" is a finding and is said;
+ * "not measured" is not, so it is null and the view leaves it out.
+ */
+export function activityText(e: ReferenceEntry, sources: ReferenceSources): string | null {
     if (sources.activity_days === null) {
-        return 'Not measured';
+        return null;
     }
     if (!e.activity) {
         return `No activity recorded in ${sources.activity_days} days`;
@@ -232,14 +273,81 @@ export function profilePercent(e: ReferenceEntry): number | null {
     return Math.round((e.profile_filled / e.profile_fields) * 100);
 }
 
-/** Where the component comes from, as one line. */
-export function sourceText(e: ReferenceEntry): string {
+/** Where the component comes from, as one line; null when nobody recorded it. */
+export function sourceText(e: ReferenceEntry): string | null {
     const where = e.synced_from ?? repoShort(e.repository);
     const path = e.repo_path ? `/${e.repo_path}` : '';
     if (where) {
         return `${where}${path}`;
     }
-    return e.repo_path ? `${e.repo_path} (in the gear corpus)` : 'Not recorded';
+    return e.repo_path ? `${e.repo_path} (in the gear corpus)` : null;
+}
+
+// ── readiness ────────────────────────────────────────────────────────────────
+
+/** Where in the pipeline a stage sits, as the colour the view draws it in. */
+export type StageTone = 'done' | 'late' | 'early' | 'idle';
+
+export function stageTone(r: ReferenceReadiness | null | undefined): StageTone {
+    if (!r || typeof r.stage_at !== 'number' || typeof r.stage_of !== 'number') {
+        return 'idle';
+    }
+    if (r.stage_at >= r.stage_of) {
+        return 'done';
+    }
+    if (r.stage_at <= 1) {
+        return 'idle';
+    }
+    return r.stage_at / r.stage_of >= 0.7 ? 'late' : 'early';
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** `2026-10-31` -> `Oct 2026`. */
+export function monthText(date: string | null | undefined): string | null {
+    const m = /^(\d{4})-(\d{2})/.exec(date ?? '');
+    return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : null;
+}
+
+export type Lamp = 'good' | 'watch' | 'bad' | 'none';
+
+/** What the plan says about the date, as one phrase and a lamp. */
+export function scheduleText(r: ReferenceReadiness | null | undefined, today = new Date()): { text: string; lamp: Lamp } | null {
+    if (!r || (!r.milestone && !r.plan)) {
+        return null;
+    }
+    if (r.plan === 'delivered') {
+        return { text: 'Delivered', lamp: 'good' };
+    }
+    if (r.due) {
+        const d = new Date(`${r.due}T00:00:00Z`);
+        if (d.getTime() < today.getTime()) {
+            const months = Math.max(1, (today.getUTCFullYear() - d.getUTCFullYear()) * 12 + today.getUTCMonth() - d.getUTCMonth());
+            return { text: `${months} month${months === 1 ? '' : 's'} late`, lamp: 'bad' };
+        }
+    } else {
+        return { text: 'No date', lamp: 'none' };
+    }
+    return r.plan_lamp === 'watch' ? { text: 'Check', lamp: 'watch' } : { text: 'On target', lamp: 'good' };
+}
+
+/** `Acronis P1 · Constructor P3`, most urgent first; null when nobody asked. */
+export function demandText(r: ReferenceReadiness | null | undefined): string | null {
+    if (!r || r.demand.length === 0) {
+        return null;
+    }
+    return [...r.demand]
+        .sort((a, b) => a.priority - b.priority || a.consumer.localeCompare(b.consumer))
+        .map(d => `${d.consumer} P${d.priority}`)
+        .join(' · ');
+}
+
+/** The plan lamp, when it says something: amber or red. */
+export function planWarning(r: ReferenceReadiness | null | undefined): { lamp: 'watch' | 'bad'; text: string } | null {
+    if (!r || (r.plan_lamp !== 'watch' && r.plan_lamp !== 'bad')) {
+        return null;
+    }
+    return { lamp: r.plan_lamp, text: r.plan_reasons[0] ?? r.plan ?? '' };
 }
 
 function repoShort(url: string | null): string | null {

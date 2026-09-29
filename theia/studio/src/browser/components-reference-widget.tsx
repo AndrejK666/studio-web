@@ -11,13 +11,18 @@ import {
     activityText,
     addableGears,
     countText,
+    demandText,
     emptyMessage,
     filterEntries,
     kindCounts,
     loadComponentsReference,
+    monthText,
+    planWarning,
     profilePercent,
     releaseText,
+    scheduleText,
     sourceText,
+    stageTone,
 } from './components-reference-model';
 
 /*
@@ -183,6 +188,8 @@ export class ComponentsReferenceWidget extends ReactWidget {
 
     protected renderRow(e: ReferenceEntry, reference: ComponentsReference): React.ReactNode {
         const pct = profilePercent(e);
+        const release = releaseText(e);
+        const activity = activityText(e, reference.sources);
         return (
             <li
                 key={e.name}
@@ -196,13 +203,19 @@ export class ComponentsReferenceWidget extends ReactWidget {
                     <span className='scr-name'>{e.title ?? e.name}</span>
                     <span className='scr-kind'>{e.kind}</span>
                     {e.engine.length > 0 && <span className='scr-engine' title='The Gearbox engine describes it'>gear.gdl</span>}
+                    {e.readiness?.stage && (
+                        <span className={`scr-stage ${stageTone(e.readiness)}`}>
+                            <span className='scr-dot' />{e.readiness.stage}
+                        </span>
+                    )}
                 </div>
                 {e.title && <div className='scr-sub'>{e.name}</div>}
                 {e.description && <div className='scr-purpose'>{e.description}</div>}
+                {this.renderPlanLine(e)}
                 <div className='scr-meta'>
-                    <span>{releaseText(e)}</span>
-                    <span>{countText(e.downloads)} downloads</span>
-                    <span>{activityText(e, reference.sources)}</span>
+                    {release && <span>{release}</span>}
+                    {typeof e.downloads === 'number' && <span>{countText(e.downloads)} downloads</span>}
+                    {activity && <span>{activity}</span>}
                     {pct !== null && <span>profile {pct}%</span>}
                 </div>
             </li>
@@ -212,27 +225,36 @@ export class ComponentsReferenceWidget extends ReactWidget {
     protected renderDetail(e: ReferenceEntry, reference: ComponentsReference): React.ReactNode {
         const pct = profilePercent(e);
         const canAdd = this.commands.getCommand(ADD_GEAR_COMMAND) !== undefined;
+        const release = releaseText(e);
+        const activity = activityText(e, reference.sources);
+        const source = sourceText(e);
         return (
             <div className='scr-page'>
                 <h2 className='scr-title'>{e.title ?? e.name}</h2>
                 {e.title && <div className='scr-sub'>{e.name}</div>}
-                <p className='scr-purpose'>{e.description ?? 'No purpose recorded.'}</p>
+                {e.description && <p className='scr-purpose'>{e.description}</p>}
+                {this.renderReadiness(e)}
                 <dl className='scr-facts'>
                     <dt>Type</dt><dd>{e.kind}{e.category ? ` · ${e.category}` : ''}</dd>
-                    <dt>Status</dt><dd>{e.status ?? '—'}</dd>
-                    <dt>Release</dt><dd>{releaseText(e)}</dd>
-                    <dt>Downloads</dt>
-                    <dd>{countText(e.downloads)}{typeof e.recent_downloads === 'number' ? ` (${countText(e.recent_downloads)} recent)` : ''}</dd>
-                    <dt>Activity</dt>
-                    <dd>{activityText(e, reference.sources)}{e.activity ? ` · ${e.activity.files_changed} files` : ''}</dd>
-                    <dt>Profile</dt>
-                    <dd>{pct === null ? 'No schema describes this type' : `${pct}% (${e.profile_filled} of ${e.profile_fields} fields answered)`}</dd>
-                    <dt>Last change</dt><dd>{e.updated_at ? e.updated_at.slice(0, 10) : '—'}</dd>
-                    <dt>Source</dt>
-                    <dd>{e.repository
-                        ? <a href={e.repository} target='_blank' rel='noreferrer'>{sourceText(e)}</a>
-                        : sourceText(e)}</dd>
-                    <dt>Facts from</dt><dd>{e.sources.join(', ') || '—'}</dd>
+                    {e.status && <><dt>Status</dt><dd>{e.status}</dd></>}
+                    {release && <><dt>Release</dt><dd>{release}</dd></>}
+                    {typeof e.downloads === 'number' && <>
+                        <dt>Downloads</dt>
+                        <dd>{countText(e.downloads)}{typeof e.recent_downloads === 'number' ? ` (${countText(e.recent_downloads)} recent)` : ''}</dd>
+                    </>}
+                    {activity && <>
+                        <dt>Activity</dt>
+                        <dd>{activity}{e.activity ? ` · ${e.activity.files_changed} files` : ''}</dd>
+                    </>}
+                    {pct !== null && <><dt>Profile</dt><dd>{`${pct}% (${e.profile_filled} of ${e.profile_fields} fields answered)`}</dd></>}
+                    {e.updated_at && <><dt>Last change</dt><dd>{e.updated_at.slice(0, 10)}</dd></>}
+                    {source && <>
+                        <dt>Source</dt>
+                        <dd>{e.repository
+                            ? <a href={e.repository} target='_blank' rel='noreferrer'>{source}</a>
+                            : source}</dd>
+                    </>}
+                    {e.sources.length > 0 && <><dt>Facts from</dt><dd>{e.sources.join(', ')}</dd></>}
                 </dl>
 
                 <h3>Engine</h3>
@@ -275,10 +297,8 @@ export class ComponentsReferenceWidget extends ReactWidget {
                         </div>
                     ))}
 
-                <h3>Related crates</h3>
-                {e.related.length === 0
-                    ? <p className='scr-muted'>None recorded.</p>
-                    : (
+                {e.related.length > 0 && <h3>Related crates</h3>}
+                {e.related.length > 0 && (
                         <ul className='scr-related'>
                             {e.related.map(r => (
                                 <li key={r.name}>
@@ -292,6 +312,89 @@ export class ComponentsReferenceWidget extends ReactWidget {
                         </ul>
                     )}
             </div>
+        );
+    }
+
+    /**
+     * Stage, due date and whether the plan holds, in one line under the
+     * purpose; the plan's warning, when it has one, above everything else.
+     * Nothing at all for a component the roadmap does not plan.
+     */
+    protected renderPlanLine(e: ReferenceEntry): React.ReactNode {
+        const r = e.readiness;
+        const schedule = scheduleText(r);
+        const due = monthText(r?.due);
+        const demand = demandText(r);
+        const warning = planWarning(r);
+        if (!schedule && !demand && !warning) {
+            return undefined;
+        }
+        return (
+            <div className='scr-plan'>
+                {(schedule || due) && (
+                    <div className='scr-plan-line'>
+                        {r?.committed !== null && r?.committed !== undefined && (
+                            <span className='scr-pill'>{r.committed ? 'Committed' : 'Planned'}</span>
+                        )}
+                        {schedule && <span className={`scr-sched ${schedule.lamp}`}><span className='scr-dot' />{schedule.text}</span>}
+                        {due && <span className='scr-due'>due {due}</span>}
+                    </div>
+                )}
+                {demand && <div className='scr-demand'>{demand}</div>}
+                {warning && <div className={`scr-warning ${warning.lamp}`}>⚠ {warning.text}</div>}
+            </div>
+        );
+    }
+
+    /** The page's readiness block: every answered part of it, nothing else. */
+    protected renderReadiness(e: ReferenceEntry): React.ReactNode {
+        const r = e.readiness;
+        if (!r) {
+            return undefined;
+        }
+        const schedule = scheduleText(r);
+        const demand = demandText(r);
+        return (
+            <section className='scr-readiness'>
+                <h3>Readiness</h3>
+                {r.plan_reasons.length > 0 && (
+                    <ul className={`scr-reasons ${r.plan_lamp ?? ''}`}>
+                        {r.plan_reasons.map(reason => <li key={reason}>{reason}</li>)}
+                    </ul>
+                )}
+                <dl className='scr-facts'>
+                    {r.stage && <>
+                        <dt>Stage</dt>
+                        <dd>
+                            <span className={`scr-stage ${stageTone(r)}`}><span className='scr-dot' />{r.stage}</span>
+                            {typeof r.stage_at === 'number' && typeof r.stage_of === 'number' ? ` (${r.stage_at} of ${r.stage_of})` : ''}
+                        </dd>
+                    </>}
+                    {schedule && <>
+                        <dt>Plan</dt>
+                        <dd><span className={`scr-sched ${schedule.lamp}`}><span className='scr-dot' />{schedule.text}</span>{r.plan ? ` · ${r.plan}` : ''}</dd>
+                    </>}
+                    {r.milestone && <>
+                        <dt>Milestone</dt>
+                        <dd>{r.milestone}{r.due ? ` · due ${r.due}` : ''}{r.committed === null ? '' : r.committed ? ' · committed' : ' · not a commitment'}</dd>
+                    </>}
+                    {r.progress.length > 0 && <>
+                        <dt>Progress</dt>
+                        <dd className='scr-axes'>
+                            {r.progress.map(a => (
+                                <span key={a.label} className={`scr-axis ${a.pct === 100 ? 'full' : a.pct === null ? 'na' : 'part'}`}>
+                                    <span className='scr-dot' />{a.label} {a.value}
+                                </span>
+                            ))}
+                        </dd>
+                    </>}
+                    {demand && <><dt>Needed by</dt><dd>{demand}</dd></>}
+                    {r.lifecycle && <><dt>In the repository</dt><dd>{r.lifecycle}</dd></>}
+                    {r.last_release && <><dt>Last release</dt><dd>{r.last_release}{r.released_on ? ` · ${r.released_on}` : ''}</dd></>}
+                    {typeof r.used_by === 'number' && <><dt>Used by</dt><dd>{r.used_by} component{r.used_by === 1 ? '' : 's'}</dd></>}
+                    {r.roadmap_item && <><dt>Roadmap item</dt><dd><a href={r.roadmap_item} target='_blank' rel='noreferrer'>{r.roadmap_item.replace(/^https?:\/\/github\.com\//, '')}</a></dd></>}
+                </dl>
+            </section>
         );
     }
 }
