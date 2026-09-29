@@ -476,6 +476,12 @@ impl RepoEnricher {
         if let Some(lic) = package_json_str(pkg, "license") {
             f.insert("licence".into(), text(&lic, None, None));
         }
+        // What the package IS, for the kind taxonomy (`taxonomy::classify`):
+        // a `bin` makes it a tool, module federation a micro-frontend.
+        let facts = package_json_facts(pkg, &rel);
+        f.insert("npm_bin".into(), boolean(facts.bin));
+        f.insert("npm_mfe".into(), boolean(facts.mfe));
+        f.insert("npm_private".into(), boolean(facts.private));
         f.insert(
             "guideline".into(),
             boolean(rel.iter().any(|q| {
@@ -1411,6 +1417,45 @@ fn package_json_dep_keys(body: &str) -> Vec<String> {
     out
 }
 
+/// What a `package.json` (and the files beside it) say about the package's
+/// kind: whether it ships a command (`bin`), builds a module-federation remote
+/// (a federation plugin among its dependencies, or a federation config file
+/// at its root), and whether it is `private`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct PackageFacts {
+    pub bin: bool,
+    pub mfe: bool,
+    pub private: bool,
+}
+
+pub(crate) fn package_json_facts(body: &str, rel: &[&str]) -> PackageFacts {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return PackageFacts::default();
+    };
+    let bin = match v.get("bin") {
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+        _ => false,
+    };
+    let federation_dep = ["dependencies", "devDependencies"].iter().any(|section| {
+        v.get(section)
+            .and_then(Value::as_object)
+            .is_some_and(|deps| {
+                deps.keys().any(|k| {
+                    k.starts_with("@module-federation/") || k.contains("vite-plugin-federation")
+                })
+            })
+    });
+    let federation_file = rel.iter().any(|p| {
+        !p.contains('/') && (*p == "mfe.json" || p.starts_with("module-federation.config"))
+    });
+    PackageFacts {
+        bin,
+        mfe: federation_dep || federation_file,
+        private: v.get("private").and_then(Value::as_bool).unwrap_or(false),
+    }
+}
+
 /// One top-level string field out of a package.json body.
 fn package_json_str(body: &str, key: &str) -> Option<String> {
     serde_json::from_str::<Value>(body)
@@ -2214,6 +2259,26 @@ cf-gears-types-registry = { git = "https://github.com/x/y" }
             "two candidates: undecided, not a coin toss"
         );
         assert_eq!(primary_crate("approval-service", &[]), None);
+    }
+
+    #[test]
+    fn package_json_says_tool_federation_and_private() {
+        let cli = package_json_facts(
+            r#"{"name":"@gears-frontx/cli","bin":{"frontx":"dist/cli.js"}}"#,
+            &[],
+        );
+        assert!(cli.bin && !cli.mfe);
+        let mfe = package_json_facts(
+            r#"{"name":"@acme/orders","devDependencies":{"@originjs/vite-plugin-federation":"1"}}"#,
+            &[],
+        );
+        assert!(mfe.mfe);
+        let by_file = package_json_facts(
+            r#"{"name":"@acme/x","private":true}"#,
+            &["mfe.json", "src/a.ts"],
+        );
+        assert!(by_file.mfe && by_file.private);
+        assert_eq!(package_json_facts("nope", &[]), PackageFacts::default());
     }
 
     #[test]
