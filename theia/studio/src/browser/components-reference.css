@@ -348,3 +348,25 @@
     font-size: var(--theia-ui-font-size0);
     color: var(--theia-editorWarning-foreground);
 }
+
+.scr-grade {
+    display: inline-block;
+    min-width: 16px;
+    text-align: center;
+    font-weight: 700;
+    font-size: var(--theia-ui-font-size0);
+    padding: 0 5px;
+    border: 1px solid currentColor;
+    border-radius: 5px;
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-grade.good { color: var(--theia-charts-green); }
+.scr-grade.watch { color: var(--theia-charts-orange); }
+.scr-grade.bad { color: var(--theia-errorForeground); }
+
+.scr-fixes {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    color: var(--theia-descriptionForeground);
+}

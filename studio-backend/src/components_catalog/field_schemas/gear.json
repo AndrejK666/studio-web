@@ -27,6 +27,10 @@
   "project": {
    "label": "Roadmap board",
    "hint": "Read from the GitHub Project the gears are planned on: the item matched to this gear by title, or the one pinned in its roadmap item field."
+  },
+  "rule": {
+   "label": "Quality rule",
+   "hint": "Computed from this page's other fields by the quality criteria; nothing is read for it."
   }
  },
  "groups": [
@@ -35,6 +39,17 @@
    "title": "Summary",
    "icon": "S",
    "fields": [
+    {
+     "key": "grade",
+     "label": "Quality grade",
+     "source": {
+      "class": "rule",
+      "ref": "quality criteria over the fields below"
+     },
+     "example": "B \u2014 19 of 24 criteria",
+     "kind": "status",
+     "lamp": true
+    },
     {
      "key": "description",
      "label": "Description",
@@ -1137,5 +1152,231 @@
   "done": "present, no open markers",
   "in progress": "present, with TBD or TODO left in it",
   "N/A": "not present \u2014 a conditional artifact this Gear does not need"
+ },
+ "quality": {
+  "grades": [
+   {
+    "min": 90,
+    "g": "A"
+   },
+   {
+    "min": 75,
+    "g": "B"
+   },
+   {
+    "min": 60,
+    "g": "C"
+   },
+   {
+    "min": 40,
+    "g": "D"
+   },
+   {
+    "min": 0,
+    "g": "E"
+   }
+  ],
+  "capUntilProd": "B",
+  "capNote": "A Gear that is not in production yet cannot grade above B, however complete it looks.",
+  "areas": [
+   {
+    "id": "spec",
+    "title": "Specification"
+   },
+   {
+    "id": "qa",
+    "title": "Quality assurance"
+   },
+   {
+    "id": "own",
+    "title": "Ownership"
+   },
+   {
+    "id": "api",
+    "title": "Contracts"
+   },
+   {
+    "id": "del",
+    "title": "Delivery"
+   },
+   {
+    "id": "sec",
+    "title": "Security and compliance"
+   }
+  ],
+  "criteria": [
+   {
+    "a": "spec",
+    "label": "PRD is written",
+    "field": "prd",
+    "test": "b==done",
+    "fix": "Finish the PRD and clear the TBD markers left in it"
+   },
+   {
+    "a": "spec",
+    "label": "Design is written",
+    "field": "design",
+    "test": "b==done",
+    "fix": "Finish DESIGN.md and clear the TBD markers left in it"
+   },
+   {
+    "a": "spec",
+    "label": "Decisions are recorded",
+    "field": "adr",
+    "test": "n>=2",
+    "fix": "Record the architecture decisions as ADRs"
+   },
+   {
+    "a": "spec",
+    "label": "Requirements are traceable",
+    "field": "cpt",
+    "test": "n>=50",
+    "fix": "Add cpt-* traceability IDs across the specs"
+   },
+   {
+    "a": "spec",
+    "label": "Design is drawn",
+    "field": "diagrams",
+    "test": "n>=3",
+    "fix": "Add component and sequence diagrams to DESIGN.md"
+   },
+   {
+    "a": "spec",
+    "label": "Specs track the code",
+    "field": "@specfresh",
+    "test": "==fresh",
+    "fix": "Update the specs - they are months behind the code"
+   },
+   {
+    "a": "qa",
+    "label": "Unit tests exist",
+    "field": "unitmods",
+    "test": "n>=10",
+    "fix": "Add unit test modules"
+   },
+   {
+    "a": "qa",
+    "label": "Integration tests exist",
+    "field": "integfiles",
+    "test": "n>=1",
+    "fix": "Add integration tests under tests/"
+   },
+   {
+    "a": "qa",
+    "label": "E2E suite exists",
+    "field": "e2e",
+    "test": "b==yes",
+    "fix": "Add a suite under testing/e2e/suites/"
+   },
+   {
+    "a": "qa",
+    "label": "Coverage is published",
+    "field": "coverage",
+    "test": "filled",
+    "fix": "Publish the llvm-cov number CI already computes"
+   },
+   {
+    "a": "qa",
+    "label": "Tests are proportionate to the code",
+    "field": "@testratio",
+    "test": "==ok",
+    "fix": "Test lines are thin against the size of this Gear"
+   },
+   {
+    "a": "own",
+    "label": "Path owner is named",
+    "field": "owner",
+    "test": "s==good",
+    "fix": "Add a CODEOWNERS entry for this path"
+   },
+   {
+    "a": "own",
+    "label": "Product owner is named",
+    "field": "pm",
+    "test": "filled",
+    "fix": "Record who owns this Gear as a product"
+   },
+   {
+    "a": "own",
+    "label": "Support route is named",
+    "field": "support",
+    "test": "filled",
+    "fix": "Record a 3rd-line support route"
+   },
+   {
+    "a": "api",
+    "label": "SDK crate exists",
+    "field": "sdk",
+    "test": "filled",
+    "fix": "Split a transport-agnostic SDK crate out"
+   },
+   {
+    "a": "api",
+    "label": "API spec is generated",
+    "field": "openapi",
+    "test": "b==yes",
+    "fix": "Generate and commit the OpenAPI document"
+   },
+   {
+    "a": "api",
+    "label": "Extension points are declared",
+    "field": "gtstypes",
+    "test": "notnone",
+    "fix": "Register this Gear's GTS types"
+   },
+   {
+    "a": "api",
+    "label": "Published to crates.io",
+    "field": "published",
+    "test": "s==good",
+    "fix": "Publish the gear crate, not only its SDK"
+   },
+   {
+    "a": "del",
+    "label": "Released at least once",
+    "field": "lastrelease",
+    "test": "notnone",
+    "fix": "Cut a release"
+   },
+   {
+    "a": "del",
+    "label": "Changelog records the work",
+    "field": "changelog",
+    "test": "n>=5",
+    "fix": "Record changes in the changelog"
+   },
+   {
+    "a": "del",
+    "label": "Work is tracked against a milestone",
+    "field": "milestone",
+    "test": "notnone",
+    "fix": "Put this Gear's issues on a milestone"
+   },
+   {
+    "a": "sec",
+    "label": "Every commit is signed off",
+    "field": "dco",
+    "test": "ratio==1",
+    "fix": "DCO is a stated rule - sign off every commit"
+   },
+   {
+    "a": "sec",
+    "label": "Licence is declared",
+    "field": "licence",
+    "test": "filled",
+    "fix": "Declare a licence"
+   },
+   {
+    "a": "sec",
+    "label": "Advisories or an SBOM exist",
+    "field": "advisories",
+    "test": "s!=none",
+    "fix": "Add an SBOM job and surface advisories per Gear"
+   }
+  ],
+  "derived": {
+   "@specfresh": "fresh when the specs last moved within 30 days of the code",
+   "@testratio": "ok when unit + integration + E2E lines are at least 30% of code lines"
+  }
  }
 }
