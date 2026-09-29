@@ -26,12 +26,34 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   wide; they now open at the assistants' width when the panel was narrower than
   300px.
 
+### Doc editing
+
+- **Analyze sees the document you are writing.** A Markdown document open in
+  Doc editing (the product's editor) was "No active document" to the Analyze
+  panel and to the ribbon's **Analyze**. The panel now names it and analyses
+  the text on screen, unsaved edits included.
+- **A document reaches a commit without leaving Doc editing.** The ribbon has
+  a **Git** group: **Changes** opens Source Control, with the commit message
+  and **Commit** and **Push**.
+- **New document is on the ribbon and at the top of File.** It creates a
+  Markdown file in the open project, its name as its first heading, as the
+  start page's button does.
+- **File offers New/Open Product and New/Open Gear only in Building and Full
+  functionality.** In Doc editing and Development they headed File and had
+  nothing to do with the work there; the command palette still has them.
+- **Traceability says to sign in** when the desktop is not signed in to a
+  Studio, instead of "Failed to load: HTTP 503" above a "no ingested
+  artifacts" hint.
+
 ### Known limits
 
 - The rails and the right panel were checked on a local desktop build without
   the Extensions view (it predates #513), so the Extensions tab's placement in
   Development and Full functionality is covered by unit tests only, and a
   portal session was not opened to look at Documents and Workbench.
+- An analysis run needs a signed-in desktop and a project Studio knows.
+  Offline, the panel names the document and says the window is not connected
+  to a Studio project.
 
 ## 0.3.0-beta.5
 

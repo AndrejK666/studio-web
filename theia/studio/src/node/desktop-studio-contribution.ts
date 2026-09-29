@@ -483,7 +483,9 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 await this.ready;
                 const config = this.config!;
                 if (!this.session) {
-                    res.status(503).json({ error: 'not signed in to Constructor Studio' });
+                    // `reason` is what the widgets tell a sign-in from an outage
+                    // by (browser/studio-api.ts `STUDIO_SIGNED_OUT`).
+                    res.status(503).json({ error: 'not signed in to Constructor Studio', reason: 'signed-out' });
                     return;
                 }
                 const target = `${config.studioUrl}${config.gatewayPrefix}${req.url}`;
