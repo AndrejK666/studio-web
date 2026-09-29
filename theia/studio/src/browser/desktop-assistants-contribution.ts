@@ -10,13 +10,22 @@
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
-import { CommandContribution, CommandRegistry, MessageService, Progress } from '@theia/core/lib/common';
+import { CommandContribution, CommandRegistry, CommandService, MessageService, Progress } from '@theia/core/lib/common';
 import {
     AssistantStatus, AssistantsStatus, DESKTOP_ASSISTANT_MESSAGE_COMMAND, assistantUnavailableMessage, progressLine
 } from '../common/desktop-assistants';
 import { desktopStatus, desktopUrl } from './desktop-studio-widget';
 
 const POLL_MS = 1000;
+
+/**
+ * What to run once an extension that arrived while the app runs is ready: a
+ * user that looked for it at start and found nothing has to look again. The
+ * gear catalogue asked for its engine then and said none is installed.
+ */
+export const ON_ARRIVAL: Readonly<Record<string, string>> = {
+    'constructorfabric.gearbox-engine': 'gearbox.catalogue.reload',
+};
 
 @injectable()
 export class DesktopAssistantsContribution implements FrontendApplicationContribution, CommandContribution {
@@ -25,6 +34,12 @@ export class DesktopAssistantsContribution implements FrontendApplicationContrib
 
     @inject(MessageService)
     protected readonly messages: MessageService;
+
+    @inject(CommandService)
+    protected readonly commands: CommandService;
+
+    /** Ids seen missing or on their way, so arriving is told apart from having been there. */
+    protected readonly pending = new Set<string>();
 
     protected last: AssistantsStatus | undefined;
     protected progress: Progress | undefined;
@@ -98,6 +113,14 @@ export class DesktopAssistantsContribution implements FrontendApplicationContrib
             this.progress?.cancel();
             this.progress = undefined;
             return;
+        }
+        for (const assistant of status.assistants) {
+            if (assistant.state !== 'ready' && assistant.state !== 'failed') {
+                this.pending.add(assistant.id);
+            } else if (assistant.state === 'ready' && this.pending.delete(assistant.id) && ON_ARRIVAL[assistant.id]) {
+                // A build without that command (no gearbox-studio) throws; nothing to redo then.
+                this.commands.executeCommand(ON_ARRIVAL[assistant.id]).catch(() => undefined);
+            }
         }
         const line = progressLine(status.assistants);
         if (line) {

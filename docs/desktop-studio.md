@@ -248,7 +248,7 @@ installed build is pointed somewhere else for a test.
 | `STUDIO_DESKTOP_WORKSPACES` | where opened workspaces are cloned; default `~/ConstructorStudio/workspaces` |
 | `STUDIO_DESKTOP_BROWSER` | a command to open the sign-in page with, instead of the system browser |
 | `STUDIO_DESKTOP_AUTO_SIGN_IN` | `1` starts the sign-in at launch |
-| `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else `gearbox` on `PATH` |
+| `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else the one the manifest has the app fetch (the gearbox engine extension), else `gearbox` on `PATH` |
 | `STUDIO_DESKTOP_ASSISTANTS` | the assistants' manifest; default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
 | `STUDIO_DESKTOP_PLUGINS` | where the assistants are unpacked; default `~/ConstructorStudio/plugins` |
 | `STUDIO_CORPUS_CACHE` | where the per-machine gear corpus copies are kept; default `~/ConstructorStudio/corpus` |
@@ -339,9 +339,10 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 - `--environments <file>` ships another list; `--studio-url <address>
   [--issuer <realm>]` ships exactly one Studio.
 - `--gearbox <path>` ships that `gearbox` executable as `resources/bin/gearbox.exe`,
-  the engine behind the gear catalogue, products and `.gdl`. Without it the
-  build still packages, and its catalogue says no engine is installed; a
-  developer's `theia start` needs `gearbox` on `PATH` or `GEARBOX_ENGINE`.
+  the engine behind the gear catalogue, products and `.gdl`. The workflow does
+  not pass it any more: the app fetches the engine instead (*The gearbox
+  engine* below). A developer's `theia start` needs `gearbox` on `PATH` or
+  `GEARBOX_ENGINE`.
 - The app is staged without `node_modules`: the Theia bundle in `lib/` is
   self-contained (its only external is `electron`), so the installer carries
   the bundle, `desktop-main.js`, the git credential helper, the built-in
@@ -352,9 +353,8 @@ npm --prefix theia/electron-app run package -- --default dev --version 0.1.0
 
 `.github/workflows/desktop-windows.yml` builds and packages on `windows-2022`,
 where the native modules compile, and uploads the installer and the zip as the
-run's artifact. It builds the `gearbox` engine too, from source, at the
-repository, revision and Rust that `theia/Dockerfile`'s `gearbox` stage pins for
-the session image — one pin for both — and caches the build per revision. It runs
+run's artifact. It no longer builds the `gearbox` engine; `gearbox-engine.yml`
+does, once per revision (*The gearbox engine* below). It runs
 for PRs changing `theia/electron-app/**` or the workflow, for matching pushes to
 `main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop — Windows build → Run workflow**).
 New commits cancel older PR/main builds; release tags and manual builds are not
@@ -376,6 +376,32 @@ extensions there. The code modes (Development, FULL) keep its tab on the rail
 (`MODE_TABS`, `studio-chrome-mode.ts`). Extensions the app ships or brings
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
+
+### The gearbox engine
+
+The `gearbox` executable behind the gear catalogue, products and `.gdl` is not
+in the installer either. It is the extension `constructorfabric.gearbox-engine`
+(`theia/gearbox-engine`): the executable at `extension/bin/gearbox.exe`, built
+from source at the repository, revision and Rust that `theia/Dockerfile`'s
+`gearbox` stage pins for the session image -- one pin for both.
+
+- `.github/workflows/gearbox-engine.yml` builds it on `windows-2022` and
+  publishes each version once, into a release `gearbox-engine-v<version>`. The
+  version is `theia/gearbox-engine/package.json`'s (raised when the packaging
+  changes) and the revision: `0.1.0-3b64969`. A new revision in the Dockerfile
+  is a new release. Nothing is built when the release exists.
+- `assistants-manifest.mjs --gearbox-engine` pins that asset's SHA-256 into the
+  installer's manifest, and the app fetches it like the CLI (a pinned entry,
+  unpacked into `~/ConstructorStudio/plugins/<id>-<version>/`, listed as
+  built-in in the Extensions view).
+- `desktop-main.js` points `GEARBOX_ENGINE` at the executable in that folder
+  even before the first fetch; gearbox-studio reads the path each time it starts
+  an engine. When the engine arrives, the window reloads the gear catalogue
+  (`gearbox.catalogue.reload`), which until then said no engine is installed.
+- A build that passes `--gearbox` still carries its own, and that one wins.
+
+The installer shrinks by the engine's size, and the desktop workflow no longer
+compiles Rust.
 
 ### Studio kits in the Extensions view
 
