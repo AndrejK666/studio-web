@@ -1,3 +1,10 @@
+/**
+ * The backend module runs in Node, and since #522 it loads @theia/plugin-ext's
+ * node side, whose types-impl uses TextEncoder at load time -- a Node global
+ * the default jsdom environment does not have.
+ *
+ * @jest-environment node
+ */
 import 'reflect-metadata';
 import * as path from 'path';
 import { StudioRuntimeEndpoint } from './studio-backend-module';

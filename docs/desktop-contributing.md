@@ -101,7 +101,10 @@ Electron or a Studio.
    Judge the run against `main`'s: on 2026-09-28 five suites fail there too
    (`orca-service`, `cfs-map-adapter`, `audit-controller`, `orca-live`,
    `portal-bridge-contribution`). Run the failing ones on `git archive HEAD` to
-   tell a regression from the baseline.
+   tell a regression from the baseline. `studio-mode-bar` also reads
+   `theia/gearbox-studio/src/browser/menus.ts`. The image carries its own copy,
+   which may be older, so copy that file in too, or the suite fails with
+   "gearbox-studio no longer exports GEARBOX_MENU_LABEL".
 
 2. **Exercise it against the local stack** (`docker compose up -d`) as both kinds
    of member — they take different paths through rule 3:
