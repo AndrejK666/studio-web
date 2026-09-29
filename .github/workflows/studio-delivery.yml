@@ -64,7 +64,13 @@ permissions:
 concurrency:
   # Deployments serialize independently per target environment. A dev deploy
   # must never cancel an explicit test deploy (or the other way around).
-  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.environment || (github.ref == 'refs/heads/main' && github.sha || github.ref) }}
+  #
+  # Pushes to one branch share a group, main included: a newer merge cancels
+  # the unfinished run of the one before. Nothing is lost by that, because the
+  # component diff of a main push starts from the commit `edge` was last built
+  # from (`delivery/edge`, see test-changes), not from the previous commit --
+  # so the run that survives builds everything the cancelled ones would have.
+  group: studio-delivery-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.operation || 'continuous' }}-${{ (github.event.inputs.operation == 'Deploy existing images' || github.event.inputs.operation == 'Build, publish and deploy') && github.event.inputs.environment || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.operation != 'Deploy existing images' && github.event.inputs.operation != 'Build, publish and deploy') }}
 
 env:
@@ -100,12 +106,33 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: echo "sha=$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"
+      # A main push diffs against the commit the current `edge` images were
+      # built from, which build-service-images records as `delivery/edge`
+      # when it moves `edge`. Against the previous commit instead, a merge
+      # whose run was superseded would have its changes skipped by the next
+      # run and its images copied from an `edge` that never had them. With no
+      # such tag yet, or one that is not an ancestor (a force-push), the
+      # filter falls back to its default, the push's `before`.
+      - name: Select the last delivered commit
+        id: delivered-base
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sha=$(git rev-parse -q --verify "refs/tags/delivery/edge^{commit}") \
+            && git merge-base --is-ancestor "$sha" HEAD; then
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "Diffing against the last delivered commit ${sha:0:12}"
+          else
+            echo "No usable delivery/edge tag; diffing against the push's before"
+          fi
       - uses: dorny/paths-filter@v4
         id: filter
         with:
           # A dispatch from main with source_ref=<old SHA> must inspect that
-          # commit, not everything between the old SHA and today's main.
-          base: ${{ steps.manual-base.outputs.sha }}
+          # commit, not everything between the old SHA and today's main. A
+          # main push starts from the last delivered commit (above).
+          base: ${{ steps.manual-base.outputs.sha || steps.delivered-base.outputs.sha }}
           ref: ${{ github.event.inputs.source_ref || github.ref }}
           # The backend filter has multiple includes and one exclusion. With
           # the default "some", the negated glob matches unrelated Theia files.
@@ -747,7 +774,8 @@ jobs:
       immutable: ${{ steps.tags.outputs.immutable }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write: `Record the delivered commit` moves the delivery/edge tag.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -956,6 +984,21 @@ jobs:
                 "$IMAGE_PREFIX/$image:$immutable"
             done
           done
+
+      # The commit `edge` now holds, as the base of the next main push's
+      # component diff (test-changes). A failure here only makes that diff
+      # start further back -- more is rebuilt, nothing is skipped -- so it
+      # warns rather than failing a run whose images are already published.
+      # A tag pushed with GITHUB_TOKEN does not trigger workflows.
+      - name: Record the delivered commit
+        if: contains(steps.tags.outputs.promotions, 'edge')
+        run: |
+          set -euo pipefail
+          if git push --force origin "$SOURCE_SHA:refs/tags/delivery/edge"; then
+            echo "delivery/edge -> $SOURCE_SHA"
+          else
+            echo "::warning::could not move delivery/edge to $SOURCE_SHA; the next main build diffs from further back"
+          fi
       - name: Summary
         run: |
           {
