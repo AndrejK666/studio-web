@@ -23,6 +23,7 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
+import { MAIN_MENU_BAR, MenuModelRegistry } from '@theia/core/lib/common/menu';
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 
 /** The Gearbox perspective's id, owned by `gearbox-studio`. Named here rather
@@ -267,6 +268,31 @@ function modeFor(perspectiveId: string | undefined): Mode {
 export function keepsMenu(perspectiveId: string | undefined, label: string): boolean {
     const allowed = modeFor(perspectiveId).menus;
     return allowed.includes('*') || allowed.includes(label);
+}
+
+/** A top-level menu as `emptyMenus` reads it: the part of Theia's menu node it needs. */
+export interface TopMenuNode {
+    readonly id: string;
+    readonly label?: string;
+    readonly children?: readonly unknown[];
+    isEmpty?(path: string[], matcher: unknown, context: undefined): boolean;
+}
+
+/**
+ * The labels of the top-level menus with nothing to show now: every entry's
+ * `when` is false. Theia's menu bar draws such a menu anyway, and opening it
+ * shows an empty box -- the Gearbox menu with no product open, whose entries
+ * all wait for `gearbox.context == 'product'`.
+ */
+export function emptyMenus(menus: readonly TopMenuNode[], matcher: unknown): Set<string> {
+    const empty = new Set<string>();
+    for (const menu of menus) {
+        if (menu.label && Array.isArray(menu.children) && typeof menu.isEmpty === 'function'
+            && menu.isEmpty([...MAIN_MENU_BAR, menu.id], matcher, undefined)) {
+            empty.add(menu.label);
+        }
+    }
+    return empty;
 }
 
 /** What both halves of the header share: the active mode, kept current. */
@@ -625,6 +651,12 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
     @inject(PerspectiveService) @optional()
     protected readonly perspectives: PerspectiveService | undefined;
 
+    @inject(MenuModelRegistry) @optional()
+    protected readonly menus: MenuModelRegistry | undefined;
+
+    @inject(ContextKeyService) @optional()
+    protected readonly contextKeys: ContextKeyService | undefined;
+
     protected readonly toDispose = new DisposableCollection();
     protected shell: FrontendApplication['shell'] | undefined;
 
@@ -680,6 +712,11 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
         if (this.perspectives) {
             this.toDispose.push(this.perspectives.onDidChangePerspective(schedule));
         }
+        // A menu empties or fills as its entries' `when` changes: Gearbox's
+        // when a product opens or closes.
+        if (this.contextKeys) {
+            this.toDispose.push(this.contextKeys.onDidChange(schedule));
+        }
         schedule();
     }
 
@@ -703,9 +740,12 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
 
     protected pruneMenus(): void {
         const perspective = this.perspectives?.getActivePerspectiveId();
+        const empty = this.menus && this.contextKeys
+            ? emptyMenus((this.menus.getMenu(MAIN_MENU_BAR)?.children ?? []) as unknown as TopMenuNode[], this.contextKeys)
+            : new Set<string>();
         document.querySelectorAll<HTMLElement>('#theia-top-panel .lm-MenuBar-item').forEach((item) => {
             const label = item.querySelector('.lm-MenuBar-itemLabel')?.textContent?.trim() ?? '';
-            const display = keepsMenu(perspective, label) ? '' : 'none';
+            const display = keepsMenu(perspective, label) && !empty.has(label) ? '' : 'none';
             if (item.style.display !== display) {
                 item.style.display = display;
             }
