@@ -33,6 +33,13 @@ const SAFE_GIT_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/u;
 
 export const KitInstaller = Symbol('KitInstaller');
 
+/** Where a kit goes: a checkout, and the id and label it is reported under. */
+export interface KitTargetRepository {
+    readonly repositoryId: string;
+    readonly label: string;
+    readonly canonicalRoot: string;
+}
+
 interface CommandResult {
     readonly stdout: string;
     readonly stderr: string;
@@ -46,22 +53,30 @@ export class KitInstallerImpl {
         request: StudioKitInstallRequest,
         repositories: RepositoryRegistry
     ): Promise<StudioKitInstallResult> {
-        const official = OFFICIAL_KITS[request.kitSlug];
-        if (!official) {
-            throw new Error(`Kit is not allow-listed: ${request.kitSlug}`);
-        }
-        const version = request.version.trim();
-        if (!isSafeGitRef(version)) {
-            throw new Error('Kit version is not a safe Git ref');
-        }
-        const repository = request.repositoryId
+        // Checked before the registry is asked, so a bad request never looks
+        // up (or fails on) a repository.
+        checkRequest(request);
+        const registered = request.repositoryId
             ? repositories.requireRepository(request.repositoryId)
             : requireDefaultRepository(repositories);
-        if (this.activeRepositories.has(repository.descriptor.repositoryId)) {
-            throw new Error(`A kit operation is already running for ${repository.descriptor.label}`);
+        return this.installInto(request, {
+            repositoryId: registered.descriptor.repositoryId,
+            label: registered.descriptor.label,
+            canonicalRoot: registered.canonicalRoot,
+        });
+    }
+
+    /**
+     * The same install into one checkout named directly: a desktop's opened
+     * project, which the repository registry does not hold.
+     */
+    async installInto(request: StudioKitInstallRequest, repository: KitTargetRepository): Promise<StudioKitInstallResult> {
+        const { official, version } = checkRequest(request);
+        if (this.activeRepositories.has(repository.repositoryId)) {
+            throw new Error(`A kit operation is already running for ${repository.label}`);
         }
 
-        this.activeRepositories.add(repository.descriptor.repositoryId);
+        this.activeRepositories.add(repository.repositoryId);
         try {
             // One command for the whole operation, so init, install and
             // generation run the same cfs.
@@ -87,12 +102,12 @@ export class KitInstallerImpl {
             return {
                 kitSlug: request.kitSlug,
                 version,
-                repositoryId: repository.descriptor.repositoryId,
-                repositoryLabel: repository.descriptor.label,
+                repositoryId: repository.repositoryId,
+                repositoryLabel: repository.label,
                 output: joinOutput(...(initialized ? [initialized] : []), installed, generated)
             };
         } finally {
-            this.activeRepositories.delete(repository.descriptor.repositoryId);
+            this.activeRepositories.delete(repository.repositoryId);
         }
     }
 
@@ -210,6 +225,19 @@ function failureDetail(error: Error, stdout: string, stderr: string): string {
  */
 function lastLines(text: string, limit = 800): string {
     return text.length <= limit ? text : `...${text.slice(-limit)}`;
+}
+
+/** The allow-listed kit and a safe Git ref, or the reason there is none. */
+function checkRequest(request: StudioKitInstallRequest): { official: OfficialKit; version: string } {
+    const official = OFFICIAL_KITS[request.kitSlug];
+    if (!official) {
+        throw new Error(`Kit is not allow-listed: ${request.kitSlug}`);
+    }
+    const version = request.version.trim();
+    if (!isSafeGitRef(version)) {
+        throw new Error('Kit version is not a safe Git ref');
+    }
+    return { official, version };
 }
 
 function isSafeGitRef(value: string): boolean {

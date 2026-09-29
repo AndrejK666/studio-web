@@ -29,6 +29,8 @@ is authorized through account-management, the same way
 | `GET`/`POST /projects/{id}/installations` | what the project wants installed |
 | `DELETE /projects/{id}/installations/{kit_slug}` | stop wanting one |
 | `GET /projects/{id}/repositories` | the repositories a kit would be materialized into |
+| `POST /projects/{id}/installations/{kit_slug}/materialize` | install it through the project's running session |
+| `POST /projects/{id}/installations/{kit_slug}/materializations` | record an install a desktop ran itself (the backend cannot call a desktop) |
 
 ## In the assembly
 

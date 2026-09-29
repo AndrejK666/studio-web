@@ -134,6 +134,18 @@ pub struct MaterializeKitInstallationDto {
     pub repository_id: Option<String>,
 }
 
+/// How an install the IDE ran itself went: a desktop, which the backend
+/// cannot call (ADR-0027), installs into its own checkout and reports here.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReportKitMaterializationDto {
+    pub repository_id: String,
+    pub repository_label: Option<String>,
+    /// "installed" or "failed".
+    pub status: String,
+    pub failure_reason: Option<String>,
+}
+
 impl From<KitDescriptor> for KitDto {
     fn from(value: KitDescriptor) -> Self {
         Self {
@@ -303,6 +315,48 @@ async fn materialize_installation(
     Ok(Json(value.into()))
 }
 
+async fn report_materialization(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<KitRegistryService>>,
+    Path((project_id, kit_slug)): Path<(Uuid, String)>,
+    Json(body): Json<ReportKitMaterializationDto>,
+) -> ApiResult<JsonBody<KitInstallationDto>> {
+    let failure = match body.status.as_str() {
+        "installed" => None,
+        "failed" => Some(
+            body.failure_reason
+                .filter(|reason| !reason.trim().is_empty())
+                .unwrap_or_else(|| "the IDE reported a failure without a reason".to_owned()),
+        ),
+        _ => {
+            return Err(KitRegistryError::invalid_argument()
+                .with_constraint("status must be \"installed\" or \"failed\"")
+                .create());
+        }
+    };
+    let value = service
+        .report_materialization(
+            &ctx,
+            project_id,
+            &kit_slug,
+            &body.repository_id,
+            body.repository_label,
+            failure,
+        )
+        .await
+        .map_err(|error| {
+            KitRegistryError::invalid_argument()
+                .with_constraint(error.to_string())
+                .create()
+        })?
+        .ok_or_else(|| {
+            KitRegistryError::not_found("the project has not requested this kit")
+                .with_resource(kit_slug.clone())
+                .create()
+        })?;
+    Ok(Json(value.into()))
+}
+
 async fn reconcile_installation(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
@@ -400,6 +454,27 @@ pub fn register_routes(
     .json_response_with_schema::<KitInstallationDto>(openapi, StatusCode::OK, "Materialized installation")
     .error_401(openapi)
     .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::post(
+        "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations",
+    )
+    .operation_id("studio_kits.create_materialization")
+    .summary("Record how an install the IDE ran itself went")
+    .description("For an IDE the backend cannot call -- a desktop -- which installs the requested kit into its own checkout with its own cfs. Updates the installation and its repository row exactly as a materialize through a session would.")
+    .tag("StudioKits")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("project_id", "Project tenant id")
+    .path_param("kit_slug", "Registered kit slug")
+    .json_request::<ReportKitMaterializationDto>(openapi, "The repository and the outcome")
+    .handler(report_materialization)
+    .json_response_with_schema::<KitInstallationDto>(openapi, StatusCode::OK, "Updated installation")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
     .error_500(openapi)
     .register(router, openapi);
 

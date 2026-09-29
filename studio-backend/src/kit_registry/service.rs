@@ -326,54 +326,78 @@ impl KitRegistryService {
 
         match outcome {
             Ok(result) => {
-                let materialized_at = now_rfc3339()?;
-                let version = installations[index].version.clone();
-                installations[index].status = "installed".to_owned();
-                installations[index].installed_at = Some(materialized_at.clone());
-                installations[index].failure_reason = None;
-                upsert_materialization(
-                    &mut installations[index].materializations,
-                    KitMaterialization {
-                        repository_id: result.repository_id,
+                record_outcome(
+                    &mut installations[index],
+                    MaterializationOutcome {
+                        repository_id: Some(result.repository_id),
                         repository_label: Some(result.repository_label),
-                        version,
-                        status: "installed".to_owned(),
-                        materialized_at,
-                        failure_reason: None,
+                        failure: None,
                     },
+                    now_rfc3339()?,
                 );
                 self.write_installations(ctx, project_id, installations.clone())
                     .await?;
                 Ok(installations.remove(index))
             }
             Err(error) => {
-                let detail: String = error.to_string().chars().take(2_000).collect();
-                installations[index].status = "failed".to_owned();
-                installations[index].failure_reason = Some(detail.clone());
                 // Recorded per repository only when the caller named one. With
                 // no target the node chose for us, and the error may well be
                 // that it could not choose -- attributing the failure to a
                 // guessed repository would put a red row on the wrong one.
-                if let Some(repository_id) = target_repository_id {
-                    let version = installations[index].version.clone();
-                    let materialized_at = now_rfc3339()?;
-                    upsert_materialization(
-                        &mut installations[index].materializations,
-                        KitMaterialization {
-                            repository_id,
-                            repository_label: None,
-                            version,
-                            status: "failed".to_owned(),
-                            materialized_at,
-                            failure_reason: Some(detail),
-                        },
-                    );
-                }
+                record_outcome(
+                    &mut installations[index],
+                    MaterializationOutcome {
+                        repository_id: target_repository_id,
+                        repository_label: None,
+                        failure: Some(error.to_string()),
+                    },
+                    now_rfc3339()?,
+                );
                 self.write_installations(ctx, project_id, installations)
                     .await?;
                 Err(error)
             }
         }
+    }
+
+    /// Record an install that ran somewhere the backend cannot call: a
+    /// desktop IDE (ADR-0027), which installs the kit into its own checkout
+    /// with its own `cfs` and says how it went. The row changes exactly as a
+    /// materialize through a session's bridge would change it. `None` when
+    /// the project never requested the kit: there is no row to record against.
+    pub async fn report_materialization(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        kit_slug: &str,
+        repository_id: &str,
+        repository_label: Option<String>,
+        failure: Option<String>,
+    ) -> Result<Option<KitInstallation>> {
+        let kit_slug = normalize_slug(kit_slug)?;
+        let repository_id = normalize_reported_label(repository_id, "repository_id")?;
+        let repository_label = repository_label
+            .map(|label| normalize_reported_label(&label, "repository_label"))
+            .transpose()?;
+        let mut installations = self.list_installations(ctx, project_id).await?;
+        let Some(index) = installations
+            .iter()
+            .position(|entry| entry.kit_slug == kit_slug)
+        else {
+            return Ok(None);
+        };
+        record_outcome(
+            &mut installations[index],
+            MaterializationOutcome {
+                repository_id: Some(repository_id),
+                repository_label,
+                failure,
+            },
+            now_rfc3339()?,
+        );
+        self.write_installations(ctx, project_id, installations.clone())
+            .await?;
+        Ok(Some(installations.remove(index)))
     }
 
     /// Bring every repository this installation is meant to cover up to the
@@ -609,6 +633,69 @@ fn upsert_materialization(
     }
 }
 
+/// What one install into one repository came to, whoever ran it.
+struct MaterializationOutcome {
+    /// None when the runner chose the repository and failed before saying which.
+    repository_id: Option<String>,
+    repository_label: Option<String>,
+    /// None for success; otherwise what went wrong, as the runner put it.
+    failure: Option<String>,
+}
+
+/// Apply an outcome to its installation: the installation's status, and the
+/// row of the repository it landed in (or failed in, when that is known).
+fn record_outcome(installation: &mut KitInstallation, outcome: MaterializationOutcome, at: String) {
+    let version = installation.version.clone();
+    match outcome.failure {
+        None => {
+            installation.status = "installed".to_owned();
+            installation.installed_at = Some(at.clone());
+            installation.failure_reason = None;
+            if let Some(repository_id) = outcome.repository_id {
+                upsert_materialization(
+                    &mut installation.materializations,
+                    KitMaterialization {
+                        repository_id,
+                        repository_label: outcome.repository_label,
+                        version,
+                        status: "installed".to_owned(),
+                        materialized_at: at,
+                        failure_reason: None,
+                    },
+                );
+            }
+        }
+        Some(failure) => {
+            let detail: String = failure.chars().take(2_000).collect();
+            installation.status = "failed".to_owned();
+            installation.failure_reason = Some(detail.clone());
+            if let Some(repository_id) = outcome.repository_id {
+                upsert_materialization(
+                    &mut installation.materializations,
+                    KitMaterialization {
+                        repository_id,
+                        repository_label: outcome.repository_label,
+                        version,
+                        status: "failed".to_owned(),
+                        materialized_at: at,
+                        failure_reason: Some(detail),
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// A repository id or label a desktop reports: stored and shown, never run,
+/// but still bounded and free of control characters.
+fn normalize_reported_label(value: &str, field: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 200 || value.chars().any(char::is_control) {
+        bail!("{field} must be 1..=200 printable characters");
+    }
+    Ok(value.to_owned())
+}
+
 /// Bring a stored installation up to the current shape.
 ///
 /// Before materializations were a list, a successful install wrote its target
@@ -646,9 +733,10 @@ fn upgrade_installation(mut installation: KitInstallation) -> KitInstallation {
 #[cfg(test)]
 mod tests {
     use super::{
-        KitInstallation, KitMaterialization, ProjectRepository, SCOPE_ALL_REPOSITORIES,
-        SCOPE_PROJECT, normalize_install_mode, normalize_scope, normalize_slug, normalize_version,
-        official_catalogue, reconciliation_targets, upgrade_installation, upsert_materialization,
+        KitInstallation, KitMaterialization, MaterializationOutcome, ProjectRepository,
+        SCOPE_ALL_REPOSITORIES, SCOPE_PROJECT, normalize_install_mode, normalize_reported_label,
+        normalize_scope, normalize_slug, normalize_version, official_catalogue,
+        reconciliation_targets, record_outcome, upgrade_installation, upsert_materialization,
     };
 
     #[test]
@@ -861,6 +949,98 @@ mod tests {
                 git_mode: None,
             },
         ]
+    }
+
+    #[test]
+    fn a_reported_install_marks_the_installation_and_its_repository() {
+        let mut kit = installation(
+            SCOPE_PROJECT,
+            "v1.2.3",
+            vec![row("repo-a", "v1.0.0", "installed")],
+        );
+        kit.status = "pending".to_owned();
+        kit.failure_reason = Some("an earlier failure".to_owned());
+
+        record_outcome(
+            &mut kit,
+            MaterializationOutcome {
+                repository_id: Some("repo-a".to_owned()),
+                repository_label: Some("app".to_owned()),
+                failure: None,
+            },
+            "2026-09-29T12:00:00Z".to_owned(),
+        );
+
+        assert_eq!(kit.status, "installed");
+        assert_eq!(kit.installed_at.as_deref(), Some("2026-09-29T12:00:00Z"));
+        assert_eq!(kit.failure_reason, None);
+        assert_eq!(
+            kit.materializations.len(),
+            1,
+            "the row is updated, not appended"
+        );
+        let landed = &kit.materializations[0];
+        assert_eq!(
+            (landed.version.as_str(), landed.status.as_str()),
+            ("v1.2.3", "installed")
+        );
+        assert_eq!(landed.repository_label.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn a_reported_failure_is_kept_bounded_on_the_installation_and_its_repository() {
+        let mut kit = installation(SCOPE_PROJECT, "main", Vec::new());
+
+        record_outcome(
+            &mut kit,
+            MaterializationOutcome {
+                repository_id: Some("repo-a".to_owned()),
+                repository_label: None,
+                failure: Some("x".repeat(5_000)),
+            },
+            "2026-09-29T12:00:00Z".to_owned(),
+        );
+
+        assert_eq!(kit.status, "failed");
+        assert_eq!(kit.failure_reason.as_ref().map(String::len), Some(2_000));
+        assert_eq!(kit.materializations[0].status, "failed");
+        assert_eq!(kit.materializations[0].failure_reason, kit.failure_reason);
+    }
+
+    #[test]
+    fn a_failure_with_no_known_repository_marks_no_repository() {
+        let mut kit = installation(SCOPE_PROJECT, "main", Vec::new());
+
+        record_outcome(
+            &mut kit,
+            MaterializationOutcome {
+                repository_id: None,
+                repository_label: None,
+                failure: Some("no project repository".to_owned()),
+            },
+            "2026-09-29T12:00:00Z".to_owned(),
+        );
+
+        assert_eq!(kit.status, "failed");
+        assert!(kit.materializations.is_empty());
+    }
+
+    #[test]
+    fn a_reported_repository_is_bounded_and_printable() {
+        assert_eq!(
+            normalize_reported_label(" repo-a ", "repository_id").unwrap(),
+            "repo-a"
+        );
+        assert!(normalize_reported_label("", "repository_id").is_err());
+        assert!(
+            normalize_reported_label(
+                "a
+b",
+                "repository_id"
+            )
+            .is_err()
+        );
+        assert!(normalize_reported_label(&"a".repeat(201), "repository_id").is_err());
     }
 
     fn installation(

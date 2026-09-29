@@ -227,7 +227,7 @@ export class RepositoryRegistry implements Disposable {
             registration.commonDirectory,
             canonicalGitDirectory
         );
-        const repositoryId = hashIdentity(`${canonicalRoot}\0${canonicalCommonDirectory}`);
+        const repositoryId = repositoryIdentity(canonicalRoot, canonicalCommonDirectory);
         const fingerprint = hashIdentity(canonicalCommonDirectory);
         const workspaceRelativeRoot = toWorkspaceRelativePath(workspaceRoot, canonicalRoot);
 
@@ -272,6 +272,16 @@ export class RepositoryRegistry implements Disposable {
 
 async function canonicalizeOptionalPath(candidate: string | undefined, fallback: string): Promise<string> {
     return candidate ? fs.realpath(candidate) : fallback;
+}
+
+/**
+ * A repository's id: its working tree and its Git common directory, both
+ * canonical. Exported for a caller that names a repository the registry has
+ * not registered -- a desktop's opened project, which the backend then records
+ * under this id exactly as it would a session's.
+ */
+export function repositoryIdentity(canonicalRoot: string, canonicalCommonDirectory: string): string {
+    return hashIdentity(`${canonicalRoot}\0${canonicalCommonDirectory}`);
 }
 
 function hashIdentity(value: string): string {
