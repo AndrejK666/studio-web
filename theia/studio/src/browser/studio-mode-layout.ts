@@ -200,6 +200,13 @@ export class StudioModeLayout implements FrontendApplicationContribution {
         for (const area of ['left', 'right'] as const) {
             for (const widget of this.shell.getWidgets(area)) {
                 if (foreign.has(widget.id)) {
+                    // A side tab bar selects the previous tab when its current
+                    // one goes, which would bring forward whatever sat beside it
+                    // (an assistant, say) with nobody having asked. Fold the
+                    // panel first, so it simply closes.
+                    if (this.shell.getCurrentWidget(area) === widget) {
+                        await this.shell.collapsePanel(area);
+                    }
                     // As Theia's own detachStrayWidgets: out of this layout, not
                     // disposed — the mode that declares it restores it.
                     // eslint-disable-next-line no-null/no-null
