@@ -9,6 +9,21 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Unreleased
+
+### Doc editing and modes
+
+- **The code modes see the code.** Development, Full functionality, Agent
+  development and Building open the Explorer on every file, `src/` included,
+  under file names; Doc editing keeps its list of documents titled by their
+  H1. The Explorer's toggle is remembered per mode, so choosing the document
+  list in Development leaves the other modes as they were. The portal session
+  behaves the same way: its Workbench is the same Development mode.
+- **The status bar is back in the code modes.** The branch with its dirty and
+  sync state, the Problems count, the notification bell, progress, the
+  bottom-panel toggle, the cursor position and a lost-connection warning show
+  beside Studio's own fields. Doc editing keeps the quiet line.
+
 ## 0.3.0-beta.5
 
 Everything merged since `desktop-v0.3.0-beta.4`. The installer is Windows
