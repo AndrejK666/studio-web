@@ -1802,7 +1802,7 @@ function ActivityPanel({
                 PR abandoned without merging often has no file record at all — dependable for what
                 shipped, indicative for what did not.
               </p>
-              <PullRequestTiles prs={activity.pull_requests} />
+              <PullRequestTiles prs={activity.pull_requests} previous={activity.pull_requests_previous} />
             </>
           )}
         </>

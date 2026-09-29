@@ -72,7 +72,7 @@ export function useGearActivity(token: string, days: number): ActivityIndex {
     let live = true;
     setState((cur) => ({ ...cur, status: "loading" }));
     api
-      .gearActivity(token, days)
+      .gearActivity(token, days, true)
       .then((page) => {
         if (!live) return;
         setState({
@@ -241,15 +241,18 @@ export function MiniChurn({ points }: { points: GearActivity["points"] }) {
  * the categorical palette to say what four labelled numbers already say, and it
  * would collide with the blue/red the churn chart above uses for a different
  * meaning. The number is the chart. */
-export function PullRequestTiles({ prs }: { prs: GearPullRequests }) {
+export function PullRequestTiles({ prs, previous }: { prs: GearPullRequests; previous?: GearPullRequests | null }) {
   const hours = prs.merged_cycle_hours;
-  const cycle =
-    hours === null ? "—" : hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours.toFixed(1)}h`;
-  const tiles = [
-    { label: "Open", value: compact(prs.open) },
-    { label: "Merged", value: compact(prs.merged) },
-    { label: "Closed", value: compact(prs.closed) },
-    { label: "Merge time", value: cycle, note: hours === null ? "nothing merged" : "mean, opened → merged" },
+  const tiles: { label: string; value: string; note?: string; trend?: Trend }[] = [
+    { label: "Open", value: compact(prs.open), trend: countTrend(prs.open, previous?.open) },
+    { label: "Merged", value: compact(prs.merged), trend: countTrend(prs.merged, previous?.merged) },
+    { label: "Closed", value: compact(prs.closed), trend: countTrend(prs.closed, previous?.closed) },
+    {
+      label: "Merge time",
+      value: cycleText(hours),
+      note: hours === null ? "nothing merged" : "mean, opened → merged",
+      trend: mergeTimeTrend(hours, previous?.merged_cycle_hours),
+    },
   ];
   return (
     <div className="act-tiles">
@@ -258,10 +261,55 @@ export function PullRequestTiles({ prs }: { prs: GearPullRequests }) {
           <span className="act-label">{t.label}</span>
           <span className="act-value">{t.value}</span>
           {t.note && <span className="act-sub">{t.note}</span>}
+          {t.trend && (
+            <span className={`act-trend act-trend-${t.trend.tone}`} title={t.trend.title}>
+              {t.trend.text}
+            </span>
+          )}
         </div>
       ))}
     </div>
   );
+}
+
+function cycleText(hours: number | null | undefined): string {
+  if (hours === null || hours === undefined) return "—";
+  return hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours.toFixed(1)}h`;
+}
+
+/** How one tile compares with the window before: the text, and whether it is better. */
+export interface Trend {
+  text: string;
+  /** better / worse only where the direction means that; a count is neither. */
+  tone: "better" | "worse" | "same" | "neutral";
+  title: string;
+}
+
+/** A count: up or down by how many, judged neither way — more PRs is not better in itself. */
+export function countTrend(now: number, before: number | undefined): Trend | undefined {
+  if (before === undefined) return undefined;
+  const diff = now - before;
+  if (diff === 0) return { text: "= previous", tone: "same", title: `${before} in the previous window too` };
+  return {
+    text: `${diff > 0 ? "▲" : "▼"} ${compact(Math.abs(diff))} vs previous`,
+    tone: "neutral",
+    title: `${before} in the previous window`,
+  };
+}
+
+/** Merge time: shorter is better. Nothing merged in either window says nothing. */
+export function mergeTimeTrend(now: number | null, before: number | null | undefined): Trend | undefined {
+  if (now === null || before === null || before === undefined) return undefined;
+  const diff = now - before;
+  // Under an hour, or under 5 %, is the same wait read twice.
+  if (Math.abs(diff) < 1 || Math.abs(diff) < before * 0.05) {
+    return { text: "= previous", tone: "same", title: `${cycleText(before)} in the previous window` };
+  }
+  return {
+    text: `${diff < 0 ? "Better" : "Worse"} ${diff < 0 ? "−" : "+"}${cycleText(Math.abs(diff))}`,
+    tone: diff < 0 ? "better" : "worse",
+    title: `${cycleText(before)} in the previous window`,
+  };
 }
 
 /** The five numbers, as stat tiles. */
@@ -327,6 +375,12 @@ export const ACTIVITY_CSS = `
   border-radius:var(--radius-md); padding:8px 10px; display:flex; flex-direction:column; gap:2px; }
 .gcat .act-label { font-size:10.5px; color:var(--studio-muted); }
 .gcat .act-sub { font-size:10px; color:var(--studio-muted); }
+/* "vs previous": a count is neither better nor worse, so it stays muted; only
+ * merge time, where shorter is better, is coloured -- and it always says so in
+ * words too, so the colour is never the only signal. */
+.gcat .act-trend { font-size:10px; font-weight:600; color:var(--studio-muted); }
+.gcat .act-trend-better { color:var(--studio-verified); }
+.gcat .act-trend-worse { color:var(--studio-danger); }
 .gcat .act-value { font-size:17px; font-weight:600; letter-spacing:-.01em; }
 .gcat .ink-added { color:var(--act-added); }
 .gcat .ink-removed { color:var(--act-removed); }

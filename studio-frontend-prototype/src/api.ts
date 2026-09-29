@@ -304,6 +304,9 @@ export interface GearActivity {
   authors: number;
   /** Null when no pull request in the window touched this gear — not zeros. */
   pull_requests?: GearPullRequests | null;
+  /** The same totals over the window of the same length just before, when
+   *  asked with `compare`; what the tiles' "vs previous" is measured against. */
+  pull_requests_previous?: GearPullRequests | null;
   /** Ascending by date, gaps filled with zeros. */
   points: ActivityPoint[];
 }
@@ -3187,7 +3190,7 @@ export const api = {
    *  crate's directory, resolving the collisions, joining the two answers back
    *  together. All of that used to live in `gear-activity.tsx`, which is why
    *  this screen used to pull the whole catalogue into the browser first. */
-  gearActivity: (token: string, days: number) =>
+  gearActivity: (token: string, days: number, compare = false) =>
     request<{
       items: GearActivity[];
       total: number;
@@ -3198,7 +3201,7 @@ export const api = {
         truncated: boolean;
         repositories: string[];
       };
-    }>(`/studio-components-catalog/v1/activity?days=${days}`, token),
+    }>(`/studio-components-catalog/v1/activity?days=${days}${compare ? "&compare=previous" : ""}`, token),
 
   /** What each component's fields say, with its three sources reconciled.
    *

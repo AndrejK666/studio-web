@@ -230,6 +230,38 @@ pub fn days_ago(days: u32) -> String {
     format_day(today - i64::from(days.saturating_sub(1)))
 }
 
+/// The window of the same length just before the last `days`: `(from, to)`,
+/// both inclusive. The last 30 days are today and the 29 before it, so the
+/// previous 30 end the day before those began.
+#[must_use]
+pub fn previous_window(days: u32) -> (String, String) {
+    (
+        days_ago(days.saturating_mul(2)),
+        days_ago(days.saturating_add(1)),
+    )
+}
+
+/// Pull request totals by gear, from every repository's page. A gear lives in
+/// one repository; should two pages name it, the later answer stands, as in
+/// `index_of`.
+#[must_use]
+pub fn pull_requests_by_gear(
+    pr_pages: &[crate::insight::port::PullRequestPage],
+) -> (
+    std::collections::HashMap<String, crate::insight::port::PullRequestTotals>,
+    bool,
+) {
+    let mut by_gear = std::collections::HashMap::new();
+    let mut truncated = false;
+    for page in pr_pages {
+        truncated = truncated || page.truncated;
+        for row in &page.totals {
+            by_gear.insert(row.component.clone(), row.clone());
+        }
+    }
+    (by_gear, truncated)
+}
+
 /// One gear's numbers over the window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GearActivity {
@@ -383,6 +415,46 @@ fn days_in_month(year: i64, month: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_previous_window_is_as_long_and_ends_the_day_before_the_current_one_starts() {
+        let (from, to) = previous_window(30);
+        let current_from = parse_day(&days_ago(30)).unwrap();
+        assert_eq!(parse_day(&to).unwrap(), current_from - 1);
+        assert_eq!(parse_day(&to).unwrap() - parse_day(&from).unwrap() + 1, 30);
+        let (one_from, one_to) = previous_window(1);
+        assert_eq!(one_from, one_to, "the previous day alone");
+    }
+
+    #[test]
+    fn previous_pull_requests_are_indexed_by_gear_across_repositories() {
+        let row = |component: &str, merged: u64| crate::insight::port::PullRequestTotals {
+            component: component.to_owned(),
+            open: 0,
+            merged,
+            closed: 0,
+            total: merged,
+            merged_cycle_hours: Some(12.0),
+            authors: 1,
+        };
+        let pages = vec![
+            crate::insight::port::PullRequestPage {
+                truncated: false,
+                totals: vec![row("file-parser", 3)],
+            },
+            crate::insight::port::PullRequestPage {
+                truncated: true,
+                totals: vec![row("llm-gateway", 5)],
+            },
+        ];
+
+        let (by_gear, truncated) = pull_requests_by_gear(&pages);
+
+        assert_eq!(by_gear["file-parser"].merged, 3);
+        assert_eq!(by_gear["llm-gateway"].merged, 5);
+        assert!(truncated);
+        assert!(!by_gear.contains_key("content-policy"));
+    }
     use crate::insight::port::{DeliveryPage, DeliveryPoint, DeliveryTotals};
     use serde_json::json;
 
