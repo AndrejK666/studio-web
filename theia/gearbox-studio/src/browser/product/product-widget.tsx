@@ -49,7 +49,24 @@ import {
   ProductSessionService,
   type OpeningState,
 } from "../shell/product-session-service";
-import { ADD_GEAR, NEW_GEAR, NEW_PRODUCT, SHOW_CONFLICTS, SHOW_GENERATE } from "../shell/session-command-ids";
+import {
+  ADD_GEAR,
+  CLOSE_PRODUCT,
+  NEW_GEAR,
+  NEW_PRODUCT,
+  OPEN_PRODUCT,
+  SHOW_CONFLICTS,
+  SHOW_GENERATE,
+} from "../shell/session-command-ids";
+import { EngineConnectionService } from "../shell/engine-connection-service";
+import type { RecentEntry } from "../shell/product-session-service";
+import { ProductEmptyState, emptyStateLists } from "./product-empty-state";
+import {
+  ProductStatusStrip,
+  draftStateOf,
+  productStatusOf,
+  type StripAction,
+} from "./product-status-strip";
 import { RevealPathLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { SelectionService, type Selection } from "../shell/selection-service";
@@ -93,6 +110,15 @@ export class ProductWidget extends ReactWidget {
   @inject(CommandRegistry) protected readonly commands!: CommandRegistry;
   @inject(CatalogueStore) protected readonly catalogue!: CatalogueStore;
   @inject(PendingCreateGear) protected readonly pendingGear!: PendingCreateGear;
+  // Constructor Studio: Apply needs the engine, and the strip says so.
+  @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+
+  /**
+   * Constructor Studio: Recent products, for the empty state. Held rather than
+   * read in `render`, as the Start screen holds them: `recentEntries()` goes to
+   * `StorageService`, and a render that starts a promise starts one per frame.
+   */
+  protected recent: readonly RecentEntry[] = [];
 
   /** Which branches are folded away. Widget state; nobody else's business. */
   protected collapsed = new Set<string>();
@@ -182,6 +208,14 @@ export class ProductWidget extends ReactWidget {
       }),
     );
     this.toDispose.push(this.edits.onDraftChanged(() => this.update()));
+    // Constructor Studio: the status strip's Apply and its Resolve / Close follow
+    // the engine and the registry, and Theia re-asks neither on its own.
+    this.toDispose.push(this.engine.onDidChange(() => this.update()));
+    this.toDispose.push(this.commands.onCommandsChanged(() => this.update()));
+    // The empty state's Recent list: re-read when a product opens or closes,
+    // which is when the list changes.
+    this.toDispose.push(this.store.onChanged(() => this.refreshRecent()));
+    this.refreshRecent();
     // Overview reports whether a generated tree exists, so it has to hear when
     // that answer changes -- a plan arriving, an apply writing, or the plan being
     // dropped as stale. Subscribing rather than polling, and reading rather than
@@ -317,6 +351,67 @@ export class ProductWidget extends ReactWidget {
     void this.commands.executeCommand(NEW_GEAR.id);
   }
 
+  /**
+   * Constructor Studio: re-read Recent, and repaint only when it changed -- the
+   * store fires often while a product resolves, and the list rarely moves.
+   */
+  protected refreshRecent(): void {
+    void this.session.recentEntries().then((recent) => {
+      const same =
+        recent.length === this.recent.length &&
+        recent.every((entry, index) => entry.path === this.recent[index]?.path);
+      if (same) return;
+      this.recent = recent;
+      this.update();
+    });
+  }
+
+  /**
+   * Constructor Studio: Resolve and Close, as the registry describes them -- the
+   * header's rule that it cannot name a command that does not exist, nor drift
+   * from the menu. Ids rather than imports: `RESOLVE_PRODUCT` lives with the view
+   * contributions, which import this widget.
+   */
+  protected stripActions(): StripAction[] {
+    const actions: StripAction[] = [];
+    for (const id of ["gearbox.product.resolve", CLOSE_PRODUCT.id]) {
+      const command = this.commands.getCommand(id);
+      if (command === undefined) continue;
+      actions.push({
+        id,
+        label: command.shortTitle ?? command.label ?? id,
+        title: command.label ?? id,
+        enabled: this.commands.isEnabled(id),
+      });
+    }
+    return actions;
+  }
+
+  /** Constructor Studio: the product's state and the draft -- see `product-status-strip.tsx`. */
+  protected renderStatusStrip(): React.ReactNode {
+    const state = this.store.current;
+    return (
+      <ProductStatusStrip
+        status={productStatusOf(
+          state.status,
+          errorsIn(state.diagnostics),
+          state.resolution?.product?.product?.lock_hash !== undefined,
+        )}
+        draft={draftStateOf({
+          count: this.edits.draftEdits().length,
+          writeUnknown: state.stale?.writeUnknown === true,
+          engineConnected: this.engine.isConnected,
+          busy: state.status === "loading" || state.status === "resolving",
+        })}
+        actions={this.stripActions()}
+        onApply={() => void this.edits.applyDraft()}
+        onDiscard={() => this.edits.discardDraft()}
+        onShowConflicts={() => this.showConflicts()}
+        onRun={(id) => void this.commands.executeCommand(id)}
+      />
+    );
+  }
+
   /** Generate, by command that opens rather than toggles -- see `SHOW_GENERATE`. */
   protected showGenerate(): void {
     void this.commands.executeCommand(SHOW_GENERATE.id);
@@ -423,44 +518,21 @@ export class ProductWidget extends ReactWidget {
     }
 
     if (state.open === undefined) {
+      // Constructor Studio: New, Open, the workspace's products and Recent --
+      // the Start screen's way to a product, where Building looks for it. See
+      // `product-empty-state.tsx`.
       return (
         <div className="gbx-product">
-          {state.products.length === 0 ? (
-            <div className="gbx-empty">
-              <p>
-                This workspace has no product yet: no <code>product.gdl</code> at{" "}
-                <code>product.gdl</code> or <code>products/&lt;name&gt;/product.gdl</code>, in the
-                opened folder or in any checkout directly under it. The gears in it are in the
-                catalogue either way.
-              </p>
-              <p>Create one from gears, or open a product description in the editor to resolve it.</p>
-              <div className="gbx-product-actions">
-                <button
-                  type="button"
-                  className="gbx-start-primary"
-                  onClick={() => void this.commands.executeCommand(NEW_PRODUCT.id)}
-                >
-                  New Product…
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="gbx-kv">
-              <span>product</span>
-              <span>
-                {state.products.map((ref) => (
-                  <button
-                    type="button"
-                    className="gbx-choice"
-                    key={ref.path}
-                    onClick={() => void this.session.open(ref)}
-                  >
-                    {ref.label}
-                  </button>
-                ))}
-              </span>
-            </div>
-          )}
+          <ProductEmptyState
+            lists={emptyStateLists(state.products, this.recent)}
+            engineConnected={this.engine.isConnected}
+            onNew={() => void this.commands.executeCommand(NEW_PRODUCT.id)}
+            onOpen={() => void this.commands.executeCommand(OPEN_PRODUCT.id)}
+            onOpenWorkspace={(ref) => void this.session.open(ref)}
+            // `openRecent`, not `open`: a remembered path may have rotted, and
+            // that call is the one that forgets it and says so.
+            onOpenRecent={(ref) => void this.session.openRecent(ref).then(() => this.refreshRecent())}
+          />
         </div>
       );
     }
@@ -487,6 +559,8 @@ export class ProductWidget extends ReactWidget {
           {intent?.display_name ?? state.open.label}{" "}
           <span className="gbx-id">{intent?.id}</span>
         </div>
+
+        {this.renderStatusStrip()}
 
         <div className="gbx-product-actions">
           <button
@@ -732,37 +806,11 @@ export class ProductWidget extends ReactWidget {
   protected renderComposition(): React.ReactNode {
     const state = this.store.current;
     const selection = this.productSelection;
+    // Constructor Studio: the pending-changes line, with Apply and Discard
+    // beside it, is the status strip in the head now -- on every stage, since a
+    // profile field (Overview) and a provider option (Topology) queue into the
+    // same draft as a gear's settings here.
     return <>
-      {/* **The count, not a second pair of buttons.** Apply and Discard live in
-          the toolbar, once, because the draft is product-wide: two pairs gated
-          on the same `hasDraft()` is the defect
-          `adr-0013-create-product.spec.ts` already pins -- discarding through
-          one of them remounted that panel's inputs and left the other showing
-          text the file did not contain. What this line adds is *how much* is
-          pending, beside the composition the pending edits are about. */}
-      <div className="gbx-composition-draft" aria-live="polite">
-        {this.edits.hasDraft() ? (
-          /* **"Pending" is a claim, and after a write of unknown fate it is the
-             wrong one.** The engine may have saved exactly these edits and never
-             said so -- measured, with the file changed on disk and this line
-             still offering to change it. So the line says what is actually known
-             until the description has been re-read. */
-          state.stale?.writeUnknown === true ? (
-            <span data-draft-unverified>
-              {this.edits.draftEdits().length} change
-              {this.edits.draftEdits().length === 1 ? "" : "s"} of unknown state — the last write
-              was never confirmed. Reconnect to re-read the description.
-            </span>
-          ) : (
-            <span>
-              {this.edits.draftEdits().length} pending change
-              {this.edits.draftEdits().length === 1 ? "" : "s"} — Apply or Discard above
-            </span>
-          )
-        ) : (
-          <span>Saved</span>
-        )}
-      </div>
       <Composition state={state} descriptors={this.catalogue.current.rows.flatMap(row => row.kind === "projected" ? [row.gear] : [])}
         selection={selection} select={selected => { this.selection.select(selected); this.update(); }}
         add={(host, point) => void this.commands.executeCommand(ADD_GEAR.id, { host, point })}

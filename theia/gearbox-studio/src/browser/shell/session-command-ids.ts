@@ -11,12 +11,6 @@ export const OPEN_PRODUCT = {
   label: "Gearbox: Open Product…",
 };
 
-export const SWITCH_PRODUCT = {
-  id: "gearbox.product.switch",
-  label: "Gearbox: Switch Product…",
-  shortTitle: "Switch",
-};
-
 export const CLOSE_PRODUCT = {
   id: "gearbox.product.close",
   label: "Gearbox: Close Product",
@@ -96,30 +90,13 @@ export const SHOW_GENERATE = {
 };
 
 /**
- * Open the settings editor on Studio's own section.
- *
- * `preferences:open` takes an optional query, which is how Theia's own
- * `Show AI Settings` is implemented -- so this needs no widget of its own, and a
- * person who lands here can see every Gearbox setting rather than the one they
- * were sent for.
+ * Constructor Studio: show the Resolution Lock, for a caller that means *show*
+ * it -- the ribbon and the Gearbox menu. Same reason as `SHOW_CONFLICTS`:
+ * `gearbox.lock.toggle` closes an open lock, which is right in `View > Views`
+ * and wrong for a button a person presses to see it.
  */
-export const SHOW_SETTINGS = {
-  id: "gearbox.settings.show",
-  label: "Gearbox: Settings",
-  shortTitle: "Settings",
-};
-
-/**
- * Ask the backend whether it can reach the model provider.
- *
- * Exists because the failure it diagnoses is invisible: a rejected request
- * reaches the chat as the Anthropic SDK's `Connection error.`, with no status
- * and therefore nothing to explain itself. Runnable before any key is set --
- * the probe sends none -- so "is it me or the network" is answerable without
- * first provoking a failed question.
- */
-export const CHECK_AI_CONNECTION = {
-  id: "gearbox.ai.checkConnection",
-  label: "Gearbox: Check AI Connection",
-  shortTitle: "Check AI Connection",
+export const SHOW_LOCK = {
+  id: "gearbox.lock.show",
+  label: "Gearbox: Show Resolution Lock",
+  shortTitle: "Lock",
 };

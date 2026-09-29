@@ -147,6 +147,8 @@ const BY_WORK: readonly Mode[] = [
         label: 'Building',
         title: 'Compose the product out of gears, and generate it',
         perspective: ARCHITECT_PERSPECTIVE_ID,
+        // 'Gearbox' is the label gearbox-studio gives its top-level menu
+        // (`GEARBOX_MENU_LABEL`); the menu itself appears only with a product open.
         menus: ['File', 'Edit', 'Gearbox', 'View', 'Help'],
         groups: [
             {
@@ -164,7 +166,9 @@ const BY_WORK: readonly Mode[] = [
             {
                 label: 'Check',
                 actions: [
+                    { command: 'gearbox.product.resolve', icon: 'sync', label: 'Resolve', title: 'Resolve the product again, for the profile shown' },
                     { command: 'gearbox.conflicts.show', icon: 'warning', label: 'Conflicts', title: 'What the engine says cannot resolve' },
+                    { command: 'gearbox.lock.show', icon: 'lock', label: 'Lock', title: 'The resolution lock: what this resolution pins, and whether the copy on disk matches' },
                     { command: 'gearbox.generate.show', icon: 'run-all', label: 'Generate', title: 'Generate the product\'s code from its description' },
                 ],
             },

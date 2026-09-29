@@ -38,6 +38,7 @@ import {
   NEW_PRODUCT,
   SHOW_CONFLICTS,
   SHOW_GENERATE,
+  SHOW_LOCK,
   SHOW_PRODUCT,
 } from "./shell/session-command-ids";
 import {
@@ -46,6 +47,7 @@ import {
   addGearEntrance,
   explained,
   productCommandRefusal,
+  resolveRefusal,
   type ProductCommandState,
 } from "./shell/command-availability";
 import { PendingCreate } from "./create/pending-create";
@@ -881,13 +883,20 @@ export class ProductViewContribution
         engineConnected: this.engine.isConnected,
       }),
     }));
-    commands.registerCommand(RESOLVE_PRODUCT, {
+    commands.registerCommand(RESOLVE_PRODUCT, explained({
       // Re-resolves whatever is open for whatever profile is selected, which is
       // what "resolve" means once a product is on screen. Opening one is the
       // toggle command's job.
       execute: () => this.store.reload(),
       isEnabled: () => this.store.current.open !== undefined && this.engine.isConnected,
-    });
+      // Constructor Studio: the ribbon's Check group carries Resolve, and says why
+      // it is greyed out -- see `ribbonAction` in theia/studio.
+      disabledReason: () => resolveRefusal({
+        productOpen: this.store.current.open !== undefined,
+        opening: this.session.opening !== undefined,
+        engineConnected: this.engine.isConnected,
+      }),
+    }));
   }
 
   /**
@@ -977,10 +986,21 @@ export class LockViewContribution extends ScopedViewContribution<LockWidget> {
     });
   }
 
+  override registerCommands(commands: CommandRegistry): void {
+    super.registerCommands(commands);
+    // Constructor Studio: opens rather than toggles, for the ribbon and the
+    // Gearbox menu -- see `SHOW_LOCK`. The toggle stays in `View > Views`.
+    commands.registerCommand(SHOW_LOCK, explained({
+      execute: () => this.openView({ activate: true, reveal: true }),
+      isEnabled: () => this.availableHere(),
+      disabledReason: () => (this.availableHere() ? undefined : NO_PRODUCT),
+    }));
+  }
+
   override registerMenus(menus: MenuModelRegistry): void {
     super.registerMenus(menus);
     menus.registerMenuAction(GearboxMenus.GEARBOX_RESOLVE, {
-      commandId: this.toggleCommand?.id ?? "",
+      commandId: SHOW_LOCK.id,
       label: "Resolution Lock",
       order: "4",
       when: `${STUDIO_CONTEXT_KEY} == 'product'`,

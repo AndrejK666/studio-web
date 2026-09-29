@@ -17,6 +17,7 @@ import { FrontendApplicationContribution, LabelProviderContribution, bindViewCon
 import { Agent, AIVariableContribution, bindToolProvider } from "@theia/ai-core";
 import { ChatAgent } from "@theia/ai-chat";
 import { GearboxChatAgent } from "./ai/gearbox-chat-agent";
+import { GearboxMenuContribution } from "./menus";
 import { GearboxContextContribution } from "./ai/gearbox-context";
 import { GearboxSelectionChip, GearboxVariableLabelProvider } from "./ai/gearbox-selection-chip";
 import { GEARBOX_TOOLS } from "./ai/gearbox-tools";
@@ -133,6 +134,10 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
 
   bind(ProductSessionService).toSelf().inSingletonScope();
   bind(GearSessionService).toSelf().inSingletonScope();
+
+  // The Gearbox top-level menu's label -- see `GearboxMenuContribution`.
+  bind(GearboxMenuContribution).toSelf().inSingletonScope();
+  bind(MenuContribution).toService(GearboxMenuContribution);
 
   // Open, New and Close Product under File.
   bind(SessionCommands).toSelf().inSingletonScope();

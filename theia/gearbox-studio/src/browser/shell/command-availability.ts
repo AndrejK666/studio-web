@@ -39,6 +39,14 @@ export function productCommandRefusal(state: ProductCommandState, needsEngine = 
 }
 
 /**
+ * Why Resolve cannot run now: a product must be open and the engine up, since
+ * resolving is asking the engine again.
+ */
+export function resolveRefusal(state: ProductCommandState): string | undefined {
+  return productCommandRefusal(state, true);
+}
+
+/**
  * What Add gear does from here.
  *
  * With no product open it creates one: a gear goes *into* a product, so a
