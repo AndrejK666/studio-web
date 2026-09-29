@@ -49,18 +49,27 @@ export function openFolders(workspace: WorkspaceService): string[] {
     return workspace.tryGetRoots().map(root => root.resource.path.fsPath());
 }
 
-/** Tell the member how a push went, with the pull-request link when the host gave one. */
-export async function reportPush(messages: MessageService, windows: WindowService, result: DesktopGitPush): Promise<void> {
+/**
+ * Tell the member how a push went, with the pull-request link when the host
+ * gave one. Not awaited: the notification's answer comes when it is closed,
+ * and Push must not stay disabled until then.
+ */
+export function reportPush(messages: MessageService, windows: WindowService, result: DesktopGitPush): void {
     const { level, text } = describePush(result);
     if (level === 'error') {
         messages.error(text);
         return;
     }
     const url = result.pullRequestUrl;
-    const action = url ? await messages.info(text, OPEN_PULL_REQUEST) : (messages.info(text), undefined);
-    if (action === OPEN_PULL_REQUEST && url) {
-        windows.openNewWindow(url, { external: true });
+    if (!url) {
+        messages.info(text);
+        return;
     }
+    void messages.info(text, OPEN_PULL_REQUEST).then(action => {
+        if (action === OPEN_PULL_REQUEST) {
+            windows.openNewWindow(url, { external: true });
+        }
+    });
 }
 
 @injectable()
@@ -105,7 +114,7 @@ export class DesktopGitContribution implements CommandContribution, FrontendAppl
                 if (!repository) {
                     return;
                 }
-                await reportPush(this.messages, this.windows, await desktopPush(root, repository.path));
+                reportPush(this.messages, this.windows, await desktopPush(root, repository.path));
                 return;
             }
             this.messages.warn('Push: this folder holds no git repository. Open a project from the Constructor Studio view to clone its sources.');
@@ -174,7 +183,7 @@ export class DesktopWorkspaceSourcesController extends WorkspaceSourcesFrontendC
     /** Push one clone, for the Sources view's own button. */
     async pushClone(root: string, repository: string): Promise<void> {
         try {
-            await reportPush(this.messageService, this.windows, await desktopPush(root, repository));
+            reportPush(this.messageService, this.windows, await desktopPush(root, repository));
         } catch (error) {
             this.messageService.error(`Push: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
