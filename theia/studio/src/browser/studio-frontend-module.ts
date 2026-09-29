@@ -67,6 +67,7 @@ import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
 import '../../src/browser/workspace-sources.css';
 import '../../src/browser/orca.css';
+import '../../src/browser/desktop-studio.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // ADR-0030: each window's agents run on that window's person.

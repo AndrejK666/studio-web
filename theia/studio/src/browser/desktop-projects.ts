@@ -35,7 +35,12 @@ export interface Workspace extends Tenant {
     nested: Tenant[];
 }
 
-export interface Organization extends Tenant {
+/** An organization the member may switch to; `role` is theirs in it, from the membership. */
+export interface MemberOrganization extends Tenant {
+    role?: string;
+}
+
+export interface Organization extends MemberOrganization {
     projects: Workspace[];
 }
 
@@ -74,14 +79,17 @@ async function tenantOf(get: GetJson, id: string): Promise<Tenant | undefined> {
 }
 
 /** The organizations this person may switch between, as the main portal lists them. */
-export async function organizationsOf(get: GetJson): Promise<Tenant[]> {
+export async function organizationsOf(get: GetJson): Promise<MemberOrganization[]> {
     const me = await get('/account-management/v1/me') as { subject_tenant_id?: string } | undefined;
     if (me?.subject_tenant_id === PLATFORM_ROOT_TENANT_ID) {
         return childrenOf(get, PLATFORM_ROOT_TENANT_ID, TENANT_TYPES.organization);
     }
-    const memberships = ((await get('/studio-user/v1/me/memberships')) as { items?: { org_id: string }[] } | undefined)?.items ?? [];
-    const resolved = await Promise.all(memberships.map(m => tenantOf(get, m.org_id)));
-    return resolved.filter((t): t is Tenant => !!t && t.tenant_type === TENANT_TYPES.organization);
+    const memberships = ((await get('/studio-user/v1/me/memberships')) as { items?: { org_id: string; role?: string }[] } | undefined)?.items ?? [];
+    const resolved = await Promise.all(memberships.map(async m => {
+        const tenant = await tenantOf(get, m.org_id);
+        return tenant && typeof m.role === 'string' && m.role ? { ...tenant, role: m.role } : tenant;
+    }));
+    return resolved.filter((t): t is MemberOrganization => !!t && t.tenant_type === TENANT_TYPES.organization);
 }
 
 /** Every organization with its workspaces, and each workspace with its nested projects. */

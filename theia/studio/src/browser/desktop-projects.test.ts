@@ -41,7 +41,7 @@ describe('the projects a desktop member sees', () => {
             [children(ACME.id)]: { items: [PAYMENTS, project('stray', 'not a workspace')] },
             [children(PAYMENTS.id)]: { items: [RUST, WEB] },
         });
-        expect(await projectsOf(get)).toEqual([{ ...ACME, projects: [{ ...PAYMENTS, nested: [RUST, WEB] }] }]);
+        expect(await projectsOf(get)).toEqual([{ ...ACME, role: 'member', projects: [{ ...PAYMENTS, nested: [RUST, WEB] }] }]);
     });
 
     it('never come from the home tenant the token names, only from membership (ADR-0011)', async () => {
