@@ -79,6 +79,7 @@ import { SessionCommands } from "./shell/session-commands";
 import { FocusModeService } from "./shell/focus-mode-service";
 import { DescriptionWatchService } from "./shell/description-watch-service";
 import { ScreenScopeService } from "./shell/screen-scope-service";
+import { StudioScreenScopeService } from "./shell/studio-screen-scope";
 import { StudioContextService } from "./shell/studio-context-service";
 import { StudioGearboxPerspective } from "./shell/studio-gearbox-perspective";
 import { GearLocator } from "./shell/gear-locator";
@@ -153,11 +154,16 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(DescriptionWatchService).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(DescriptionWatchService);
 
-  // Injected by the views; neither acts outside a Gearbox perspective, and
-  // neither is an application contribution until P6, so nothing reconciles
-  // Studio's layout on its own.
+  // Injected by the views; neither acts outside a Gearbox perspective.
+  // `FocusModeService` is not an application contribution, so it folds panels
+  // only when a focus screen asks. The screen scope is started (P6b), as
+  // Studio's subclass: it withdraws a closed or replaced product's screens, only
+  // while a Gearbox perspective is active, and neither folds panels nor opens
+  // Start -- see `studio-screen-scope.ts`.
   bind(FocusModeService).toSelf().inSingletonScope();
-  bind(ScreenScopeService).toSelf().inSingletonScope();
+  bind(StudioScreenScopeService).toSelf().inSingletonScope();
+  bind(ScreenScopeService).toService(StudioScreenScopeService);
+  bind(FrontendApplicationContribution).toService(StudioScreenScopeService);
 
   // The Gearbox perspective beside Workbench and Documents, and the command
   // the portal's `studio.openProduct` runs to land in it with a product open.

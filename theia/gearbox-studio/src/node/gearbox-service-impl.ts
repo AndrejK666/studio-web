@@ -54,6 +54,7 @@ import {
   workspaceDir,
 } from "./gearbox-environment";
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
+import { closeSourcesList } from "./sources-list";
 
 /**
  * How long the engine gets to answer before the request is abandoned.
@@ -530,12 +531,67 @@ export class GearboxServiceImpl implements GearboxService {
     dryRun: boolean,
     expectedBefore?: string,
   ): Promise<EditGearResult> {
+    // Constructor Studio: before a batch that appends a source, give the list
+    // the trailing comma the engine's append needs -- see `closeSourcesListFor`
+    // and https://github.com/MikeFalcon77/gearbox/issues/1. On the dry run too:
+    // the dry run is where the engine would otherwise write the broken text,
+    // and the preview a person confirms is computed from it.
+    if (edits.some((edit) => edit.kind === "add_source")) {
+      await this.closeSourcesListFor(path);
+    }
     return this.request(method.PRODUCT_APPLY_EDITS, {
       path,
       edits: [...edits],
       expected_before: expectedBefore,
       dry_run: dryRun,
     });
+  }
+
+  /**
+   * Constructor Studio: close `productPath`'s `sources` list with a comma, and
+   * keep the change only if the product still reads the same.
+   *
+   * The workaround for https://github.com/MikeFalcon77/gearbox/issues/1 (see
+   * `sources-list.ts`): a product `product/create` wrote has no comma after its
+   * last source, and `add_source` appends without adding one, so the product
+   * becomes unreadable (GBX0101). This is the one place Studio asks the engine
+   * to append a source, so it is the one place the list is closed first.
+   *
+   * **Guarded by the engine's own reading, before and after.** Nothing is
+   * touched when the product does not read now (the engine's refusal of the
+   * batch will say why), and the old text is put back when the new one does not
+   * read, or reads with different sources. The file is written only when the
+   * list needs the comma; a product that already has one, or a one-line list,
+   * is left as it is. Remove with the pin that fixes the engine.
+   */
+  protected async closeSourcesListFor(productPath: string): Promise<boolean> {
+    let original: string;
+    try {
+      original = await fs.promises.readFile(productPath, "utf8");
+    } catch {
+      return false;
+    }
+    const closed = closeSourcesList(original);
+    if (closed === undefined) return false;
+    let before: ProductLoadResult;
+    try {
+      before = await this.loadProduct(productPath);
+    } catch {
+      return false;
+    }
+    await fs.promises.writeFile(productPath, closed, "utf8");
+    try {
+      const after = await this.loadProduct(productPath);
+      if (JSON.stringify(after.intent?.sources ?? null) === JSON.stringify(before.intent?.sources ?? null)) {
+        this.logger.info(`gearbox: closed the sources list of ${productPath} with a comma before adding a source`);
+        return true;
+      }
+    } catch {
+      // Falls through to the restore.
+    }
+    await fs.promises.writeFile(productPath, original, "utf8");
+    this.logger.warn(`gearbox: left the sources list of ${productPath} as it was: the closed list did not read the same`);
+    return false;
   }
 
   async createProduct(params: {

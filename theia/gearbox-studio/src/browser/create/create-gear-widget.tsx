@@ -19,6 +19,7 @@ import type { GearKind } from "../../common/generated/GearKind";
 import type { ProductEdit } from "../../common/generated/ProductEdit";
 import { placeNewGear, type HostStanding } from "./gear-edits";
 import { relativeTo, volumeOf } from "./paths";
+import { UPSTREAM_SCAFFOLD_ISSUE, createGearGuidance } from "./create-gear-guidance";
 import { pluginLocatorFor, type HostPoint, type LocatorOutcome } from "./plugin-locator";
 import type { ScaffoldGearResult } from "../../common/generated/ScaffoldGearResult";
 import { pointsOf } from "../../common/extension-points";
@@ -388,6 +389,30 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
   }
 
   /**
+   * Constructor Studio: the two things New Gear has to say before Create -- a
+   * scaffold is not catalogued until its code carries `#[toolkit::gear]`, and a
+   * plugin for a corpus host has to be moved into that corpus by hand.
+   */
+  protected renderGuidance(): React.ReactNode {
+    const chosen = this.kind === "plugin" ? this.hosts().find((entry) => entry.key === this.point) : undefined;
+    const gdl = chosen === undefined ? undefined : this.catalogue.absolutePath(chosen.host.source, chosen.host.gdl_path);
+    const notes = createGearGuidance({
+      kind: this.kind,
+      addingToProduct: this.product !== undefined,
+      gearId: this.gearId,
+      destinationDir: this.destinationDir(),
+      ...(chosen === undefined
+        ? {}
+        : { host: { id: chosen.host.id, dir: gdl === undefined ? undefined : gdl.replace(/[\\/][^\\/]*$/, "") } }),
+    });
+    return notes.map((note) => (
+      <p key={note.id} className="gbx-create-note" data-create-gear-guidance={note.id}>
+        {note.text}
+      </p>
+    ));
+  }
+
+  /**
    * Whether the product names a gear directly, only pulled it in, or lacks it.
    *
    * `selected_gears` is the intent -- what the description says -- and the
@@ -695,6 +720,16 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
           <p className="gbx-create-sources-note">
             Writes <code>{this.destinationDir()}/{this.gearId}/</code> (gear.gdl, Cargo.toml,
             src/lib.rs). Must stay under the workspace and outside source roots.
+          </p>
+          {/* Constructor Studio: what the engine does not say until after the
+              crate exists -- see `create-gear-guidance.ts`. */}
+          {this.renderGuidance()}
+          <p className="gbx-create-note gbx-create-note-upstream">
+            These are engine limits, reported at{" "}
+            <a href={UPSTREAM_SCAFFOLD_ISSUE} target="_blank" rel="noreferrer">
+              gearbox#2
+            </a>
+            .
           </p>
           {destinationProblem !== undefined && (
             <p className="gbx-inline-error" role="alert" data-create-gear-destination-refusal>
