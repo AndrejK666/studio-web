@@ -224,6 +224,41 @@ test('somebody who never said who they are is counted, not named', () => {
     assert.strictEqual(anonymous, 1);
 });
 
+// -- the strip's line about who is here ------------------------------------
+
+test('alone, the strip says nothing about who is here', () => {
+    const { people } = scan.roster([{ doc: 'file:///w/a.md', author: ROMA, typing: false }]);
+    assert.strictEqual(scan.presenceText(people, ROMA), undefined);
+});
+
+test('signed out and alone is not "You is here"', () => {
+    const me = { id: 'local:abc', name: 'You', kind: 'person', key: 'local-abc' };
+    const { people } = scan.roster([{ doc: 'file:///w/a.md', author: me, typing: false }]);
+    assert.strictEqual(scan.presenceText(people, me), undefined);
+});
+
+test('a colleague is named, and one who never set a name is somebody', () => {
+    const unnamed = { id: 'local:xyz', name: 'You', kind: 'person', key: 'local-xyz' };
+    const { people } = scan.roster([
+        { doc: 'file:///w/a.md', author: ROMA, typing: false },
+        { doc: 'file:///w/a.md', author: ANA, typing: true }
+    ]);
+    assert.strictEqual(scan.presenceText(people, ROMA).text, 'Ana is editing');
+    const alone = scan.roster([{ doc: 'file:///w/a.md', author: unnamed, typing: false }]).people;
+    assert.strictEqual(scan.presenceText(alone, ROMA).text, 'Somebody is here');
+});
+
+test('"others" does not count me', () => {
+    const { people } = scan.roster([
+        { doc: 'file:///w/a.md', author: ROMA, typing: false },
+        { doc: 'file:///w/a.md', author: ANA, typing: false },
+        { doc: 'file:///w/b.md', author: { id: 'oidc:sub-3', name: 'Ivo', kind: 'person', key: 'oidc-sub-3' }, typing: true }
+    ]);
+    const presence = scan.presenceText(people, ROMA);
+    assert.strictEqual(presence.text, '2 others here, 1 editing');
+    assert.strictEqual(presence.people.length, 2);
+});
+
 // -- what the page admits ----------------------------------------------------
 
 test('the honesty line always says what is not in the repository', () => {

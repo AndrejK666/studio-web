@@ -239,6 +239,28 @@ function roster(parties) {
 }
 
 /**
+ * Who else is in the project, as the strip says it: `undefined` when nobody is.
+ *
+ * The project roster is everybody, this window's author included, so the strip
+ * leaves `me` out -- it said "You is here" to a member alone and signed out,
+ * and counted them among "2 others". A colleague who never set a name is
+ * announced as "You" (identity.js's placeholder for the person at the
+ * keyboard), which on somebody else's screen is nobody, so they are
+ * "Somebody" here.
+ */
+function presenceText(people, me) {
+    const others = (people || []).filter(person => !me || !person.author || person.author.id !== me.id);
+    if (others.length === 0) { return undefined; }
+    if (others.length === 1) {
+        const name = others[0].author && others[0].author.name;
+        const who = name && !/^(you|me)$/i.test(name.trim()) ? name : 'Somebody';
+        return { people: others, text: who + (others[0].typing ? ' is editing' : ' is here') };
+    }
+    const typing = others.filter(person => person.typing).length;
+    return { people: others, text: others.length + ' others here' + (typing ? ', ' + typing + ' editing' : '') };
+}
+
+/**
  * What was read, in one line, and what could not be.
  *
  * A collaboration panel is a machine for making people believe they have seen
@@ -269,7 +291,7 @@ function countText(result) {
 }
 
 module.exports = {
-    ageText, agoText, mentions, isMine, threadItem, band, inbox, roster, honestyLine, countText,
+    ageText, agoText, mentions, isMine, threadItem, band, inbox, roster, presenceText, honestyLine, countText,
     clip, plural,
     PREVIEW_MAX, INBOX_MAX
 };
