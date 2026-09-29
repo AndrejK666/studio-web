@@ -106,7 +106,7 @@ describe('the recent folders', () => {
 describe('the onboarding cards', () => {
     it('are the modes of the mode picker, in its order, in its own words', () => {
         const cards = modeCards(MODES, undefined, 'default');
-        expect(cards.map(c => c.label)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'FULL SUPER POWER']);
+        expect(cards.map(c => c.label)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'Full functionality']);
         for (const [i, mode] of MODES.entries()) {
             expect(cards[i]).toMatchObject({ label: mode.label, icon: mode.icon, line: mode.title, perspective: mode.perspective });
         }

@@ -5,7 +5,7 @@ import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, ribbonAction, roleOf }
 
 describe('Studio modes', () => {
     it('names the modes by the work, one perspective each', () => {
-        expect(MODES.map(m => m.label)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'FULL SUPER POWER']);
+        expect(MODES.map(m => m.label)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'Full functionality']);
         expect(new Set(MODES.map(m => m.perspective)).size).toBe(MODES.length);
     });
 
@@ -24,14 +24,14 @@ describe('Studio modes', () => {
         expect(roleOf(undefined)).toBe('development');
     });
 
-    it('keeps File and Help in every mode, and everything in FULL SUPER POWER', () => {
+    it('keeps File and Help in every mode, and everything in Full functionality', () => {
         for (const mode of MODES.filter(m => m.role !== 'full')) {
             expect(mode.menus).toEqual(expect.arrayContaining(['File', 'Help']));
         }
         expect(MODES.find(m => m.role === 'full')?.menus).toEqual(['*']);
     });
 
-    it('gives FULL SUPER POWER every other mode\'s commands, each once', () => {
+    it('gives Full functionality every other mode\'s commands, each once', () => {
         const full = MODES.find(m => m.role === 'full');
         const commands = (full?.groups ?? []).flatMap(g => g.actions.map(a => a.command));
         expect(new Set(commands).size).toBe(commands.length);
