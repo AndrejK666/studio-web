@@ -1,4 +1,4 @@
-// The desktop landing page, rendered against a fake desktop backend: signed
+// The desktop landing page, rendered against the fake desktop client: signed
 // out, signing in, a Studio out of reach, signed in with projects, with no
 // organization, with projects that could not load; the onboarding cards and
 // their "Got it"; and "Work offline".
@@ -11,6 +11,7 @@ jest.mock('@theia/workspace/lib/browser/workspace-service', () => ({
 jest.mock('./portal-bridge-contribution', () => ({
     IDENTITY_VIEWER_COMMAND_ID: 'studio.identity.viewer'
 }));
+jest.mock('./desktop-studio-client', () => jest.requireActual('./desktop-studio-client.fake'));
 import * as fs from 'fs';
 import * as React from '@theia/core/shared/react';
 import { Container, ContainerModule } from '@theia/core/shared/inversify';
@@ -20,11 +21,11 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
-import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DesktopLandingWidget, OPEN_FOLDER_COMMAND_ID } from './desktop-landing-widget';
 import { ONBOARDING_STORAGE_KEY } from './desktop-landing-state';
 import { TENANT_TYPES } from './desktop-projects';
+import { fakeStudio } from './desktop-studio-client.fake';
 
 const STUDIO = 'https://studio-dev.cfabric.org';
 const START = '/home/me/ConstructorStudio/workspace';
@@ -34,55 +35,45 @@ const ENVIRONMENTS = [
     { id: 'local', label: 'Local', studioUrl: 'http://127.0.0.1:8090', issuer: 'http://127.0.0.1:8088/realms/studio' },
 ];
 
-interface Answer { status: number; body: unknown }
-type Routes = Record<string, Answer | (() => Answer | Promise<Answer>)>;
-const ok = (body: unknown): Answer => ({ status: 200, body });
+const ORG = { id: '0b6f2c1e-1111-4000-8000-000000000001', name: 'Constructor Fabric', tenant_type: TENANT_TYPES.organization };
 
-function statusOf(state: string, extra: object = {}): Answer {
-    return ok({
-        enabled: true, studioUrl: STUDIO, state, switchable: true, updates: 'stable', startFolder: START,
+/** A desktop backend in `state`; `undefined` status is a build with no Studio. */
+function backend(state: string | undefined, extra: object = {}): void {
+    fakeStudio.reset();
+    fakeStudio.status = state === undefined ? undefined : {
+        enabled: true, studioUrl: STUDIO, state: state as 'signed-in', switchable: true, updates: 'stable', startFolder: START,
         environments: ENVIRONMENTS, current: ENVIRONMENTS[0],
         ...(state === 'signed-in' ? { user: { sub: 'u-1', name: 'ANDREI KUCHMA', email: 'andrei@example.com' } } : {}),
         ...extra,
-    });
+    };
 }
 
-function signedInRoutes(): Routes {
-    const children = (id: string) => `/studio-api/account-management/v1/tenants/${id}/children`;
-    const ORG = { id: '0b6f2c1e-1111-4000-8000-000000000001', name: 'Constructor Fabric', tenant_type: TENANT_TYPES.organization };
-    return {
-        '/studio-desktop/status': statusOf('signed-in'),
-        '/studio-api/account-management/v1/me': ok({ subject_tenant_id: 'home' }),
-        '/studio-api/studio-user/v1/me/memberships': ok({ items: [{ org_id: ORG.id, role: 'owner' }] }),
-        [`/studio-api/account-management/v1/tenants/${ORG.id}`]: ok(ORG),
-        [children(ORG.id)]: ok({ items: [{ id: 'ws-gears', name: 'Gears workspace', tenant_type: TENANT_TYPES.workspace }] }),
-        [children('ws-gears')]: ok({
-            items: [
+/** Signed in, with one organization, one workspace and two projects, one of them with no repositories. */
+function signedIn(): void {
+    backend('signed-in');
+    fakeStudio.projects = [{
+        ...ORG, role: 'owner', projects: [{
+            id: 'ws-gears', name: 'Gears workspace', tenant_type: TENANT_TYPES.workspace, nested: [
                 { id: 'p-web', name: 'Studio-web', tenant_type: TENANT_TYPES.project },
                 { id: 'p-2', name: 'project 2', tenant_type: TENANT_TYPES.project },
             ],
-        }),
-        '/studio-api/studio-git/v1/sources?project_id=ws-gears': ok({ items: [{ name: 'a' }], total: 1 }),
-        '/studio-api/studio-git/v1/sources?project_id=p-web': ok({ items: [{ name: 'studio-web' }, { name: 'gears-rust' }], total: 2 }),
-        '/studio-api/studio-git/v1/sources?project_id=p-2': { status: 404, body: { status: 404, context: { resource_name: 'p-2' } } },
-        '/studio-desktop/open-progress': ok({
-            workspaceId: 'p-web', name: 'Studio-web', phase: 'cloning',
-            sources: [{ name: 'studio-web', state: 'cloning', percent: 40 }, { name: 'gears-rust', state: 'waiting' }],
-        }),
-        '/studio-desktop/open': ok({ path: '/home/me/ConstructorStudio/workspaces/Gears workspace - Studio-web' }),
+        }],
+    }];
+    fakeStudio.sources = {
+        'ws-gears': { state: 'ready', repositories: 1 },
+        'p-web': { state: 'ready', repositories: 2 },
+        'p-2': { state: 'empty' },
     };
+    fakeStudio.open = async () => '/home/me/ConstructorStudio/workspaces/Gears workspace - Studio-web';
 }
 
 describe('the desktop landing page', () => {
     let widget: DesktopLandingWidget;
-    let routes: Routes;
-    let asked: Array<{ path: string; method: string }>;
     let stored: Map<string, unknown>;
     let executed: string[];
     let opened: string[];
     let switched: string[];
     let external: string[];
-    let studioViewRefreshed: number;
     const act = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
     const settle = async () => {
@@ -101,8 +92,8 @@ describe('the desktop landing page', () => {
         await settle();
     };
 
-    async function mount(initial: Routes): Promise<void> {
-        routes = initial;
+    async function mount(given: () => void): Promise<void> {
+        given();
         const module = new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue({
                 tryGetRoots: () => [{ resource: { path: { fsPath: () => START } } }],
@@ -131,9 +122,6 @@ describe('the desktop landing page', () => {
                 getActivePerspectiveId: () => 'default',
                 switchPerspective: async (id: string) => { switched.push(id); },
             } as never);
-            bind(WidgetManager).toConstantValue({
-                tryGetWidget: () => ({ refresh: async () => { studioViewRefreshed++; } }),
-            } as never);
             bind(DesktopLandingWidget).toSelf();
         });
         const container = new Container();
@@ -150,22 +138,11 @@ describe('the desktop landing page', () => {
     beforeAll(() => { act.IS_REACT_ACT_ENVIRONMENT = true; });
 
     beforeEach(() => {
-        asked = [];
         stored = new Map();
         executed = [];
         opened = [];
         switched = [];
         external = [];
-        studioViewRefreshed = 0;
-        (globalThis as { fetch?: unknown }).fetch = jest.fn(async (input: string, init?: RequestInit) => {
-            const url = new URL(String(input), 'http://localhost');
-            const path = url.pathname + url.search;
-            asked.push({ path, method: init?.method ?? 'GET' });
-            const key = Object.keys(routes).find(route => path === route || (!route.includes('?') && url.pathname === route));
-            const found = key ? routes[key] : { status: 404, body: {} };
-            const answer = typeof found === 'function' ? await found() : found;
-            return { ok: answer.status >= 200 && answer.status < 300, status: answer.status, json: async () => answer.body } as Response;
-        });
     });
 
     afterEach(() => {
@@ -181,7 +158,7 @@ describe('the desktop landing page', () => {
     });
 
     it('signed out: says where you are, what connecting gives, and offers the sign-in and the Studio picker', async () => {
-        await mount({ '/studio-desktop/status': statusOf('signed-out') });
+        await mount(() => backend('signed-out'));
         expect(text()).toContain('You are in Constructor Studio Desktop.');
         expect(text()).toContain('Connect to your organization and choose a project, or keep working offline.');
         expect(text()).toContain('organization\'s projects, clone their sources through Studio');
@@ -191,15 +168,13 @@ describe('the desktop landing page', () => {
         ]);
         expect(widget.node.querySelector('[data-view]')!.getAttribute('data-view')).toBe('connect');
 
-        routes['/studio-desktop/sign-in'] = { status: 202, body: {} };
-        routes['/studio-desktop/status'] = statusOf('signing-in');
         await click(button('Sign in with Constructor ID'));
-        expect(asked).toContainEqual({ path: '/studio-desktop/sign-in', method: 'POST' });
+        expect(fakeStudio.calls).toContain('sign-in');
         expect(text()).toContain('Finish signing in in your browser.');
     });
 
     it('signed out: switching the Studio goes through the backend', async () => {
-        await mount({ '/studio-desktop/status': statusOf('signed-out'), '/studio-desktop/environment': ok({}) });
+        await mount(() => backend('signed-out'));
         const picker = widget.node.querySelector<HTMLSelectElement>('select')!;
         await React.act(async () => {
             const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
@@ -207,25 +182,27 @@ describe('the desktop landing page', () => {
             picker.dispatchEvent(new Event('change', { bubbles: true }));
         });
         await settle();
-        expect(asked).toContainEqual({ path: '/studio-desktop/environment', method: 'POST' });
+        expect(fakeStudio.calls).toContain('switch test');
+        // Read again: the page is on the Studio switched to.
+        expect(text()).toContain('studio-test.cfabric.org');
     });
 
     it('a Studio out of reach: says so, and makes Open folder the primary way on', async () => {
-        await mount({ '/studio-desktop/status': statusOf('failed', { error: 'fetch failed' }) });
+        await mount(() => backend('failed', { error: 'fetch failed' }));
         expect(text()).toContain('studio-dev.cfabric.org could not be reached (fetch failed)');
         expect(text()).toContain('or work offline below');
         expect(button('Open folder…').className).toContain('studio-landing__btn--primary');
     });
 
     it('no Studio at all: offline is all there is, said plainly', async () => {
-        await mount({});
+        await mount(() => backend(undefined));
         expect(text()).toContain('This app is not set up for a Constructor Studio');
         expect(text()).not.toContain('Sign in with Constructor ID');
         expect(text()).toContain('Open folder…');
     });
 
     it('signed in: chooses a project from the member\'s organizations, with the no-repositories state on its row', async () => {
-        await mount(signedInRoutes());
+        await mount(signedIn);
         expect(text()).toContain('Choose a project');
         expect(text()).toContain('ANDREI KUCHMA');
         const names = Array.from(widget.node.querySelectorAll('.studio-landing__row[data-row-id] .studio-landing__row-name')).map(e => e.textContent);
@@ -240,7 +217,7 @@ describe('the desktop landing page', () => {
     });
 
     it('signed in: the filter narrows the list, and says when nothing matches', async () => {
-        await mount(signedInRoutes());
+        await mount(signedIn);
         const filter = widget.node.querySelector<HTMLInputElement>('.studio-landing__filter input')!;
         const type = async (value: string) => {
             await React.act(async () => {
@@ -259,58 +236,46 @@ describe('the desktop landing page', () => {
 
     it('signed in: opening a project clones it with progress, then opens its folder here', async () => {
         let release: () => void = () => undefined;
-        const routesNow = signedInRoutes();
-        const done = routesNow['/studio-desktop/open'] as Answer;
-        routesNow['/studio-desktop/open'] = () => new Promise<Answer>(resolve => { release = () => resolve(done); });
-        await mount(routesNow);
-        jest.useFakeTimers({ doNotFake: ['setTimeout', 'nextTick', 'setImmediate', 'queueMicrotask'] });
-        try {
-            await React.act(async () => { (widget.node.querySelector('[data-row-id="p-web"]') as HTMLElement).click(); });
-            await React.act(async () => { jest.advanceTimersByTime(450); });
-            await settle();
-            expect(text()).toContain('Opening Studio-web');
-            expect(text()).toContain('studio-web40%');
-            expect(asked).toContainEqual({ path: '/studio-desktop/open', method: 'POST' });
-            await React.act(async () => { release(); });
-            await settle();
-        } finally {
-            jest.useRealTimers();
-        }
+        await mount(() => {
+            signedIn();
+            const done = fakeStudio.open;
+            fakeStudio.open = (id, folder) => new Promise<string>(resolve => { release = () => resolve(done(id, folder)); });
+        });
+        await React.act(async () => { (widget.node.querySelector('[data-row-id="p-web"]') as HTMLElement).click(); });
+        await React.act(async () => {
+            fakeStudio.progress!({
+                workspaceId: 'p-web', name: 'Studio-web', phase: 'cloning',
+                sources: [{ name: 'studio-web', state: 'cloning', percent: 40 }, { name: 'gears-rust', state: 'waiting' }],
+            } as never);
+        });
+        await settle();
+        expect(text()).toContain('Opening Studio-web');
+        expect(text()).toContain('studio-web40%');
+        expect(fakeStudio.calls).toContain('open p-web Gears workspace - Studio-web');
+        await React.act(async () => { release(); });
+        await settle();
         expect(opened).toHaveLength(1);
         expect(decodeURIComponent(opened[0])).toContain('Gears workspace - Studio-web');
     });
 
     it('signed in with no organization yet: says what to do in the portal', async () => {
-        await mount({
-            '/studio-desktop/status': statusOf('signed-in'),
-            '/studio-api/account-management/v1/me': ok({ subject_tenant_id: 'home' }),
-            '/studio-api/studio-user/v1/me/memberships': ok({ items: [] }),
-        });
+        await mount(() => backend('signed-in'));
         expect(text()).toContain('You belong to no organization on studio-dev.cfabric.org yet.');
         await click(button('Open the portal'));
         expect(external).toEqual([STUDIO]);
     });
 
     it('signed in, projects out of reach: says so and offers to try again', async () => {
-        await mount({
-            '/studio-desktop/status': statusOf('signed-in'),
-            '/studio-api/account-management/v1/me': { status: 502, body: {} },
+        await mount(() => {
+            backend('signed-in');
+            fakeStudio.projects = new Error('HTTP 502');
         });
         expect(text()).toContain('studio-dev.cfabric.org could not be reached (HTTP 502)');
         expect(button('Try again')).toBeTruthy();
     });
 
-    it('a sign-in finished here is news to the Studio view', async () => {
-        await mount({ '/studio-desktop/status': statusOf('signing-in') });
-        routes = { ...signedInRoutes() };
-        await React.act(async () => { await widget.refresh(); });
-        await settle();
-        expect(studioViewRefreshed).toBe(1);
-        expect(text()).toContain('Choose a project');
-    });
-
     it('onboarding: a card per mode, between connecting and working offline, and each switches to its mode', async () => {
-        await mount({ '/studio-desktop/status': statusOf('signed-out') });
+        await mount(() => backend('signed-out'));
         const sections = Array.from(widget.node.querySelectorAll('section')).map(s => s.getAttribute('aria-label'));
         expect(sections).toEqual(['Connect', 'Modes', 'Work offline']);
         const cards = Array.from(widget.node.querySelectorAll('.studio-landing__card'));
@@ -322,7 +287,7 @@ describe('the desktop landing page', () => {
     });
 
     it('onboarding: "Got it" puts it away on this machine, and Help → Welcome brings it back', async () => {
-        await mount(signedInRoutes());
+        await mount(signedIn);
         expect(widget.node.querySelector('.studio-landing__onboarding')).not.toBeNull();
         await click(button('Got it'));
         expect(widget.node.querySelector('.studio-landing__onboarding')).toBeNull();
@@ -335,12 +300,12 @@ describe('the desktop landing page', () => {
 
     it('onboarding: stays away once dismissed', async () => {
         stored.set(ONBOARDING_STORAGE_KEY, true);
-        await mount({ '/studio-desktop/status': statusOf('signed-out') });
+        await mount(() => backend('signed-out'));
         expect(widget.node.querySelector('.studio-landing__onboarding')).toBeNull();
     });
 
     it('work offline: Open folder runs Theia\'s own command, and recent folders open here', async () => {
-        await mount({ '/studio-desktop/status': statusOf('signed-out') });
+        await mount(() => backend('signed-out'));
         await click(button('Open folder…'));
         expect(executed).toContain(OPEN_FOLDER_COMMAND_ID);
         const recent = Array.from(widget.node.querySelectorAll('.studio-landing__row--recent .studio-landing__row-name')).map(e => e.textContent);

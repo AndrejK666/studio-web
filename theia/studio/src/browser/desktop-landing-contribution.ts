@@ -23,7 +23,7 @@ import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/c
 import { MenuContribution, MenuModelRegistry } from '@theia/core/lib/common/menu';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import type { WorkspaceRepositorySuggestion } from '../common/workspace-protocol';
-import { desktopStatus } from './desktop-studio-widget';
+import { desktopStatus } from './desktop-studio-client';
 import { DESKTOP_LANDING_WIDGET_ID, DesktopLandingWidget } from './desktop-landing-widget';
 import { LandingStatus, landingWanted, sameFolder } from './desktop-landing-state';
 import { WorkspaceSuggestionGate } from './workspace-suggestion-gate';

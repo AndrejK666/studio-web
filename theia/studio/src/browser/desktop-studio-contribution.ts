@@ -11,7 +11,8 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { FrontendApplicationStateService } from '@theia/core/lib/browser/frontend-application-state';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { DESKTOP_STUDIO_WIDGET_ID, DesktopStudioWidget, desktopStatus, desktopUrl } from './desktop-studio-widget';
+import { DESKTOP_STUDIO_WIDGET_ID, DesktopStudioWidget } from './desktop-studio-widget';
+import { desktopStatus, desktopUrl } from './desktop-studio-client';
 import { remoteGearCatalogueRefused, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
 
 /** How often a window renews; the server's `heartbeat_secs`, and a third of its lease. */
