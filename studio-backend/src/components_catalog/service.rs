@@ -1108,6 +1108,11 @@ impl CatalogService {
                     continue;
                 };
                 let mut add = roadmap::item_fields(&board, &board.items[*ix], *how, source, &today);
+                // Which board said so: the Sources label names boards from this.
+                add.insert(
+                    "roadmap_board".to_string(),
+                    roadmap::board_field(&board, source),
+                );
                 let lifecycle = node
                     .value
                     .pointer("/auto/lifecycle/b")

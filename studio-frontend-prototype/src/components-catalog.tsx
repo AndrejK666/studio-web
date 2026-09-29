@@ -773,7 +773,7 @@ export function ComponentsCatalog({
   const syncing = sync.endsWith("…");
   /* What filled the catalogue, read off the nodes -- the picker below is only
      this browser's choice for the NEXT sync. */
-  const filledFrom = useMemo(() => syncedSources(gears ?? []).join(" + "), [gears]);
+  const filledFrom = useMemo(() => syncedSources(gears ?? [], profiles).join(" + "), [gears, profiles]);
   const sourceSummary = [
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
