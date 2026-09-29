@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { manifestEntry, metadataUrl, parseDigest, parseFetchVsixPins, shortLabel, studioCliUrl, studioCliVersion } from './assistants-manifest.mjs';
+import { metadataUrl, openVsxEntry, parseFetchVsixPins, shortLabel, studioCliUrl, studioCliVersion } from './assistants-manifest.mjs';
 
 const theia = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -42,22 +42,11 @@ test('labels an assistant by its name, not its tagline', () => {
     assert.equal(shortLabel(undefined, 'openai.chatgpt'), 'openai.chatgpt');
 });
 
-test('writes an entry the app accepts', () => {
-    const sha = 'b'.repeat(64);
-    const meta = {
-        namespace: 'openai', name: 'chatgpt', version: '26.5730.61309', displayName: 'Codex – OpenAI’s coding agent',
-        files: { download: 'https://open-vsx.org/api/openai/chatgpt/win32-x64/26.5730.61309/file/openai.chatgpt-26.5730.61309@win32-x64.vsix' },
-    };
-    assert.deepEqual(manifestEntry(meta, 'win32-x64', sha), {
-        id: 'openai.chatgpt', label: 'Codex', version: '26.5730.61309', target: 'win32-x64', url: meta.files.download, sha256: sha,
+test('writes an entry the app installs from open-vsx, with no version to pin', () => {
+    assert.deepEqual(openVsxEntry('Anthropic.claude-code', 'Claude Code for VS Code'), {
+        id: 'anthropic.claude-code', label: 'Claude Code', source: 'open-vsx',
     });
-    assert.throws(() => manifestEntry({ ...meta, files: {} }, 'win32-x64', sha), /no download/);
-    assert.throws(() => manifestEntry(meta, 'win32-x64', 'nope'), /no usable SHA-256/);
-});
-
-test('reads a .sha256 file in either shape', () => {
-    assert.equal(parseDigest('ABCDEF\n'), 'abcdef');
-    assert.equal(parseDigest('abcdef  openai.chatgpt.vsix\n'), 'abcdef');
+    assert.deepEqual(openVsxEntry('openai.chatgpt', undefined), { id: 'openai.chatgpt', label: 'openai.chatgpt', source: 'open-vsx' });
 });
 
 test('versions the Constructor Studio CLI by its pins, as build_vsix.py does', () => {

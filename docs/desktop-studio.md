@@ -358,85 +358,69 @@ Manual inputs are:
 | `studio_url`, `issuer` | empty | instead, ship exactly one Studio |
 | `version` | `0.1.0` | the version the installer carries |
 
+### The Extensions view
+
+A desktop has Theia's Extensions view (`@theia/vsx-registry`, in
+`electron-app` only; a browser session does not get it). It is open to all of
+open-vsx, as VS Code's is: the member searches, installs, updates and removes
+extensions there. The code modes (Development, FULL) keep its tab on the rail
+(`MODE_TABS`, `studio-chrome-mode.ts`). Extensions the app ships or brings
+itself show under **Built-in**, without Uninstall or Update; those the member,
+or the first start below, installed show under **Installed**.
+
 ### The assistant extensions
 
 Claude Code and Codex ship as the VS Code extensions product-ext drives. The
 installer does not carry them
-([#480](https://github.com/constructorfabric/studio-web/issues/480)). It
-carries `resources/assistants.json`, the pinned win32 builds, and the app
-fetches each one on first start.
+([#480](https://github.com/constructorfabric/studio-web/issues/480)), and
+their versions are not pinned: on its first start the app installs the newest
+version open-vsx has, and from then on they are the member's, updated or
+removed in the Extensions view like any other.
 
-**The pin.** The workflow's *Assistant extensions manifest* step runs
-`theia/electron-app/scripts/assistants-manifest.mjs`. The script reads the
-`fetch_vsix` pins from `theia/Dockerfile`, the same pins the session image
-uses. For each pin it asks open-vsx for that version's `win32-x64` build. When
-the pinned version has none, it takes the newest win32 build, and the run warns
-about it. Codex 26.5803.61601 is pinned, but only 26.5730.61309 has a win32
-build, so the desktop and the session can run different Codex versions. The
-script downloads each VSIX once and checks it against open-vsx's
-`files.sha256`. It then writes `{ id, label, version, target, url, sha256 }`
-for each extension. `package.mjs --assistants <file>` ships the manifest. From
-then on the app trusts the manifest's digest, not what open-vsx answers at run
-time.
+**The manifest.** The workflow's *Assistant extensions manifest* step runs
+`theia/electron-app/scripts/assistants-manifest.mjs`. Which extensions: the
+`fetch_vsix` lines of `theia/Dockerfile`, the ones the session image carries.
+Each becomes `{ id, label, source: 'open-vsx' }` (the label is open-vsx's
+name). `package.mjs --assistants <file>` ships it as `resources/assistants.json`.
 
 **On the member's machine**
-(`theia/studio/src/node/desktop-assistants.ts`, `desktop-assistants-store.ts`).
-The backend contribution mounts `/studio-desktop/assistants` only on a desktop
+(`theia/studio/src/node/desktop-assistants.ts`, `desktop-open-vsx.ts`). The
+backend contribution mounts `/studio-desktop/assistants` only on a desktop
 connected to a Studio whose build carries a manifest. A browser session has no
-such route, and nothing in it runs there. Once the window is up, it asks the
-backend to fetch whatever is missing, one extension at a time:
+such route. Once the window is up, it asks the backend to install what is
+missing, one at a time: `PluginServer.install('vscode-extension://<id>',
+PluginType.User)`, which is what the view's **Install** does. It resolves the
+newest version, downloads it from open-vsx, and deploys it into the running
+app; the rail's assistant then opens without a restart.
 
-1. It uses a VSIX the member put in place by hand, under the name open-vsx
-   gives it (`Anthropic.claude-code-2.1.227@win32-x64.vsix`), in
-   `~/ConstructorStudio/plugins` or next to `Constructor Studio.exe`, but only
-   when its digest is the pinned one. Otherwise it downloads the VSIX from the
-   manifest's URL into a `.partial-*` file.
-2. It checks the SHA-256 against the manifest. On a mismatch the file is
-   deleted and nothing is installed.
-3. It unpacks the VSIX, without Codex's `bin/linux-*` (used only for *run Codex
-   in WSL*, off by default), into
-   `~/ConstructorStudio/plugins/<id>-<version>/<id>/`. The unpack goes into a
-   `.partial-*` folder first, which is then renamed into place in one step.
-4. It deploys the extension into the running app with
-   `PluginServer.install('local-dir:<folder>')` (`@theia/plugin-ext`). Theia
-   deploys it and fires `onDidDeploy`, and each window's `HostedPluginSupport`
-   loads and starts the new plugin. The rail's assistant then opens without a
-   restart.
-5. Once the new version has deployed, it deletes the other versions of the same
-   extension. A new app version with a new manifest therefore fetches the new
-   pin on start and then removes the old one.
+- Each id installed once is remembered in
+  `~/ConstructorStudio/plugins/.open-vsx-installed.json`. One the member later
+  removed is not installed again, and drops out of the progress list.
+- One the member already has, at any version, is left alone.
+- An older build unpacked pinned copies into `~/ConstructorStudio/plugins/<id>-<version>/`
+  as system plugins. They are removed once the member's own copy is in: with
+  two copies of one id, Theia runs one of them without saying which (the view's
+  2.1.284 ran, the pinned 2.1.227 did not).
 
-On the next start, `desktop-main.js` adds the folder of each pinned version
-that is already there to `THEIA_PLUGINS`, so it loads like a built-in plugin.
-Only the pinned version's folder is added, so a leftover older version never
-loads.
+**What the member sees.** A progress notification while an assistant installs
+("Installing Claude Code…") and a note when it is ready. Until then the rail
+answers "Claude Code is being installed. It opens here in a moment." instead of
+"… is not available here" (the command `studio.desktop.assistantMessage`,
+which a session answers with nothing). A failure says what happened and offers
+**Try again**, and names the Extensions view as the other way.
 
-**What the member sees.** A progress notification while an assistant
-downloads ("Downloading Codex 26.5730.61309… 37 %") and a note when it is ready.
-Until then the rail answers "Codex is downloading (37 %). It opens here once it
-is installed." instead of "… is not available here". The rail gets that
-sentence from the command `studio.desktop.assistantMessage`, which a session
-answers with nothing. A failure leaves nothing behind, and its message says
-what happened and offers **Try again**:
+**Known limit.** Removing Claude Code from the view on Windows can stay at
+*Uninstalling*: its running `claude.exe` processes hold files in its folder.
+Closing the app and removing it on the next start, or removing the folder under
+the Theia config's `deployedPlugins`, gets it done. A plain extension (a theme)
+uninstalls and asks for **Reload Window** as usual.
 
-- open-vsx cannot be reached: the message names the host and the cause, and
-  says where to put the VSIX by hand (the offline path above);
-- a digest mismatch: the download is discarded;
-- the archive is not an extension, or the deploy fails.
-
-**Sizes.** The member downloads 92 MB for Claude Code and 347 MB for Codex
-(win32 VSIX, which still includes the linux binaries). Unpacked, without
-those, Codex takes about 600 MB. The installer now carries neither.
-
-**Behind a proxy.** The download is Node's `fetch` in the IDE backend, which
-does not read the system proxy. Where open-vsx is reachable only through a
-proxy, the VSIX can be put in place by hand. Mirroring the VSIXs as assets of
-the `desktop-v*` release is the way out, should that become common: the
-manifest's `url` would point there.
+**Behind a proxy.** The downloads are the backend's, which does not read the
+system proxy.
 
 ### The Constructor Studio CLI
 
-`cfs` arrives the same way, as one more entry of that manifest: the extension
+`cfs` arrives through the same manifest, as its one pinned entry: the extension
 `constructorfabric.studio-cli` (`theia/studio-cli`). The session image has
 `cfs` in `/opt/cfs`; a member's machine may have no Python at all, or one with
 its own `cfs` at another version. So the extension brings everything:
@@ -445,6 +429,16 @@ its own `cfs` at another version. So the extension brings everything:
   `constructor-studio` at `theia/cfs.json`'s `ref` in its site-packages;
 - `runtime/home/.cf-studio/cache`: the skill engine at `cfs.json`'s `engine`;
 - `runtime/bin/cfs.cmd` (`cfs` elsewhere): the command for a shell.
+
+Its entry is `{ id, label, version, target, url, sha256 }`, and the app treats
+it as #480 treated every assistant (`desktop-assistants-store.ts`): it
+downloads the VSIX from `url` (or takes one with that digest put in
+`~/ConstructorStudio/plugins` or beside `Constructor Studio.exe` by hand),
+checks the SHA-256, unpacks it into `~/ConstructorStudio/plugins/<id>-<version>/`,
+deploys it into the running app as a system plugin (so the view lists it as
+built-in), and deletes other versions once the new one is in. On later starts
+`desktop-main.js` loads that folder like a built-in plugin. Once the CLI is on
+open-vsx it can become an `open-vsx` entry like the assistants.
 
 **The same versions as the session.** `theia/cfs.json` is the one pin:
 `theia/Dockerfile` installs those versions into the image, and
