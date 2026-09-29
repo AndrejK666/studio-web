@@ -18,10 +18,6 @@
     },
     {
       "gear": "account-management",
-      "type_id": "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
-    },
-    {
-      "gear": "account-management",
       "type_id": "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
     },
     {
@@ -958,10 +954,7 @@
             "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
           }
         ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": []
-        }
+        "type": "object"
       },
       "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.kg.contains.v1~"
     },
@@ -977,10 +970,7 @@
             "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
           }
         ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": []
-        }
+        "type": "object"
       },
       "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.kg.contributed_to.v1~"
     },
@@ -996,10 +986,7 @@
             "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
           }
         ],
-        "type": "object",
-        "x-gts-traits": {
-          "full_text_search": []
-        }
+        "type": "object"
       },
       "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.kg.includes.v1~"
     },
