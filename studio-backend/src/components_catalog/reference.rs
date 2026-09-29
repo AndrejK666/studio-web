@@ -1393,7 +1393,8 @@ mod tests {
                 "cf-gears-chat-engine".to_string(),
                 json!({ "gear_name": "cf-gears-chat-engine", "source": "gears", "auto": {
                     "path": { "v": "gears/chat-engine", "b": "gears/chat-engine" },
-                    "adr": { "v": "28", "b": "28", "n": 28 }
+                    "adr": { "v": "28", "b": "28", "n": 28 },
+                    "stage": { "b": "In Dev", "v": "In Dev (3 of 6)" }
                 } }),
             ),
             (
@@ -1626,6 +1627,12 @@ mod tests {
         );
         assert_eq!(real.status.as_deref(), Some("published"));
         assert!(real.sources.contains(&"repository".to_string()));
+        // Readiness is read off the lent profile too: the survivor says where
+        // the gear is, not only the node that was superseded.
+        assert_eq!(
+            real.readiness.as_ref().and_then(|r| r.stage.as_deref()),
+            Some("In Dev")
+        );
     }
 
     #[test]
