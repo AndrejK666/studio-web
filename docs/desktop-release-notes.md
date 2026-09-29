@@ -9,6 +9,30 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next release
+
+### Modes
+
+- **Each mode has the same rails whichever mode you came from.** Agent
+  development now has the file tree and Search; Building has the file tree and
+  Source Control; Development and Full functionality have Source Control on the
+  left, Run and Debug and Testing, whatever order the modes were visited in.
+  The Extensions tab shows only in Development and Full functionality. A view
+  opened in one mode, such as the Gearbox Catalogue, is set aside the next time
+  you enter a mode that does not use it. The same holds in a portal session,
+  which has no Extensions view.
+- **Panels on the right open at a readable width.** Agents, Source Control in
+  Agent development, the Gearbox Inspector, Outline and AI chat opened 100px
+  wide; they now open at the assistants' width when the panel was narrower than
+  300px.
+
+### Known limits
+
+- The rails and the right panel were checked on a local desktop build without
+  the Extensions view (it predates #513), so the Extensions tab's placement in
+  Development and Full functionality is covered by unit tests only, and a
+  portal session was not opened to look at Documents and Workbench.
+
 ## 0.3.0-beta.5
 
 Everything merged since `desktop-v0.3.0-beta.4`. The installer is Windows

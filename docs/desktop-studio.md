@@ -435,10 +435,39 @@ Manual inputs are:
 A desktop has Theia's Extensions view (`@theia/vsx-registry`, in
 `electron-app` only; a browser session does not get it). It is open to all of
 open-vsx, as VS Code's is: the member searches, installs, updates and removes
-extensions there. The code modes (Development, Full functionality) keep its tab on the rail
-(`MODE_TABS`, `studio-chrome-mode.ts`). Extensions the app ships or brings
+extensions there. The code modes (Development, Full functionality) keep its tab on the rail,
+and no other mode shows it (`MODE_VIEWS`, `studio-mode-layout.ts`; see
+[What each mode keeps on its rails](#what-each-mode-keeps-on-its-rails)). Extensions the app ships or brings
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
+
+### What each mode keeps on its rails
+
+One table, `MODE_VIEWS` in `theia/studio/src/browser/studio-mode-layout.ts`,
+says which views each mode keeps on its rails, in the desktop and in a session
+alike:
+
+| Mode | Left rail, beyond the Studio view and the mode's own panels |
+|---|---|
+| Doc editing | Explorer |
+| Development, Full functionality | Explorer, Search, Source Control, Run and Debug, Extensions (desktop only), Testing |
+| Agent development | Explorer, Search (Agents on the left, Source Control on the right) |
+| Building | Explorer, Source Control (beside the Gearbox Catalogue) |
+
+On startup and after every mode switch, `StudioModeLayout` places each of the
+mode's views that is missing, without opening it, and sets aside (detaches, it
+does not close) side views that another mode names and this one does not, so
+a view opened once in one mode no longer stays in another for good. Views no
+mode names -- the assistants, AI chat, Object Details, a plugin's own view --
+stay where the member put them. The rail tabs (`MODE_TABS`) are read from the
+same table. A view opened from the View menu stays for as long as the member
+works in the mode. The Studio view is put back in any mode whose layout was
+saved before the view existed.
+
+The right panel has no tab bar in the product. Whatever opens there gets a
+readable width: a panel narrower than 300px when a new view comes to the
+front is widened to the assistants' 360px (`settleRightPanelWidth`,
+`theia/product-ext/src/browser/ai-context.js`).
 
 ### The gearbox engine
 
