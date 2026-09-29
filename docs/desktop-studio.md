@@ -401,6 +401,55 @@ proxy, the VSIX can be put in place by hand. Mirroring the VSIXs as assets of
 the `desktop-v*` release is the way out, should that become common: the
 manifest's `url` would point there.
 
+### The Constructor Studio CLI
+
+`cfs` arrives the same way, as one more entry of that manifest: the extension
+`constructorfabric.studio-cli` (`theia/studio-cli`). The session image has
+`cfs` in `/opt/cfs`; a member's machine may have no Python at all, or one with
+its own `cfs` at another version. So the extension brings everything:
+
+- `runtime/python`: a relocatable CPython (python-build-standalone), with
+  `constructor-studio` at `theia/cfs.json`'s `ref` in its site-packages;
+- `runtime/home/.cf-studio/cache`: the skill engine at `cfs.json`'s `engine`;
+- `runtime/bin/cfs.cmd` (`cfs` elsewhere): the command for a shell.
+
+**The same versions as the session.** `theia/cfs.json` is the one pin:
+`theia/Dockerfile` installs those versions into the image, and
+`theia/studio-cli/build_vsix.py` into the extension. The extension's version
+follows the pins (`<engine>-<ref>.<build>`, e.g. `1.6.2-ca55c66.2`), so a new
+pin is a new version; `extension.build` is raised for a change to the extension
+alone. `.github/workflows/studio-cli.yml` publishes each version once, into a
+release `studio-cli-v<version>`, and `assistants-manifest.mjs --studio-cli`
+pins that asset's SHA-256 into the installer's manifest. A desktop build whose
+release does not exist yet warns and ships without the CLI. The two workflows
+start together on a push that changes `cfs.json`, so that push's desktop build
+can miss the new release; a `desktop-v*` tag, cut afterwards, has it.
+
+**Its own home.** Both `cfs` and the engine's `init` look for the engine in
+`~/.cf-studio/cache`, whatever `CFS_CACHE_DIR` says. On a machine where the
+member runs their own `cfs`, that cache holds their engine, and the pin would
+be lost. So every `cfs` the desktop runs gets `HOME` and `USERPROFILE` set to
+`runtime/home`, which also leaves the member's `~/.cf-studio` untouched. It also
+runs with `PYTHONUTF8=1`, because Python writes a pipe or a console in the
+Windows code page and stops at the first character of `cfs`'s output that the
+code page lacks, and with `CFS_NO_VERSION_CHECK=1`, because the engine is
+pinned. The kit installer passes that engine to `cfs init --version`: without
+it, `init` first updates the cache to the latest engine on GitHub.
+
+**Who runs it.** `desktop-main.js` names the pinned version's folder in
+`STUDIO_CFS_RUNTIME`, even before the first fetch. The studio extension
+(`theia/studio/src/node/cfs-command.ts`) runs `python -m studio_proxy` from
+there once it exists, for the traceability map and the kit installer, and
+falls back to `cfs` on `PATH` until then. `desktop-main.js` also puts
+`runtime/bin` first on the `PATH` the terminals start with, where the member
+and the coding agents type `cfs`. An extension's
+`environmentVariableCollection` would be the usual way, but it does not reach
+the terminals of an extension deployed while the app runs, which is how this
+one arrives. The extension adds *Constructor Studio CLI: Show Version*.
+
+**Size.** 22 MB to download, about 65 MB unpacked (43 MB Python, 22 MB
+engine).
+
 ## Updates
 
 An installed app updates itself from the rolling `desktop-updates` release,

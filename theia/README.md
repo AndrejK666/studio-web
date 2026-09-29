@@ -149,12 +149,19 @@ dangling CPT uses while adding only the repository locations and freshness
 metadata needed by Theia. Missing canonical positions remain absent so the
 frontend can apply its own deterministic layout.
 
-The backend resolves the map command in this order:
+The backend resolves the map command in this order (`studio/src/node/cfs-command.ts`,
+shared with the kit installer, which runs the first of them):
 
 1. the exact executable set in `STUDIO_CFS_COMMAND`, when provided;
-2. `cfs` from the backend process `PATH`;
-3. the Workspace-local `.cf-studio/.core/skills/studio/scripts/studio.py`
-   through `python3`, when present.
+2. on a desktop, the Constructor Studio CLI extension (`studio-cli/`) in
+   `STUDIO_CFS_RUNTIME`, once it has been fetched: its own Python, home and
+   pinned engine;
+3. `cfs` from the backend process `PATH`;
+4. the Workspace-local `.cf-studio/.core/skills/studio/scripts/studio.py`
+   through `python3`, or `python` then `py -3` on Windows, when present.
+
+The `cfs` version and its skill engine are pinned in `theia/cfs.json`; the
+session image installs exactly those, and so does the desktop's CLI extension.
 
 Each candidate must support `map --help`; its `--version` output is recorded
 with the cached snapshot. Studio launches the selected executable directly,

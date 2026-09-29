@@ -62,6 +62,26 @@ function fetchedAssistants() {
         .map(({ folder }) => `local-dir:${folder}`);
 }
 
+/*
+ * The Constructor Studio CLI (theia/studio-cli) arrives the same way, as one
+ * more pin of that manifest. The studio extension runs `cfs` from the runtime
+ * the pin unpacks into, once it is there (studio/src/node/cfs-command.ts), so
+ * the folder is named even before the first fetch.
+ */
+const STUDIO_CLI = 'constructorfabric.studio-cli';
+
+function studioCliRuntime() {
+    let pins;
+    try {
+        pins = JSON.parse(fs.readFileSync(assistantsManifest, 'utf8')).assistants;
+    } catch {
+        return undefined;
+    }
+    const pin = (Array.isArray(pins) ? pins : [])
+        .find(p => typeof p?.id === 'string' && p.id.toLowerCase() === STUDIO_CLI && typeof p?.version === 'string');
+    return pin ? path.join(plugins, `${STUDIO_CLI}-${pin.version}`, STUDIO_CLI, 'extension', 'runtime') : undefined;
+}
+
 const defaults = {
     // A list, not STUDIO_DESKTOP_URL: that one pins a single Studio and hides
     // the choice, which is for a developer's `theia start`.
@@ -88,11 +108,22 @@ const defaults = {
     // The gearbox engine (gear catalogue, products, `.gdl`), when the build
     // carries one; the session image has it on PATH instead.
     GEARBOX_ENGINE: shippedEngine(),
+    // `cfs` from the Constructor Studio CLI extension; the session image has
+    // it on PATH instead.
+    STUDIO_CFS_RUNTIME: studioCliRuntime(),
 };
 for (const [name, value] of Object.entries(defaults)) {
     if (value && !process.env[name]) {
         process.env[name] = value;
     }
+}
+// `cfs` for the terminals, which start with this process's environment: the
+// CLI's bin ahead of any `cfs` the member installed. Named before the first
+// fetch too, since a shell looks a command up when it runs. (An extension's
+// terminal environment collection does not reach terminals when the extension
+// is deployed while the app runs.)
+if (process.env.STUDIO_CFS_RUNTIME) {
+    process.env.PATH = [path.join(process.env.STUDIO_CFS_RUNTIME, 'bin'), process.env.PATH].filter(Boolean).join(path.delimiter);
 }
 // Added to, not replaced: a THEIA_PLUGINS from the shell still counts.
 const fetched = fetchedAssistants();
