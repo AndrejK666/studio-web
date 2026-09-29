@@ -34,6 +34,11 @@ only, as before.
   picker, so a sign-in, sign-out, Studio switch or open done in one shows in
   the other straight away. A refused sign-out or switch now says why instead
   of leaving the view stuck on "Loading your projects…". (#527)
+- **"Desktop IDE" links from the portal behave like the view.** A
+  `cfstudio://` link switches Studio, signs in and opens the project through
+  the same client: a failed open says why (`HTTP n`), a refused sign-in is
+  reported, and the landing page and the Studio view show the opened project
+  at once. (#537)
 - **The update channel is a setting.** The beta checkbox left the Studio view
   and is now **Settings → Extensions → Studio → Desktop: Update Channel**:
   `auto` (the default: betas for a beta install, releases for a release),

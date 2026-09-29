@@ -107,6 +107,10 @@ Studio.
    image:
 
    ```bash
+   # From Git Bash on Windows, export MSYS_NO_PATHCONV=1 first: without it the
+   # shell rewrites /app/studio/src into a Windows path, the rm removes nothing,
+   # the copy lands in src/src, and the run tests the image's old sources.
+   export MSYS_NO_PATHCONV=1
    docker run -d --name desk-verify --user root --entrypoint sleep cf-studio-theia:local infinity
    docker exec desk-verify rm -rf /app/studio/src      # the image's own sources may be another branch's
    docker cp theia/studio/src desk-verify:/app/studio/src
