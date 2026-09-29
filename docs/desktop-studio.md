@@ -416,7 +416,7 @@ its own `cfs` at another version. So the extension brings everything:
 **The same versions as the session.** `theia/cfs.json` is the one pin:
 `theia/Dockerfile` installs those versions into the image, and
 `theia/studio-cli/build_vsix.py` into the extension. The extension's version
-follows the pins (`<engine>-<ref>.<build>`, e.g. `1.6.2-ca55c66.1`), so a new
+follows the pins (`<engine>-<ref>.<build>`, e.g. `1.6.2-ca55c66.2`), so a new
 pin is a new version; `extension.build` is raised for a change to the extension
 alone. `.github/workflows/studio-cli.yml` publishes each version once, into a
 release `studio-cli-v<version>`, and `assistants-manifest.mjs --studio-cli`
@@ -438,10 +438,12 @@ it, `init` first updates the cache to the latest engine on GitHub.
 `STUDIO_CFS_RUNTIME`, even before the first fetch. The studio extension
 (`theia/studio/src/node/cfs-command.ts`) runs `python -m studio_proxy` from
 there once it exists, for the traceability map and the kit installer, and
-falls back to `cfs` on `PATH` until then. The extension itself puts
-`runtime/bin` on the `PATH` of the terminals
-(`environmentVariableCollection`), where the member and the coding agents type
-`cfs`, and adds *Constructor Studio CLI: Show Version*.
+falls back to `cfs` on `PATH` until then. `desktop-main.js` also puts
+`runtime/bin` first on the `PATH` the terminals start with, where the member
+and the coding agents type `cfs`. An extension's
+`environmentVariableCollection` would be the usual way, but it does not reach
+the terminals of an extension deployed while the app runs, which is how this
+one arrives. The extension adds *Constructor Studio CLI: Show Version*.
 
 **Size.** 22 MB to download, about 65 MB unpacked (43 MB Python, 22 MB
 engine).

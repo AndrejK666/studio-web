@@ -6,7 +6,7 @@ same `cfs` as the browser session whatever the machine has installed.
 
 A desktop fetches it on first need, like Claude Code and Codex. The IDE runs
 `cfs` from it for the traceability map and kits, and the terminals find `cfs`
-on their `PATH`.
+on their `PATH` (electron-app/desktop-main.js puts it there).
 
 Build one platform's VSIX (Python 3.11.4+ and git; any target on any machine):
 

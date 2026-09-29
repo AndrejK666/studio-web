@@ -2,7 +2,7 @@
   "ref": "ca55c6687474a53151a0956de03eb22f8da56ef4",
   "engine": "v1.6.2",
   "extension": {
-    "build": 1,
+    "build": 2,
     "python": {
       "release": "20260924",
       "version": "3.12.14",
