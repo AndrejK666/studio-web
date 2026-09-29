@@ -22,11 +22,12 @@ What the release leaves open (its notes: `docs/desktop-release-notes.md`):
   the local Postgres against docker, not a generated product built and run on
   a machine that has the Build Tools. #534.
 
-- [ ] A per-machine catalogue cache for the Gearbox engine @andrejk666
+- [x] A per-machine catalogue cache for the Gearbox engine @andrejk666
 
-  The first open after a start waits about 90 s on a cold Windows machine
-  while the engine projects the corpus (#520 made the wait visible). TODO:
-  link the PR when it lands. #535.
+  The cold wait was Defender scanning the corpus file by file. #538 reads the
+  corpus ahead in parallel, keeps the engine for a second open and caches the
+  catalogue on disk: a cold open takes 10-20 s instead of 64-90 s. Handing the
+  engine a saved catalogue needs MikeFalcon77/gearbox#5. #535.
 
 - [ ] Gearbox engine bugs, worked around in Studio until the engine fixes them @andrejk666
 

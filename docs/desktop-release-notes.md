@@ -208,11 +208,15 @@ only, as before.
   needs docker. Build and Run were checked on a machine without MSVC, where the
   panel correctly says the linker is missing, and have not been run end to end
   on one that has it. A portal session has no Rust and says so. (#514)
-- **The first open of the gear catalogue is slow on Windows.** A cold open
-  took about 90 seconds on a Windows machine (7 seconds warm) while the engine
-  reads the 44-gear corpus. The open now shows how far it has got instead of
-  looking hung. (#502, #520)
-  <!-- TODO(catalogue-cache, #535): a per-machine catalogue cache is in progress; when its PR lands, replace this item with what it changes and its PR number. -->
+- **The first open of the gear catalogue after a launch takes 10-20 seconds
+  on Windows.** The wait was Microsoft Defender scanning the corpus's ~4,200
+  files one at a time as the engine read them (64-90 seconds). Studio now reads
+  the corpus ahead from parallel threads, keeps the engine for a second open
+  (under 0.1 seconds), and caches the catalogue on disk so the next launch
+  lists all gears at once. If the first read was slow, a one-time note names
+  the folder an organisation may exclude from scanning. Defender forgets
+  within about half an hour, so a later first open is again 10-20 seconds.
+  (#502, #520, #538)
 - **The first start downloads the tools.** Claude Code and Codex come from
   open-vsx (together a few hundred MB), the CLI (22 MB) and the Gearbox engine
   (about 6 MB) from GitHub releases. Until then the rail's assistants say they
