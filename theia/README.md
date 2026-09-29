@@ -222,7 +222,10 @@ finished; it does not say what it touched, and the alternative was a terminal
 and `git status` in a panel that exists so you do not need one.
 
 Requirements: an `orca` binary and a reachable runtime. The binary is looked up
-as `$ORCA_CLI`, then the desktop install for the platform, then `orca` on PATH.
+as `$ORCA_CLI`, then Orca's install locations and shell-command links for the
+platform, then `orca`/`orca-ide` on PATH, and resolved to an absolute path
+(the full order, and what the panel says in each failure state, is in
+[docs/desktop-studio.md › Agent development](../docs/desktop-studio.md#agent-development-orca)).
 A session container should set `ORCA_CLI` and run `orca serve --json
 --project-root <workspace>` beside the IDE; on a developer machine the desktop
 app already provides one.
@@ -328,7 +331,10 @@ against 3.7 GB) and an Electron process per session. `STUDIO_ORCA_VERSION=`
 at build time, or `STUDIO_ORCA_ENABLED=false` at deploy time, opts out of
 either half.
 
-Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca`.
+Tests: `cd studio && npx jest --config configs/jest.config.ts src/node/orca src/common/orca src/browser/orca`.
+`orca-discovery.test.ts` covers finding the executable on each platform,
+`orca-availability.test.ts` what the panel says in each state, and
+`orca-worktree-groups.test.ts` the grouping by repository.
 `orca-service.test.ts` is offline (fixtures are trimmed real payloads);
 `orca-live.acceptance.test.ts` drives a real runtime when one is available and
 stands down otherwise.

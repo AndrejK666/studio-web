@@ -24,7 +24,7 @@ import { TerminalService } from '@theia/terminal/lib/browser/base/terminal-servi
 import { TerminalLocation, type TerminalWidget } from '@theia/terminal/lib/browser/base/terminal-widget';
 import type { OrcaTerminal } from '../common/orca-protocol';
 import {
-    NO_ORCA_PAIRING,
+    needsPairing,
     OrcaTerminalService,
     type OrcaTerminalClient
 } from '../common/orca-terminal-protocol';
@@ -145,7 +145,8 @@ export class OrcaTerminalOpener {
         try {
             await this.bridge.attach(stream, handle, cols, rows);
         } catch (error) {
-            const unpaired = error instanceof Error && error.message.includes(NO_ORCA_PAIRING);
+            // Missing, or no longer accepted: both are fixed by pairing (again).
+            const unpaired = error instanceof Error && needsPairing(error.message);
             if (!unpaired || !(await this.bridge.canPair()) || !(await this.askToPair())) {
                 throw error;
             }
