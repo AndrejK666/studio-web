@@ -1,3 +1,55 @@
+# 2026-09-29 — the desktop's tools as extensions (ADR-0032)
+
+What was built today, and what it left open:
+
+- [x] Ship `cfs` to the desktop @andrejk666
+
+  The Constructor Studio CLI is the extension `constructorfabric.studio-cli`,
+  with its own Python, home and pinned engine (#505).
+
+- [x] The standard Extensions view, open to all of open-vsx @andrejk666
+
+  Claude Code and Codex are no longer pinned; they install from open-vsx on
+  first start and are the member's from then on (#513).
+
+- [x] Kits in the Extensions view @andrejk666
+
+  Installed into the open checkout, and reported through
+  `POST …/installations/{kit}/materializations` (#517).
+
+- [x] The gearbox engine out of the installer @andrejk666
+
+  The extension `constructorfabric.gearbox-engine`, built once per pinned
+  revision (#519).
+
+- [x] Uninstalling on Windows finishes @andrejk666
+
+  An extension of Theia's deployer handler stops what runs from the folder and
+  leaves what is still held for the next start (#522).
+
+- [ ] Install a kit end to end from a signed-in desktop @andrejk666
+
+  Needs a Studio running #517's backend: request → `cfs` in the checkout →
+  the portal's row shows *installed* for that repository.
+
+- [ ] Pin the session's `cfs init` to its engine @andrejk666
+
+  In a session, `kit-installer` runs `cfs init` without `--version`, so the
+  proxy first updates its cache to the newest engine on GitHub and the
+  image's pin holds only until the first kit install. The desktop passes the
+  pin; the session should too (a web change).
+
+- [ ] Publish the CLI and the engine on open-vsx @andrejk666
+
+  Until then the view lists them as built-in and they update only with a new
+  app build. Needs a `constructorfabric` namespace and a publishing token.
+
+- [ ] Build the CLI and the engine for macOS and Linux @andrejk666
+
+  `cfs.json` pins a Python for `linux-x64` and `darwin-arm64`; the workflows
+  build `win32-x64` only, as there is no macOS or Linux desktop yet. The
+  store's unpack keeps no exec bit, which a POSIX target will need.
+
 # 2026-09-29 — agent development (Orca) on the desktop
 
 What #496 left open when it made Orca discovery, states and worktree scoping
