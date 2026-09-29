@@ -15,6 +15,8 @@
 // The backend holds that conversation (see `src/node/orca-service.ts`); the
 // frontend only sees the handful of operations below.
 
+import type { OrcaProjectSync } from './desktop-orca-projects';
+
 export const orcaServicePath = '/services/studio-orca';
 /** DI key for the proxy on the frontend and the impl on the backend. */
 export const OrcaService = Symbol('OrcaService');
@@ -188,6 +190,15 @@ export interface OrcaService {
      * it registered.
      */
     registerWorkspace(path: string): Promise<string[]>;
+    /**
+     * A window reports the project it has open (undefined: none), on start
+     * and whenever it changes. On a member's machine this releases from Orca
+     * the repositories Studio added for projects no window has open any more,
+     * and answers which of this project's repositories Orca does not know
+     * (see ./desktop-orca-projects.ts). In a session it does nothing and
+     * answers `enabled: false`.
+     */
+    trackProject(windowId: string, root: string | undefined): Promise<OrcaProjectSync>;
     currentWorktree(): Promise<OrcaWorktree | undefined>;
     listTerminals(worktree: string): Promise<OrcaTerminal[]>;
     /** Uncommitted changes in one worktree, by absolute path. */
