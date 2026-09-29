@@ -24,6 +24,39 @@ What a member does:
    the Studio and the folder opens in the IDE. The organization is named only
    when there is more than one, as the portal hides it.
 
+### The landing page
+
+The app starts in a placeholder folder (`~/ConstructorStudio/workspace`, the
+backend's `STUDIO_WORKSPACE_ROOT`, reported as `startFolder` by
+`/studio-desktop/status`). While that folder, or no folder, is open, the main
+area shows a **Welcome** page instead of the product's start page, which would
+read the placeholder as a project
+(`theia/studio/src/browser/desktop-landing-widget.tsx`; what it decides is in
+`desktop-landing-state.ts`, with its tests). Top to bottom:
+
+- **Connect**: signed out, what signing in gives, the Studio picker and **Sign
+  in with Constructor ID** (the same `/studio-desktop/*` routes as the view);
+  while signing in, a wait for the browser; a Studio that cannot be reached is
+  said so, and **Open folder…** becomes the primary action. Signed in,
+  **Choose a project**: the member's organizations, workspaces and projects
+  with a filter, the no-repositories state per row, and the same clone with
+  progress as the view. No organization yet, or projects that could not load,
+  each say what to do.
+- **Modes**: one card per mode of the mode picker (`MODES` in
+  `studio-mode-bar.tsx`: its label, icon and title), each switching to that
+  mode. **Got it** hides them on this machine (the IDE's local storage,
+  `studio.desktop.landing.onboarding-dismissed`, a boolean); **Help → Welcome**
+  opens the page and shows them again, in any window.
+- **Work offline**: Theia's **Open folder…** and the recently opened folders.
+
+The page is a widget in the main dock, so the start page — a layer of the
+*empty* dock — yields to it by its own rule and comes back unchanged once a
+real project or folder is open; product-ext is not changed. It cannot be
+closed in the placeholder. The **Workspace source suggestion** notification is
+not raised for the placeholder folder (a `WorkspaceSuggestionGate` the desktop
+binds; a session binds none). Both are bound only by the electron frontend
+module, so a session never loads them.
+
 ### The Constructor Studio view
 
 Top to bottom (`theia/studio/src/browser/desktop-studio-widget.tsx`; what it
