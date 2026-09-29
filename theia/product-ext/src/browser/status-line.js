@@ -65,6 +65,7 @@ const { StatusBarAlignment } = require('@theia/core/lib/browser/status-bar/statu
 const { ChangesStore, relativePath } = require('./changes-store');
 const { fileTypeSettings } = require('./file-type-settings');
 const { activeProject } = require('./active-project');
+const { codeModeStatusCss } = require('./status-line-modes');
 
 /*
  * Pending counts are re-read after a burst of sidecar writes settles rather than
@@ -109,6 +110,9 @@ const STATUS_LINE_CSS = `
  * a studio-status-* class and a place in the policy.
  */
 #theia-statusBar .element:not([class*="studio-status-"]) { display: none !important; }
+/* ...in Doc editing. The code modes name the few of Theia's entries they need
+   back: branch and sync, Problems, the bell (status-line-modes.js). */
+${codeModeStatusCss()}
 /* !important on the colour, for the same reason the token in SHELL_CSS carries
    it: Theia's own status-bar stylesheet sets the text colour on
    "#theia-statusBar .area .element", which outranks a product rule on
