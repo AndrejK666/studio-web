@@ -34,6 +34,7 @@ import {
   type StudioSession,
   keyFor,
 } from "../common/protocol";
+import { remoteKey } from "../common/git-remote";
 
 /**
  * How many engine log lines are kept.
@@ -594,6 +595,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       remote: remote.corpus,
     };
     this.remoteOrigin = remote.origin;
+    this.knownOrigin = remote.origin ?? this.knownOrigin;
     // A copy of this very commit may already be on this machine, brought by
     // another project. Then there is no reason to stay read-only: adopt it and
     // reload onto it. Only a copy already there -- nothing is fetched unasked.
@@ -605,6 +607,34 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
 
   /** Where the listed corpus comes from, while the rows are the backend's. */
   protected remoteOrigin: CorpusOrigin | undefined;
+  /** The last corpus origin the backend named, kept after a copy is adopted. */
+  protected knownOrigin: CorpusOrigin | undefined;
+
+  /**
+   * Where the listed corpus can be brought from, while the rows are the
+   * backend's and no copy is here yet. What New Product offers inline.
+   */
+  get corpusToBring(): CorpusOrigin | undefined {
+    return this.state.remote === undefined ? undefined : this.remoteOrigin;
+  }
+
+  /**
+   * The corpus the Studio backend relays, when `url` is that repository: how a
+   * product's `git(url, rev)` source reaches a private corpus. Asks the backend
+   * when nothing has been listed from it yet (a workspace with its own roots
+   * never did); undefined when there is no backend or it names another corpus.
+   */
+  async corpusOriginFor(url: string): Promise<CorpusOrigin | undefined> {
+    if (this.knownOrigin === undefined && this.remote !== undefined) {
+      try {
+        this.knownOrigin = (await this.remote.load())?.origin;
+      } catch {
+        // No Studio backend to ask: the source is fetched as its URL says.
+      }
+    }
+    const origin = this.knownOrigin;
+    return origin !== undefined && remoteKey(origin.url) === remoteKey(url) ? origin : undefined;
+  }
   protected bringingState: { readonly busy: boolean; readonly error?: string } = { busy: false };
 
   /**

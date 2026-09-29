@@ -25,9 +25,10 @@
 // pays, and the alternative -- a client that guesses the roots -- is what this
 // replaces.
 //
-// `git(...)` sources are refused rather than skipped. Materialising a repository
-// is not built, and a catalogue quietly missing a source is indistinguishable
-// from a product whose gears do not exist.
+// `git(...)` sources are fetched into the per-machine cache before step 2 reads
+// the roots (`materializeGitSource`), and one that cannot be fetched is refused
+// rather than skipped: a catalogue quietly missing a source is
+// indistinguishable from a product whose gears do not exist.
 
 import { StorageService } from "@theia/core/lib/browser/storage-service";
 
@@ -51,6 +52,7 @@ import {
 } from "./opening-outcome";
 import { ProductStore } from "../product-store";
 import { GearSessionService } from "./gear-session-service";
+import { isInside, parentOf, resolveFrom } from "./source-paths";
 
 // The steps and their words live in `opening-outcome.ts`, beside the decisions
 // that attribute a failure to one of them. Re-exported because the Product view
@@ -405,7 +407,7 @@ export class ProductSessionService {
     const containing = this.workspace
       .tryGetRoots()
       .map((stat) => stat.resource.path.fsPath())
-      .filter((root) => path.startsWith(`${root}/`))
+      .filter((root) => isInside(path, root))
       .sort((a, b) => b.length - a.length);
     return containing[0] ?? directory;
   }
@@ -415,7 +417,7 @@ export class ProductSessionService {
    *
    * Returns whether it opened. A refusal is reported to the person rather than
    * thrown: every reason is something they can act on -- a description that does
-   * not evaluate, a `git(...)` source, no local sources at all.
+   * not evaluate, a `git(...)` source that cannot be fetched, no sources at all.
    */
   async open(ref: ProductRef): Promise<boolean> {
     const pending = this.inFlight;
@@ -498,18 +500,30 @@ export class ProductSessionService {
     if (!this.current(generation)) return false;
 
     // Constructor Studio: a description Studio writes names its corpus as a
-    // git source at a commit; that commit is brought into the workspace first.
+    // git source at a commit; that commit is brought onto this machine first,
+    // into the per-machine cache the corpus copy lives in -- through the Studio
+    // relay when it is the private corpus the backend relays.
     const gitRoots: Record<string, string> = {};
+    const gitFailures: Record<string, string> = {};
     for (const [id, source] of Object.entries(intent.sources ?? {}) as [string, SourceDecl][]) {
       if (source.kind !== "git") continue;
+      const relayed = await this.catalogue.corpusOriginFor(source.url);
       const dir = await this.service
-        .materializeGitSource(id, source.url, { rev: source.rev, tag: source.tag, branch: source.branch })
-        .catch(() => undefined);
+        .materializeGitSource(
+          id,
+          source.url,
+          { rev: source.rev, tag: source.tag, branch: source.branch },
+          relayed?.clonePath,
+        )
+        .catch((error: unknown) => {
+          gitFailures[id] = messageOf(error);
+          return undefined;
+        });
       if (dir !== undefined) gitRoots[id] = dir;
     }
     if (!this.current(generation)) return false;
     const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at), gitRoots);
-    const usable = sourcesUsable(ref.label, sources);
+    const usable = sourcesUsable(ref.label, sources, gitFailures);
     if (!usable.ok) return this.failStage("describe", usable.reason, generation);
     const roots = [...sources.roots];
 
@@ -564,31 +578,6 @@ export class ProductSessionService {
     if (ref === undefined) return false;
     return this.open(ref);
   }
-}
-
-/** The directory a `product.gdl` sits in. */
-function parentOf(file: string): string {
-  const at = file.lastIndexOf("/");
-  return at <= 0 ? "/" : file.slice(0, at);
-}
-
-/**
- * `at` resolved against the description's directory.
- *
- * Hand-rolled because the browser has no `path`: the inputs are a POSIX absolute
- * directory and a relative path out of a `.gdl`, which is the only case this has
- * to be right for. `..` is honoured because that is how every real product points
- * at a sibling checkout -- `path("../../../gears-rust")` in the demo.
- */
-function resolveFrom(directory: string, at: string): string {
-  if (at.startsWith("/")) return at;
-  const parts = directory.split("/").filter((p) => p.length > 0);
-  for (const segment of at.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") parts.pop();
-    else parts.push(segment);
-  }
-  return `/${parts.join("/")}`;
 }
 
 function messageOf(error: unknown): string {

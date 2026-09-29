@@ -117,9 +117,15 @@ function holdsDescription(dir: string, depth: number): boolean {
  * The products a person can open: `<checkout>/product.gdl`, which is where
  * Studio's portal saves one, and `<checkout>/products/<name>/product.gdl`, the
  * layout the gearbox repository itself uses.
+ *
+ * The workspace itself counts as a checkout too, for a desktop member who
+ * opened one repository directly: then `<workspace>/product.gdl` and
+ * `<workspace>/products/<name>/product.gdl` are that repository's products, and
+ * the second is where New Product suggests putting one. A session's
+ * `/workspace` holds no `products/` of its own, so it finds nothing new there.
  */
 export function productFiles(workspace = workspaceDir()): string[] {
-  const out: string[] = [];
+  const out = new Set<string>();
   let checkouts: fs.Dirent[];
   try {
     checkouts = fs.readdirSync(workspace, { withFileTypes: true });
@@ -127,22 +133,26 @@ export function productFiles(workspace = workspaceDir()): string[] {
     return [];
   }
   const consider = (file: string) => {
-    if (fs.existsSync(file)) out.push(file);
+    if (fs.existsSync(file)) out.add(file);
   };
-  consider(path.join(workspace, "product.gdl"));
-  for (const c of checkouts) {
-    if (!c.isDirectory() || SKIP.has(c.name) || c.name.startsWith(".")) continue;
-    const dir = path.join(workspace, c.name);
-    consider(path.join(dir, "product.gdl"));
+  const productsUnder = (dir: string) => {
     let products: fs.Dirent[];
     try {
       products = fs.readdirSync(path.join(dir, "products"), { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
     for (const p of products) {
       if (p.isDirectory()) consider(path.join(dir, "products", p.name, "product.gdl"));
     }
+  };
+  consider(path.join(workspace, "product.gdl"));
+  productsUnder(workspace);
+  for (const c of checkouts) {
+    if (!c.isDirectory() || SKIP.has(c.name) || c.name.startsWith(".")) continue;
+    const dir = path.join(workspace, c.name);
+    consider(path.join(dir, "product.gdl"));
+    productsUnder(dir);
   }
-  return out.sort();
+  return [...out].sort();
 }

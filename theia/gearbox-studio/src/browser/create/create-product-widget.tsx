@@ -21,6 +21,7 @@ import { ProductEditService } from "../product-edit-service";
 import { EngineConnectionService } from "../shell/engine-connection-service";
 import { ProductSessionService } from "../shell/product-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
+import { corpusOffer, corpusSourceDecl, type CorpusCopy, type CorpusOffer } from "./corpus-source";
 
 export type CreateMode = "blank" | "clone-local" | "clone-git";
 
@@ -55,6 +56,8 @@ export interface CreateProductState {
   id?: string;
   name?: string;
   mode?: CreateMode;
+  /** A line above the form saying why the wizard opened -- Add gear with no product. */
+  note?: string;
 }
 
 @injectable()
@@ -119,6 +122,18 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   protected previewTimer: ReturnType<typeof setTimeout> | undefined;
   protected roots: string[] = [];
   protected selectedRoots = new Set<string>();
+  protected note: string | undefined;
+
+  /**
+   * Constructor Studio: the gear corpus as a source -- see `corpus-source.ts`.
+   * The copy on this machine when there is one, else the corpus the backend
+   * lists, to bring here from the form.
+   */
+  protected corpusCopy: CorpusCopy | undefined;
+  protected corpusChecked = false;
+  /** Whether the checkbox has been decided for this copy, by the default or a person. */
+  protected corpusDecidedFor: string | undefined;
+  protected corpusKey = "";
 
   @postConstruct()
   protected init(): void {
@@ -127,10 +142,70 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     this.title.closable = true;
     this.addClass("gbx-widget-create");
     this.toDispose.push(this.engine.onDidChange(() => this.update()));
+    // A copy adopted or brought while the form is open, or the backend's
+    // listing arriving after sign-in, changes what the sources can offer. The
+    // store fires on every projected gear too, so the backend is asked only
+    // when the roots or the listing moved.
+    this.toDispose.push(
+      this.catalogue.onChanged(() => {
+        const bring = this.catalogue.corpusBringing;
+        const key = [
+          this.catalogue.rootPaths().join("|"),
+          this.catalogue.current.remote ?? "",
+          this.catalogue.corpusToBring?.rev ?? "",
+          bring.busy ? "busy" : bring.error ?? "",
+        ].join("#");
+        if (key === this.corpusKey) return;
+        this.corpusKey = key;
+        void this.refreshCorpus();
+      }),
+    );
     void this.refreshRoots();
   }
 
+  protected corpusOffer(): CorpusOffer {
+    return corpusOffer({
+      copy: this.corpusCopy,
+      toBring: this.catalogue.corpusToBring,
+      bringable: this.catalogue.corpusBringable,
+      workspaceRoots: this.roots.map((path) => ({ path, id: this.sourceIdFor(path) })),
+      engineRoots: this.catalogue.rootPaths(),
+    });
+  }
+
+  protected async refreshCorpus(): Promise<void> {
+    let copy: CorpusCopy | undefined;
+    try {
+      copy = await this.service.adoptedCorpus();
+    } catch {
+      copy = undefined;
+    }
+    const changed = copy?.path !== this.corpusCopy?.path;
+    this.corpusCopy = copy;
+    const offer = this.corpusOffer();
+    // The default is applied once per copy, so a person's unticking survives
+    // every catalogue change after it.
+    if (offer.kind === "copy" && this.corpusDecidedFor !== offer.copy.path) {
+      this.corpusDecidedFor = offer.copy.path;
+      this.corpusChecked = offer.preselect || this.corpusRequested;
+      this.corpusRequested = false;
+    }
+    if (changed) this.schedulePreview();
+    else this.update();
+  }
+
+  /** Set by the inline "Bring the gears here": tick the copy once it is here. */
+  protected corpusRequested = false;
+
+  protected async bringCorpus(): Promise<void> {
+    this.corpusRequested = true;
+    this.update();
+    await this.catalogue.bringCorpusHere();
+    await this.refreshCorpus();
+  }
+
   openWith(state?: CreateProductState): void {
+    this.note = state?.note;
     if (state?.cloneFrom !== undefined) {
       this.cloneFrom = state.cloneFrom;
       this.mode = state.mode ?? "clone-local";
@@ -155,6 +230,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   protected async refreshRoots(): Promise<void> {
     this.roots = this.workspace.tryGetRoots().map((r) => r.resource.path.fsPath());
     this.selectedRoots = new Set(this.selectableRoots());
+    await this.refreshCorpus();
     await this.refreshPreview();
     this.update();
   }
@@ -350,12 +426,16 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   }
 
   protected createParams(cloneFrom: string | undefined, dryRun: boolean) {
+    const offer = this.corpusOffer();
     const sources =
       this.mode === "blank"
-        ? [...this.selectedRoots].map((at) => ({
-            id: this.sourceIdFor(at),
-            at: this.relativeSource(at),
-          }))
+        ? [
+            ...[...this.selectedRoots].map((at) => ({
+              id: this.sourceIdFor(at),
+              at: this.relativeSource(at),
+            })),
+            ...(offer.kind === "copy" && this.corpusChecked ? [corpusSourceDecl(offer.copy)] : []),
+          ]
         : [];
     return {
       path: this.productPath(),
@@ -658,6 +738,11 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
       <div className="gbx-create">
         <div className="gbx-create-form">
           <h2>New product</h2>
+          {this.note !== undefined && (
+            <p className="gbx-create-note" data-create-note>
+              {this.note}
+            </p>
+          )}
           {!connected && (
             <div className="gbx-error" role="alert" data-engine-status="disconnected">
               Engine disconnected: {this.engine.disconnectReason}. Preview and Create need the
@@ -810,6 +895,25 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
               >
                 Choose…
               </button>
+              {/* The suggestion taken by a press, never by default (ADR-0013).
+                  It is a folder the product list finds: `products/<id>` under
+                  the opened repository. */}
+              {this.productPath() === "" && this.workspaceRoot() !== "" && (
+                <button
+                  type="button"
+                  className="theia-button secondary"
+                  data-destination-suggested
+                  disabled={!connected}
+                  onClick={() => {
+                    this.destinationTouched = true;
+                    this.destination = this.suggestedProductPath();
+                    this.selectedRoots = new Set(this.selectableRoots());
+                    this.schedulePreview();
+                  }}
+                >
+                  Use suggested
+                </button>
+              )}
             </div>
           </label>
           {/* **The whole path, wrapped, outside the field.** A destination is
@@ -870,6 +974,14 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                   </label>
                 );
               })}
+              {this.renderCorpusSource(connected)}
+              {this.productPath() !== "" && this.createParams(undefined, true).sources.length === 0 && (
+                // Said before Create rather than after: a product with no
+                // sources is written, and then refuses to open.
+                <div className="gbx-create-sources-note" data-create-no-sources>
+                  No source is selected, so the product would have no gears to compose and would not open.
+                </div>
+              )}
             </div>
           ) : (
             <p className="gbx-create-sources-note" data-clone-sources-note>
@@ -914,6 +1026,80 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
         </pre>
       </div>
     );
+  }
+
+  /**
+   * Constructor Studio: the corpus among the sources -- its copy on this
+   * machine, or a way to bring one here without leaving the form.
+   */
+  protected renderCorpusSource(connected: boolean): React.ReactNode {
+    const offer = this.corpusOffer();
+    if (offer.kind === "copy") {
+      return (
+        <label
+          data-create-source={offer.copy.path}
+          data-create-source-corpus
+          title="The gear corpus, from the one copy kept on this machine for every project."
+        >
+          <input
+            type="checkbox"
+            checked={this.corpusChecked}
+            disabled={!connected}
+            onChange={() => {
+              this.corpusChecked = !this.corpusChecked;
+              this.schedulePreview();
+            }}
+          />
+          {offer.copy.path}
+          <span className="gbx-id"> — the gear corpus, this machine's copy</span>
+          {this.corpusChecked && (
+            <div className="gbx-create-sources-note" data-corpus-local-note>
+              Named by its path on this machine: the product resolves here. To share it, declare the
+              corpus as <code>git(url, rev)</code> instead, which opens anywhere.
+            </div>
+          )}
+        </label>
+      );
+    }
+    if (offer.kind === "bring") {
+      const { busy, error } = this.catalogue.corpusBringing;
+      return (
+        <div data-create-source-bring>
+          <div>
+            The gear corpus ({offer.origin.url.replace(/^https:\/\//, "").replace(/\.git$/, "")}) is not on this
+            machine yet.
+          </div>
+          {offer.unavailable !== undefined ? (
+            <div className="gbx-create-sources-note" data-corpus-unavailable>
+              {offer.unavailable} Add its repository to the workspace to use it as a source.
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="theia-button secondary"
+                data-corpus-bring
+                disabled={!connected || busy}
+                onClick={() => void this.bringCorpus()}
+              >
+                {busy ? "Bringing the gears here…" : "Bring the gears here"}
+              </button>
+              {offer.note !== undefined && (
+                <div className="gbx-create-sources-note" data-corpus-note>
+                  {offer.note}
+                </div>
+              )}
+            </>
+          )}
+          {error !== undefined && (
+            <div className="gbx-error" role="alert" data-corpus-error>
+              {error}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
   }
 
   protected async create(): Promise<void> {

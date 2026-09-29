@@ -265,15 +265,26 @@ export interface GearboxService {
 
   /**
    * Constructor Studio: a directory named `id` holding the git source `url` at
-   * `ref`, brought into the workspace when no checkout already is that commit.
-   * For a description that names its corpus as `git(url, rev)`. `undefined`
-   * when it cannot be had.
+   * `ref`. A workspace checkout that already is that commit, else the commit in
+   * the per-machine cache `useSharedCorpus` fills (`~/ConstructorStudio/corpus`),
+   * brought there when missing. For a description that names its corpus as
+   * `git(url, rev)`. `clonePath` is the Studio relay's path when `url` is the
+   * corpus the backend relays (a private one). `undefined` when the input is not
+   * something to hand to git or the ref names no commit; rejects with git's
+   * reason when the repository cannot be reached.
    */
   materializeGitSource(
     id: string,
     url: string,
     ref: { rev?: string | null; tag?: string | null; branch?: string | null },
+    clonePath?: string,
   ): Promise<string | undefined>;
+
+  /**
+   * Constructor Studio: the corpus copy `useSharedCorpus` adopted, with the
+   * source id the engine names it by. `undefined` when none is adopted.
+   */
+  adoptedCorpus(): Promise<{ id: string; path: string } | undefined>;
 
   /**
    * Constructor Studio: make the gear corpus `url` at commit `rev` a source

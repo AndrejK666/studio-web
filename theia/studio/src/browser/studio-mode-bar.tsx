@@ -21,6 +21,8 @@ import { FrontendApplication, FrontendApplicationContribution } from '@theia/cor
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { CommandRegistry } from '@theia/core/lib/common/command';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
+import { MessageService } from '@theia/core/lib/common/message-service';
+import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 
 /** The Gearbox perspective's id, owned by `gearbox-studio`. Named here rather
@@ -37,6 +39,54 @@ interface ModeAction {
     title: string;
     /** Arguments the command is run with. */
     args?: unknown[];
+}
+
+/** The part of the command registry the ribbon reads. */
+export interface RibbonCommands {
+    getCommand(id: string): unknown;
+    isEnabled(id: string, ...args: unknown[]): boolean;
+    getAllHandlers(id: string): readonly object[];
+}
+
+/** How the ribbon draws one action; `undefined` when it is not drawn at all. */
+export interface RibbonActionState {
+    readonly enabled: boolean;
+    /** The tooltip: what the action does, and why it cannot be done now. */
+    readonly title: string;
+}
+
+/**
+ * Whether, and how, an action is drawn.
+ *
+ * An action whose command is not registered (its package absent from this
+ * build) is left out rather than drawn as a button that does nothing. One whose
+ * command exists but is not enabled now -- Product with no product open -- is
+ * drawn disabled, and says why when the contribution can say: a handler may
+ * carry `disabledReason(...args)`, read here by duck typing because the
+ * extension that registers it (gearbox-studio) is not a dependency of this one.
+ * The ribbon used to draw it enabled and run it into Theia's "no active
+ * handler" rejection, which nothing reported: the click did nothing at all.
+ */
+export function ribbonAction(commands: RibbonCommands, action: Pick<ModeAction, 'command' | 'title' | 'args'>): RibbonActionState | undefined {
+    if (!commands.getCommand(action.command)) {
+        return undefined;
+    }
+    const args = action.args ?? [];
+    if (commands.isEnabled(action.command, ...args)) {
+        return { enabled: true, title: action.title };
+    }
+    let reason: string | undefined;
+    for (const handler of commands.getAllHandlers(action.command)) {
+        const explain = (handler as { disabledReason?: unknown }).disabledReason;
+        if (typeof explain === 'function') {
+            const said: unknown = explain.apply(handler, args);
+            if (typeof said === 'string' && said.trim() !== '') {
+                reason = said.trim();
+                break;
+            }
+        }
+    }
+    return { enabled: false, title: `${action.title} — ${reason ?? 'not available right now'}` };
 }
 
 interface ModeGroup {
@@ -218,6 +268,33 @@ abstract class ModeAware extends ReactWidget {
         this.update();
     }
 
+    @inject(ContextKeyService) @optional()
+    protected readonly contextKeys: ContextKeyService | undefined;
+
+    /**
+     * Keep the actions' enabled state current. Theia has no event for "a
+     * handler's `isEnabled` changed", so the ribbon asks again whenever it may
+     * have: after any command ran (opening a product is one), when a context
+     * key changes (Gearbox keeps its context -- a product or not -- in one), and
+     * when the pointer or the keyboard reaches the ribbon, which is always
+     * before a click.
+     */
+    protected watchEnablement(): void {
+        this.toDispose.push(this.commands.onDidExecuteCommand(() => this.update()));
+        if (this.contextKeys) {
+            this.toDispose.push(this.contextKeys.onDidChange(() => this.update()));
+        }
+        const refresh = () => this.update();
+        this.node.addEventListener('mouseenter', refresh);
+        this.node.addEventListener('focusin', refresh);
+        this.toDispose.push({
+            dispose: () => {
+                this.node.removeEventListener('mouseenter', refresh);
+                this.node.removeEventListener('focusin', refresh);
+            },
+        });
+    }
+
     override dispose(): void {
         this.toDispose.dispose();
         super.dispose();
@@ -332,34 +409,59 @@ export class StudioModeSwitch extends ModeAware {
 export class StudioModeBar extends ModeAware {
     static readonly ID = 'studio-mode-bar';
 
+    @inject(MessageService) @optional()
+    protected readonly messages: MessageService | undefined;
+
     @postConstruct()
     protected init(): void {
         this.id = StudioModeBar.ID;
         this.addClass('studio-mode-bar');
         this.watchMode();
+        this.watchEnablement();
+    }
+
+    /** Run an action, asking again first: the state drawn may be a moment old. */
+    protected run(action: ModeAction): void {
+        if (!ribbonAction(this.commands, action)?.enabled) {
+            this.update();
+            return;
+        }
+        this.commands.executeCommand(action.command, ...(action.args ?? [])).catch((error: unknown) => {
+            const reason = error instanceof Error ? error.message : String(error);
+            console.warn(`studio: ${action.label} (${action.command}) failed`, error);
+            this.messages?.warn(`${action.label}: ${reason}`);
+        });
     }
 
     protected render(): React.ReactNode {
         const mode = this.mode;
-        // Only what this session can run: an action whose command is not
-        // registered (its package absent from this build) is left out rather
-        // than drawn as a button that does nothing, and a group left empty
-        // goes with it.
+        // Only what this session can run -- see `ribbonAction` -- and a group
+        // left empty goes with its actions.
         const groups = mode.groups
-            .map((g) => ({ ...g, actions: g.actions.filter((a) => this.commands.getCommand(a.command)) }))
+            .map((g) => ({
+                ...g,
+                actions: g.actions.flatMap((action) => {
+                    const state = ribbonAction(this.commands, action);
+                    return state ? [{ action, state }] : [];
+                }),
+            }))
             .filter((g) => g.actions.length > 0);
         return (
             <div className="studio-ribbon" data-studio-role={mode.role}>
                 {groups.map((g) => (
                     <div key={g.label} className="studio-ribbon-group" role="group" aria-label={g.label}>
                         <div className="studio-ribbon-actions">
-                            {g.actions.map((a) => (
+                            {g.actions.map(({ action: a, state }) => (
                                 <button
                                     key={a.command}
                                     type="button"
-                                    className="studio-ribbon-action"
-                                    title={a.title}
-                                    onClick={() => void this.commands.executeCommand(a.command, ...(a.args ?? []))}
+                                    // `aria-disabled` rather than `disabled`: a disabled
+                                    // button shows no tooltip in some engines, and the
+                                    // tooltip is what says why.
+                                    className={state.enabled ? 'studio-ribbon-action' : 'studio-ribbon-action disabled'}
+                                    aria-disabled={state.enabled ? undefined : true}
+                                    title={state.title}
+                                    onClick={() => this.run(a)}
                                 >
                                     <span className={`codicon codicon-${a.icon}`} aria-hidden />
                                     <span className="studio-ribbon-label">{a.label}</span>
@@ -474,7 +576,8 @@ const MODE_BAR_CSS = `
 }
 .studio-ribbon-action .codicon { font-size: 20px; line-height: 22px; }
 .studio-ribbon-label { font-size: 11px; line-height: 13px; white-space: nowrap; }
-.studio-ribbon-action:hover { background: var(--theia-toolbar-hoverBackground, var(--theia-list-hoverBackground)); border-color: var(--theia-widget-border, var(--theia-editorGroup-border)); }
+.studio-ribbon-action.disabled { opacity: .45; cursor: default; }
+.studio-ribbon-action:not(.disabled):hover { background: var(--theia-toolbar-hoverBackground, var(--theia-list-hoverBackground)); border-color: var(--theia-widget-border, var(--theia-editorGroup-border)); }
 .studio-ribbon-caption {
     font-size: 10px; line-height: 14px; text-align: center; white-space: nowrap;
     color: var(--theia-descriptionForeground, var(--theia-foreground)); opacity: .85;

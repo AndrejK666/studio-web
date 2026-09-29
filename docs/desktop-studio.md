@@ -124,6 +124,16 @@ And the assistants: Claude Code and Codex are fetched on first start into
 extensions' code as open-vsx publishes it, checked against the digest the build
 recorded. It holds no secret; deleting it only means the app fetches them again.
 
+And the gear corpus: "Bring the gears here" (in the Catalogue, or inline in
+New Product) clones it once per machine and commit into
+`~/ConstructorStudio/corpus/<host__owner__repo>/<commit12>/<source id>`
+(`STUDIO_CORPUS_CACHE` moves it), and a product that names a git source at a
+commit (`git(url, rev)`) is brought into the same place when it opens,
+instead of into the project. A private corpus is cloned through the Studio
+relay with the credential helper given for that one command, so the copy's
+`.git/config` names no helper and no token. Each copy is a fixed commit and
+never fetches again; deleting one only means it is cloned again.
+
 ## What a Studio deployment needs
 
 **1. The `studio-desktop` Keycloak client.** The client is in both realm files
@@ -199,6 +209,7 @@ installed build is pointed somewhere else for a test.
 | `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else `gearbox` on `PATH` |
 | `STUDIO_DESKTOP_ASSISTANTS` | the assistants' manifest; default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
 | `STUDIO_DESKTOP_PLUGINS` | where the assistants are unpacked; default `~/ConstructorStudio/plugins` |
+| `STUDIO_CORPUS_CACHE` | where the per-machine gear corpus copies are kept; default `~/ConstructorStudio/corpus` |
 | `STUDIO_DESKTOP_VSIX_DIRS` | more folders to look in for a VSIX put there by hand (`;` on Windows, `:` elsewhere); default the app's own folder |
 | `ORCA_CLI` | the `orca` executable the Agents panel runs, when Orca is installed somewhere [Agent development](#agent-development-orca) does not look |
 
