@@ -62,6 +62,17 @@ pub const FRONTX_TYPE: &str = "gts.cf.studio.catalog.frontx.v1~";
 /// describes: one schema per type per tenant.
 pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
 
+/// What one component's fields said on one day: the history the catalogue
+/// otherwise overwrites on every sync.
+///
+/// Kept out of [`ALL_NODE_TYPES`] on purpose. Everything that enumerates those
+/// reads the catalogue -- the component listings, the pruning after a sync --
+/// and a snapshot is not a component; listing a year of them alongside the
+/// gears would be a hundred and fifty times the rows for none of the answers.
+/// Read only through the history queries, which filter on its indexed
+/// `component` and `day`.
+pub const COMPONENT_SNAPSHOT_TYPE: &str = "gts.cf.studio.catalog.component_snapshot.v1~";
+
 /// Every catalog node type, for registering and enumerating.
 pub const ALL_NODE_TYPES: [&str; 8] = [
     GEAR_TYPE,
@@ -194,6 +205,12 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
     ),
 ];
 
+const SNAPSHOT_DOC: (&str, &str, &str) = (
+    COMPONENT_SNAPSHOT_TYPE,
+    "Component snapshot",
+    "What one component's fields said on one day, kept so a later sync can be compared with it.",
+);
+
 /// The relation types as catalog entries. Registered alongside the nodes so
 /// the platform registry catalogs everything this gear puts in the graph (see
 /// `crate::gts_inventory`).
@@ -209,6 +226,7 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 1] = [(
 pub fn type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
+        .chain([SNAPSHOT_DOC])
         .chain(EDGE_TYPE_DOCS)
         .map(|(id, title, description)| {
             json!({
@@ -237,7 +255,8 @@ const SEARCHABLE_PATHS: [&str; 8] = [
 ];
 
 /// The same types as **graph-storage** ontology entries: each derives from a
-/// graph-storage family and declares which payload paths are searched.
+/// graph-storage family and declares which payload paths are searched. The
+/// snapshot type comes last, with its indexes instead of search traits.
 pub fn graph_node_type_schemas() -> Vec<Value> {
     NODE_TYPE_DOCS
         .into_iter()
@@ -255,7 +274,40 @@ pub fn graph_node_type_schemas() -> Vec<Value> {
                 "allOf": [{ "$ref": format!("gts://{OWNED_NODE_FAMILY}") }],
             })
         })
+        .chain([graph_snapshot_type_schema()])
         .collect()
+}
+
+/// The snapshot type as a graph-storage ontology entry.
+///
+/// Declares `component` and `day` as index paths, which is what lets a history
+/// read ask the graph for one component, or for one week of days, instead of
+/// paging every snapshot ever taken. The index has to be declared here, at
+/// first registration: graph-storage cannot add one to a type afterwards.
+/// No search traits -- a snapshot is nothing a person looks for by text.
+pub fn graph_snapshot_type_schema() -> Value {
+    json!({
+        "$id": format!("gts://{}", graph_type_id(COMPONENT_SNAPSHOT_TYPE)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": SNAPSHOT_DOC.1,
+        "description": SNAPSHOT_DOC.2,
+        "type": "object",
+        "x-gts-traits": {
+            "index": ["/payload/component", "/payload/day"],
+        },
+        "allOf": [
+            { "$ref": format!("gts://{OWNED_NODE_FAMILY}") },
+            { "type": "object", "properties": { "payload": {
+                "type": "object",
+                "properties": {
+                    "component": { "type": "string" },
+                    "day": { "type": "integer" },
+                    "date": { "type": "string" },
+                    "fields": { "type": "object" },
+                },
+            } } },
+        ],
+    })
 }
 
 /// The relation types as graph-storage ontology entries.
@@ -397,6 +449,21 @@ pub fn project_product_node(project_id: &str, value: Value) -> GtsNode {
     }
 }
 
+/// Instance id of a component's snapshot for one day: a second sync on the
+/// same day replaces that day's snapshot rather than adding one.
+pub fn component_snapshot_instance_id(component: &str, date: &str) -> String {
+    anon_id(&["component_snapshot", component, date])
+}
+
+/// One component's snapshot for one day.
+pub fn component_snapshot_node(component: &str, date: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: COMPONENT_SNAPSHOT_TYPE,
+        instance_id: component_snapshot_instance_id(component, date),
+        value,
+    }
+}
+
 /// gear → crate_version.
 pub fn has_version_edge(gear_id: &str, version_id: &str) -> GtsEdge {
     GtsEdge {
@@ -414,7 +481,11 @@ mod tests {
     /// each `~`-segment; the v2 gear enforces it where the v1 gear did not.
     #[test]
     fn every_type_leaf_is_a_valid_gts_segment() {
-        for id in ALL_NODE_TYPES.into_iter().chain(ALL_EDGE_TYPES) {
+        for id in ALL_NODE_TYPES
+            .into_iter()
+            .chain([COMPONENT_SNAPSHOT_TYPE])
+            .chain(ALL_EDGE_TYPES)
+        {
             let leaf = id.strip_prefix("gts.").unwrap_or(id).trim_end_matches('~');
             let tokens: Vec<&str> = leaf.split('.').collect();
             assert!(
@@ -440,6 +511,22 @@ mod tests {
             ),
             "gts.cf.studio.artifact.file.v1~"
         );
+    }
+
+    /// The history reads filter on these two; graph-storage refuses a filter
+    /// on a path the type did not declare, and a declaration without a typed
+    /// property is refused at registration.
+    #[test]
+    fn the_snapshot_type_indexes_what_history_filters_on() {
+        let schema = graph_snapshot_type_schema();
+        assert_eq!(
+            schema["x-gts-traits"]["index"],
+            json!(["/payload/component", "/payload/day"])
+        );
+        let props = &schema["allOf"][1]["properties"]["payload"]["properties"];
+        assert_eq!(props["component"]["type"], "string");
+        assert_eq!(props["day"]["type"], "integer");
+        assert!(!ALL_NODE_TYPES.contains(&COMPONENT_SNAPSHOT_TYPE));
     }
 
     #[test]

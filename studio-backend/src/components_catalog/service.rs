@@ -88,6 +88,27 @@ pub(crate) trait CatalogSink: Send + Sync {
         graph_type: &str,
         cap: usize,
     ) -> anyhow::Result<(usize, bool)>;
+    /// Write component snapshots (see `super::history`). Apart from
+    /// [`Self::upsert`] because a snapshot is not a catalogue node: nothing
+    /// that lists the catalogue may see one, and nothing in one is embedded.
+    async fn write_snapshots(
+        &self,
+        _ctx: &SecurityContext,
+        _nodes: &[GtsNode],
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+    /// Snapshot payloads with `from_day <= day < to_day`, of one component
+    /// or of every one. Unordered.
+    async fn snapshots(
+        &self,
+        _ctx: &SecurityContext,
+        _component: Option<&str>,
+        _from_day: i64,
+        _to_day: i64,
+    ) -> anyhow::Result<Vec<Value>> {
+        Ok(Vec::new())
+    }
 }
 
 /// A node of any type, typed only by its id — what a catalogue that no longer
@@ -118,6 +139,7 @@ pub struct GraphNodeType {
 #[derive(Default)]
 pub(crate) struct MemorySink {
     nodes: Mutex<HashMap<String, GtsNode>>,
+    snapshots: Mutex<HashMap<String, Value>>,
 }
 
 #[async_trait]
@@ -230,6 +252,51 @@ impl CatalogSink for MemorySink {
             .count();
         Ok((total.min(cap), total > cap))
     }
+
+    async fn write_snapshots(
+        &self,
+        _ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<()> {
+        let mut map = self
+            .snapshots
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        for n in nodes {
+            map.insert(n.instance_id.clone(), n.value.clone());
+        }
+        Ok(())
+    }
+
+    async fn snapshots(
+        &self,
+        _ctx: &SecurityContext,
+        component: Option<&str>,
+        from_day: i64,
+        to_day: i64,
+    ) -> anyhow::Result<Vec<Value>> {
+        let map = self
+            .snapshots
+            .lock()
+            .map_err(|_| anyhow!("catalog store lock poisoned"))?;
+        Ok(map
+            .values()
+            .filter(|v| {
+                let day = v.get("day").and_then(Value::as_i64).unwrap_or(-1);
+                (from_day..to_day).contains(&day)
+                    && component
+                        .is_none_or(|c| v.get("component").and_then(Value::as_str) == Some(c))
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+/// A snapshot's node name: which component, which day.
+#[cfg(feature = "graph")]
+fn snapshot_name(value: &Value) -> String {
+    let part = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default();
+    format!("{} @ {}", part("component"), part("date"))
 }
 
 /// Human name for a node, from the curated payload. Used by the graph backend.
@@ -672,6 +739,86 @@ impl CatalogSink for GraphSink {
         }
         Ok((total, false))
     }
+
+    async fn write_snapshots(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<()> {
+        use crate::artifact_ingest::graph_backend::{str_without_nul, without_nul};
+        use graph_storage_sdk::models::NodeSpec;
+        for chunk in nodes.chunks(NODE_INGEST_CHUNK) {
+            let specs: Vec<NodeSpec> = chunk
+                .iter()
+                .map(|n| NodeSpec {
+                    node_key: n.instance_id.clone(),
+                    type_id: gts::graph_type_id(n.type_id),
+                    name: Some(str_without_nul(snapshot_name(&n.value))),
+                    payload: Some(without_nul(n.value.clone())),
+                    expected_version: None,
+                })
+                .collect();
+            self.client
+                .ingest(ctx, node_batch(specs, false))
+                .await
+                .map_err(|e| {
+                    anyhow!(
+                        "graph-storage snapshot ingest: {}",
+                        crate::graph_error::explain(&e)
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Filtered by the graph, on the two paths the snapshot type indexes, so a
+    /// read costs the snapshots it asks for rather than every one ever taken.
+    async fn snapshots(
+        &self,
+        ctx: &SecurityContext,
+        component: Option<&str>,
+        from_day: i64,
+        to_day: i64,
+    ) -> anyhow::Result<Vec<Value>> {
+        use toolkit_odata::{CursorV1, ODataQuery};
+        const PAGE: u64 = 200;
+        let mut raw = format!("payload/day ge {from_day} and payload/day lt {to_day}");
+        if let Some(name) = component {
+            // OData quotes a quote by doubling it.
+            raw.push_str(&format!(
+                " and payload/component eq '{}'",
+                name.replace('\'', "''")
+            ));
+        }
+        let filter = toolkit_odata::parse_filter_string(&raw)
+            .map_err(|e| anyhow!("snapshot filter `{raw}`: {e}"))?
+            .into_expr();
+        let patterns = [gts::graph_type_id(gts::COMPONENT_SNAPSHOT_TYPE)];
+        let mut out: Vec<Value> = Vec::new();
+        // A cursor is bound to the filter it was minted under, so every page
+        // sends the filter again.
+        let mut query = ODataQuery::default()
+            .with_filter(filter.clone())
+            .with_limit(PAGE);
+        loop {
+            let page = self
+                .client
+                .project_nodes(ctx, &patterns, query.clone())
+                .await
+                .map_err(|e| anyhow!("graph-storage snapshot projection: {e}"))?;
+            out.extend(page.items.into_iter().filter_map(|row| row.payload));
+            let Some(next) = page.page_info.next_cursor else {
+                break;
+            };
+            let cursor = CursorV1::decode(&next)
+                .map_err(|e| anyhow!("graph-storage returned an undecodable cursor: {e}"))?;
+            query = ODataQuery::default()
+                .with_filter(filter.clone())
+                .with_limit(PAGE)
+                .with_cursor(cursor);
+        }
+        Ok(out)
+    }
 }
 // ── Service ─────────────────────────────────────────────────────────────────
 /// How far a per-type count will page before it reports a floor instead of a
@@ -786,6 +933,13 @@ pub struct SyncSources {
     /// due and who is waiting for it.
     #[serde(default)]
     pub roadmaps: Vec<RoadmapSource>,
+}
+
+/// One catalogued component with its sources reconciled and graded.
+pub struct ResolvedComponent {
+    pub name: String,
+    pub category: String,
+    pub values: serde_json::Map<String, Value>,
 }
 
 /// What a catalog sync has counted.
@@ -1525,6 +1679,14 @@ impl CatalogService {
             }
         }
 
+        // What the fields say now, kept for the next comparison. After the
+        // prune, so a component this run removed is not given a snapshot; and
+        // never the sync's failure -- the catalogue is written either way, and
+        // a missing day of history is a gap in a chart, not a broken catalogue.
+        if let Err(error) = self.record_snapshots(ctx).await {
+            tracing::warn!(%error, "components-catalog: snapshots not recorded");
+        }
+
         tracing::info!(
             gears = gears_total,
             kits = kits_total,
@@ -1551,6 +1713,129 @@ impl CatalogService {
         type_filter: Option<&str>,
     ) -> anyhow::Result<Vec<GtsNode>> {
         self.sink.list(ctx, type_filter).await
+    }
+
+    /// Every catalogued component's reconciled, graded values, and whether the
+    /// component listing was truncated: what the values table, the roadmap
+    /// report and the snapshots all read.
+    pub async fn resolved_components(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<(Vec<ResolvedComponent>, bool)> {
+        let (nodes, truncated) = self.list_component_nodes(ctx).await?;
+        // Profiles are keyed by the component name they are about, which is
+        // `gear_name` on the node rather than the node's own name.
+        let mut profiles: HashMap<String, Value> = HashMap::new();
+        for node in self.list_profiles(ctx).await? {
+            if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+                profiles.insert(name.to_owned(), node.value);
+            }
+        }
+        // The schemas, for the grade: a component is graded by its type's
+        // rules. Without them the values are still answered, only ungraded.
+        let schemas = self.list_field_schemas(ctx).await.unwrap_or_default();
+
+        let items = nodes
+            .into_iter()
+            .filter_map(|node| {
+                let name = node.value.get("name").and_then(Value::as_str)?.to_owned();
+                let profile = profiles.get(&name);
+                let mut values = super::values::resolve(&node.value, profile);
+                super::quality::attach(
+                    &mut values,
+                    super::reference::schema_for(&schemas, &node.type_id),
+                );
+                Some(ResolvedComponent {
+                    category: super::values::category_of(&node.value, profile),
+                    values,
+                    name,
+                })
+            })
+            .collect();
+        Ok((items, truncated))
+    }
+
+    /// Snapshot every component's fields as of today (see `super::history`).
+    pub async fn record_snapshots(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
+        self.record_snapshots_on(ctx, time::OffsetDateTime::now_utc().date())
+            .await
+    }
+
+    async fn record_snapshots_on(
+        &self,
+        ctx: &SecurityContext,
+        date: time::Date,
+    ) -> anyhow::Result<usize> {
+        let (components, _) = self.resolved_components(ctx).await?;
+        let day = date.to_string();
+        let nodes: Vec<GtsNode> = components
+            .iter()
+            .map(|c| {
+                gts::component_snapshot_node(
+                    &c.name,
+                    &day,
+                    super::history::snapshot(&c.name, date, &c.values),
+                )
+            })
+            .collect();
+        self.sink.write_snapshots(ctx, &nodes).await?;
+        Ok(nodes.len())
+    }
+
+    /// One component's snapshots over the last `days` days, today included,
+    /// oldest first.
+    pub async fn component_history(
+        &self,
+        ctx: &SecurityContext,
+        component: &str,
+        days: u32,
+    ) -> anyhow::Result<Vec<Value>> {
+        let today = super::history::day_of(time::OffsetDateTime::now_utc().date());
+        let rows = self
+            .sink
+            .snapshots(ctx, Some(component), today - i64::from(days), today + 1)
+            .await?;
+        Ok(super::history::oldest_first(rows))
+    }
+
+    /// Each component as it was `days` days ago: its earliest snapshot from
+    /// then on.
+    pub async fn component_baselines(
+        &self,
+        ctx: &SecurityContext,
+        days: u32,
+    ) -> anyhow::Result<Vec<Value>> {
+        let today = super::history::day_of(time::OffsetDateTime::now_utc().date());
+        self.component_baselines_on(ctx, days, today).await
+    }
+
+    /// Read a week at a time from the window's start, and stop at the first
+    /// week that has any snapshot at all.
+    ///
+    /// Not the whole window in one read: that is every component times every
+    /// day, a hundred and fifty rows a day, to keep one row per component. A
+    /// week is enough slack for syncs that skip a weekend; a component first
+    /// snapshotted after that week is new in the window, and has no "before"
+    /// to compare with -- which is the true answer for it.
+    async fn component_baselines_on(
+        &self,
+        ctx: &SecurityContext,
+        days: u32,
+        today: i64,
+    ) -> anyhow::Result<Vec<Value>> {
+        const WEEK: i64 = 7;
+        let mut from = today - i64::from(days);
+        while from <= today {
+            let rows = self
+                .sink
+                .snapshots(ctx, None, from, (from + WEEK).min(today + 1))
+                .await?;
+            if !rows.is_empty() {
+                return Ok(super::history::earliest_per_component(rows));
+            }
+            from += WEEK;
+        }
+        Ok(Vec::new())
     }
 
     /// Read the editable, Studio-owned metadata for all catalogued gears.
@@ -3038,6 +3323,72 @@ mod component_list_tests {
         assert!(
             !types.iter().any(|t| t.contains("gear_profile")),
             "a profile is not a component: {types:?}"
+        );
+    }
+
+    /// A sync keeps what each component said that day; a second one that
+    /// day replaces it; and a window's "before" is the earliest it holds.
+    #[tokio::test]
+    async fn snapshots_keep_a_day_each_and_the_baseline_is_the_earliest() {
+        use crate::components_catalog::history::day_of;
+        let service = with_two_kinds_of_node().await;
+        let ctx = ctx();
+        let day = |d: u8| time::Date::from_calendar_date(2026, time::Month::September, d).unwrap();
+
+        assert_eq!(service.record_snapshots_on(&ctx, day(20)).await.unwrap(), 2);
+        service.record_snapshots_on(&ctx, day(22)).await.unwrap();
+        service.record_snapshots_on(&ctx, day(22)).await.unwrap();
+
+        let all = service
+            .sink
+            .snapshots(&ctx, Some("cf-gears-toolkit"), 0, i64::MAX)
+            .await
+            .unwrap();
+        let mut dates: Vec<&str> = all.iter().filter_map(|r| r["date"].as_str()).collect();
+        dates.sort_unstable();
+        assert_eq!(
+            dates,
+            ["2026-09-20", "2026-09-22"],
+            "one a day, per component"
+        );
+
+        let today = day_of(day(29));
+        let baseline = service
+            .component_baselines_on(&ctx, 10, today)
+            .await
+            .unwrap();
+        let named: Vec<(&str, &str)> = baseline
+            .iter()
+            .map(|r| {
+                (
+                    r["component"].as_str().unwrap(),
+                    r["date"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("@cf/shell", "2026-09-20"),
+                ("cf-gears-toolkit", "2026-09-20")
+            ]
+        );
+        // A window that opens after the last snapshot has nothing before it.
+        assert!(
+            service
+                .component_baselines_on(&ctx, 5, today)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Nor is a snapshot ever a catalogue node.
+        assert!(
+            !service
+                .list_nodes(&ctx, None)
+                .await
+                .unwrap()
+                .iter()
+                .any(|n| n.type_id == gts::COMPONENT_SNAPSHOT_TYPE)
         );
     }
 
