@@ -31,6 +31,8 @@ import {
     type OrcaWorktreeChange
 } from '../common/orca-protocol';
 import { OrcaTerminalOpener, OrcaPairCommand } from './orca-terminal-opener';
+import { DesktopOrcaProjectSync } from './desktop-orca-project-sync';
+import { ORCA_ADD_PROJECTS_PREFERENCE, keptMessage } from '../common/desktop-orca-projects';
 import { ORCA_INSTALL_URL, missingAgentsNote, orcaAvailability, type OrcaAction } from '../common/orca-availability';
 import {
     defaultWorktree,
@@ -73,6 +75,11 @@ export class OrcaWidget extends ReactWidget {
     @inject(CommandService) @optional()
     protected readonly commands: CommandService | undefined;
 
+    // The desktop's bookkeeping of projects in the member's Orca (#497);
+    // absent from the tests that do not need it, inert in a session.
+    @inject(DesktopOrcaProjectSync) @optional()
+    protected readonly projectSync: DesktopOrcaProjectSync | undefined;
+
     protected status: OrcaRuntimeStatus | undefined;
     protected worktrees: OrcaWorktree[] = [];
     /** The repositories Orca knows, to name the worktree groups. */
@@ -111,8 +118,14 @@ export class OrcaWidget extends ReactWidget {
 
     protected onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
+        if (this.projectSync && !this.projectSyncListening) {
+            this.projectSyncListening = true;
+            this.toDispose.push(this.projectSync.onDidChange(() => void this.refresh()));
+        }
         void this.refresh();
     }
+
+    protected projectSyncListening = false;
 
     // ── data ───────────────────────────────────────────────────────────────
 
@@ -134,7 +147,14 @@ export class OrcaWidget extends ReactWidget {
             // used to wait for someone to find the Register button. Once per
             // panel, and only when Orca knows nothing: hand it the workspace's
             // repositories, so the agents have somewhere to work.
-            if (this.worktrees.length === 0 && this.workspaceRoot && !this.autoRegistered) {
+            // On a member's machine it is their Orca, and they decide: the
+            // project sync asks them (always / not now / never).
+            if (
+                this.status.host !== 'local'
+                && this.worktrees.length === 0
+                && this.workspaceRoot
+                && !this.autoRegistered
+            ) {
                 this.autoRegistered = true;
                 try {
                     if ((await this.orca.registerWorkspace(this.workspaceRoot)).length > 0) {
@@ -174,7 +194,13 @@ export class OrcaWidget extends ReactWidget {
     protected startOrca(): void {
         void this.run('Starting Orca', async () => {
             this.status = await this.orca.start();
-        }).then(() => (this.status?.reachable ? this.refresh() : undefined));
+        }).then(async () => {
+            if (this.status?.reachable) {
+                // Orca was not there to add the open project to before.
+                await this.projectSync?.check();
+                await this.refresh();
+            }
+        });
     }
 
     protected act(action: OrcaAction): void {
@@ -556,6 +582,7 @@ export class OrcaWidget extends ReactWidget {
                     </>
                 )}
                 {shown.map(group => this.renderGroup(group, groups.length > 1))}
+                {this.renderProjectSync()}
                 {root && others.length > 0 && (
                     <button
                         className="theia-button secondary studio-orca-others"
@@ -570,6 +597,44 @@ export class OrcaWidget extends ReactWidget {
                             : `Other repositories in Orca (${others.length})`}
                     </button>
                 )}
+            </div>
+        );
+    }
+
+    /**
+     * What Studio does with projects opened here, and what it left in Orca.
+     * Only on a member's machine: the sync is inert in a session.
+     */
+    protected renderProjectSync(): React.ReactNode {
+        const sync = this.projectSync;
+        if (!sync || this.status?.host !== 'local') {
+            return undefined;
+        }
+        const words = {
+            ask: 'Studio asks before adding a project opened here to Orca.',
+            always: 'Studio adds projects opened here to Orca, and removes them when they close.',
+            never: 'Studio does not add projects opened here to Orca.'
+        }[sync.preference()];
+        return (
+            <div className="studio-orca-project-sync">
+                {sync.kept.map(kept => (
+                    <p key={kept.path} className="studio-orca-hint studio-orca-kept" title={kept.path}>
+                        {keptMessage(kept)}
+                    </p>
+                ))}
+                <p className="studio-orca-hint">
+                    {words}{' '}
+                    <a
+                        href="#"
+                        className="studio-orca-link"
+                        onClick={event => {
+                            event.preventDefault();
+                            void this.commands?.executeCommand('preferences:open', ORCA_ADD_PROJECTS_PREFERENCE);
+                        }}
+                    >
+                        Change
+                    </a>
+                </p>
             </div>
         );
     }

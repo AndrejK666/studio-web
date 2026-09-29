@@ -28,6 +28,8 @@ import { DesktopStudioWidget, DESKTOP_STUDIO_WIDGET_ID } from './desktop-studio-
 import { DesktopStudioContribution } from './desktop-studio-contribution';
 import { DesktopAssistantsContribution } from './desktop-assistants-contribution';
 import { DesktopLinkHandler } from './desktop-link-handler';
+import { DesktopOrcaProjectSync, ORCA_PROJECTS_PREFERENCE_SCHEMA } from './desktop-orca-project-sync';
+import { PreferenceContribution } from '@theia/core/lib/common/preferences/preference-schema';
 import { WorkspaceGraphContribution } from './workspace-graph-contribution';
 import { ArtifactGraphContribution } from './artifact-graph-contribution';
 import { ArtifactGraphWidget } from './artifact-graph-widget';
@@ -214,6 +216,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(OrcaPairingCommands).toSelf().inSingletonScope();
     bind(CommandContribution).toService(OrcaPairingCommands);
     bindViewContribution(bind, OrcaContribution);
+    // Projects opened on the desktop, in the member's own Orca (#497). Inert
+    // in a session: the backend answers `enabled: false` there.
+    bind(DesktopOrcaProjectSync).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(DesktopOrcaProjectSync);
+    bind(PreferenceContribution).toConstantValue({ schema: ORCA_PROJECTS_PREFERENCE_SCHEMA });
     bind(OperationsWidget).toSelf();
     bind(WorkspaceGraphWidget).toSelf();
     bind(AnalyzeWidget).toSelf();

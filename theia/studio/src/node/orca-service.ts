@@ -24,6 +24,8 @@ import {
     ORCA_AGENTS
 } from '../common/orca-protocol';
 import { OrcaCli, OrcaCliError, OrcaCliMissingError, availableAgents, orcaHost } from './orca-cli';
+import { NO_PROJECT_SYNC, type OrcaProjectSync } from '../common/desktop-orca-projects';
+import { DesktopOrcaProjects, fileStore, type OrcaProjectsPort } from './desktop-orca-projects';
 import { pairingOffer } from './orca-terminal-bridge';
 import { GitExecutor } from './git-executor';
 
@@ -155,7 +157,63 @@ export class OrcaServiceImpl implements OrcaService {
         }
     }
 
+    /** The member's projects in their own Orca; made on first use, off a session only. */
+    protected projects: DesktopOrcaProjects | undefined;
+
+    protected desktopProjects(): DesktopOrcaProjects {
+        if (!this.projects) {
+            const port: OrcaProjectsPort = {
+                listRepositories: () => this.listRepositories(),
+                listWorktrees: () => this.listWorktrees(),
+                listTerminals: selector => this.listTerminals(selector),
+                uncommitted: async checkout => {
+                    if (!fs.existsSync(checkout)) {
+                        return 0;
+                    }
+                    return parseStatusRecords(await this.git.statusPorcelain(checkout)).length;
+                },
+                repositoriesAt: root => gitRepositoriesAt(root),
+                addRepository: async repository => {
+                    await this.cli.json(['repo', 'add', '--path', repository], CREATE_TIMEOUT_MS);
+                },
+                removeRepository: repoId => this.removeRepository(repoId)
+            };
+            this.projects = new DesktopOrcaProjects(port, fileStore());
+        }
+        return this.projects;
+    }
+
+    /**
+     * Forget a repository in Orca, leaving every file where it is. The CLI
+     * has no `repo rm`; a repository Orca knows is a project host setup, and
+     * deleting a repo-backed setup is Orca's own "remove project"
+     * (`removeProjectForHost`: state only, read off Orca 1.4.211).
+     */
+    protected async removeRepository(repoId: string): Promise<void> {
+        const result = await this.cli.json<Record<string, unknown>>(['project', 'setups']);
+        const setups = Array.isArray(result.setups) ? result.setups.map(asRecord) : [];
+        const setup = setups.find(s => asString(s.repoId) === repoId && (asString(s.hostId) || 'local') === 'local');
+        await this.cli.json(['project', 'setup-delete', '--setup', asString(setup?.id) || repoId]);
+    }
+
+    async trackProject(windowId: string, root: string | undefined): Promise<OrcaProjectSync> {
+        if (orcaHost() !== 'local') {
+            return NO_PROJECT_SYNC;
+        }
+        try {
+            return await this.desktopProjects().track(windowId, root);
+        } catch (error) {
+            // Orca not installed or not running: nothing to add to or remove from.
+            console.warn(`[orca] cannot sync the open project with Orca: ${message(error)}`);
+            return NO_PROJECT_SYNC;
+        }
+    }
+
     async registerWorkspace(root: string): Promise<string[]> {
+        if (orcaHost() === 'local') {
+            // Recorded, so that Studio removes again what it added.
+            return this.desktopProjects().add(root);
+        }
         const repositories = await gitRepositoriesAt(root);
         for (const repository of repositories) {
             await this.cli.json(['repo', 'add', '--path', repository], CREATE_TIMEOUT_MS);
