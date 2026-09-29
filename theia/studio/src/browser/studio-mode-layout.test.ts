@@ -25,6 +25,8 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
     let current = active;
     const area = new Map<string, 'left' | 'right'>(Object.entries(placed));
     const made = new Map<string, FakeWidget>();
+    /** The expanded view of each side panel, if any. */
+    const currentIn: Partial<Record<'left' | 'right', string>> = {};
     const widget = (id: string): FakeWidget => {
         let w = made.get(id);
         if (!w) {
@@ -46,6 +48,8 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
         getWidgets: jest.fn((side: string) => [...area].filter(([, a]) => a === side).map(([id]) => widget(id))),
         getAreaFor: jest.fn((w: FakeWidget) => area.get(w.id)),
         addWidget: jest.fn(async (w: FakeWidget, options: { area: 'left' | 'right' }) => { area.set(w.id, options.area); }),
+        getCurrentWidget: jest.fn((side: 'left' | 'right') => (currentIn[side] ? made.get(currentIn[side]!) : undefined)),
+        collapsePanel: jest.fn(async (side: 'left' | 'right') => { delete currentIn[side]; }),
     };
     const widgets = {
         tryGetWidget: jest.fn((id: string) => made.get(id)),
@@ -73,7 +77,7 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
         await new Promise(resolve => setTimeout(resolve, 0));
     };
     const on = (side: 'left' | 'right'): string[] => [...area].filter(([, a]) => a === side).map(([id]) => id).sort();
-    return { layout, shell, widgets, switchTo, on, area };
+    return { layout, shell, widgets, switchTo, on, area, currentIn };
 }
 
 const CODE_LEFT = ['debug', 'explorer-view-container', 'scm-view-container', 'search-view-container', 'test-view-container', 'vsx-extensions-view-container'];
@@ -152,6 +156,18 @@ describe('what a mode sets aside on entering it', () => {
         expect(on('left')).toEqual(['explorer-view-container', 'studio.desktop']);
         // The assistants belong to no mode, and stay.
         expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
+    });
+
+    it('folds a panel whose front view is set aside, rather than bringing its neighbour forward', async () => {
+        const { layout, shell, currentIn, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
+            'explorer-view-container': 'left', 'scm-view-container': 'right',
+            'plugin-view-container:workbench.view.extension.claude-sidebar-secondary': 'right',
+        });
+        currentIn.right = 'scm-view-container';
+        await layout.apply();
+        expect(shell.collapsePanel).toHaveBeenCalledWith('right');
+        expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
+        expect(shell.collapsePanel).not.toHaveBeenCalledWith('left');
     });
 
     it('detaches without disposing: the mode that declares it gets it back', async () => {
