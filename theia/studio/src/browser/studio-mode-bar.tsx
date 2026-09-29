@@ -115,7 +115,7 @@ const TERMINAL: ModeAction = { command: 'workbench.action.terminal.toggleTermina
 const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control', label: 'Changes', title: 'What changed, and commit it' };
 const GIT_OPS: ModeAction = { command: 'studio.git-operations:toggle', icon: 'git-pull-request', label: 'Pushes & PRs', title: 'Commits and pushes waiting to go out' };
 
-/** The modes that are one kind of work each; FULL SUPER POWER is all of them. */
+/** The modes that are one kind of work each; Full functionality is all of them. */
 const BY_WORK: readonly Mode[] = [
     {
         role: 'docs',
@@ -225,7 +225,7 @@ export const MODES: readonly Mode[] = [
     {
         role: 'full',
         icon: 'zap',
-        label: 'FULL SUPER POWER',
+        label: 'Full functionality',
         title: 'Everything at once: every view, the whole menu, every command in the ribbon',
         perspective: FULL_PERSPECTIVE_ID,
         menus: ['*'],

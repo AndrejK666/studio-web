@@ -314,7 +314,7 @@ describe('the desktop landing page', () => {
         const sections = Array.from(widget.node.querySelectorAll('section')).map(s => s.getAttribute('aria-label'));
         expect(sections).toEqual(['Connect', 'Modes', 'Work offline']);
         const cards = Array.from(widget.node.querySelectorAll('.studio-landing__card'));
-        expect(cards.map(c => c.querySelector('b')!.textContent)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'FULL SUPER POWER']);
+        expect(cards.map(c => c.querySelector('b')!.textContent)).toEqual(['Doc editing', 'Building', 'Development', 'Agent development', 'Full functionality']);
         expect(cards[0].textContent).toContain('Write the specs and check them');
         expect(cards[2].getAttribute('aria-pressed')).toBe('true');
         await click(cards[0] as HTMLElement);
