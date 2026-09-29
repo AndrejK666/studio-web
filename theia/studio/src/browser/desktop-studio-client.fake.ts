@@ -37,9 +37,9 @@ export class FakeDesktopStudio {
     /** What starting a sign-in does to the status; by default, it is under way. */
     onSignIn: () => void = () => this.setState('signing-in');
     /** What a switch does to the status; by default, signed out, on the Studio switched to. */
-    onSwitch: (target: { id: string } | { studioUrl: string }) => void = target => this.switchedTo(target);
+    onSwitch: (target: { id: string } | { studioUrl: string; issuer?: string }) => void = target => this.switchedTo(target);
     /** How an open ends: the folder to open, or a rejection with the backend's reason. */
-    open: (id: string, folder: string) => Promise<string> = async () => { throw new Error('no open in this test'); };
+    open: (id: string, folder: string | undefined) => Promise<string> = async () => { throw new Error('no open in this test'); };
     /** The progress callback of the open under way, to report progress through. */
     progress: ((progress: OpenProgress) => void) | undefined;
 
@@ -49,7 +49,7 @@ export class FakeDesktopStudio {
         this.onSwitch = target => this.switchedTo(target);
     }
 
-    protected switchedTo(target: { id: string } | { studioUrl: string }): void {
+    protected switchedTo(target: { id: string } | { studioUrl: string; issuer?: string }): void {
         const env = 'id' in target ? this.status?.environments.find(e => e.id === target.id) : undefined;
         this.setState('signed-out', { user: undefined, ...(env ? { studioUrl: env.studioUrl, current: env } : {}) });
     }
@@ -85,7 +85,7 @@ export async function signOut(): Promise<string | undefined> {
     return undefined;
 }
 
-export async function switchStudio(target: { id: string } | { studioUrl: string }): Promise<string | undefined> {
+export async function switchStudio(target: { id: string } | { studioUrl: string; issuer?: string }): Promise<string | undefined> {
     fakeStudio.calls.push(`switch ${'id' in target ? target.id : target.studioUrl}`);
     if (fakeStudio.refuse.switch) {
         return fakeStudio.refuse.switch;
@@ -111,7 +111,7 @@ export async function openedProject(root: string): Promise<string | undefined> {
     return fakeStudio.opened[root];
 }
 
-export async function openStudioProject(workspaceId: string, folder: string, onProgress: (progress: OpenProgress) => void): Promise<string> {
+export async function openStudioProject(workspaceId: string, folder: string | undefined, onProgress: (progress: OpenProgress) => void): Promise<string> {
     fakeStudio.calls.push(`open ${workspaceId} ${folder}`);
     fakeStudio.progress = onProgress;
     try {
