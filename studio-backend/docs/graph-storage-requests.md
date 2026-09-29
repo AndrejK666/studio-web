@@ -323,6 +323,42 @@ by a node budget because it holds parsed payloads in a pod with a 1 GiB limit,
 and it does nothing for the first request after any write. None of that is
 fixed by making the cache better.
 
+The cache was then replaced by `studio_artifact_index`, our own Postgres
+mirror of the listed fields (`src/artifact_ingest/index.rs`).
+
+### Status, weftgraph 0.1.1 (checked 2026-09-29)
+
+**The binding landed.** `$filter`/`$orderby` accept `payload/<path>` for the
+paths the selected types declare in their `index` trait. Equality on a string,
+boolean or date-time is served by one GIN over the payload; `contains` and
+`startswith` work too. The cursor is bound to its `$filter` (G-1), and m0009
+adds `(tenant, type, node_key)` for filtered listings (G-6).
+
+**It still does not replace the index.** Everything the index serves in one
+query today, and what the projection gives instead:
+
+| the index does | the projection in 0.1.1 |
+|---|---|
+| `total` for the pager and the portfolio counts (`COUNT`) | no count: `Page` carries `next_cursor` and `limit` only, so a count means walking every page |
+| offset pages (`?offset=`) and "just after this id" | cursor only; an offset is a walk |
+| order by the artifact's own `updated_at`, indexed | allowed, but ordering on a payload path is not indexed: a scan of the type's rows |
+| `q` substring over title, author, path and number (one lower-cased column) | `contains` on one payload path per term, no index; four paths means an `or` of four scans |
+| scope = `workspace_id` OR `project_id` | expressible as an `or` of two equalities |
+| the file list reads three columns, no payload | every row carries its payload |
+
+And one deployment blocker: our artifact types declare no `index` trait. Adding
+one changes a stored schema, which the in-process client cannot update
+(`register_types` takes no `on_existing`; see
+`scripts/graph-storage-update-edge-types.sh` for the same problem on edges).
+Every environment would need a REST update of 18 types before the first ingest.
+
+**So: keep the index.** Delete it when the projection has a count (or the
+screens stop needing one), a payload ordering can use an index, and the client
+can update a stored type. The migration then is: declare `index` on the listed
+types (`workspace_id`, `project_id`, `repo`, `path`, `is_dir`, `updated_at`),
+update them on each environment, route `IndexedGraphStore`'s five reads to
+`project_nodes` with a `$filter`, and drop the two tables and their fill.
+
 ---
 
 ## 6. Let us read all the relations of a high-degree node
@@ -408,9 +444,9 @@ sooner.
 | 2 | Node version on the read path | write-only `expected_version` | every update is last-writer-wins |
 | 3 | A published schema can change | one immutable column, registry not read | indexing cannot follow the model |
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
-| 5 | `$filter`/`$orderby` on payload attributes | key/name/timestamps only | every listing page re-reads the whole tenant graph — 144 projection calls and 31 MB per request, an 8.06 s p95 |
+| 5 | `$filter`/`$orderby` on payload attributes | landed in weftgraph 0.1.1 for `index`-declared paths, without a count or an indexed payload ordering | nothing at runtime now (`studio_artifact_index` serves it); the mirror itself, until the gaps in item 5's status close |
 | 6 | A cursor over edges | adjacency capped at 1,000, traversal at 10,000, neither pages | the relation graph comes back incomplete and says it is complete — 5,944 of 79,184 relations unreachable |
-| 7 | A NUL in a payload is a validation error | the insert fails as `unknown: internal error` | one file with a NUL dead-lettered every sync of its repository |
+| 7 | A NUL in a payload is a validation error | landed in weftgraph 0.1.1 (refused at admission with the JSON path; G-3) | nothing |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is

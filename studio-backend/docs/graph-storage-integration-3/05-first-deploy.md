@@ -31,15 +31,22 @@ The bootstrap job connects with the bootstrap credentials: they must be able to
    It asks `POST /graph-storage/v1/types/compatibility` for every edge type in
    `docs/gts-types.json` and updates only those neither `new` nor `unchanged`,
    with `on_existing: update`; it stops if any change is not admissible. Safe to
-   re-run. Unnecessary once the gear converges byte-identical stored types
-   before analysing them (gears-rust #4794).
+   re-run. The gear's G-17 fix (a byte-identical stored type converges before
+   it is analysed) shipped in weftgraph 0.1.1, which this build runs, and does
+   not make this step unnecessary: S-12 changed these schemas, so what studio
+   offers is no longer byte-identical to what studio-dev stored. It stays
+   needed until the in-process client can pass `on_existing: update`.
 
 2. **Custom configs.** A profile supplied outside the image (DMZ
    `existingConfigMap`, a hand-kept compose file) must make the same two
    changes #512 made to the shipped profiles, or the backend does not boot:
    drop the `gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~` entity from
    `types-registry.entities`, and define the `rl_mini_chat_chat` /
-   `ifl_mini_chat_chat` api-gateway zones.
+   `ifl_mini_chat_chat` api-gateway zones. It should also copy
+   `hnsw.iterative_scan` / `hnsw.ef_search` into
+   `graph-storage.database.params` (every shipped profile has them): not
+   needed to boot, but without them filtered vector search can answer an
+   empty page for a small tenant.
 
 3. **Compose only.** Rebuild `backend-bootstrap` (`docker compose build
    backend-bootstrap`) so it creates the databases of gears added since the
