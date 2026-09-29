@@ -102,6 +102,8 @@ export class DesktopLandingWidget extends ReactWidget {
         this.title.closable = true;
         this.addClass('studio-landing-view');
         this.node.tabIndex = -1;
+        // A page, scrolled natively like the start page it stands in for.
+        this.scrollOptions = undefined;
     }
 
     protected onAfterAttach(msg: Message): void {
