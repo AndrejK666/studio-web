@@ -8,6 +8,10 @@ if (typeof document !== "undefined") {
   (document as unknown as { queryCommandSupported: () => boolean }).queryCommandSupported = () => false;
 }
 
+// The real one reads the frontend application's configuration at load time;
+// the store only needs the token to inject by.
+jest.mock("@theia/workspace/lib/browser/workspace-service", () => ({ WorkspaceService: class WorkspaceService {} }));
+
 import { ProductStore } from "../product-store";
 import { announceOpenedWorkspace } from "./opened-workspace";
 
