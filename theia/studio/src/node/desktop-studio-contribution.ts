@@ -48,8 +48,9 @@ export interface DesktopStudioConfig {
 export interface DesktopSettings {
     readonly environment?: string;
     readonly custom?: { readonly studioUrl: string; readonly issuer?: string };
-    /** Which updates the app takes: `beta` adds pre-releases. Read by the
-     *  electron main process (electron-app/desktop-updater.js), not here. */
+    /** Which updates the app took before the choice moved to Settings
+     *  (`studio.desktop.updateChannel`). Read once by the desktop frontend,
+     *  which copies it into the preference and then removes it from here. */
     readonly updates?: 'stable' | 'beta';
     /** Which Studio tenant each folder was opened for, keyed by the folder.
      *  The folder is named after the workspace, not its id, and a session's
@@ -211,8 +212,6 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     readonly error?: string;
     readonly user?: { readonly sub: string; readonly name?: string; readonly email?: string; readonly tenantId?: string };
-    /** The update channel the member chose. */
-    readonly updates: 'stable' | 'beta';
 }
 
 function claimsOf(accessToken: string): Record<string, unknown> {
@@ -284,9 +283,6 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             current,
             switchable: !this.offered.pinned,
             state,
-            // The same default as electron-app/desktop-updater.js: a pre-release
-            // follows betas until the member chooses.
-            updates: this.settings.updates ?? ((process.env.STUDIO_DESKTOP_VERSION ?? '').includes('-') ? 'beta' : 'stable'),
             ...extra,
         };
     }
@@ -343,17 +339,20 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             this.status = this.describe('signed-out');
             res.json(this.status);
         });
-        // Which updates the app takes. The electron main process reads the
-        // file before every check, so this needs no restart.
-        app.post('/studio-desktop/updates', express.json(), (req, res) => {
-            const { channel } = (req.body ?? {}) as { channel?: string };
-            if (channel !== 'stable' && channel !== 'beta') {
-                res.status(400).json({ error: 'the channel is stable or beta' });
-                return;
+        // The update channel as the Studio view kept it before the choice
+        // moved to Settings: the desktop frontend copies it into the
+        // preference, then removes it here, so the preference is the only
+        // place it lives (electron-browser/desktop-update-channel.ts).
+        app.get('/studio-desktop/updates', (_req, res) => {
+            const channel = this.settings.updates;
+            res.json({ channel: channel === 'stable' || channel === 'beta' ? channel : null });
+        });
+        app.delete('/studio-desktop/updates', (_req, res) => {
+            if (this.settings.updates !== undefined) {
+                const { updates: _moved, ...rest } = this.settings;
+                this.saveSettings(rest);
             }
-            this.saveSettings({ ...this.settings, updates: channel });
-            this.status = { ...this.status, updates: channel };
-            res.json(this.status);
+            res.status(204).end();
         });
         app.post('/studio-desktop/sign-out', async (_req, res) => {
             await this.signOut();

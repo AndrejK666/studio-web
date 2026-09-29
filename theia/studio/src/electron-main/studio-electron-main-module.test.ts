@@ -30,6 +30,25 @@ describe('Help → Check for Updates, in the main process', () => {
     });
 });
 
+describe('the channel chosen in Settings, in the main process', () => {
+    afterEach(() => {
+        delete (globalThis as Record<string, unknown>)[DESKTOP_UPDATER_GLOBAL];
+    });
+
+    it('hands the choice to the updater', async () => {
+        const setChannel = jest.fn();
+        (globalThis as Record<string, unknown>)[DESKTOP_UPDATER_GLOBAL] = { checkNow: jest.fn(), setChannel };
+        await new DesktopUpdatesMain().setChannel('beta');
+        expect(setChannel).toHaveBeenCalledWith('beta');
+    });
+
+    it('is a no-op where no updater started, or one that predates the choice', async () => {
+        await expect(new DesktopUpdatesMain().setChannel('stable')).resolves.toBeUndefined();
+        (globalThis as Record<string, unknown>)[DESKTOP_UPDATER_GLOBAL] = { checkNow: jest.fn() };
+        await expect(new DesktopUpdatesMain().setChannel('stable')).resolves.toBeUndefined();
+    });
+});
+
 describe('what the member reads after a check', () => {
     it('says which version is current, and whether betas count', () => {
         expect(describeUpdateCheck({ state: 'current', version: '0.3.0', channel: 'stable' }).text)

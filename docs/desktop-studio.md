@@ -49,9 +49,9 @@ decides is in `desktop-studio-tree.ts`, with its tests):
   repository has been added since. When the listing cannot say (a Studio
   without `studio-git`, a 5xx), the row stays clickable, and a failed open is
   shown under that row.
-- **App**: *Get beta versions of the app*, and **Check for Updates** (the same
-  command as *Help → Check for Updates…*, shown only where the desktop app
-  registers it).
+
+The app's own settings are not in the view: which updates it takes is in
+**Settings** ([Updates](#updates)), and *Help → Check for Updates…* checks now.
 
 ## One IDE, two hosts
 
@@ -411,14 +411,40 @@ installs on quit), or read what changed. Nothing is forced.
 
 **Help → Check for Updates…** checks now and says what it found — the latest
 already, an update downloading, one downloaded (and asks again), or why the
-check failed. Stable or beta is the Studio view's *Get beta versions of the
-app*. A checkout's `theia start` and an unpacked zip are not updated in place,
-and say so.
+check failed. A checkout's `theia start` and an unpacked zip are not updated in
+place, and say so.
 
-The menu item exists only in the desktop app: it is a `frontendElectron`
-module talking to an `electronMain` one over Theia's Electron IPC
-(`theia/studio/src/electron-browser`, `src/electron-main`), and a session's
-`browser-app` loads neither.
+Stable or beta is a preference: **Settings → Extensions → Studio → Desktop:
+Update Channel** (`studio.desktop.updateChannel`, user scope only; searching
+Settings for "update channel" or "beta" finds it):
+
+| Value | Follows |
+|---|---|
+| `auto` (default) | the installed version: betas for a pre-release (`0.3.0-beta.2`), releases for a release |
+| `stable` | releases only |
+| `beta` | pre-releases too |
+
+Its description links to *Check for Updates*. The preference lives in Theia's
+user settings and nowhere else: the frontend reports it to the updater in the
+main process at start and on every change
+(`theia/studio/src/electron-browser/desktop-update-channel.ts` →
+`DesktopUpdates.setChannel` → `desktop-update-channel.js`), so a change takes
+effect on the next check without a restart. The first check on start waits for
+that report (up to a minute, then `auto`). A move from beta back to stable
+keeps the installed beta until a release passes it.
+
+Up to this change the Studio view kept the choice as `updates` in
+`~/ConstructorStudio/settings.json`. On the first start after it, the frontend
+copies that value into the preference — unless the member has already set the
+preference — and removes it from the file (`GET`/`DELETE
+/studio-desktop/updates`, desktop only), so the choice is kept and there is one
+place it lives.
+
+The menu item and the preference exist only in the desktop app: they are a
+`frontendElectron` module talking to an `electronMain` one over Theia's
+Electron IPC (`theia/studio/src/electron-browser`, `src/electron-main`), and a
+session's `browser-app` loads neither — a session's Settings has no Update
+Channel.
 
 ## Agent development (Orca)
 

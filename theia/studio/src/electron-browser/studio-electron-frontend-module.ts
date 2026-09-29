@@ -4,14 +4,19 @@
 
 import { ContainerModule, inject, injectable } from '@theia/core/shared/inversify';
 import { CommonMenus } from '@theia/core/lib/browser/common-menus';
+import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
+import { PreferenceContribution } from '@theia/core/lib/common/preferences/preference-schema';
 import {
     CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry, MessageService, type Command
 } from '@theia/core/lib/common';
 import { ElectronIpcConnectionProvider } from '@theia/core/lib/electron-browser/messaging/electron-ipc-connection-source';
 import { DesktopUpdates, describeUpdateCheck, desktopUpdatesPath } from '../common/desktop-updates-protocol';
+import {
+    CHECK_FOR_UPDATES_COMMAND_ID, DESKTOP_UPDATE_CHANNEL_PREFERENCE_SCHEMA, DesktopUpdateChannelContribution
+} from './desktop-update-channel';
 
 export const CheckForUpdatesCommand: Command = {
-    id: 'studio.desktop.checkForUpdates',
+    id: CHECK_FOR_UPDATES_COMMAND_ID,
     category: 'Constructor Studio',
     label: 'Check for Updates…'
 };
@@ -64,4 +69,8 @@ export default new ContainerModule(bind => {
     bind(CheckForUpdatesContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(CheckForUpdatesContribution);
     bind(MenuContribution).toService(CheckForUpdatesContribution);
+    // Settings → Extensions → Studio → Desktop: Update Channel, which the updater follows.
+    bind(PreferenceContribution).toConstantValue({ schema: DESKTOP_UPDATE_CHANNEL_PREFERENCE_SCHEMA });
+    bind(DesktopUpdateChannelContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(DesktopUpdateChannelContribution);
 });
