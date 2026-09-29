@@ -88,8 +88,10 @@ export const MODE_VIEWS: Readonly<Record<string, readonly ModeView[]>> = {
     // Writing: the documents are files, found by browsing. Finding them by
     // their text is the product's own Search, which also reads comments,
     // proposed changes and history; Theia's file search beside it would be a
-    // second, lesser search.
-    [DOCUMENTS_PERSPECTIVE_ID]: [EXPLORER],
+    // second, lesser search. Source Control, because a written document is
+    // committed from here: the ribbon's Changes opens it, and without a tab the
+    // view took the side bar with no icon to come back to it.
+    [DOCUMENTS_PERSPECTIVE_ID]: [EXPLORER, SOURCE_CONTROL],
     // Development and Full: the file tree, Theia's search across files (code is
     // found by its text), Source Control, Run and Debug, Testing, and the
     // Extensions view where the application has one.

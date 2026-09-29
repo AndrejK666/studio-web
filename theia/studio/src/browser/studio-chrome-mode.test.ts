@@ -104,10 +104,11 @@ describe('the chrome a mode implies', () => {
         // code and wants to commit it — and a rule on data-studio-mode showed
         // it in every mode but writing, Agent development included.
         expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-');
-        for (const mode of ['default', 'studio.full', 'gearbox.product']) {
+        // Doc editing too: a written document is committed from there.
+        for (const mode of ['default', 'studio.full', 'gearbox.product', 'studio.documents']) {
             expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
         }
-        for (const mode of ['studio.documents', 'studio.orca-mode']) {
+        for (const mode of ['studio.orca-mode']) {
             expect(css).not.toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
         }
         // Run and Debug and Testing belong to the code modes.

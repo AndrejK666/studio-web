@@ -123,7 +123,7 @@ describe('the views a mode keeps on its rails', () => {
     });
 
     it('leaves a view where it already is', async () => {
-        const { layout, shell } = setup(DOCUMENTS_PERSPECTIVE_ID, { 'explorer-view-container': 'left' });
+        const { layout, shell } = setup(DOCUMENTS_PERSPECTIVE_ID, { 'explorer-view-container': 'left', 'scm-view-container': 'left' });
         await layout.apply();
         expect(shell.addWidget).not.toHaveBeenCalled();
     });
@@ -163,24 +163,24 @@ describe('the Studio view', () => {
 });
 
 describe('what a mode sets aside on entering it', () => {
-    it('takes the Gearbox Catalogue and the code rails out of Doc editing', async () => {
+    it('takes the Gearbox Catalogue and the code rails out of Doc editing, and keeps Source Control', async () => {
         const { layout, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
             'explorer-view-container': 'left', 'gearbox.catalogue': 'left', 'scm-view-container': 'left',
             'vsx-extensions-view-container': 'left', 'studio.desktop': 'left',
             'plugin-view-container:workbench.view.extension.claude-sidebar-secondary': 'right',
         });
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'studio.desktop']);
+        expect(on('left')).toEqual(['explorer-view-container', 'scm-view-container', 'studio.desktop']);
         // The assistants belong to no mode, and stay.
         expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
     });
 
     it('folds a panel whose front view is set aside, rather than bringing its neighbour forward', async () => {
         const { layout, shell, currentIn, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
-            'explorer-view-container': 'left', 'scm-view-container': 'right',
+            'explorer-view-container': 'left', 'scm-view-container': 'left', 'debug': 'right',
             'plugin-view-container:workbench.view.extension.claude-sidebar-secondary': 'right',
         });
-        currentIn.right = 'scm-view-container';
+        currentIn.right = 'debug';
         await layout.apply();
         expect(shell.collapsePanel).toHaveBeenCalledWith('right');
         expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
@@ -199,10 +199,11 @@ describe('what a mode sets aside on entering it', () => {
 
     it('never touches a view no mode claims — Object Details, the AI chat, a plugin’s view', async () => {
         const { layout, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
-            'explorer-view-container': 'left', 'studio.object-details': 'right', 'chat-view-widget': 'right', 'timeline-view': 'left',
+            'explorer-view-container': 'left', 'scm-view-container': 'left',
+            'studio.object-details': 'right', 'chat-view-widget': 'right', 'timeline-view': 'left',
         });
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'timeline-view']);
+        expect(on('left')).toEqual(['explorer-view-container', 'scm-view-container', 'timeline-view']);
         expect(on('right')).toEqual(['chat-view-widget', 'studio.object-details']);
     });
 
