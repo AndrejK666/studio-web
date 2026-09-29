@@ -25,6 +25,16 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   Agent development, the Gearbox Inspector, Outline and AI chat opened 100px
   wide; they now open at the assistants' width when the panel was narrower than
   300px.
+- **The code modes see the code.** Development, Full functionality, Agent
+  development and Building open the Explorer on every file, `src/` included,
+  under file names; Doc editing keeps its list of documents titled by their
+  H1. The Explorer's toggle is remembered per mode, so choosing the document
+  list in Development leaves the other modes as they were. The portal session
+  behaves the same way: its Workbench is the same Development mode.
+- **The status bar is back in the code modes.** The branch with its dirty and
+  sync state, the Problems count, the notification bell, progress, the
+  bottom-panel toggle, the cursor position and a lost-connection warning show
+  beside Studio's own fields. Doc editing keeps the quiet line.
 
 ### Doc editing
 

@@ -469,6 +469,24 @@ readable width: a panel narrower than 300px when a new view comes to the
 front is widened to the assistants' 360px (`settleRightPanelWidth`,
 `theia/product-ext/src/browser/ai-context.js`).
 
+### The Explorer and the status bar per mode
+
+Both are shared with the portal session, which has the same modes.
+
+- **Explorer.** Doc editing lists documents (Project settings → Files shown)
+  titled by their first heading; every other mode lists every file under its
+  name (`defaultExplorerMode`, `explorer-presentation-service.ts`). The
+  Explorer's toggle is kept per mode, in the IDE's local storage under
+  `studio.explorer.mode.<perspective id>`; the old single
+  `studio.explorer.mode` is read only by a build with no modes.
+- **Status bar.** The product hides every entry of Theia's it does not own.
+  In the code modes a named list comes back — source control (`scm.*`),
+  Problems, notifications, progress, connection status, the bottom-panel
+  toggle and the cursor position (`CODE_MODE_STATUS_ENTRIES`,
+  `product-ext/src/browser/status-line-modes.js`), keyed by
+  `body[data-studio-perspective]`. A new entry is shown only once it is named
+  there.
+
 ### The gearbox engine
 
 The `gearbox` executable behind the gear catalogue, products and `.gdl` is not
