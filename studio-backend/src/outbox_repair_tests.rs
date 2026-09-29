@@ -11,12 +11,13 @@ async fn connect(prefix: &str) -> Client {
     client
 }
 
-/// The body table and journal toolkit-db before 0.16 created: no `trace`
-/// column, no trace table, and m001 recorded as applied.
+/// The tables and journal toolkit-db before 0.16 created: body and dead
+/// letters with no `trace` column, no trace table, and m001 recorded.
 async fn old_outbox(client: &Client, prefix: &str, journal: &str, version: &str) {
     client
         .batch_execute(&format!(
             "CREATE TABLE {prefix}_outbox_body (id BIGSERIAL PRIMARY KEY, payload BYTEA NOT NULL);
+             CREATE TABLE {prefix}_outbox_dead_letters (id BIGSERIAL PRIMARY KEY, payload BYTEA NOT NULL);
              CREATE TABLE IF NOT EXISTS \"{journal}\" (
                  version VARCHAR(255) PRIMARY KEY,
                  applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -65,10 +66,14 @@ async fn an_old_outbox_gets_its_column_and_runs_its_migration_again() {
     let r = repair(&c).await.unwrap();
     assert_eq!(
         r.columns_added,
-        vec!["studio_tasks_outbox_body".to_string()]
+        vec![
+            "studio_tasks_outbox_body".to_string(),
+            "studio_tasks_outbox_dead_letters".to_string(),
+        ]
     );
     assert_eq!(r.migrations_reset, 1);
     assert!(has_column(&c, "studio_tasks_outbox_body", "trace").await);
+    assert!(has_column(&c, "studio_tasks_outbox_dead_letters", "trace").await);
     // Only the outbox migration is forgotten; the gear's own history stays.
     assert_eq!(versions(&c, journal).await, vec!["m002_something_else"]);
 }
@@ -113,12 +118,39 @@ async fn repairing_twice_changes_nothing_the_second_time() {
     assert!(repair(&c).await.unwrap().is_empty());
 }
 
+/// What the first repair (#521) left: body and trace table fixed, the dead
+/// letters still without `trace` -- so a rejected message fails. Only the
+/// missing column is added; m001 is not reset again.
+#[tokio::test]
+async fn an_outbox_repaired_before_the_dead_letters_were_known_gets_them() {
+    let c = connect("outbox_repair_half").await;
+    let journal = "toolkit_migrations__studio_tasks__0123abcd";
+    c.batch_execute(&format!(
+        "CREATE TABLE studio_tasks_outbox_body (id BIGSERIAL PRIMARY KEY, trace VARCHAR(256) NULL);
+         CREATE TABLE studio_tasks_outbox_dead_letters (id BIGSERIAL PRIMARY KEY, payload BYTEA NOT NULL);
+         CREATE TABLE studio_tasks_outbox_trace (id BIGSERIAL PRIMARY KEY, trace VARCHAR(256) NOT NULL);
+         CREATE TABLE \"{journal}\" (version VARCHAR(255) PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+         INSERT INTO \"{journal}\" (version) VALUES ('m001_create_toolkit_outbox_schema');"
+    ))
+    .await
+    .unwrap();
+
+    let r = repair(&c).await.unwrap();
+    assert_eq!(
+        r.columns_added,
+        vec!["studio_tasks_outbox_dead_letters".to_string()]
+    );
+    assert_eq!(r.migrations_reset, 0);
+    assert!(has_column(&c, "studio_tasks_outbox_dead_letters", "trace").await);
+}
+
 #[tokio::test]
 async fn a_current_outbox_is_left_alone() {
     let c = connect("outbox_repair_current").await;
     let journal = "toolkit_migrations__studio_tasks__0123abcd";
     c.batch_execute(&format!(
         "CREATE TABLE studio_tasks_outbox_body (id BIGSERIAL PRIMARY KEY, trace VARCHAR(256) NULL);
+         CREATE TABLE studio_tasks_outbox_dead_letters (id BIGSERIAL PRIMARY KEY, trace VARCHAR(256) NULL);
          CREATE TABLE studio_tasks_outbox_trace (id BIGSERIAL PRIMARY KEY, trace VARCHAR(256) NOT NULL);
          CREATE TABLE \"{journal}\" (version VARCHAR(255) PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
          INSERT INTO \"{journal}\" (version) VALUES ('m001_create_toolkit_outbox_schema');"
