@@ -19,6 +19,10 @@ browser-app/scripts/*
 !browser-app/scripts/start-browser.test.js
 # The desktop packaging (ADR-0027) is source too. dist/, dist-stage/ and
 # dist-resources/ are its output and stay ignored by `*-app/*`.
+# Its esbuild customization too (mermaid and KaTeX as their own scripts): the
+# default `theia build` writes when this is absent has neither, and the
+# desktop then had no `mermaid.js` / `katex.js` for the editor to load.
+!electron-app/esbuild.mjs
 !electron-app/desktop-main.js
 !electron-app/desktop-updater.js
 !electron-app/desktop-update-channel.js
