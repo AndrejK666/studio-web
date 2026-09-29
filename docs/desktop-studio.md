@@ -421,7 +421,9 @@ pin is a new version; `extension.build` is raised for a change to the extension
 alone. `.github/workflows/studio-cli.yml` publishes each version once, into a
 release `studio-cli-v<version>`, and `assistants-manifest.mjs --studio-cli`
 pins that asset's SHA-256 into the installer's manifest. A desktop build whose
-release does not exist yet warns and ships without the CLI.
+release does not exist yet warns and ships without the CLI. The two workflows
+start together on a push that changes `cfs.json`, so that push's desktop build
+can miss the new release; a `desktop-v*` tag, cut afterwards, has it.
 
 **Its own home.** Both `cfs` and the engine's `init` look for the engine in
 `~/.cf-studio/cache`, whatever `CFS_CACHE_DIR` says. On a machine where the
