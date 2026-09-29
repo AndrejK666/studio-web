@@ -72,6 +72,19 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # The SPA's own files, at whatever depth an address asked for them. The
+    # build references them relatively (vite `base: "./"`, for the /prototype
+    # mount), so a reload at /workspaces/{id}/projects/{id} or /space/{id}
+    # asks for …/assets/index-*.js one level down, where the fallback below
+    # would answer index.html in place of the script. They only ever exist at
+    # the root. The proxied prefixes are left out: /cf/ and /studio/ are the
+    # backend's and the IDE's, whatever their paths contain. try_files moves
+    # $uri to /assets/…, so the cache map above still marks them immutable.
+    location ~ ^/(?!cf/|studio/|prototype/)(?:.+/)?(assets/[^/]+|env\.js)$ {
+        add_header Cache-Control $frontend_cache_control always;
+        try_files /$1 =404;
+    }
+
     # SPA fallback
     location / {
         add_header Cache-Control $frontend_cache_control always;

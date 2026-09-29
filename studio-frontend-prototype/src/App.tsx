@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv, idpConsoleUrl } from "./env";
 import { errText, matches, relTime } from "./format";
@@ -723,6 +724,23 @@ function forgetPlace(): void {
  *  previous version of the app wrote: a `view` that no longer exists would
  *  render an empty shell with no way back, which is worse than starting at
  *  the default. */
+/** Every section has an address; a View without one fails to compile here. */
+VIEW_PATHS satisfies Record<View, string>;
+
+/** What an address may name, from the lists the screens draw their tabs from. */
+function knownPlaces(): KnownPlaces {
+  return {
+    projectTabs: PROJECT_TABS.map((t) => t.id),
+    workspaceTabs: WORKSPACE_TABS.map((t) => t.id),
+    adminViews: [...ADMIN_NAV, ...PLATFORM_NAV].map((t) => t.id),
+  };
+}
+
+/** The place the address names (place-url.ts), cast to the shell's types it was checked against. */
+function placeFromUrl(): Partial<Place> | undefined {
+  return pathToPlace(window.location.pathname, window.location.search, knownPlaces()) as Partial<Place> | undefined;
+}
+
 function readPlace(): Partial<Place> {
   try {
     const raw = sessionStorage.getItem(PLACE_KEY);
@@ -738,7 +756,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // Restored once, as the initial state: setting it from an effect afterwards
   // would flash the default screen first and fight any navigation the person
   // made in between.
-  const restoredPlace = useRef<Partial<Place>>(readPlace()).current;
+  // The address wins over the tab's memory: a link someone followed names the
+  // place they meant, and the stored one is only where this tab last was.
+  const restoredPlace = useRef<Partial<Place>>({ ...readPlace(), ...placeFromUrl() }).current;
   const [view, setView] = useState<View>(restoredPlace.view ?? "projects");
   /** A component page the platform catalogue should open on, asked for from
    *  elsewhere (a project's product). Stamped, so asking twice reopens it. */
@@ -779,7 +799,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // section you left on the last one says nothing about this one, and landing
   // in a type editor belonging to a workspace you have only just opened reads
   // as the app having lost your place.
+  // Not on the first render, nor on a Back/Forward that names the tab: a
+  // reload or a link restoring /workspaces/{id}/types is not "opening a
+  // different workspace", and resetting there undid the restore.
+  const tabbedWorkspace = useRef(restoredPlace.crumb?.projectId);
   useEffect(() => {
+    if (tabbedWorkspace.current === crumb.projectId) return;
+    tabbedWorkspace.current = crumb.projectId;
     setWorkspaceTab("projects");
   }, [crumb.projectId]);
   const [accountMenu, setAccountMenu] = useState(false);
@@ -937,11 +963,23 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/)?.[1] ?? null,
   );
 
+  // URL ← state: the open IDE space when there is one, else the portal place
+  // (place-url.ts). Pushed, so Back returns to where the person was; a change
+  // that came FROM the address (Back/Forward) is not pushed again.
+  // The first write and one after Back/Forward only REPLACE: pushing there
+  // would add an entry for the same place, and at an address that names none
+  // (the root) Back would land on it and be pushed forward again, forever.
+  const fromHistoryRef = useRef(true);
   useEffect(() => {
-    // URL ← state (replace, not push: spaces are switched often).
-    const path = activeSpace ? `/space/${activeSpace}` : "/";
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
-  }, [activeSpace]);
+    const path = activeSpace
+      ? `/space/${activeSpace}`
+      : placeToPath({ view, crumb, projectTab, workspaceTab, activeOrgId, adminOpen, adminView });
+    const replace = fromHistoryRef.current;
+    fromHistoryRef.current = false;
+    if (window.location.pathname + window.location.search === path) return;
+    if (replace) window.history.replaceState(null, "", path);
+    else window.history.pushState(null, "", path);
+  }, [activeSpace, view, crumb, projectTab, workspaceTab, activeOrgId, adminOpen, adminView]);
 
   // Remember where the person is, so a reload puts them back rather than at
   // the default screen. Per-tab on purpose: two tabs are two places, and the
@@ -979,7 +1017,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     // Back/forward buttons switch space ↔ portal.
     const onPop = () => {
       const m = window.location.pathname.match(/^\/space\/([0-9a-f-]{36})$/);
+      fromHistoryRef.current = true;
       setActiveSpace(m ? m[1] : null);
+      if (m) return;
+      const place = placeFromUrl();
+      if (!place) return;
+      // The tab resets above answer "opened something else"; this is going
+      // back to a place, tab included, so they are told it is not new.
+      tabbedProject.current = place.crumb?.nestedId;
+      tabbedWorkspace.current = place.crumb?.projectId;
+      if (place.view) setView(place.view);
+      if (place.crumb) setCrumb(place.crumb);
+      if (place.projectTab) setProjectTab(place.projectTab);
+      if (place.workspaceTab) setWorkspaceTab(place.workspaceTab);
+      if (place.adminOpen !== undefined) setAdminOpen(place.adminOpen);
+      if (place.adminView) setAdminView(place.adminView);
+      if (place.activeOrgId !== undefined) setActiveOrgId(place.activeOrgId);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
