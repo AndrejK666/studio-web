@@ -137,6 +137,27 @@ for (const [name, value] of Object.entries(defaults)) {
 if (process.env.STUDIO_CFS_RUNTIME) {
     process.env.PATH = [path.join(process.env.STUDIO_CFS_RUNTIME, 'bin'), process.env.PATH].filter(Boolean).join(path.delimiter);
 }
+// Extensions uninstalled while something still held their folder
+// (studio/src/node/desktop-plugin-uninstall.ts): removed now, before any
+// plugin loads and holds them again. What still will not go stays listed.
+const pendingRemovals = path.join(process.env.STUDIO_DATA_DIR, 'pending-plugin-removals.json');
+try {
+    const left = JSON.parse(fs.readFileSync(pendingRemovals, 'utf8')).filter(folder => {
+        try {
+            fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+            return fs.existsSync(folder);
+        } catch {
+            return true;
+        }
+    });
+    if (left.length) {
+        fs.writeFileSync(pendingRemovals, JSON.stringify(left, undefined, 2) + '\n');
+    } else {
+        fs.rmSync(pendingRemovals, { force: true });
+    }
+} catch {
+    // Nothing pending.
+}
 // Added to, not replaced: a THEIA_PLUGINS from the shell still counts.
 const fetched = fetchedAssistants();
 if (fetched.length) {

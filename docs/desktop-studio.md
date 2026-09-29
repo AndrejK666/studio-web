@@ -475,11 +475,25 @@ answers "Claude Code is being installed. It opens here in a moment." instead of
 which a session answers with nothing). A failure says what happened and offers
 **Try again**, and names the Extensions view as the other way.
 
-**Known limit.** Removing Claude Code from the view on Windows can stay at
-*Uninstalling*: its running `claude.exe` processes hold files in its folder.
-Closing the app and removing it on the next start, or removing the folder under
-the Theia config's `deployedPlugins`, gets it done. A plain extension (a theme)
-uninstalls and asks for **Reload Window** as usual.
+**Uninstalling on Windows** (`studio/src/node/desktop-plugin-uninstall.ts`).
+Theia deletes an extension's folder and only then marks it uninstalled. On
+Windows a folder cannot go while something runs from it: Claude Code starts its
+`claude.exe` from its folder and loads a native module
+(`resources/audio-capture`) into the plugin host, so the delete never finished,
+the view stayed at *Uninstalling*, and the extension was back on the next
+start. The desktop binds an extension of Theia's handler in its place
+(`rebind(PluginDeployerHandlerImpl)`, no patch):
+
+1. it stops the processes whose executable lives under the folder;
+2. it removes the folder within 15 s;
+3. what still cannot go (a module loaded into the running plugin host) is left
+   out of Theia's delete and recorded in `<data>/pending-plugin-removals.json`;
+   Theia then marks the extension uninstalled and the view offers **Reload
+   Window**;
+4. `desktop-main.js` removes the recorded folders on the next start, before any
+   plugin loads.
+
+Anywhere but a Windows desktop the handler is Theia's, unchanged.
 
 **Behind a proxy.** The downloads are the backend's, which does not read the
 system proxy.
