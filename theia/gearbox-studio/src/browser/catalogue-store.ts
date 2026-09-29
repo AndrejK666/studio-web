@@ -45,6 +45,18 @@ import { announceOpenedWorkspace } from "./shell/opened-workspace";
  */
 const LOG_LIMIT = 500;
 
+/** Constructor Studio: how a `load` may treat the engine already running. */
+export interface LoadOptions {
+  /**
+   * Keep the running engine when it was started on these same roots and they
+   * are corpus copies at a commit (`GearboxService.initialize`'s `keep`): its
+   * catalogue is still true, so it is told again rather than read again. An
+   * open passes it; `Reload Catalogue` and a new gear do not, since they are
+   * asking for the disk to be read.
+   */
+  readonly keep?: boolean;
+}
+
 /** The state a store starts in and returns to at the head of every load. */
 const EMPTY: CatalogueState = {
   status: "idle",
@@ -316,7 +328,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * either becomes an unhandled rejection in the console while the panel keeps
    * claiming it is still projecting.
    */
-  async load(session?: StudioSession): Promise<void> {
+  async load(session?: StudioSession, options?: LoadOptions): Promise<void> {
     // Remembered here, and **captured here**, which are two different things.
     //
     // `Reload Catalogue` and the reconnect path call `load()` with nothing and
@@ -332,7 +344,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       this.session = session;
     }
     const forThisLoad = this.session;
-    return this.queued(() => this.doLoad(forThisLoad));
+    return this.queued(() => this.doLoad(forThisLoad, options?.keep === true));
   }
 
   /**
@@ -367,7 +379,27 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    */
   async resetToBootSession(): Promise<void> {
     this.session = undefined;
-    return this.queued(() => this.doLoad(undefined));
+    // Constructor Studio: the engine is kept when the boot roots are the
+    // product's (a corpus-only product on a desktop) -- see `LoadOptions.keep`.
+    return this.queued(() => this.doLoad(undefined, true));
+  }
+
+  /**
+   * Constructor Studio: when the load or step in flight has got its engine and
+   * its first answer (what `queued` waits for), so `rootPaths` says what that
+   * engine has open. Never rejects.
+   */
+  async idle(): Promise<void> {
+    await this.loading?.catch(() => undefined);
+  }
+
+  /**
+   * Constructor Studio: whether the newest load is still projecting -- on an
+   * engine `prepare` kept, the load an open has to wait for before the engine
+   * answers anything else.
+   */
+  get projecting(): boolean {
+    return this.isStreaming() && this.state.status === "loading";
   }
 
   /**
@@ -444,7 +476,8 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * took longer than the 60 s allowance), and the open then scans the same
    * roots again in step 3. Queued with the loads, so it never respawns an
    * engine one of them is still using. The rows are cleared: they belonged to
-   * the engine this replaces.
+   * the engine this replaces -- unless the engine is kept (`reused`: same
+   * corpus-copy roots), when they and a load still streaming into them stay.
    */
   async prepare(session: StudioSession): Promise<string | undefined> {
     let failure: string | undefined;
@@ -452,23 +485,32 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     // and a `load()` after an open that stops here -- the recovery below it --
     // has to go back to the session there was, not to this one.
     await this.queued(async () => {
-      const epoch = ++this.epoch;
-      this.streaming = undefined;
-      this.rowsByKey.clear();
-      this.state = { ...EMPTY, status: "loading" };
-      this.onChangedEmitter.fire();
+      // Constructor Studio: asked before the rows are cleared, because a kept
+      // engine (`reused`) is still the one these rows -- and a load that may
+      // still be streaming into them -- belong to. Only a new engine clears them.
+      let epoch = this.epoch;
       try {
         await this.announceOpenedWorkspace();
-        const init = await this.service.initialize(session);
+        const init = await this.service.initialize(session, true);
         if (epoch !== this.epoch) return;
+        if (init.reused !== true) {
+          epoch = ++this.epoch;
+          this.streaming = undefined;
+          this.rowsByKey.clear();
+          this.state = { ...EMPTY, status: "loading" };
+          this.onChangedEmitter.fire();
+        }
         this.engine.markConnected();
         this.capabilities = init.capabilities;
         this.rootsById = new Map((init.roots ?? []).map((r) => [r.id, r.path]));
       } catch (error) {
         if (epoch !== this.epoch) return;
+        ++this.epoch;
+        this.streaming = undefined;
+        this.rowsByKey.clear();
         failure = describe(error);
         this.engine.markDisconnected(failure);
-        this.state = { ...this.state, status: "error", error: failure };
+        this.state = { ...EMPTY, status: "error", error: failure };
         this.onChangedEmitter.fire();
       }
     });
@@ -480,7 +522,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   }
 
   /** One load, against the session decided when it was asked for. */
-  protected async doLoad(session: StudioSession | undefined): Promise<void> {
+  protected async doLoad(session: StudioSession | undefined, keep = false): Promise<void> {
     const epoch = ++this.epoch;
     this.streaming = undefined;
     this.rowsByKey.clear();
@@ -494,7 +536,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       // Said first, every time: the folder is this window's, and a desktop
       // member opening another project reloads the window onto it.
       await this.announceOpenedWorkspace();
-      const init = await this.service.initialize(session);
+      const init = await this.service.initialize(session, keep);
       if (epoch !== this.epoch) {
         return;
       }
@@ -580,12 +622,22 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     // carried-over projection could be about a gear the new roots do not have.
     const previous = this.rowsByKey;
     this.rowsByKey = new Map();
+    // Constructor Studio: projections remembered on disk for these very roots
+    // and this engine (`StudioCatalogueLoad.cached`) fill a row until the
+    // engine's own projection of it arrives and replaces it. Only for a row the
+    // engine has just discovered, so a gear gone from disk does not come back.
+    const remembered = new Map((loaded.cached ?? []).map((event) => [keyFor(event.gear.source, event.replaces), event.gear]));
     for (const gear of loaded.pending) {
       const key = keyFor(gear.source, gear.gdl_path);
       const carried = keepProjected ? previous.get(key) : undefined;
+      const cached = remembered.get(key);
       this.rowsByKey.set(
         key,
-        carried?.kind === "projected" ? carried : { kind: "pending", gear },
+        carried?.kind === "projected"
+          ? carried
+          : cached !== undefined
+            ? { kind: "projected", gear: cached }
+            : { kind: "pending", gear },
       );
     }
     // Nothing discovered is nothing to project, and no `$/progress done` will

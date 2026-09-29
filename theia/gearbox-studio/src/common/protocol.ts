@@ -150,6 +150,31 @@ export interface StudioSession {
   readonly workspace: string;
 }
 
+/**
+ * Constructor Studio: `initialize`'s answer, and whether the engine already
+ * running was kept for it (`GearboxService.initialize`'s `keep`). A kept engine
+ * still holds the catalogue it read, and may still be reading it.
+ */
+export type StudioInitializeResult = InitializeResult & { readonly reused?: boolean };
+
+/**
+ * Constructor Studio: `loadCatalogue`'s answer, and the projections remembered
+ * on disk for exactly these roots and this engine (`node/catalogue-cache.ts`).
+ * The engine's own projections still arrive and replace them; until they do the
+ * Catalogue shows these rather than a tree of names.
+ */
+export type StudioCatalogueLoad = CatalogueLoadResult & { readonly cached?: readonly CatalogueChanged[] };
+
+/**
+ * Constructor Studio: files that took a long time to read the first time --
+ * on-access antivirus scanning -- and the folder an exclusion would cover.
+ */
+export interface ScanHint {
+  readonly folder: string;
+  readonly files: number;
+  readonly seconds: number;
+}
+
 export const GearboxService = Symbol("GearboxService");
 export interface GearboxService {
   /**
@@ -159,8 +184,20 @@ export interface GearboxService {
    * catalogue's own reload does when no product has been opened yet. A session
    * replaces both values, and because `initialize` disposes and respawns the
    * engine, it takes effect wholesale rather than merging with what was there.
+   *
+   * Constructor Studio: `keep` lets the engine already running stay when it was
+   * started on these same roots and they are corpus copies at a commit: it is
+   * given the new workspace, keeps the catalogue it read, and the next
+   * `loadCatalogue` is answered from that load instead of a rescan. For an open;
+   * a reload of the catalogue does not pass it.
    */
-  initialize(session?: StudioSession): Promise<InitializeResult>;
+  initialize(session?: StudioSession, keep?: boolean): Promise<StudioInitializeResult>;
+
+  /**
+   * Constructor Studio: the slow first read of source files the last catalogue
+   * load saw on this machine, once; `undefined` when there was none.
+   */
+  scanHint(): Promise<ScanHint | undefined>;
 
   /**
    * The folder this window has open, as Theia names it: a `file://` URI of a
@@ -179,7 +216,7 @@ export interface GearboxService {
    * whole tree by name, none of it projected. Projections arrive on the client
    * callback.
    */
-  loadCatalogue(): Promise<CatalogueLoadResult>;
+  loadCatalogue(): Promise<StudioCatalogueLoad>;
 
   /**
    * The directories a Studio workspace should contain.

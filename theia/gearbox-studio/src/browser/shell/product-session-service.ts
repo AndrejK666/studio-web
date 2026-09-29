@@ -48,6 +48,7 @@ import {
   catalogueUsable,
   openedSuccessfully,
   projectionStalled,
+  scanHintMessage,
   type Outcome,
   sourceRootsOf,
   sourcesUsable,
@@ -69,6 +70,9 @@ export {
 
 /** Where the Recent list lives. Per browser profile, like any other Theia state. */
 const RECENT_KEY = "gearbox.recentProducts";
+
+/** Constructor Studio: whether the scanning hint (`hintScanning`) was shown. */
+const SCAN_HINT_KEY = "gearbox.scanHintShown";
 
 /**
  * A remembered product, and when it was last opened.
@@ -327,7 +331,7 @@ export class ProductSessionService {
     if (!this.current(generation)) return false;
     await (before === undefined
       ? this.catalogue.resetToBootSession()
-      : this.catalogue.load(before));
+      : this.catalogue.load(before, { keep: true }));
     return false;
   }
 
@@ -346,7 +350,7 @@ export class ProductSessionService {
    * engine nobody meant to keep. `load()` goes back to the session there was.
    */
   protected failDescribing(reason: string, generation: number): false {
-    if (this.current(generation)) void this.catalogue.load();
+    if (this.current(generation)) void this.catalogue.load(undefined, { keep: true });
     return this.failStage("describe", reason, generation);
   }
 
@@ -574,6 +578,13 @@ export class ProductSessionService {
       await this.gears.close();
     }
 
+    // Constructor Studio: the roots below are read once the boot load has its
+    // engine. An open clicked while that engine was still starting read none,
+    // fell back to the product's folder, and so replaced the engine reading the
+    // corpus instead of keeping it. `prepare` waits for the same queue anyway.
+    await this.catalogue.idle();
+    if (!this.current(generation)) return false;
+
     // Step 1: an engine whose workspace is the product's, so a later edit is
     // inside the write boundary before anything reads the description.
     //
@@ -609,6 +620,16 @@ export class ProductSessionService {
         generation,
         before,
       );
+    }
+    // Constructor Studio: the engine was kept (a corpus copy it had already
+    // started reading -- the boot load, on a desktop) and is still projecting.
+    // It answers nothing else until that ends, so wait for it here, counting,
+    // rather than on "reading the description". What it reads is kept, and the
+    // catalogue step below is then answered from it instead of a second read.
+    if (this.catalogue.projecting) {
+      const warmed = await this.awaitProjection(ref, generation);
+      if (!this.current(generation)) return false;
+      if (!warmed.ok) return this.failAndRestore("workspace", warmed.reason, generation, before);
     }
 
     // Step 2: read what the description declares. `loadProduct` is evaluation
@@ -657,7 +678,9 @@ export class ProductSessionService {
     // Step 3 and 4: the real session, then the catalogue and the product.
     this.enterStage("catalogue", generation);
     const session: StudioSession = { roots, workspace };
-    await this.catalogue.load(session);
+    // Constructor Studio: `keep` -- when the roots are the ones the engine has
+    // already read, it is not made to read them again.
+    await this.catalogue.load(session, { keep: true });
     if (!this.current(generation)) return false;
     // Constructor Studio: the projection, before the product -- see `awaitProjection`.
     const projected = await this.awaitProjection(ref, generation);
@@ -677,12 +700,30 @@ export class ProductSessionService {
     const resolved = openedSuccessfully(ref, this.products.current);
     if (resolved.ok) {
       await this.remember(ref);
+      void this.hintScanning();
       return true;
     }
     // The store also renders its own error, and that is the surface a person
     // should end up on: this stops the open and says why, and the panel shows
     // the product with its error rather than four steps still in progress.
     return this.failStage("resolve", resolved.reason, generation);
+  }
+
+  /**
+   * Constructor Studio: once per browser profile, say that the gear sources
+   * were slow to read the first time and which folder an antivirus exclusion
+   * would cover. Advice only: Studio changes no system setting.
+   */
+  protected async hintScanning(): Promise<void> {
+    try {
+      if ((await this.storage.getData<boolean>(SCAN_HINT_KEY)) === true) return;
+      const hint = await this.service.scanHint();
+      if (hint === undefined) return;
+      await this.storage.setData(SCAN_HINT_KEY, true);
+      void this.messages.info(scanHintMessage(hint));
+    } catch {
+      // A hint that cannot be given is not worth a second message.
+    }
   }
 
   /**

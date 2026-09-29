@@ -38,7 +38,13 @@ import type { LockResult } from "../common/generated/LockResult";
 import type { LogParams } from "../common/generated/LogParams";
 import type { ProductEdit } from "../common/generated/ProductEdit";
 import type { ProductLoadResult } from "../common/generated/ProductLoadResult";
-import type { GitCloneReview, StudioSession } from "../common/protocol";
+import type {
+  GitCloneReview,
+  ScanHint,
+  StudioCatalogueLoad,
+  StudioInitializeResult,
+  StudioSession,
+} from "../common/protocol";
 import type { ResolveResult } from "../common/generated/ResolveResult";
 import type { ValidateResult } from "../common/generated/ValidateResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
@@ -57,6 +63,32 @@ import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
 import { buildToolchain, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
+import {
+  LoadRecord,
+  catalogueCacheFile,
+  catalogueCacheKey,
+  corpusCommitOf,
+  engineIdentity,
+  normalizeRoot,
+  readCatalogueCache,
+  replayCatalogue,
+  sameRoots,
+  writeCatalogueCache,
+  type CatalogueCacheKey,
+} from "./catalogue-cache";
+import { Prewarmer, shouldPrewarm } from "./source-prewarm";
+
+/**
+ * Constructor Studio: the source roots read ahead of the engine, shared by
+ * every window's service -- a root warmed for one is warm for all.
+ */
+const prewarmer = new Prewarmer();
+
+/** A first read slower than this is worth a word about the scanner (`scanHint`). */
+const SLOW_SCAN_MS = 5_000;
+
+/** The slowest first read seen, for `scanHint`. */
+let slowScan: ScanHint | undefined;
 
 /**
  * How long the engine gets to answer before the request is abandoned.
@@ -197,11 +229,10 @@ export class GearboxServiceImpl implements GearboxService {
    */
   protected workspace = workspaceDir();
 
-  async initialize(session?: StudioSession): Promise<InitializeResult> {
-    this.disposeEngine();
+  async initialize(session?: StudioSession, keep?: boolean): Promise<StudioInitializeResult> {
     // From the session when there is one. The fixed repository root is only a
     // default for the catalogue-only case.
-    this.workspace = session?.workspace ?? this.defaultWorkspace();
+    const workspace = session?.workspace ?? this.defaultWorkspace();
     // Empty `roots` means "use the defaults", not "open nothing". The frontend
     // reaches that after a reload, when `CatalogueStore.rootPaths()` is still
     // empty because the boot load has not installed `rootsById` yet; passing the
@@ -210,20 +241,38 @@ export class GearboxServiceImpl implements GearboxService {
     // treats an empty `initialize.roots` as "keep the CLI defaults" -- match it.
     const roots_ =
       session === undefined || session.roots.length === 0 ? this.engineRoots() : [...session.roots];
+    // Constructor Studio: the engine already on these roots, kept -- see `keepEngine`.
+    if (keep === true && this.canKeepEngine(roots_)) {
+      return this.keepEngine(workspace);
+    }
+    this.disposeEngine();
+    this.workspace = workspace;
+    // Constructor Studio: from the spawn, not the load -- the load's first pass
+    // reads every description, and that is scanned too.
+    void this.prewarm(roots_);
     const engine = spawnEngine(enginePath(), roots_, this.logger);
     this.engine = engine;
     this.openRoots = roots_;
+    this.record = undefined;
+    this.replayNext = false;
+    this.pendingInit = undefined;
+    this.lastInit = undefined;
 
-    engine.connection.onNotification(method.CATALOGUE_CHANGED, (event: CatalogueChanged) =>
-      this.client?.onCatalogueChanged(event),
-    );
-    engine.connection.onNotification(
-      method.CATALOGUE_DIAGNOSTICS,
-      (event: CatalogueDiagnostics) => this.client?.onCatalogueDiagnostics(event),
-    );
-    engine.connection.onNotification(method.PROGRESS, (event: ProgressParams) =>
-      this.client?.onProgress(event),
-    );
+    // Constructor Studio: each notification is also recorded, for the load that
+    // `keepEngine` answers from and the cache beside the corpus copy.
+    const recording = (): LoadRecord | undefined => (this.engine === engine ? this.record : undefined);
+    engine.connection.onNotification(method.CATALOGUE_CHANGED, (event: CatalogueChanged) => {
+      recording()?.changed(event);
+      this.client?.onCatalogueChanged(event);
+    });
+    engine.connection.onNotification(method.CATALOGUE_DIAGNOSTICS, (event: CatalogueDiagnostics) => {
+      recording()?.diagnostics(event);
+      this.client?.onCatalogueDiagnostics(event);
+    });
+    engine.connection.onNotification(method.PROGRESS, (event: ProgressParams) => {
+      recording()?.progress(event);
+      this.client?.onProgress(event);
+    });
     engine.connection.onNotification(method.LOG, (event: LogParams) =>
       this.client?.onLog(event.message),
     );
@@ -259,6 +308,7 @@ export class GearboxServiceImpl implements GearboxService {
       // the client knows whether a load was live, so that decision stays there.
       if (this.engine !== engine) return;
       this.engine = undefined;
+      this.record?.fail();
       this.client?.onEngineExit(reason);
     });
 
@@ -310,13 +360,84 @@ export class GearboxServiceImpl implements GearboxService {
         textDocument: { uri, languageId: "gdl", version: document.version, text: document.text },
       });
     }
+    if (this.engine === engine) this.lastInit = result;
     return result;
   }
 
   /** The source roots the running engine was started on. */
   protected openRoots: readonly string[] = [];
 
-  async loadCatalogue(): Promise<CatalogueLoadResult> {
+  /**
+   * Constructor Studio: the running engine's latest catalogue load, as it
+   * arrived -- in flight, finished, or cut short. See `catalogue-cache.ts`.
+   */
+  protected record: LoadRecord | undefined;
+
+  /** Constructor Studio: answer the next `loadCatalogue` from `record` (set by `keepEngine`). */
+  protected replayNext = false;
+
+  /** Constructor Studio: a kept engine's `initialize`, sent behind its load. Awaited before anything else is. */
+  protected pendingInit: Promise<unknown> | undefined;
+
+  /** Constructor Studio: what the running engine answered to its `initialize`. */
+  protected lastInit: InitializeResult | undefined;
+
+  /**
+   * Constructor Studio: whether the running engine can serve a session on
+   * `roots` as it is. Only for the same roots, in the same order, when every
+   * one is a corpus copy at a commit: what the engine read from those is still
+   * what is on disk, so its catalogue is still the answer. A workspace's own
+   * checkout changes under a person's hands and gets a new engine and a rescan,
+   * as before.
+   */
+  protected canKeepEngine(roots: readonly string[]): boolean {
+    const engine = this.engine;
+    if (engine === undefined || engine.dead || this.lastInit === undefined) return false;
+    if (!sameRoots(this.openRoots, roots)) return false;
+    const cache = corpusCacheRoot();
+    return roots.every((root) => corpusCommitOf(root, cache) !== undefined);
+  }
+
+  /**
+   * Constructor Studio: keep the running engine for a new session on the same
+   * roots, instead of respawning it and reading the whole corpus again.
+   *
+   * **This is what makes a second open fast.** Opening a product respawned the
+   * engine twice, and the second one scanned the roots from scratch -- 7-8 s on
+   * the 44-gear corpus with the scanner's verdicts cached, more than a minute
+   * without -- even when the engine already running, the boot one or the last
+   * product's, had read exactly those roots. `initialize` with no `roots` keeps
+   * the engine's catalogue (gearbox-rpc `initialize`: the cache is dropped only
+   * when the roots change) and takes the new workspace and creation boundary.
+   *
+   * **Sent behind a load in flight, not awaited here.** The engine answers one
+   * request at a time, so an `initialize` sent during a load is answered when
+   * the projection ends; the caller is answered now, with `reused`, and the
+   * open waits for the projection it can see (`ProductSessionService`). Every
+   * request after this awaits it, so none reaches the engine ahead of it.
+   */
+  protected keepEngine(workspace: string): StudioInitializeResult {
+    const engine = this.engine as EngineHandle;
+    this.workspace = workspace;
+    this.replayNext = this.record !== undefined;
+    const params = {
+      roots: [],
+      allow_writes: true,
+      workspace,
+      creation_boundary: { roots: this.engineRoots(), workspace: this.defaultWorkspace() },
+    };
+    const behind = this.record?.settled ?? Promise.resolve();
+    this.pendingInit = behind
+      .then(() => engine.request<InitializeResult>(method.INITIALIZE, params, INITIALIZE_TIMEOUT_MS))
+      .then((result) => {
+        if (this.engine === engine) this.lastInit = result;
+      })
+      .catch((error: unknown) => this.logger.warn(`gearbox: the kept engine refused initialize: ${String(error)}`));
+    this.logger.info(`gearbox: kept the engine on ${this.openRoots.join(", ")} for ${workspace}`);
+    return { ...(this.lastInit as InitializeResult), reused: true };
+  }
+
+  async loadCatalogue(): Promise<StudioCatalogueLoad> {
     const engine = this.engine;
     if (!engine || engine.dead) {
       throw new Error("the engine is not running; reload the catalogue to start it");
@@ -328,7 +449,109 @@ export class GearboxServiceImpl implements GearboxService {
     if (this.openRoots.length === 0) {
       return { total: 0, pending: [], diagnostics: [] };
     }
-    return engine.request<CatalogueLoadResult>(method.CATALOGUE_LOAD, {}, LOAD_TIMEOUT_MS);
+    await this.pendingInit;
+    // Constructor Studio: a kept engine still has the catalogue it read; say it
+    // again rather than reading the corpus again.
+    if (this.replayNext) {
+      this.replayNext = false;
+      const replayed = await this.replay(engine);
+      if (replayed !== undefined) return replayed;
+    }
+    return this.freshLoad(engine);
+  }
+
+  /**
+   * Constructor Studio: the recorded load of `engine`, told again: answered
+   * with its S1 result, then its projections and `done` as notifications,
+   * as the engine sent them. `undefined` when there is no complete record --
+   * a load the engine died in -- and the caller loads for real.
+   */
+  protected async replay(engine: EngineHandle): Promise<StudioCatalogueLoad | undefined> {
+    const record = this.record;
+    if (record === undefined) return undefined;
+    await record.settled;
+    const recorded = record.snapshot();
+    if (recorded === undefined || this.engine !== engine || engine.dead) return undefined;
+    // After the answer, as the engine does: the client installs the tree from
+    // the answer and accepts projections from then on.
+    setTimeout(() => {
+      if (this.engine !== engine || this.client === undefined) return;
+      replayCatalogue(recorded, this.client);
+      this.client.onLog(`catalogue: ${recorded.changed.length} gear(s) from the engine's last load of the same roots`);
+    }, 0);
+    return recorded.load;
+  }
+
+  /**
+   * One real `catalogue/load`, recorded; answered with the projections cached
+   * for these roots when there are some (`StudioCatalogueLoad.cached`), and
+   * with the source files read ahead where a scanner makes the engine's own
+   * reads slow (`source-prewarm.ts`).
+   */
+  protected async freshLoad(engine: EngineHandle): Promise<StudioCatalogueLoad> {
+    const roots = [...this.openRoots];
+    const record = new LoadRecord();
+    this.record = record;
+    void this.prewarm(roots);
+    const key = this.cacheKeyFor(roots);
+    const file = key === undefined ? undefined : catalogueCacheFile(roots[0]!, key);
+    let result: CatalogueLoadResult;
+    try {
+      result = await engine.request<CatalogueLoadResult>(method.CATALOGUE_LOAD, {}, LOAD_TIMEOUT_MS);
+    } catch (error) {
+      record.fail();
+      throw error;
+    }
+    record.answered(result);
+    const cached = key === undefined || file === undefined ? undefined : readCatalogueCache(file, key);
+    if (key !== undefined && file !== undefined) {
+      void record.settled.then(() => this.remember(record, key, file, cached));
+    }
+    return cached === undefined ? result : { ...result, cached: cached.changed };
+  }
+
+  /** The cache key for a load of `roots` by this backend's engine, if it is one to cache. */
+  protected cacheKeyFor(roots: readonly string[]): CatalogueCacheKey | undefined {
+    return catalogueCacheKey(roots, corpusCacheRoot(), engineIdentity(enginePath()));
+  }
+
+  /** Write a finished load to its cache file, unless the file already says the same. */
+  protected remember(
+    record: LoadRecord,
+    key: CatalogueCacheKey,
+    file: string,
+    cached: ReturnType<typeof readCatalogueCache>,
+  ): void {
+    const recorded = record.snapshot();
+    if (recorded === undefined) return;
+    if (cached !== undefined && JSON.stringify(cached) === JSON.stringify(recorded)) return;
+    try {
+      writeCatalogueCache(file, key, recorded);
+      this.logger.info(`gearbox: remembered the catalogue of ${key.roots.map((r) => r.path).join(", ")} in ${file}`);
+    } catch (error) {
+      this.logger.warn(`gearbox: could not remember the catalogue in ${file}: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Constructor Studio: read `roots` ahead of the engine where an on-access
+   * scanner would otherwise scan each file as the engine reaches it
+   * (`source-prewarm.ts`), and remember a slow first read for `scanHint`.
+   */
+  protected async prewarm(roots: readonly string[]): Promise<void> {
+    if (!shouldPrewarm()) return;
+    for (const warmed of await prewarmer.prewarm(roots)) {
+      this.logger.info(`gearbox: read ${warmed.files} source files of ${warmed.root} ahead of the engine in ${warmed.ms} ms`);
+      if (warmed.ms >= SLOW_SCAN_MS && (slowScan === undefined || warmed.ms / 1000 > slowScan.seconds)) {
+        const cache = corpusCacheRoot();
+        const inCache = normalizeRoot(warmed.root).startsWith(normalizeRoot(cache));
+        slowScan = { folder: inCache ? cache : warmed.root, files: warmed.files, seconds: Math.round(warmed.ms / 1000) };
+      }
+    }
+  }
+
+  async scanHint(): Promise<ScanHint | undefined> {
+    return slowScan;
   }
 
   async workspaceRoots(): Promise<string[]> {
@@ -418,6 +641,8 @@ export class GearboxServiceImpl implements GearboxService {
     }
     if (dir !== undefined) {
       this.sharedCorpus = dir;
+      // Constructor Studio: read it ahead now, at start, before any load asks.
+      void this.prewarm([dir]);
     }
     return dir;
   }
@@ -817,6 +1042,8 @@ export class GearboxServiceImpl implements GearboxService {
     if (!engine || engine.dead) {
       throw new Error(`cannot call ${method}: the engine is not initialized`);
     }
+    // Constructor Studio: a kept engine's new workspace first (`keepEngine`).
+    await this.pendingInit;
     try {
       return await engine.request<T>(method, params, productTimeoutMs());
     } catch (error) {
@@ -878,6 +1105,7 @@ export class GearboxServiceImpl implements GearboxService {
     const engine = this.engine;
     if (!engine || engine.dead) return empty;
     try {
+      await this.pendingInit;
       return await engine.request<T>(
         engineMethod,
         { textDocument: { uri }, position: { line, character } },
@@ -922,6 +1150,7 @@ export class GearboxServiceImpl implements GearboxService {
   protected disposeEngine(): void {
     const engine = this.engine;
     this.engine = undefined;
+    this.record?.fail();
     engine?.dispose();
   }
 }

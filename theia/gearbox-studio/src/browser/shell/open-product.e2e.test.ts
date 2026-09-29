@@ -142,11 +142,17 @@ run("opens a real product to `ready`", async () => {
   void catalogue.load();
   void products.ensureDiscovered();
   await new Promise((resolve) => setTimeout(resolve, 2000));
+  // GEARBOX_E2E_OPEN_AFTER=ready: click only once the boot load has finished,
+  // as a member does who opens a product a while after launch.
+  for (let i = 0; process.env.GEARBOX_E2E_OPEN_AFTER === "ready" && i < 240 && catalogue.current.status === "loading"; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  const clicked = Date.now();
   const opened = await Promise.race([
     session.open({ path: PRODUCT as string, label: "shop" }),
     new Promise<boolean>((resolve) => setTimeout(() => (log("open: no answer in 240 s"), resolve(false)), 240000)),
   ]);
-  log("open returned", opened);
+  log("open returned", opened, `after ${Date.now() - clicked} ms`);
   for (let i = 0; opened && i < 120 && products.current.status !== "ready" && products.current.status !== "error"; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -156,6 +162,17 @@ run("opens a real product to `ready`", async () => {
   log("view:", text.replace(/\s+/g, " ").slice(0, 300));
   log("render errors:", errors.length, errors.slice(0, 3).join(" || "));
   console.error = consoleError;
+  // GEARBOX_E2E_REOPEN=1: close it and open it again in the same session, as
+  // a member switching back to a product does.
+  if (process.env.GEARBOX_E2E_REOPEN === "1" && opened) {
+    await session.close();
+    for (let i = 0; i < 240 && catalogue.current.status === "loading"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const again = Date.now();
+    const reopened = await session.open({ path: PRODUCT as string, label: "shop" });
+    log("reopen returned", reopened, `after ${Date.now() - again} ms`, products.current.status);
+  }
   (backend as unknown as { disposeEngine(): void }).disposeEngine();
   expect(opened).toBe(true);
   expect(products.current.status).toBe("ready");

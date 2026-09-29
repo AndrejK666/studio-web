@@ -57,6 +57,20 @@ export function projectionStalled(label: string, completed: number, total: numbe
   );
 }
 
+/**
+ * Constructor Studio: the one-time word about a slow first read of the gear
+ * sources -- on Windows, real-time antivirus scanning each file as it is first
+ * opened -- and the exclusion that would end it. Advice, never an action.
+ */
+export function scanHintMessage(hint: { readonly folder: string; readonly files: number; readonly seconds: number }): string {
+  return (
+    `Reading the ${hint.files} gear source files took ${hint.seconds} s, most of it real-time antivirus ` +
+    `scanning each file on first open. Studio reads them in parallel to shorten it; to skip it, add this ` +
+    `folder to your antivirus exclusions (Microsoft Defender: Windows Security › Virus & threat protection › ` +
+    `Manage settings › Exclusions › Add an exclusion › Folder), if your organisation allows it: ${hint.folder}`
+  );
+}
+
 /** Either carry on, or stop at a step with a reason. */
 export type Outcome = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
