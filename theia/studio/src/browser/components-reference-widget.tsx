@@ -96,6 +96,12 @@ export class ComponentsReferenceWidget extends ReactWidget {
         this.update();
     }
 
+    /** Show one component's page, as when a person picks it in the list. */
+    select(name: string): void {
+        this.selected = name;
+        this.update();
+    }
+
     protected async addToProduct(gearId: string): Promise<void> {
         this.addNotes.set(gearId, 'Adding…');
         this.update();
