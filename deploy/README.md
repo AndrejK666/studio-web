@@ -56,6 +56,17 @@ One image, any environment:
 
   Empty is a legitimate setting and the gear says so at boot rather than
   failing; it is only wrong if somebody expected to administer the place.
+- **The Gearbox engine is environment-controlled** (`backend.gearbox.enabled`,
+  off by default). On, the backend keeps a checkout of the gear corpus in an
+  `emptyDir` (`sizeLimit: 2Gi`) and serves the gear catalogue an IDE lists when
+  its workspace has no gears, product previews, and the corpus clone relay
+  (`/studio-components-catalog/v1/gearbox/*`); off, those routes answer 404 and
+  Building's catalogue is empty in such a workspace. `corpusUrl`, `corpusRef`
+  and `refreshSecs` override the code's defaults. The dev example turns it on
+  with `MikeFalcon77/gears-rust` at `feature/gearbox`, the branch that carries
+  `gear.gdl` until constructorfabric/gears-rust#4793 merges. The published
+  backend image carries the `gearbox` binary at the pin the session image
+  uses; it does nothing until this is on.
 - **IDE sessions are environment-controlled** (`backend.sessions.enabled`).
   Dev enables the Kubernetes Pod driver and launches the immutable
   `cf-studio-theia` image matching the backend SHA. The backend needs a

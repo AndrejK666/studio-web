@@ -256,6 +256,8 @@ git push origin infra-v0.1.0
 - [`docs/desktop-studio.md`](docs/desktop-studio.md) — the desktop Studio:
   which Studios it connects to, what a stand needs, and how to build the
   installer.
+- [`docs/desktop-release-notes.md`](docs/desktop-release-notes.md) — what
+  each desktop release changes for a member, and its known limits.
 - [`keycloak/README.md`](keycloak/README.md) — Keycloak image and realm setup.
 - [`deploy/README.md`](deploy/README.md) — Kubernetes prerequisites and
   operations.
