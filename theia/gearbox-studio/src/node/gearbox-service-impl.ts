@@ -45,7 +45,7 @@ import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
 import { checkAiConnectivity as probeAiConnectivity } from "./ai-connectivity";
 import { fileOnBranch } from "./product-branch";
-import { corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
+import { cachedCorpora, corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
   folderOfWorkspaceUri,
@@ -387,9 +387,13 @@ export class GearboxServiceImpl implements GearboxService {
     }
   }
 
-  async adoptedCorpus(): Promise<{ id: string; path: string } | undefined> {
+  async corpusCopy(): Promise<{ id: string; path: string } | undefined> {
     const dir = this.sharedCorpus;
-    return dir === undefined || !fs.existsSync(dir) ? undefined : { id: path.basename(dir), path: dir };
+    if (dir !== undefined && fs.existsSync(dir)) return { id: path.basename(dir), path: dir };
+    // Nothing adopted -- signed out, so the backend was never asked which
+    // commit it lists -- but a copy on disk needs no backend.
+    const newest = cachedCorpora(corpusCacheRoot())[0];
+    return newest === undefined ? undefined : { id: newest.id, path: newest.path };
   }
 
   async useSharedCorpus(

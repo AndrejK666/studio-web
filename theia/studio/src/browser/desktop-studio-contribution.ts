@@ -12,6 +12,7 @@ import { FrontendApplicationStateService } from '@theia/core/lib/browser/fronten
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DESKTOP_STUDIO_WIDGET_ID, DesktopStudioWidget, desktopStatus, desktopUrl } from './desktop-studio-widget';
+import { remoteGearCatalogueRefused, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
 
 /** How often a window renews; the server's `heartbeat_secs`, and a third of its lease. */
 export const DESKTOP_HEARTBEAT_MS = 30_000;
@@ -73,6 +74,12 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
     /** One renewal. Not signed in, or a folder Studio did not open, is an
      *  answer the backend gives and the next beat asks again. */
     protected async beat(): Promise<void> {
+        // The gear catalogue was refused while signed out, and the Studio view
+        // may be closed or may not have watched the sign-in: this is the
+        // backstop that asks again once the member is signed in.
+        if (remoteGearCatalogueRefused() && (await desktopStatus())?.state === 'signed-in') {
+            remoteGearCatalogueSignedIn();
+        }
         const root = this.root();
         if (!root) {
             return;

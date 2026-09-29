@@ -229,6 +229,48 @@ export function sharedCorpusDir(root: string, id: string, url: string, rev: stri
   return path.join(root, repo, rev.slice(0, 12), id);
 }
 
+/** A corpus copy found in the cache. */
+export interface CachedCorpus {
+  /** The source id: the copy's directory name. */
+  readonly id: string;
+  readonly path: string;
+  /** When the copy was made, to prefer the newest. */
+  readonly madeAt: number;
+}
+
+/**
+ * Every finished copy under the cache, newest first: `<root>/<repo>/<commit>/<id>`
+ * holding a `.git`. A `.partial` clone is not one. Reads the disk only, so it
+ * answers with no Studio to ask -- signed out, or offline.
+ */
+export function cachedCorpora(root: string): CachedCorpus[] {
+  const dirs = (dir: string): fs.Dirent[] => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory());
+    } catch {
+      return [];
+    }
+  };
+  const found: CachedCorpus[] = [];
+  for (const repo of dirs(root)) {
+    for (const commit of dirs(path.join(root, repo.name))) {
+      for (const copy of dirs(path.join(root, repo.name, commit.name))) {
+        if (copy.name.endsWith(".partial") || !isKebabId(copy.name)) continue;
+        const at = path.join(root, repo.name, commit.name, copy.name);
+        if (!fs.existsSync(path.join(at, ".git"))) continue;
+        let madeAt = 0;
+        try {
+          madeAt = fs.statSync(at).mtimeMs;
+        } catch {
+          continue;
+        }
+        found.push({ id: copy.name, path: at, madeAt });
+      }
+    }
+  }
+  return found.sort((a, b) => b.madeAt - a.madeAt);
+}
+
 /**
  * The corpus `url` at commit `rev`, from the shared cache. Undefined when it is
  * not there and `fetch` is false, or when the input is not something to hand

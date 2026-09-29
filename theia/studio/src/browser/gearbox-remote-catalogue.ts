@@ -33,6 +33,32 @@ type Fetch = (path: string) => Promise<Response>;
 export const remoteGearCatalogueChanged = new Emitter<void>();
 
 /**
+ * Whether the last ask was refused (401 signed out, 503 no Studio yet) rather
+ * than answered. What decides a re-ask on signing in: the Studio view used to
+ * fire `remoteGearCatalogueChanged` only for a sign-in it watched happen, and
+ * a window that first saw the member already signed in -- the view opened
+ * after the browser sign-in finished -- never asked again, leaving the
+ * catalogue at "0 gear(s)" until a reload.
+ */
+let refused = false;
+
+export function remoteGearCatalogueRefused(): boolean {
+    return refused;
+}
+
+/**
+ * The member is signed in now: ask again if the last answer was a refusal.
+ * Safe to call on every status seen signed in -- it asks once per refusal, so
+ * a catalogue that was listed at start is not loaded twice.
+ */
+export function remoteGearCatalogueSignedIn(): void {
+    if (refused) {
+        refused = false;
+        remoteGearCatalogueChanged.fire();
+    }
+}
+
+/**
  * The gear corpus's catalogue, from the one checkout the Studio backend keeps.
  *
  * A workspace that holds no gear corpus -- a desktop project whose only
@@ -43,6 +69,9 @@ export const remoteGearCatalogueChanged = new Emitter<void>();
  */
 export async function loadRemoteGearCatalogue(fetchApi: Fetch = path => StudioApi.fetch(path)): Promise<RemoteGearCatalogue | undefined> {
     const res = await fetchApi('/studio-components-catalog/v1/gearbox/catalogue');
+    // Refused, not absent: signed out (401/403) or no Studio behind the proxy
+    // yet (503). A 404 is a backend without Gearbox, which signing in does not change.
+    refused = res.status === 401 || res.status === 403 || res.status === 503;
     if (!res.ok) {
         return undefined;
     }
