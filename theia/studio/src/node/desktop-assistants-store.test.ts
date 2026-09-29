@@ -7,7 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
 import { AssistantPin } from '../common/desktop-assistants';
-import { AssistantStore, Download, safeEntryName, sha256File, skippedEntry, unpackVsix } from './desktop-assistants-store';
+import { AssistantStore, Download, renameWhenFree, safeEntryName, sha256File, skippedEntry, unpackVsix } from './desktop-assistants-store';
 import { assistantsConfigFrom } from './desktop-assistants';
 
 /** A stored (uncompressed) zip, enough for yauzl: local headers, central directory, end record. */
@@ -283,5 +283,42 @@ describe('assistantsConfigFrom', () => {
         });
         expect(assistantsConfigFrom({ STUDIO_DESKTOP_ASSISTANTS: 'm.json' })?.pluginsDir)
             .toBe(path.join(os.homedir(), 'ConstructorStudio', 'plugins'));
+    });
+});
+
+describe('moving an unpacked extension into place', () => {
+    const busy = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
+
+    it('waits out a folder the antivirus still holds (EPERM on Windows), then renames it', async () => {
+        const rename = jest.fn()
+            .mockRejectedValueOnce(busy('EPERM'))
+            .mockRejectedValueOnce(busy('EBUSY'))
+            .mockResolvedValueOnce(undefined);
+        const waits: number[] = [];
+        await renameWhenFree('a', 'b', { rename, wait: async ms => { waits.push(ms); } });
+        expect(rename).toHaveBeenCalledTimes(3);
+        expect(waits).toEqual([100, 200]);
+    });
+
+    it('gives up with the last error once its budget is spent', async () => {
+        const rename = jest.fn().mockRejectedValue(busy('EPERM'));
+        await expect(renameWhenFree('a', 'b', { rename, budgetMs: 1_000, wait: async () => undefined }))
+            .rejects.toMatchObject({ code: 'EPERM' });
+        expect(rename.mock.calls.length).toBeGreaterThan(2);
+    });
+
+    it('does not retry an error that waiting cannot fix', async () => {
+        const rename = jest.fn().mockRejectedValue(busy('ENOENT'));
+        await expect(renameWhenFree('a', 'b', { rename, wait: async () => undefined })).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(rename).toHaveBeenCalledTimes(1);
+    });
+
+    it('renames a real folder', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rename-when-free-'));
+        fs.mkdirSync(path.join(dir, 'from'));
+        fs.writeFileSync(path.join(dir, 'from', 'x'), 'x');
+        await renameWhenFree(path.join(dir, 'from'), path.join(dir, 'to'));
+        expect(fs.readFileSync(path.join(dir, 'to', 'x'), 'utf8')).toBe('x');
+        fs.rmSync(dir, { recursive: true, force: true });
     });
 });
