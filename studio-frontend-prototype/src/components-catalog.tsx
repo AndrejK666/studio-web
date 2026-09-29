@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { responsibilityOf } from "./responsibility";
 import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
 import { RoadmapReportDialog } from "./roadmap-report-view";
 import { ViewToggle, useViewMode } from "./view-mode";
@@ -1935,9 +1936,14 @@ function GearDetail({
       )}
 
       {view === "filled" && <QualityPanel values={values} />}
+      {view === "filled" && <ResponsibilityPanel values={values} />}
 
       <div className="grid">
-        {(view === "filled" ? answeredGroups(schema, values) : schema.groups).map((group) => (
+        {(view === "filled"
+          ? // The map above is the Responsibility group, laid out by role.
+            answeredGroups(schema, values).filter((g) => g.id !== "responsibility")
+          : schema.groups
+        ).map((group) => (
           <Panel key={group.id} group={group} values={values} view={view} />
         ))}
       </div>
@@ -2007,6 +2013,45 @@ function ReviewCell({ parts }: { parts: ReviewPart[] | undefined }) {
         ))}
       </ul>
     </details>
+  );
+}
+
+/** Who answers for the component, role by role, and which roles nobody
+ *  holds yet (responsibility.ts). An unheld role says where its answer would
+ *  come from, so the gap reads as something to fill, not as missing data. */
+function ResponsibilityPanel({ values }: { values: Values }) {
+  const map = responsibilityOf(values);
+  return (
+    <section className="panel resp" id="panel-responsibility">
+      <header>
+        <h2>Responsibility</h2>
+        <span className="cnt">
+          {map.held} of {map.roles.length} roles held
+        </span>
+      </header>
+      <div className="resp-grid">
+        {map.roles.map((r) => (
+          <div key={r.key} className={`resp-role${r.holders.length ? "" : " open"}`}>
+            <span className="resp-k">{r.role}</span>
+            {r.holders.length ? (
+              <span className="resp-who">
+                {r.lamp && <span className={`tl ${r.lamp}`} />}
+                {r.link ? (
+                  <a href={r.link} target="_blank" rel="noreferrer">
+                    {r.holders.join(", ")}
+                  </a>
+                ) : (
+                  r.holders.join(", ")
+                )}
+              </span>
+            ) : (
+              <span className="resp-who none">Not recorded</span>
+            )}
+            <span className="resp-src">{r.source}</span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -3095,6 +3140,13 @@ const GCAT_CSS = `
 .gcat .qgrade.good { color:var(--studio-verified); }
 .gcat .qgrade.watch { color:var(--studio-warning); }
 .gcat .qgrade.bad { color:var(--studio-danger); }
+.gcat .resp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px 18px; padding:10px 14px 14px; }
+.gcat .resp-role { display:flex; flex-direction:column; gap:2px; border-left:2px solid var(--studio-verified); padding-left:8px; }
+.gcat .resp-role.open { border-left-color:var(--studio-line); }
+.gcat .resp-k { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--studio-muted); }
+.gcat .resp-who { font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; }
+.gcat .resp-who.none { font-weight:400; font-style:italic; color:var(--studio-muted); }
+.gcat .resp-src { font-size:10.5px; color:var(--studio-muted); }
 .gcat .qareas { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px 18px; padding:10px 14px 14px; }
 .gcat .qarea-head { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
 .gcat .qarea-head span { color:var(--studio-muted); font-variant-numeric:tabular-nums; }
