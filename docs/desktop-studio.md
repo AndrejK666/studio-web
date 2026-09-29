@@ -112,7 +112,11 @@ link* — and keeps it in `~/ConstructorStudio/orca-pairing`, readable by the
 member only. It is Orca's token for this machine's own runtime on
 `127.0.0.1`, not a Studio secret; revoking it in Orca, or deleting the file,
 undoes it. How Studio finds Orca at all is
-[Agent development](#agent-development-orca).
+[Agent development](#agent-development-orca). Beside it,
+`~/ConstructorStudio/orca-projects.json` lists the repositories Studio itself
+added to that Orca, so that it removes only those
+([Projects in the member's Orca](#projects-in-the-members-orca)). It holds ids
+and paths, no secret.
 
 And the assistants: Claude Code and Codex are fetched on first start into
 `~/ConstructorStudio/plugins/<id>-<version>/`
@@ -491,14 +495,74 @@ repository (`orca repo list`, `common/orca-worktree-groups.ts`). The open
 project's repositories come first, and the rest are behind **Other
 repositories in Orca (N)**. With no project open, the panel says so and lists
 them all. When Orca does not know the open project's repositories, the panel
-offers **Add this project's repositories to Orca**. It does not add them on
-its own, because that changes the member's Orca. A session registers them on
-the first open, since its runtime starts empty. A new task is created in the
+offers **Add this project's repositories to Orca**. Whether Studio adds them by
+itself is the member's choice (see [Projects in the member's Orca](#projects-in-the-members-orca)).
+A session registers them on the first open, since its runtime starts empty. A new task is created in the
 selected worktree's repository (`--repo id:…`). Before this, Orca guessed it
 from the backend's working directory, which on a desktop is no checkout. The
 agents Studio did not find on its own `PATH` are "not in this image" only in a
 session. On a desktop they are a hint, and every agent stays on offer: Orca
 starts an agent with its own environment.
+
+### Projects in the member's Orca
+
+Orca's repository list is the member's own, shared with work that has nothing
+to do with Studio. So Studio asks before it adds anything, and it takes out
+only what it added itself (#497). The decisions are in
+`common/desktop-orca-projects.ts`. The bookkeeping is in
+`node/desktop-orca-projects.ts`. The window side is
+`browser/desktop-orca-project-sync.ts`.
+
+**Adding.** The first time a project is open whose repositories Orca does not
+know, a notification asks: *Orca does not know the project open here yet. Add
+its repository … to Orca, so agents can work on it?* It offers **Always add**,
+**Not now** and **Never**.
+
+- **Always add** adds them now and, from then on, adds every project opened
+  here without asking.
+- **Not now** adds nothing and does not ask again for that project until the
+  window reloads. Closing the notification counts as **Not now**.
+- **Never** stops the question.
+
+The answer is the preference `studio.orca.addOpenedProjects` (`ask`, `always`
+or `never`; user scope). It can be changed in Settings, or from the line at the
+bottom of the Agents panel's worktrees ("Studio asks before adding… Change").
+The **Add this project's repositories to Orca** button stays for **Not now**
+and **Never**. Studio checks when the window starts, when the open folder
+changes, and after **Start Orca**.
+
+**Removing.** Each window tells the backend which project it has open: when it
+starts, when the folder changes, and when it closes. Studio then unregisters
+from Orca every repository it added that no open window's project holds. That
+happens when the desktop opens another project, when the folder is closed, or
+at the next start for a project that was open when the app quit.
+
+- Only repositories Studio added are removed. Studio records each one it
+  registered with `orca repo add` that Orca did not know before, in
+  `~/ConstructorStudio/orca-projects.json`: the repository id, its path, the
+  project folder and the time. A repository the member added to Orca
+  themselves never gets an entry. An entry Orca has since forgotten, or now has
+  under another id (the member removed it and added it again), is dropped
+  without touching Orca.
+- Removing means unregistering. The CLI has no `repo rm`. Studio runs
+  `orca project setup-delete --setup <id>`, which for a repository is Orca's
+  own "remove project": Orca forgets the repository, and every file, branch and
+  worktree stays on disk.
+- A repository stays in Orca while an agent or any terminal runs in one of its
+  worktrees, while a worktree has uncommitted changes, or when they cannot be
+  read. The panel says which, in the member's words ("Studio added web to Orca
+  for a project that is closed now, and left it there: claude is still running
+  in fix/x…"). Studio tries again at the next start, folder change or window
+  close.
+- A window that closes without saying so (a crash) leaves its project's
+  repositories registered until the app starts again. That errs on the safe
+  side.
+
+In a portal session none of this runs. The backend answers `enabled: false`,
+nothing is asked, and nothing is recorded.
+
+`orca-projects.json` holds repository ids and paths on this machine, not a
+secret. Deleting it only means Studio stops removing what it had added.
 
 ## Known limits
 
