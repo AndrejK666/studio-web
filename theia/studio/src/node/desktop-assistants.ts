@@ -7,6 +7,7 @@ import { BackendApplicationContribution } from '@theia/core/lib/node/backend-app
 import { PluginServer, PluginType } from '@theia/plugin-ext/lib/common/plugin-protocol';
 import { parseAssistantsManifest } from '../common/desktop-assistants';
 import { AssistantStore } from './desktop-assistants-store';
+import { OpenVsxBootstrap } from './desktop-open-vsx';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
 
 /**
@@ -49,6 +50,7 @@ export class DesktopAssistantsContribution implements BackendApplicationContribu
     protected readonly pluginServer: PluginServer | undefined;
 
     protected store: AssistantStore | undefined;
+    protected openVsx: OpenVsxBootstrap | undefined;
 
     configure(app: express.Application): void {
         const config = assistantsConfigFrom(process.env);
@@ -62,7 +64,7 @@ export class DesktopAssistantsContribution implements BackendApplicationContribu
             console.warn(`[studio-desktop] no assistants: ${config.manifest} cannot be read (${error})`);
             return;
         }
-        const { pins, rejected } = parseAssistantsManifest(manifest);
+        const { pins, openVsx, rejected } = parseAssistantsManifest(manifest);
         if (rejected.length) {
             console.warn(`[studio-desktop] assistants manifest: ignored ${rejected.join(', ')}`);
         }
@@ -81,16 +83,35 @@ export class DesktopAssistantsContribution implements BackendApplicationContribu
                 await pluginServer.install(entry, PluginType.System);
             },
         });
+        // Claude Code and Codex: the newest from open-vsx, as the Extensions
+        // view installs them, once; the member's from then on.
+        this.openVsx = new OpenVsxBootstrap({
+            assistants: openVsx,
+            markerFile: path.join(config.pluginsDir, '.open-vsx-installed.json'),
+            pluginsDir: config.pluginsDir,
+            installer: {
+                installed: async () => pluginServer ? pluginServer.getInstalledPlugins() : [],
+                install: async id => {
+                    if (!pluginServer) {
+                        throw new Error('this app cannot install extensions while it runs');
+                    }
+                    await pluginServer.install(`vscode-extension://${id}`, PluginType.User);
+                },
+            },
+        });
         const store = this.store;
-        app.get('/studio-desktop/assistants', (_req, res) => { res.json(store.status()); });
+        const bootstrap = this.openVsx;
+        const status = () => ({ assistants: [...bootstrap.status(), ...store.status().assistants] });
+        const ensure = async () => { await bootstrap.ensure(); await store.ensure(); };
+        app.get('/studio-desktop/assistants', (_req, res) => { res.json(status()); });
         app.post('/studio-desktop/assistants/ensure', (_req, res) => {
-            void store.ensure();
-            res.json(store.status());
+            void ensure();
+            res.json(status());
         });
         app.post('/studio-desktop/assistants/retry', express.json(), (req, res) => {
             const id = typeof req.body?.id === 'string' ? req.body.id : undefined;
-            void store.retry(id);
-            res.json(store.status());
+            void bootstrap.retry(id).then(() => store.retry(id));
+            res.json(status());
         });
     }
 }

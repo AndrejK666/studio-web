@@ -36,6 +36,23 @@ describe('parseAssistantsManifest', () => {
         expect(parseAssistantsManifest({}).rejected).toEqual(['the manifest has no list of assistants']);
     });
 
+    it('takes an open-vsx entry by its id alone, and never lets one id have two owners', () => {
+        const { pins, openVsx, rejected } = parseAssistantsManifest({
+            assistants: [
+                { id: 'Anthropic.claude-code', label: 'Claude Code', source: 'open-vsx' },
+                { id: 'openai.chatgpt', source: 'open-vsx' },
+                { ...good },                                     // the same id, pinned
+                { id: '../evil.x', source: 'open-vsx' },
+            ],
+        });
+        expect(openVsx).toEqual([
+            { id: 'anthropic.claude-code', label: 'Claude Code' },
+            { id: 'openai.chatgpt', label: 'openai.chatgpt' },
+        ]);
+        expect(pins).toEqual([]);
+        expect(rejected).toEqual(['Anthropic.claude-code', '../evil.x']);
+    });
+
     it('falls back to the id for a label', () => {
         expect(parseAssistantsManifest([{ ...good, label: ' ' }]).pins[0].label).toBe('anthropic.claude-code');
     });

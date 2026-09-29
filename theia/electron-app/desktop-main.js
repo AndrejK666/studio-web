@@ -157,12 +157,4 @@ try {
     console.warn(`[studio-desktop] updates are off: ${error}`);
 }
 
-// The Extensions view (@theia/vsx-registry) lists and installs only what
-// resources/ovsx-router.json allows. The backend reads the file from its
-// command line, which Theia forks it with.
-const routerConfig = path.join(process.resourcesPath, 'ovsx-router.json');
-if (fs.existsSync(routerConfig) && !process.argv.some(arg => arg.startsWith('--ovsx-router-config'))) {
-    process.argv.push(`--ovsx-router-config=${routerConfig}`);
-}
-
 require('./lib/backend/electron-main.js');

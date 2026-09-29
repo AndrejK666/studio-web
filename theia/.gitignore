@@ -22,7 +22,6 @@ browser-app/scripts/*
 !electron-app/desktop-main.js
 !electron-app/desktop-updater.js
 !electron-app/environments.json
-!electron-app/ovsx-router.json
 !electron-app/scripts/
 electron-app/scripts/*
 !electron-app/scripts/package.mjs

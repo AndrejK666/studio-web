@@ -8,15 +8,12 @@
 // app fetches and deploys the same way: the version theia/cfs.json pins, from
 // the release the studio-cli workflow publishes it in.
 //
-// Claude Code and Codex are not in the installer. The app fetches them on
-// first need (studio/src/node/desktop-assistants.ts), and trusts only what
-// this manifest says: `{ id, label, version, target, url, sha256 }` each.
-//
-// The pins are theia/Dockerfile's `fetch_vsix` lines, the one pin the browser
-// session uses too. A pinned version with no build for the target takes the
-// newest build there is instead, and says so (a GitHub Actions warning). The
-// digest is open-vsx's (`files.sha256`), checked here against a download of
-// the VSIX, so a manifest never names a file its build did not see.
+// Claude Code and Codex are not in the installer, and not pinned: the app
+// installs the newest version open-vsx has on its first start, as the
+// Extensions view would (studio/src/node/desktop-open-vsx.ts), and the member
+// updates or removes them there. Their entries are `{ id, label, source:
+// 'open-vsx' }`. Which ones are theia/Dockerfile's `fetch_vsix` lines, the
+// extensions the browser session carries; the label is open-vsx's name.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -50,22 +47,9 @@ export function shortLabel(displayName, fallback) {
     return name || fallback;
 }
 
-/** One manifest entry from open-vsx's metadata, checked. */
-export function manifestEntry(meta, target, digest) {
-    const id = `${meta.namespace}.${meta.name}`.toLowerCase();
-    const url = meta.files?.download;
-    if (!url || !/^https:\/\//.test(url)) {
-        throw new Error(`${id} ${meta.version}: open-vsx lists no download`);
-    }
-    if (!/^[0-9a-f]{64}$/.test(digest)) {
-        throw new Error(`${id} ${meta.version}: no usable SHA-256 (${digest})`);
-    }
-    return { id, label: shortLabel(meta.displayName, id), version: meta.version, target, url, sha256: digest };
-}
-
-/** The hex digest out of a `.sha256` file (`<hex>` or `<hex>  <file>`). */
-export function parseDigest(text) {
-    return String(text).trim().split(/\s+/)[0].toLowerCase();
+/** One manifest entry: installed from open-vsx at whatever version it has, named as open-vsx names it. */
+export function openVsxEntry(id, displayName) {
+    return { id: id.toLowerCase(), label: shortLabel(displayName, id.toLowerCase()), source: 'open-vsx' };
 }
 
 async function getJson(url) {
@@ -76,20 +60,6 @@ async function getJson(url) {
         throw error;
     }
     return response.json();
-}
-
-async function resolve(pin, target) {
-    const { namespace, name, version } = pin;
-    try {
-        return await getJson(metadataUrl(namespace, name, target, version));
-    } catch (error) {
-        if (error.status !== 404 && error.status !== 400) {
-            throw error;
-        }
-        const latest = await getJson(metadataUrl(namespace, name, target));
-        console.log(`::warning::${namespace}.${name} ${version} has no ${target} build; the manifest pins ${latest.version}, the newest that has one`);
-        return latest;
-    }
 }
 
 export const STUDIO_CLI_ID = 'constructorfabric.studio-cli';
@@ -147,22 +117,15 @@ async function main() {
     }
     const assistants = [];
     for (const pin of pins) {
-        const meta = await resolve(pin, values.target);
-        if (!meta.files?.sha256) {
-            throw new Error(`${pin.namespace}.${pin.name} ${meta.version}: open-vsx lists no sha256`);
+        // The label only: a missing name is the id, not a failed build.
+        let displayName;
+        try {
+            displayName = (await getJson(metadataUrl(pin.namespace, pin.name, values.target))).displayName;
+        } catch (error) {
+            console.log(`::warning::${pin.dir}: open-vsx did not answer (${error.message}); labelled by its id`);
         }
-        const published = parseDigest(await (await fetch(meta.files.sha256)).text());
-        const response = await fetch(meta.files.download);
-        if (!response.ok) {
-            throw new Error(`${meta.files.download} answered ${response.status}`);
-        }
-        const bytes = Buffer.from(await response.arrayBuffer());
-        const seen = createHash('sha256').update(bytes).digest('hex');
-        if (seen !== published) {
-            throw new Error(`${pin.namespace}.${pin.name} ${meta.version}: the download's SHA-256 ${seen} is not open-vsx's ${published}`);
-        }
-        const entry = manifestEntry(meta, values.target, seen);
-        console.log(`${entry.id} ${entry.version} (${values.target}): ${(bytes.length / 1048576).toFixed(0)} MB, sha256 ${seen}`);
+        const entry = openVsxEntry(pin.dir, displayName);
+        console.log(`${entry.id} (${entry.label}): the newest from open-vsx, on first start`);
         assistants.push(entry);
     }
     if (values['studio-cli']) {
