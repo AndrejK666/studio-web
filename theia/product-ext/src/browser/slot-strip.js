@@ -70,7 +70,10 @@
 
 const { ICONS } = require('./icons');
 const { railNav } = require('./rail-nav');
-const { revealAssistant, collapseRightPanel, currentAssistant, assistantForKey, zeroRightPanelSlot } = require('./ai-context');
+const {
+    revealAssistant, collapseRightPanel, currentAssistant, assistantForKey, zeroRightPanelSlot,
+    rightPanelShowing, settleRightPanelWidth
+} = require('./ai-context');
 const { fileTypeSettings } = require('./file-type-settings');
 
 /*
@@ -479,10 +482,16 @@ class SlotStrip {
          * belonging to no widget.
          *
          * Only when nothing is expanded, because a restored layout may
-         * legitimately have an assistant open -- zeroing that would collapse a
-         * panel the user left open.
+         * legitimately have something open -- zeroing that would squeeze a
+         * panel the user left open to Theia's 100px floor. "Nothing expanded"
+         * is the panel having no current tab, NOT "no assistant in it": Agents,
+         * Source Control, the Gearbox Inspector and Outline live there too, and
+         * testing for an assistant zeroed every one of them the moment it
+         * opened (measured on 0.3.0-beta.5: all of them at 100px).
          */
-        if (!currentAssistant(this.shell)) {
+        if (rightPanelShowing(this.shell)) {
+            void settleRightPanelWidth(this.shell);
+        } else {
             zeroRightPanelSlot(this.shell);
             /*
              * ...and again on the next frame. The desktop shell collapses both
@@ -494,7 +503,7 @@ class SlotStrip {
              * immediately once the share is already nothing.
              */
             requestAnimationFrame(() => {
-                if (!currentAssistant(this.shell)) { zeroRightPanelSlot(this.shell); }
+                if (!rightPanelShowing(this.shell)) { zeroRightPanelSlot(this.shell); }
             });
         }
         if (this.claimed) { return; }
@@ -562,7 +571,18 @@ class SlotStrip {
             if (mainPanel.widgetActivated) { mainPanel.widgetActivated.connect(() => this.scheduleRefresh()); }
         }
         const tabBar = this.shell.rightPanelHandler && this.shell.rightPanelHandler.tabBar;
-        if (tabBar) { tabBar.currentChanged.connect(() => this.scheduleRefresh()); }
+        if (tabBar) {
+            tabBar.currentChanged.connect(() => this.scheduleRefresh());
+            /*
+             * A new resident in the right panel -- which is also how it expands --
+             * gets a readable width if it came up without one. Only on THIS
+             * signal, not on refresh(): refresh also runs on focus and on the main
+             * dock, and a width rule there would undo a sash somebody just dragged.
+             */
+            tabBar.currentChanged.connect((sender, args) => {
+                if (args && args.currentTitle) { void settleRightPanelWidth(this.shell); }
+            });
+        }
     }
 
     /*
@@ -606,9 +626,10 @@ class SlotStrip {
          * transition into "nothing is in there". Zeroing here is idempotent and
          * returns immediately when the share is already nothing, and it can
          * never fight a user dragging the sash: while the slot is empty there is
-         * no panel on screen to drag.
+         * no panel on screen to drag. Empty means no current tab at all (see
+         * mount): a non-assistant resident is not an empty slot.
          */
-        if (!currentAssistant(this.shell)) { zeroRightPanelSlot(this.shell); }
+        if (!rightPanelShowing(this.shell)) { zeroRightPanelSlot(this.shell); }
         const surface = this.activeSurface();
         const capabilities = surface && typeof surface.slotCapabilities === 'function'
             ? surface.slotCapabilities()

@@ -510,6 +510,67 @@ function resizeSlotPanel(shell) {
 }
 
 /*
+ * The narrowest the right panel may open at for whatever is in it.
+ *
+ * Only the assistants were ever given a width (revealAssistant -> resizeSlotPanel
+ * above). Everything else that lives in that panel -- Agents, Source Control in
+ * Agent development, the Gearbox Inspector, Workspace Sources, Outline, AI chat --
+ * opened at whatever the split handle held, which after zeroRightPanelSlot was
+ * nothing: measured on desktop 0.3.0-beta.5, Theia's 100px floor, a column of
+ * single words. 300 is the width a fresh session gives the flank
+ * (studio-contribution.ts: Theia's own initialSizeRatio, 0.191 of a 1584px
+ * window = 302px) rounded down, so a panel somebody left at a readable width is
+ * never overruled; below it, the panel gets the assistant's width, so moving
+ * between occupants does not move the document's edge.
+ */
+const RIGHT_PANEL_MIN_WIDTH = 300;
+
+/** Whether the right panel is showing something (an expanded resident), not only holding tabs. */
+function rightPanelShowing(shell) {
+    const handler = shell && shell.rightPanelHandler;
+    return !!(handler && handler.tabBar && handler.tabBar.currentTitle);
+}
+
+/** The width the right panel occupies on screen, or undefined when it cannot be read. */
+function rightPanelWidth(shell) {
+    const handler = shell && shell.rightPanelHandler;
+    const node = handler && handler.container && handler.container.node;
+    if (!node || typeof node.getBoundingClientRect !== 'function') { return undefined; }
+    return Math.round(node.getBoundingClientRect().width);
+}
+
+/** The rule itself, apart from the shell: only a showing panel, only when too narrow to read. */
+function rightPanelNeedsWidth(showing, width, min = RIGHT_PANEL_MIN_WIDTH) {
+    return !!showing && typeof width === 'number' && width < min;
+}
+
+/*
+ * Give the right panel a readable width if it opened without one. Resolves true
+ * when it resized.
+ *
+ * Called when the panel gets a new current resident, which is also how it
+ * expands, and only after that expansion has finished: SidePanelHandler
+ * animates to the width it remembers (state.pendingUpdate is that animation's
+ * promise), and a width read in the middle of it would overrule a perfectly good
+ * one. The assistant path is unaffected: revealAssistant has already set 360 by
+ * the time this reads it, which is wider than the floor.
+ */
+async function settleRightPanelWidth(shell) {
+    const handler = shell && shell.rightPanelHandler;
+    if (!rightPanelShowing(shell)) { return false; }
+    try {
+        const pending = handler.state && handler.state.pendingUpdate;
+        if (pending && typeof pending.then === 'function') { await pending; }
+    } catch (e) { /* a failed animation still leaves a width to read */ }
+    await new Promise(resolve => (typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(() => resolve())
+        : setTimeout(resolve, 0)));
+    if (!rightPanelNeedsWidth(rightPanelShowing(shell), rightPanelWidth(shell))) { return false; }
+    resizeSlotPanel(shell);
+    return true;
+}
+
+/*
  * Which assistant owns the right panel RIGHT NOW.
  *
  * The tab-bar signal only reports transitions, so a surface that opens while the
@@ -631,5 +692,6 @@ module.exports = {
     ASSISTANTS, ASSISTANT_WIDGET_PREFIX, SLOT_PANEL_WIDTH, SLOT_GRACE_MS,
     assistantForKey, assistantWidgetId, unavailableMessage, DESKTOP_ASSISTANT_MESSAGE_COMMAND,
     revealAssistant, collapseRightPanel, assistantFromTabTitle,
-    resizeSlotPanel, currentAssistant
+    resizeSlotPanel, currentAssistant,
+    RIGHT_PANEL_MIN_WIDTH, rightPanelShowing, rightPanelWidth, rightPanelNeedsWidth, settleRightPanelWidth
 };

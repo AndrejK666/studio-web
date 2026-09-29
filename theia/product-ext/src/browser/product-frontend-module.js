@@ -1116,12 +1116,17 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
  * zero additional space.
  */
 /* plugin-ext contributes VS Code's own view containers into the activity bar;
-   a product keeps only the ones it wants */
+   a product keeps only the ones it wants. Each mode brings back what it names
+   (MODE_VIEWS in theia/studio's studio-mode-layout.ts) with a more specific
+   rule; Extensions (a desktop's only) is in this list so that it, too, shows
+   only where a mode names it, and not in writing, Building or Agent
+   development. */
 #shell-tab-debug,
 #shell-tab-test-view-container,
 #shell-tab-search-view-container,
 #shell-tab-explorer-view-container,
 #shell-tab-scm-view-container,
+#shell-tab-vsx-extensions-view-container,
 .theia-sidebar-menu { display: none !important; }
 /* The right sidebar now hosts real content — the Claude Code and Codex
    panels below — so only Theia's own Outline tab (an empty, editor-shaped
