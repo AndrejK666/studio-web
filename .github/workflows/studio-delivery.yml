@@ -153,8 +153,8 @@ jobs:
       run:
         working-directory: studio-backend
     steps:
-      # gears-rust is a git dependency pinned in Cargo.toml — no second
-      # checkout, and no second place to keep the revision in sync.
+      # Every gear comes from crates.io at the version Cargo.lock pins — no
+      # second checkout, and no second place to keep a revision in sync.
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.source_ref || github.sha }}
@@ -547,7 +547,7 @@ jobs:
     # runner and the runtime base TOGETHER.
     runs-on: ubuntu-24.04
     steps:
-      # Cargo.lock pins the exact gears-rust revision, so rebuilding the same
+      # Cargo.lock pins every gear's crates.io version, so rebuilding the same
       # commit resolves the same Rust sources.
       - uses: actions/checkout@v6
         with:
@@ -586,26 +586,25 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
 
-      # Cargo.lock is the single source of truth for the gears-rust revision.
-      # Building the sidecar from that same commit prevents control/data-plane
-      # protocol drift without duplicating a revision in this workflow.
-      - name: Resolve pinned gears-rust revision
-        id: gears
+      # Cargo.lock is the single source of truth for the file-storage version.
+      # Building the sidecar from that same crate release keeps the backend's
+      # control plane and this data plane on one protocol, without a version
+      # of its own here. The gear comes from crates.io (#512), and the
+      # published crate carries the `sidecar` bin and its own lockfile.
+      - name: Resolve the pinned file-storage version
+        id: gear
         shell: bash
         run: |
           set -euo pipefail
-          source_line=$(sed -n '/name = "cf-gears-file-storage"/,/^\[\[package\]\]/p' \
-            studio-backend/Cargo.lock | grep '^source = ' | head -n 1)
-          revision="${source_line##*#}"
-          revision="${revision%\"}"
-          test "${#revision}" -eq 40
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@v6
-        with:
-          repository: constructorfabric/gears-rust
-          ref: ${{ steps.gears.outputs.revision }}
-          path: gears-rust
+          version=$(sed -n '/^name = "cf-gears-file-storage"$/{n;p;}' studio-backend/Cargo.lock \
+            | sed -n 's/^version = "\(.*\)"$/\1/p')
+          source=$(sed -n '/^name = "cf-gears-file-storage"$/{n;n;p;}' studio-backend/Cargo.lock)
+          test -n "$version"
+          case "$source" in
+            *crates.io-index*) ;;
+            *) echo "cf-gears-file-storage no longer comes from crates.io: $source" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: System dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
@@ -613,18 +612,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: gears-rust
 
       - name: Build file-storage sidecar
-        working-directory: gears-rust
-        run: cargo build --locked --release -p cf-gears-file-storage --bin sidecar
+        run: |
+          cargo install cf-gears-file-storage --version "=${{ steps.gear.outputs.version }}" \
+            --bin sidecar --locked --root "$RUNNER_TEMP/sidecar"
 
       - uses: actions/upload-artifact@v6
         with:
           name: file-storage-sidecar-linux-x86_64
-          path: gears-rust/target/release/sidecar
+          path: ${{ runner.temp }}/sidecar/bin/sidecar
 
   # Builds the FrontX-based studio-frontend/ — the deployed portal since it
   # replaced studio-frontend-prototype/ (now a playground with its own image).

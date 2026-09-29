@@ -1,6 +1,7 @@
 # Runtime image for the file-storage data plane.
-# release.yml builds the binary from the exact gears-rust revision pinned in
-# studio-backend/Cargo.lock and places it in .release/file-storage-sidecar.
+# studio-delivery.yml builds the binary from the cf-gears-file-storage release
+# pinned in studio-backend/Cargo.lock (`cargo install --locked`) and places it
+# in .release/file-storage-sidecar.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 RUN apt-get update \

@@ -1,8 +1,8 @@
 # Runtime image for the Studio backend.
 # The binary is built in CI (release.yml, backend-binary job) and placed at
-# .release/studio-backend before `docker build` — compiling the 90-crate
-# gears workspace inside a Dockerfile would need the sibling gears-rust
-# checkout in the build context and much longer builds.
+# .release/studio-backend before `docker build` — compiling the gears
+# dependency tree inside this Dockerfile would make every image build pay for
+# it (Dockerfile.src does that, for the one-click compose path).
 # trixie, not bookworm: the binary is built on the ubuntu-24.04 runner
 # (glibc 2.39) and bookworm's glibc 2.36 cannot load it — the container
 # died at start with "version GLIBC_2.39 not found". trixie ships 2.41;
