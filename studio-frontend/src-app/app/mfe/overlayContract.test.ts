@@ -291,7 +291,10 @@ describe('generated MFE manifest', () => {
     });
 
     it('declares the project sections on the entry they are sections of', () => {
-      const project = screens.filter((ext) => ext.presentation?.level === 'project');
+      // The editor is a project-level screen too, but hidden: no rail item.
+      const project = screens.filter(
+        (ext) => ext.presentation?.level === 'project' && ext.presentation?.placement !== 'hidden'
+      );
       const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
 
       // One entry for the whole rail: that is what lets the shell relay a

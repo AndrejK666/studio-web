@@ -20,10 +20,13 @@ export {
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_ARTIFACT_KINDS,
   STUDIO_EXTENSION_WORKSPACE_CREATE,
+  isStudioArtifactKind,
   sendToHost,
   sendAndForget,
   type HostAction,
+  type StudioArtifact,
   type StudioArtifactKind,
+  type StudioArtifactRequest,
 } from './host/hostActions';
 export {
   OrganizationProvider,

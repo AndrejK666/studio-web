@@ -195,7 +195,7 @@ rule: nothing destructive is tried out on `dev` for the sake of a screen;
   `Invalid parameter: redirect_uri`, or a code exchange the browser blocks for
   CORS — and `STUDIO_STAND=local` is the way to work meanwhile.
 - **The IDE frame is not yet exercised against a stand.** The portal seeds
-  the frame address with the fixture's static page (#321); the session
+  the frame address with `space-mfe`'s static page (#321); the session
   gate's per-session `/studio/{id}/` replaces that seed in #322. Until then
   the `/studio` proxy and its `Origin` rewrite are proven against a
   substitute backend only, not a session pod.
