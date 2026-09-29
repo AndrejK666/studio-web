@@ -10,10 +10,36 @@ import { DidChangeLabelEvent } from '@theia/core/lib/browser/label-provider';
 import { FileStatNode } from '@theia/filesystem/lib/browser/file-tree/file-tree';
 import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { FileChangesEvent, FileOperationEvent } from '@theia/filesystem/lib/common/files';
+import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
+import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
 
 export type ExplorerMode = 'markdown' | 'all';
 
 const EXPLORER_MODE_STORAGE_KEY = 'studio.explorer.mode';
+
+/**
+ * The Explorer each mode opens with, until somebody toggles it there.
+ *
+ * Doc editing is the one mode whose Explorer is a list of documents titled by
+ * their own H1 - the list its perspective was designed around
+ * (studio-perspectives.ts). Every other mode is for working on code, and a code
+ * mode whose file tree hides `src/` cannot be used for that: the markdown
+ * default predates the modes, when the session had only the one Explorer.
+ * Without a perspective service there are no modes, and the Explorer is what it
+ * always was.
+ */
+export function defaultExplorerMode(perspectiveId: string | undefined): ExplorerMode {
+    return perspectiveId === undefined || perspectiveId === DOCUMENTS_PERSPECTIVE_ID ? 'markdown' : 'all';
+}
+
+/** Where a mode's own choice is kept: a toggle in one mode is not a toggle in the others. */
+export function explorerModeStorageKey(perspectiveId: string | undefined): string {
+    return perspectiveId === undefined ? EXPLORER_MODE_STORAGE_KEY : `${EXPLORER_MODE_STORAGE_KEY}.${perspectiveId}`;
+}
+
+function isExplorerMode(value: unknown): value is ExplorerMode {
+    return value === 'markdown' || value === 'all';
+}
 const MARKDOWN_HEADING_READ_LIMIT = 64 * 1024;
 
 /**
@@ -40,11 +66,21 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
     protected readonly onDidChangeLabelsEmitter = new Emitter<DidChangeLabelEvent>();
     protected readonly titleCache = new Map<string, string | undefined>();
     protected readonly pendingTitleLoads = new Map<string, number>();
-    protected mode: ExplorerMode = 'markdown';
     protected nextTitleLoadId = 0;
     protected modeUpdate = Promise.resolve();
-    protected modeWasSet = false;
     protected stopped = false;
+
+    /** The mode in front; `undefined` while there is no perspective service. */
+    protected perspectiveId: string | undefined;
+    /** Each mode's choice, by storage key: read back from storage, or just made. */
+    protected readonly chosenModes = new Map<string, ExplorerMode>();
+    /** Keys a toggle has written to in this window: a later read of storage does not undo it. */
+    protected readonly setKeys = new Set<string>();
+    /** Keys whose stored choice has been asked for. */
+    protected readonly restoredKeys = new Set<string>();
+
+    @inject(PerspectiveService) @optional()
+    protected readonly perspectives: PerspectiveService | undefined;
 
     /** The workspace roots, to know whose settings a file answers to. */
     @inject(WorkspaceService) @optional()
@@ -65,7 +101,41 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
         this.toDispose.push(this.onDidChangeLabelsEmitter);
         this.toDispose.push(this.fileService.onDidFilesChange(event => this.handleFilesChanged(event)));
         this.toDispose.push(this.fileService.onDidRunOperation(event => this.handleFileOperation(event)));
-        void this.restoreMode().catch(error => this.logger.warn('Failed to restore the Explorer mode.', error));
+        if (this.perspectives) {
+            this.toDispose.push(this.perspectives.onDidChangePerspective(id => this.enterPerspective(id)));
+            this.perspectiveId = this.perspectives.getActivePerspectiveId();
+        }
+        this.restoreMode(this.storageKey());
+    }
+
+    /**
+     * A restored layout names its perspective without announcing a switch
+     * (`setActivePerspectiveId`), so the mode is read again once the layout is in.
+     */
+    onDidInitializeLayout(): void {
+        if (this.perspectives) {
+            this.enterPerspective(this.perspectives.getActivePerspectiveId());
+        }
+    }
+
+    protected enterPerspective(perspectiveId: string | undefined): void {
+        if (this.stopped || perspectiveId === this.perspectiveId) {
+            return;
+        }
+        const before = this.getMode();
+        this.perspectiveId = perspectiveId;
+        this.restoreMode(this.storageKey());
+        if (this.getMode() !== before) {
+            this.firePresentationChanged();
+        }
+    }
+
+    protected storageKey(): string {
+        return explorerModeStorageKey(this.perspectiveId);
+    }
+
+    protected modeFor(key: string, perspectiveId: string | undefined): ExplorerMode {
+        return this.chosenModes.get(key) ?? defaultExplorerMode(perspectiveId);
     }
 
     onStop(): void {
@@ -83,11 +153,11 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
     }
 
     getMode(): ExplorerMode {
-        return this.mode;
+        return this.modeFor(this.storageKey(), this.perspectiveId);
     }
 
     isMarkdownMode(): boolean {
-        return this.mode === 'markdown';
+        return this.getMode() === 'markdown';
     }
 
     isMarkdownUri(uri: URI): boolean {
@@ -127,29 +197,36 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
         return shown;
     }
 
+    /** Toggles the Explorer of the mode in front, and only that mode's. */
     async toggleMode(): Promise<void> {
-        await this.enqueueModeUpdate(() => this.isMarkdownMode() ? 'all' : 'markdown');
+        await this.enqueueModeUpdate(current => current === 'markdown' ? 'all' : 'markdown');
     }
 
     async setMode(mode: ExplorerMode): Promise<void> {
         await this.enqueueModeUpdate(() => mode);
     }
 
-    protected async enqueueModeUpdate(resolveMode: () => ExplorerMode): Promise<void> {
-        this.modeWasSet = true;
+    protected async enqueueModeUpdate(resolveMode: (current: ExplorerMode) => ExplorerMode): Promise<void> {
+        // The mode the toggle was made in, even if another is in front by the time it is written.
+        const key = this.storageKey();
+        const perspectiveId = this.perspectiveId;
+        this.setKeys.add(key);
         const update = this.modeUpdate.catch(() => undefined).then(async () => {
-            const mode = resolveMode();
-            if (this.mode === mode) {
+            const current = this.modeFor(key, perspectiveId);
+            const mode = resolveMode(current);
+            if (current === mode) {
                 return;
             }
             try {
-                await this.storageService.setData(EXPLORER_MODE_STORAGE_KEY, mode);
+                await this.storageService.setData(key, mode);
             } catch (error) {
                 await this.logger.warn(`Failed to persist the Explorer mode '${mode}'.`, error);
                 throw error;
             }
-            this.mode = mode;
-            this.firePresentationChanged();
+            this.chosenModes.set(key, mode);
+            if (this.storageKey() === key) {
+                this.firePresentationChanged();
+            }
         });
         this.modeUpdate = update;
         await update;
@@ -167,12 +244,23 @@ export class ExplorerPresentationService implements FrontendApplicationContribut
         return fallback;
     }
 
-    protected async restoreMode(): Promise<void> {
-        const storedMode = await this.storageService.getData<ExplorerMode | undefined>(EXPLORER_MODE_STORAGE_KEY);
-        if (!this.stopped && !this.modeWasSet && storedMode === 'all') {
-            this.mode = storedMode;
-            this.firePresentationChanged();
+    /** Reads a mode's stored choice once; a toggle made meanwhile wins. */
+    protected restoreMode(key: string): void {
+        if (this.restoredKeys.has(key)) {
+            return;
         }
+        this.restoredKeys.add(key);
+        void this.storageService.getData<unknown>(key).then(storedMode => {
+            if (this.stopped || this.setKeys.has(key) || !isExplorerMode(storedMode)) {
+                return;
+            }
+            const inFront = this.storageKey() === key;
+            const before = inFront ? this.getMode() : undefined;
+            this.chosenModes.set(key, storedMode);
+            if (inFront && before !== storedMode) {
+                this.firePresentationChanged();
+            }
+        }).catch(error => this.logger.warn('Failed to restore the Explorer mode.', error));
     }
 
     protected handleFilesChanged(event: FileChangesEvent): void {
