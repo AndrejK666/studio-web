@@ -1,4 +1,4 @@
-import { sourceRootsOf, sourcesUsable } from "./opening-outcome";
+import { scanHintMessage, sourceRootsOf, sourcesUsable } from "./opening-outcome";
 
 describe("a product's sources", () => {
   const intent = {
@@ -35,5 +35,14 @@ describe("a product's sources", () => {
       ok: false,
       reason: "shop declares no source roots, so there are no gears to compose.",
     });
+  });
+});
+
+describe("the scanning hint", () => {
+  it("names the time, the files and the exact folder, and changes nothing itself", () => {
+    const text = scanHintMessage({ folder: "C:\\Users\\m\\ConstructorStudio\\corpus", files: 4211, seconds: 64 });
+    expect(text).toContain("4211 gear source files took 64 s");
+    expect(text.endsWith(": C:\\Users\\m\\ConstructorStudio\\corpus")).toBe(true);
+    expect(text).toContain("if your organisation allows it");
   });
 });

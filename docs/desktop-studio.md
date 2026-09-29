@@ -204,6 +204,40 @@ relay with the credential helper given for that one command, so the copy's
 `.git/config` names no helper and no token. Each copy is a fixed commit and
 never fetches again; deleting one only means it is cloned again.
 
+Beside each copy, `<commit12>/.catalogue/<digest>.json` holds the gear catalogue
+the engine projected from it: the gears' names, contracts, capabilities and
+diagnostics, keyed by the commit and the engine binary that read it. It shows
+the Catalogue at once on the next launch while the engine loads again (the
+engine cannot be handed a projection, so an open still waits for it). It holds
+nothing that is not in the copy's own files, and no secret; deleting it only
+means the next load is not shown early.
+
+### Opening a product fast
+
+The engine answers one request at a time, and an open needs its catalogue, so
+an open waits for the catalogue load: the engine parses every gear crate of the
+corpus (44 gears, ~4,200 files; 7–8 s of one core). On Windows the first load
+after a launch was much slower — 64–82 s — because the engine opens the files
+one after another and Microsoft Defender scans each on its first open
+([MikeFalcon77/gearbox#5](https://github.com/MikeFalcon77/gearbox/issues/5)).
+Three things now keep that out of the way:
+
+- **Read ahead** (Windows only): while the engine loads, the IDE backend reads
+  the same files from up to 32 worker threads, so Defender scans them in
+  parallel and the engine finds them scanned. A cold open is 10–20 s.
+- **Keep the engine**: an open (and closing a product) whose sources are exactly
+  the corpus copies the running engine already read keeps that engine and its
+  catalogue instead of respawning it and reading them again. The boot load
+  becomes the open's load: opened after it finished, a product is ready in
+  well under a second; opened during it, the checklist counts the rest of that
+  load ("12 of 44 gears") on its first step. `Reload Catalogue` and a new gear
+  still read the disk again.
+- **The cached catalogue** above, for the tree.
+
+When the first read took longer than 5 s, the first product opened afterwards
+says so once, with the folder an antivirus exclusion would cover
+(`~/ConstructorStudio/corpus`). Studio changes no system setting.
+
 ## What a Studio deployment needs
 
 **1. The `studio-desktop` Keycloak client.** The client is in both realm files
