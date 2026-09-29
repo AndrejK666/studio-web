@@ -100,6 +100,18 @@ jobs:
             fi
           fi
           echo "STUDIO_VERSION=${STUDIO_VERSION_INPUT:-$own}" >> "$GITHUB_ENV"
+      # What npm ci and the packaging download besides packages: the Electron
+      # binary (npm's `electron` postinstall) and electron-builder's NSIS and
+      # winCodeSign. A few hundred MB per run from GitHub releases, and the
+      # same bytes for as long as the lockfile stays put.
+      - name: Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-downloads-${{ runner.os }}-${{ hashFiles('theia/package-lock.json') }}
+          restore-keys: electron-downloads-${{ runner.os }}-
       - name: Install
         run: npm ci
       - name: Build drawio-editor
