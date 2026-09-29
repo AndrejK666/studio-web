@@ -1,4 +1,4 @@
-// Constructor Studio: a product's git source, brought into the workspace.
+// Constructor Studio: a product's git source, brought onto this machine.
 //
 // A description Studio writes names its corpus as a git source at the commit it
 // was checked against -- `source(id = "gears-rust", at = git(url, rev))` -- so
@@ -7,9 +7,12 @@
 // needs that commit on disk, in a directory called by the source's id.
 //
 // A checkout the session already has is used when it is that repository at
-// that commit. Otherwise the commit is brought in under `.gearbox/sources/`:
-// as a worktree of a checkout of the same repository when there is one (no
-// second download), or as a clone. Never by moving a checkout somebody may
+// that commit. Otherwise the commit is brought into the one per-machine cache
+// the corpus copy lives in (`~/ConstructorStudio/corpus`, below), never into
+// the project: a commit never changes, so every project that names it reads
+// the same copy. A checkout of the same repository in the workspace is cloned
+// from locally when it has the commit (no second download); a private corpus
+// is cloned through the Studio relay. Never by moving a checkout somebody may
 // have open.
 
 import { execFile } from "child_process";
@@ -17,6 +20,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { promisify } from "util";
+
+import { remoteKey } from "../common/git-remote";
+
+export { remoteKey };
 
 const git = promisify(execFile);
 
@@ -41,28 +48,35 @@ export function isSafeUrl(url: string): boolean {
   return /^(https:\/\/|ssh:\/\/|git@)[^\s]+$/.test(url);
 }
 
-/** `https://github.com/Owner/Repo.git`, `git@github.com:owner/repo` -> `github.com/owner/repo`. */
-export function remoteKey(url: string): string {
-  return url
-    .trim()
-    .replace(/^git@([^:]+):/, "$1/")
-    .replace(/^[a-z]+:\/\//, "")
-    .replace(/^[^@/]+@/, "")
-    .replace(/\.git$/, "")
-    .replace(/\/+$/, "")
-    .toLowerCase();
-}
-
 /** The one ref asked for, rev first: a rev is exact, a branch moves. */
 export function pickRef(ref: GitRef): string | undefined {
   const r = ref.rev ?? ref.tag ?? ref.branch ?? undefined;
   return r !== undefined && r !== null && isSafeRef(r) ? r : undefined;
 }
 
-/** `.gearbox/sources/<ref>/<id>`, the ref shortened when it is a commit. */
-export function materializedDir(workspace: string, id: string, ref: string): string {
-  const key = /^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 12) : ref.replace(/\//g, "-");
-  return path.join(workspace, ".gearbox", "sources", key, id);
+function isCommit(ref: string): boolean {
+  return /^[0-9a-f]{40}$/.test(ref);
+}
+
+/**
+ * The commit `ref` names in `git ls-remote` output: the branch of that name,
+ * else the tag (peeled, for an annotated one). Exact names only -- ls-remote
+ * matches by suffix, and `feature/main` is not `main`.
+ */
+export function commitFromLsRemote(output: string, ref: string): string | undefined {
+  const byName = new Map<string, string>();
+  for (const line of output.split(/\r?\n/)) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (sha !== undefined && name !== undefined && isCommit(sha)) byName.set(name, sha);
+  }
+  const wanted = ref.startsWith("refs/")
+    ? [`${ref}^{}`, ref]
+    : [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`];
+  for (const name of wanted) {
+    const sha = byName.get(name);
+    if (sha !== undefined) return sha;
+  }
+  return undefined;
 }
 
 async function run(args: string[]): Promise<string> {
@@ -86,18 +100,37 @@ function checkoutsOf(workspace: string): string[] {
   }
 }
 
+/** The `-c` pair that gives the relay's credential helper to one command only. */
+function signedBy(via: CorpusRelay | undefined): string[] {
+  return via === undefined ? [] : ["-c", "credential.helper=", "-c", `credential.helper=${via.helper}`];
+}
+
+export interface GitSourceOptions {
+  /** The per-machine cache the copy lands in: `corpusCacheRoot()`. */
+  readonly cacheRoot: string;
+  /**
+   * How to reach the repository when it is the corpus Studio relays (a
+   * private one), signed with the member's own token. The copy is still
+   * keyed, and named, by `url`.
+   */
+  readonly via?: CorpusRelay;
+}
+
 /**
- * A directory named `id` holding `url` at `ref`, or `undefined` when it cannot
- * be had (bad input, the repository unreachable, the ref unknown).
+ * A directory named `id` holding `url` at `ref`, or `undefined` when the input
+ * is not something to hand to git or the ref names no commit. Rejects with
+ * git's reason when the repository cannot be reached.
  */
 export async function materializeGitSource(
   workspace: string,
   id: string,
   url: string,
   ref: GitRef,
+  options: GitSourceOptions,
 ): Promise<string | undefined> {
   const want = pickRef(ref);
   if (!isKebabId(id) || !isSafeUrl(url) || want === undefined) return undefined;
+  if (options.via !== undefined && !/^https?:\/\/[^\s]+$/.test(options.via.url)) return undefined;
 
   const same: string[] = [];
   for (const dir of checkoutsOf(workspace)) {
@@ -115,24 +148,38 @@ export async function materializeGitSource(
     if (head !== undefined && head === target) return dir;
   }
 
-  const target = materializedDir(workspace, id, want);
-  if (fs.existsSync(path.join(target, ".git"))) return target;
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-
+  // Which commit: the cache is keyed by one, and a branch or a tag names one
+  // only for now. Asked of the checkout we have when there is one, else of
+  // the remote (through the relay when it takes one).
   const donor = same[0];
+  let rev: string | undefined = isCommit(want) ? want : undefined;
+  if (rev === undefined && donor !== undefined) {
+    const fetched = await run(["-C", donor, "fetch", "--quiet", "origin", want]).then(
+      () => true,
+      () => false,
+    );
+    rev = fetched ? await commitOf(donor, "FETCH_HEAD") : await commitOf(donor, want);
+  }
+  if (rev === undefined) {
+    const listed = await run([...signedBy(options.via), "ls-remote", options.via?.url ?? url, want]);
+    rev = commitFromLsRemote(listed, want);
+  }
+  if (rev === undefined) return undefined;
+
+  const cached = await materializeSharedCorpus(options.cacheRoot, id, url, rev, false);
+  if (cached !== undefined) return cached;
+
   if (donor !== undefined) {
-    // No second download: fetch the one ref into the checkout we have, and
-    // give it its own directory.
-    await run(["-C", donor, "fetch", "--quiet", "origin", want]).catch(() => undefined);
-    const commit = (await commitOf(donor, want)) ?? (await commitOf(donor, "FETCH_HEAD"));
-    if (commit !== undefined) {
-      await run(["-C", donor, "worktree", "add", "--quiet", "--detach", target, commit]);
-      return target;
+    // No second download: the checkout we have may already hold the commit,
+    // or can fetch the one ref into itself.
+    if ((await commitOf(donor, rev)) === undefined) {
+      await run(["-C", donor, "fetch", "--quiet", "origin", rev]).catch(() => undefined);
+    }
+    if ((await commitOf(donor, rev)) !== undefined) {
+      return materializeSharedCorpus(options.cacheRoot, id, url, rev, true, undefined, donor);
     }
   }
-  await run(["clone", "--quiet", "--filter=blob:none", url, target]);
-  await run(["-C", target, "checkout", "--quiet", "--detach", ref.rev ?? ref.tag ?? `origin/${want}`]);
-  return target;
+  return materializeSharedCorpus(options.cacheRoot, id, url, rev, true, options.via);
 }
 
 // Constructor Studio: one copy of the gear corpus per machine, not per project.
@@ -187,6 +234,10 @@ export function sharedCorpusDir(root: string, id: string, url: string, rev: stri
  * not there and `fetch` is false, or when the input is not something to hand
  * to git. Cloned into a `.partial` directory and renamed at the end, so an
  * interrupted clone is never taken for a corpus.
+ *
+ * `from`, when given, is a local checkout of the same repository that holds
+ * the commit: cloned from instead of the network. The copy is still keyed and
+ * named by `url`.
  */
 export async function materializeSharedCorpus(
   root: string,
@@ -195,20 +246,27 @@ export async function materializeSharedCorpus(
   rev: string,
   fetch: boolean,
   via?: CorpusRelay,
+  from?: string,
 ): Promise<string | undefined> {
-  if (!isKebabId(id) || !isSafeUrl(url) || !/^[0-9a-f]{40}$/.test(rev)) return undefined;
+  if (!isKebabId(id) || !isSafeUrl(url) || !isCommit(rev)) return undefined;
   const target = sharedCorpusDir(root, id, url, rev);
   if (fs.existsSync(path.join(target, ".git"))) return target;
   if (!fetch) return undefined;
   if (via !== undefined && !/^https?:\/\/[^\s]+$/.test(via.url)) return undefined;
+  if (from !== undefined && !path.isAbsolute(from)) return undefined;
   const partial = `${target}.partial`;
   fs.rmSync(partial, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  // Through the relay the helper is given for this one command (`-c` before
-  // `clone`), so nothing about it lands in the copy's config: the copy is a
-  // fixed commit and never fetches again.
-  const signed = via === undefined ? [] : ["-c", "credential.helper=", "-c", `credential.helper=${via.helper}`];
-  await run([...signed, "clone", "--quiet", "--filter=blob:none", "--no-checkout", via?.url ?? url, partial]);
+  if (from !== undefined) {
+    // A local clone: objects are linked or copied, nothing is downloaded, and
+    // the copy does not depend on the checkout afterwards.
+    await run(["clone", "--quiet", "--no-checkout", "--", from, partial]);
+  } else {
+    // Through the relay the helper is given for this one command (`-c` before
+    // `clone`), so nothing about it lands in the copy's config: the copy is a
+    // fixed commit and never fetches again.
+    await run([...signedBy(via), "clone", "--quiet", "--filter=blob:none", "--no-checkout", via?.url ?? url, partial]);
+  }
   await run(["-C", partial, "checkout", "--quiet", "--detach", rev]);
   fs.renameSync(partial, target);
   return target;

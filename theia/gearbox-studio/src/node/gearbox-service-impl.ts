@@ -370,13 +370,26 @@ export class GearboxServiceImpl implements GearboxService {
     id: string,
     url: string,
     ref: { rev?: string | null; tag?: string | null; branch?: string | null },
+    clonePath?: string,
   ): Promise<string | undefined> {
+    // The shared per-machine cache, the same one `useSharedCorpus` fills: a
+    // product naming the corpus at a commit reads the copy already there.
+    const via = clonePath === undefined ? undefined : corpusRelay(clonePath);
     try {
-      return await materializeGitSource(this.defaultWorkspace(), id, url, ref);
+      return await materializeGitSource(this.defaultWorkspace(), id, url, ref, { cacheRoot: corpusCacheRoot(), via });
     } catch (error) {
-      this.logger.warn(`gearbox: could not bring source ${id} (${url}) into the workspace: ${String(error)}`);
-      return undefined;
+      this.logger.warn(`gearbox: could not bring source ${id} (${url}) here: ${String(error)}`);
+      const signedOut =
+        clonePath !== undefined && via === undefined
+          ? " It is private: Studio relays it to the desktop app while you are signed in."
+          : "";
+      throw new Error(`${url} could not be fetched: ${messageOfGit(error)}.${signedOut}`);
     }
+  }
+
+  async adoptedCorpus(): Promise<{ id: string; path: string } | undefined> {
+    const dir = this.sharedCorpus;
+    return dir === undefined || !fs.existsSync(dir) ? undefined : { id: path.basename(dir), path: dir };
   }
 
   async useSharedCorpus(
