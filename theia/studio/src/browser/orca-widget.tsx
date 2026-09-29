@@ -145,10 +145,9 @@ export class OrcaWidget extends ReactWidget {
                     console.warn(`[orca] could not register the workspace's repositories: ${error instanceof Error ? error.message : error}`);
                 }
             }
-            // Default the selection to the worktree the IDE is open on, which
-            // is what "work on this project" means from in here.
-            // Within the open project's repositories: the first worktree
-            // Orca listed used to win, and on a desktop that was another
+            // Default the selection to the worktree the IDE is open on, else
+            // one of the open project's repositories: the first worktree Orca
+            // listed used to win, and on a desktop that was another
             // repository's.
             if (!this.selected || !this.selectedWorktree()) {
                 this.selected = defaultWorktree(this.groups(), this.current, this.workspaceRoot)?.id;
