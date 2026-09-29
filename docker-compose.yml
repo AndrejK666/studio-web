@@ -17,7 +17,7 @@
 #
 # NB: the backend image builds the 90-crate gears workspace — the first
 # `--build` takes a while; BuildKit caches make rebuilds fast. No sibling
-# checkout is needed — gears-rust is a git dependency pinned in Cargo.toml.
+# checkout is needed — every gear comes from crates.io, pinned in Cargo.lock.
 
 name: studio
 

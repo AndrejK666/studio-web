@@ -5,9 +5,9 @@
 # layers needs no registry at all — which also keeps a broken credential
 # helper from failing the build before it starts.
 # Build the Studio backend FROM SOURCE inside Docker (one-click compose path).
-# Build context is the studio-web directory: gears-rust is a git dependency
-# pinned in Cargo.toml, so cargo fetches it and no sibling checkout has to be
-# copied into the image.
+# Build context is the studio-web directory: every gear is a crates.io
+# dependency pinned in Cargo.lock, so cargo fetches it and no sibling checkout
+# has to be copied into the image.
 # CI uses the plain ./Dockerfile with a prebuilt binary instead.
 
 # Dependencies and our own code are built in separate layers (cargo-chef).
@@ -32,7 +32,7 @@ WORKDIR /src/studio-backend
 # dependencies change and not when our sources do.
 FROM chef AS planner
 COPY studio-backend/ .
-# Cargo.lock is the source of truth for the gears-rust git revision and every
+# Cargo.lock is the source of truth for every gear's version and every other
 # registry dependency. Do not run `cargo update` in an image build: it would
 # silently produce a binary different from the checked-in source tree.
 RUN cargo chef prepare --recipe-path recipe.json
