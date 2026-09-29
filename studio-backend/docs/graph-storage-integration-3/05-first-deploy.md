@@ -8,7 +8,7 @@ what the follow-up does about each point. Findings are numbered as in
 
 | Finding | What happens | Where |
 |---|---|---|
-| **S-14** outbox without `trace` | `bootstrap --apply` repairs every pre-0.16 outbox before the migrations run: adds `trace` to `<prefix>_outbox_body` and, when `<prefix>_outbox_trace` is missing, forgets `m001_create_toolkit_outbox_schema*` so the (idempotent) migration runs again. Finds outboxes by table name, so mini-chat's is covered. The Helm `database-bootstrap` job runs this before the new pods start. | `src/outbox_repair.rs`, `src/database_bootstrap.rs` |
+| **S-14** outbox without `trace` | `bootstrap --apply` repairs every pre-0.16 outbox before the migrations run: adds `trace` to `<prefix>_outbox_body` and `<prefix>_outbox_dead_letters` and, when `<prefix>_outbox_trace` is missing, forgets `m001_create_toolkit_outbox_schema*` so the (idempotent) migration runs again. Finds outboxes by table name, so mini-chat's is covered. The Helm `database-bootstrap` job runs this before the new pods start. | `src/outbox_repair.rs`, `src/database_bootstrap.rs` |
 | **S-13** partition stuck behind a given-up run | A redelivered message whose run already failed is acknowledged instead of re-entering the give-up path at the head of its partition. | `src/tasks/dispatch.rs` (`settled`) |
 | **S-15** refusal reason lost | Type registration and ingest errors now carry the gear's field violations. | `src/graph_error.rs` |
 | **S-12** edge traits | A test refuses any edge type that declares `x-gts-traits`. | `gts_inventory::no_edge_type_declares_traits` |

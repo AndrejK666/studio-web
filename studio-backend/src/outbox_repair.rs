@@ -1,8 +1,9 @@
 //! Bring an outbox created by toolkit-db before 0.16 up to the schema 0.16
 //! expects, before the migrations run.
 //!
-//! toolkit-db 0.16 added a `trace` column to `<prefix>_outbox_body` and a
-//! `<prefix>_outbox_trace` table -- by editing its released migration
+//! toolkit-db 0.16 added a `trace` column to `<prefix>_outbox_body` and to
+//! `<prefix>_outbox_dead_letters`, and a `<prefix>_outbox_trace` table -- by
+//! editing its released migration
 //! (`m001_create_toolkit_outbox_schema`) in place instead of adding a new one
 //! (constructorfabric/gears-rust#5044). A database whose journal already
 //! records m001 never runs the new DDL, and every enqueue then fails with
@@ -11,9 +12,10 @@
 //!
 //! The repair is two steps per outbox, and both are safe to repeat:
 //!
-//! * add the column (`ADD COLUMN IF NOT EXISTS`), because m001's
-//!   `CREATE TABLE IF NOT EXISTS` for the body cannot add it to a table that
-//!   exists;
+//! * add the column to the body and to the dead letters (`ADD COLUMN IF NOT
+//!   EXISTS`), because m001's `CREATE TABLE IF NOT EXISTS` cannot add it to a
+//!   table that exists -- missing on the dead letters, it fails every
+//!   rejected message rather than every enqueue;
 //! * when the trace table is missing, forget m001 in the gear's journal, so
 //!   the migration runs again. Every statement in it is `IF NOT EXISTS`, so
 //!   running it over the existing tables only creates what is missing.
@@ -22,7 +24,10 @@
 //! gear this backend does not know by name (mini-chat's outbox lives in its
 //! own crate) is repaired the same way.
 //!
-//! Delete this module once no environment has a pre-0.16 outbox left.
+//! Delete this module once studio-backend is on a toolkit-db carrying the
+//! upstream upgrade migration (`m002_add_toolkit_outbox_trace`,
+//! constructorfabric/gears-rust#5110) and every environment has booted on it
+//! -- studio-web#531.
 
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
@@ -34,7 +39,7 @@ const OUTBOX_MIGRATION: &str = "m001_create_toolkit_outbox_schema";
 /// What one database needed.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Repair {
-    /// Body tables the `trace` column was added to.
+    /// Tables (body, dead letters) the `trace` column was added to.
     pub columns_added: Vec<String>,
     /// Journal rows forgotten so the outbox migration runs again.
     pub migrations_reset: u64,
@@ -50,38 +55,28 @@ impl Repair {
 pub async fn repair(client: &Client) -> Result<Repair> {
     let mut out = Repair::default();
 
-    let bodies: Vec<(String, bool)> = client
+    let bodies: Vec<String> = client
         .query(
-            "SELECT t.table_name::text,
-                    EXISTS (SELECT 1 FROM information_schema.columns c
-                            WHERE c.table_schema = t.table_schema
-                              AND c.table_name = t.table_name
-                              AND c.column_name = 'trace')
-             FROM information_schema.tables t
-             WHERE t.table_schema = current_schema()
-               AND t.table_type = 'BASE TABLE'
-               AND t.table_name LIKE '%\\_outbox\\_body' ESCAPE '\\'",
+            "SELECT table_name::text FROM information_schema.tables
+             WHERE table_schema = current_schema()
+               AND table_type = 'BASE TABLE'
+               AND table_name LIKE '%\\_outbox\\_body' ESCAPE '\\'",
             &[],
         )
         .await
         .context("list outbox body tables")?
         .into_iter()
-        .map(|r| (r.get(0), r.get(1)))
+        .map(|r| r.get(0))
         .collect();
 
     let mut trace_missing = false;
-    for (body, has_trace) in &bodies {
-        if !has_trace {
-            client
-                .batch_execute(&format!(
-                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace VARCHAR(256) NULL",
-                    quote(body)
-                ))
-                .await
-                .with_context(|| format!("add the trace column to {body}"))?;
-            out.columns_added.push(body.clone());
-        }
+    for body in &bodies {
         let prefix = body.strip_suffix("_body").unwrap_or(body);
+        for table in [body.clone(), format!("{prefix}_dead_letters")] {
+            if add_trace_if_missing(client, &table).await? {
+                out.columns_added.push(table);
+            }
+        }
         let trace_table = format!("{prefix}_trace");
         let exists = client
             .query_opt(
@@ -120,6 +115,37 @@ pub async fn repair(client: &Client) -> Result<Repair> {
         }
     }
     Ok(out)
+}
+
+/// Add `trace` to `table` when the table exists without it. Whether it did.
+async fn add_trace_if_missing(client: &Client, table: &str) -> Result<bool> {
+    let row = client
+        .query_opt(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns c
+                            WHERE c.table_schema = t.table_schema
+                              AND c.table_name = t.table_name
+                              AND c.column_name = 'trace')
+             FROM information_schema.tables t
+             WHERE t.table_schema = current_schema()
+               AND t.table_type = 'BASE TABLE'
+               AND t.table_name = $1",
+            &[&table],
+        )
+        .await
+        .with_context(|| format!("look at {table}"))?;
+    // No such table (an outbox without dead letters yet), or it has the column.
+    let Some(row) = row else { return Ok(false) };
+    if row.get::<_, bool>(0) {
+        return Ok(false);
+    }
+    client
+        .batch_execute(&format!(
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace VARCHAR(256) NULL",
+            quote(table)
+        ))
+        .await
+        .with_context(|| format!("add the trace column to {table}"))?;
+    Ok(true)
 }
 
 /// A Postgres identifier, quoted. Names come from `information_schema`, so
