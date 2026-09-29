@@ -17,6 +17,16 @@ export const orcaTerminalServicePath = '/services/studio-orca-terminal';
 
 /** How an `attach` refused for want of a pairing begins; the frontend offers to pair on it. */
 export const NO_ORCA_PAIRING = 'This IDE has no pairing with the Orca runtime';
+/**
+ * How an `attach` refused for a pairing Orca no longer accepts begins: the
+ * device was revoked in Orca, or Orca was reinstalled and has a new key. The
+ * frontend offers to pair again on it, as it does for a missing one.
+ */
+export const STALE_ORCA_PAIRING = 'Orca no longer accepts the pairing this IDE keeps';
+/** Whether an `attach` failure is one a new pairing fixes. */
+export function needsPairing(message: string): boolean {
+    return message.includes(NO_ORCA_PAIRING) || message.includes(STALE_ORCA_PAIRING);
+}
 /** DI key for the proxy on the frontend. */
 export const OrcaTerminalService = Symbol('OrcaTerminalService');
 

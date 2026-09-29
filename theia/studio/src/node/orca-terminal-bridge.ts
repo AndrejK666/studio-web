@@ -40,7 +40,12 @@ import { createRequire } from 'module';
 import * as os from 'os';
 import * as path from 'path';
 import { injectable, inject } from '@theia/core/shared/inversify';
-import { NO_ORCA_PAIRING, type OrcaTerminalClient, type OrcaTerminalService } from '../common/orca-terminal-protocol';
+import {
+    NO_ORCA_PAIRING,
+    STALE_ORCA_PAIRING,
+    type OrcaTerminalClient,
+    type OrcaTerminalService
+} from '../common/orca-terminal-protocol';
 import { OrcaCli } from './orca-cli';
 
 /** Long enough for a cold runtime to authenticate a first socket. */
@@ -145,6 +150,33 @@ export function noPairingMessage(env: NodeJS.ProcessEnv = process.env): string {
         : `${NO_ORCA_PAIRING}, so it cannot stream a terminal. ` +
               'A session gets one when Orca starts (STUDIO_ORCA_PAIRING_FILE); ' +
               'restart the session if Orca was still starting.';
+}
+
+/**
+ * What a failed `terminal.subscribe` means, in words that say what to do.
+ *
+ * Orca's client throws a `RemoteRuntimeClientError` whose `code` is
+ * `unauthorized` when the runtime refuses the device token (revoked in Orca)
+ * and `invalid_runtime_response` when the runtime is not the one the pairing
+ * names (a reinstall draws a new key) — read off Orca 1.4.211's
+ * `remote-runtime-subscription-frame-router.js`. A refused connection means
+ * nothing listens where the pairing says: Orca is closed.
+ */
+export function attachFailure(error: unknown, env: NodeJS.ProcessEnv = process.env): string {
+    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+    const text = error instanceof Error ? error.message : String(error);
+    if (code === 'unauthorized' || code === 'invalid_runtime_response') {
+        return pairsByHand(env)
+            ? `${STALE_ORCA_PAIRING}: it was revoked in Orca, or Orca was reinstalled. Pair again ` +
+                  '(In Orca: Settings → Pair another Orca client → This computer).'
+            : `${STALE_ORCA_PAIRING}. Restart the session: it pairs again when Orca starts.`;
+    }
+    if (code === 'ECONNREFUSED' || /ECONNREFUSED|connection refused/i.test(text)) {
+        return pairsByHand(env)
+            ? 'Orca is not answering on this computer. Open the Orca app (or press Start Orca in the Agents panel) and try again.'
+            : "The session's Orca runtime is not answering. Restart the session if it does not come back.";
+    }
+    return `Could not attach to the Orca terminal: ${text}`;
 }
 
 /** The pairing offer this backend may use, or undefined when there is none. */
@@ -293,7 +325,7 @@ export class OrcaTerminalBridge implements OrcaTerminalService {
             }
             entry.done = true;
             ready();
-            throw new Error(`Could not attach to the Orca terminal: ${messageOf(error)}`);
+            throw new Error(attachFailure(error));
         }
         entry.subscription = subscription;
         ready();
