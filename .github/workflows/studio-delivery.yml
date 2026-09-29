@@ -606,14 +606,26 @@ jobs:
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # The binary is a function of the crate release and the toolchain, both
+      # pinned: while neither moves, the sidecar is not rebuilt at all.
+      - name: Cached sidecar
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sidecar/bin/sidecar
+          key: file-storage-sidecar-${{ steps.gear.outputs.version }}-rust-1.97.0-ubuntu-24.04
+
       - name: System dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           toolchain: 1.97.0
 
       - name: Build file-storage sidecar
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           cargo install cf-gears-file-storage --version "=${{ steps.gear.outputs.version }}" \
             --bin sidecar --locked --root "$RUNNER_TEMP/sidecar"
