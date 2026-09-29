@@ -1176,7 +1176,18 @@ function GearListRow({
   const lamps = fields.map((f) => lampOf(f, values)).filter((l): l is Lamp => !!l);
   const bad = lamps.filter((l) => l === "bad").length;
   const watch = lamps.filter((l) => l === "watch").length;
-  const repository = typeof gear.value.repository === "string" ? gear.value.repository : null;
+  /* A component only a repository scan produced (a draft gear, a FrontX
+     package) has no crates.io `repository`, but the scan recorded where it
+     read it: `synced_from` and, since the scan keeps it, `repo_path`. "Not
+     recorded" was wrong for every one of them. */
+  const scannedFrom = typeof gear.value.synced_from === "string" && gear.value.synced_from ? gear.value.synced_from : null;
+  const repoPath = typeof gear.value.repo_path === "string" && gear.value.repo_path ? gear.value.repo_path : null;
+  const repository =
+    typeof gear.value.repository === "string" && gear.value.repository
+      ? gear.value.repository
+      : scannedFrom
+        ? `https://github.com/${scannedFrom}${repoPath ? `/tree/HEAD/${repoPath}` : ""}`
+        : null;
   const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
 
   return (

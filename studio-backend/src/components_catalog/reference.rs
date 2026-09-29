@@ -293,14 +293,6 @@ impl EngineIndex {
         Self { gears }
     }
 
-    pub fn len(&self) -> usize {
-        self.gears.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.gears.is_empty()
-    }
-
     fn facts(&self, gear: &RawGear) -> ReferenceEngineGearDto {
         let fills = gear.fills_spec().map(str::to_string);
         let hosts: Vec<String> = match &fills {
@@ -982,7 +974,7 @@ mod tests {
         assert_eq!(only.profile_fields, None);
         assert_eq!(only.sources, ["gearbox"]);
         assert_eq!(only.engine[0].id, "api-contracts");
-        assert_eq!(e.len(), 6, "the unparseable descriptor is skipped, not fatal");
+        assert_eq!(e.gears.len(), 6, "the unparseable descriptor is skipped, not fatal");
     }
 
     #[test]
