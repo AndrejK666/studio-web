@@ -350,6 +350,24 @@ export class ProductWidget extends ReactWidget {
    * activates its views one after another: without this, entering Building
    * cost ten seconds, and the rail showed the previous mode's tabs meanwhile.
    */
+  /**
+   * Constructor Studio: ask what products there are whenever the panel is on
+   * screen. Discovery used to be started only by the Start screen, the Open
+   * Product command and product creation; the desktop shows product-ext's
+   * start page instead of Gearbox's, so nothing asked and this panel drew
+   * "no product yet" for a workspace that has one. `ensureDiscovered` returns
+   * at once when a list is in hand or a load is in flight.
+   */
+  protected override onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    void this.store.ensureDiscovered();
+  }
+
+  protected override onAfterShow(msg: Message): void {
+    super.onAfterShow(msg);
+    void this.store.ensureDiscovered();
+  }
+
   protected override onActivateRequest(msg: Message): void {
     super.onActivateRequest(msg);
     if (!this.node.hasAttribute("tabindex")) {
