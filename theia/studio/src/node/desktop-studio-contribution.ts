@@ -8,6 +8,7 @@ import { injectable } from '@theia/core/shared/inversify';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
 import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
+import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { DesktopSession, signIn } from './desktop-sign-in';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
@@ -73,6 +74,18 @@ export interface OpenedFolder {
 function folderKey(folder: string): string {
     const resolved = path.resolve(folder);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/** A folder the git routes may work in: an absolute path to an existing directory. */
+export function projectFolder(candidate: unknown): string | undefined {
+    if (typeof candidate !== 'string' || !path.isAbsolute(candidate)) {
+        return undefined;
+    }
+    try {
+        return fs.statSync(candidate).isDirectory() ? path.resolve(candidate) : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /** The settings with one more folder remembered against its tenant. */
@@ -263,6 +276,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected broker: TokenBroker | undefined;
     protected ready: Promise<void> | undefined;
     protected status: DesktopStatus = this.describe('signed-out');
+    /** How the git routes run git; a test swaps it. */
+    protected git: GitRunner = runGit;
     protected readonly leases = new DesktopLeases();
 
     /** The open in progress, or the last one, for the Studio view to draw. */
@@ -469,6 +484,45 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 await this.leases.end(target, tenantId);
             }
             res.status(204).end();
+        });
+        // Git on the opened project's clones (node/desktop-git.ts): what the
+        // Sources view lists, and what Sync and Push do on the desktop, where
+        // there is no canonical workspace config and no operations queue.
+        app.get('/studio-desktop/git/repositories', async (req, res) => {
+            const root = projectFolder(req.query.root);
+            if (!root) {
+                res.status(400).json({ error: 'which folder? (an existing absolute path)' });
+                return;
+            }
+            res.json({ repositories: await Promise.all(repositoriesUnder(root).map(dir => describeRepository(this.git, root, dir))) });
+        });
+        app.post('/studio-desktop/git/sync', express.json(), async (req, res) => {
+            const root = projectFolder((req.body as { root?: unknown } | undefined)?.root);
+            if (!root) {
+                res.status(400).json({ error: 'which folder? (an existing absolute path)' });
+                return;
+            }
+            const results = [];
+            // One at a time: the clones share a remote host and a helper.
+            for (const dir of repositoriesUnder(root)) {
+                results.push(await syncRepository(this.git, root, dir));
+            }
+            console.info(`[studio-desktop] sync in ${root}: ${results.map(r => `${r.name} ${r.outcome}`).join(', ') || 'no repositories'}`);
+            res.json({ results });
+        });
+        app.post('/studio-desktop/git/push', express.json(), async (req, res) => {
+            const body = (req.body ?? {}) as { root?: unknown; repository?: unknown };
+            const root = projectFolder(body.root);
+            const dir = root && typeof body.repository === 'string'
+                ? repositoriesUnder(root).find(candidate => folderKey(candidate) === folderKey(String(body.repository)))
+                : undefined;
+            if (!root || !dir) {
+                res.status(400).json({ error: 'which repository? (one of the folder\'s clones)' });
+                return;
+            }
+            const result = await pushRepository(this.git, root, dir);
+            console.info(`[studio-desktop] push ${result.name}: ${result.outcome}`);
+            res.json(result);
         });
         app.post('/studio-desktop/sign-in', (_req, res) => {
             if (this.status.state !== 'signing-in' && this.status.state !== 'signed-in') {

@@ -667,6 +667,41 @@ Electron IPC (`theia/studio/src/electron-browser`, `src/electron-main`), and a
 session's `browser-app` loads neither — a session's Settings has no Update
 Channel.
 
+## Git on the desktop: Sources, Sync and Push
+
+A desktop project is a folder of clones, one per repository the project's
+settings in Studio list (`workspace.settings` repos[], which studio-git serves
+as `/sources?project_id=`). It has no canonical workspace config
+(`.cf-studio/*.toml`) and no operations queue, which is what a session's
+Sources, Sync and pushes are built on. So on the desktop
+(`browser/desktop-git-contribution.ts`, `browser/desktop-sources-widget.tsx`,
+`node/desktop-git.ts`, bound only by the electron frontend module, and acting
+only when `studio-desktop/status` answers `enabled`):
+
+- **Sources** lists the clones in the open folders as git sees them: branch,
+  upstream, commits to push and to pull (as of the last fetch), files not
+  committed, and the remote without credentials. There is no TOML to create or
+  edit. A repository added to the project in the portal is cloned the next
+  time the project is opened from the Constructor Studio view.
+- **Sync** runs `git fetch --prune` in every clone and then only a
+  fast-forward (`git merge --ff-only @{upstream}`). A branch with commits of
+  its own that is also behind is left as it is and reported; merging or
+  rebasing it is the member's call, in Source Control. One notification says
+  what happened in each clone.
+- **Push** (the ribbon, Development, Agent development and Full) pushes the
+  current branch of the clone Source Control has selected, or the only one, or
+  the one the member picks; a branch pushed for the first time gets its
+  upstream on `origin`. When the host prints a pull-request link (GitHub,
+  GitLab, Bitbucket, Gitea do), the notification offers **Open pull request**.
+
+The routes are `GET /studio-desktop/git/repositories?root=`,
+`POST /studio-desktop/git/sync` and `POST /studio-desktop/git/push`; like the
+rest of `/studio-desktop/*` they exist only when a Studio is configured.
+Credentials are git's: a clone's config names the token broker's helper, and
+pushing to a Studio remote works only while signed in. A session keeps its
+own Sources, Sync and Operations panel (View → Operations); it has no ribbon
+Push.
+
 ## Building (Gearbox) on the desktop
 
 Building mode is the Gearbox port (`theia/gearbox-studio`, whose README says
