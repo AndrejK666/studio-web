@@ -27,6 +27,13 @@ export class StudioExplorerFilter extends FileNavigatorFilter implements Fronten
     protected readonly directoryMarkdownCache = new Map<string, Promise<boolean>>();
     protected readonly toDispose = new DisposableCollection();
 
+    /**
+     * This filter applies the project's Files shown (in the documents
+     * presentation only), so product-ext's `patchNavigatorFilter` must not
+     * apply it again in every presentation.
+     */
+    readonly appliesFilesShown = true;
+
     constructor(
         @inject(FileNavigatorPreferences) preferences: FileNavigatorPreferences,
         @inject(FileService) protected readonly fileService: FileService,
