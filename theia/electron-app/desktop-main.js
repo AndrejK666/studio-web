@@ -63,14 +63,18 @@ function fetchedAssistants() {
 }
 
 /*
- * The Constructor Studio CLI (theia/studio-cli) arrives the same way, as one
- * more pin of that manifest. The studio extension runs `cfs` from the runtime
- * the pin unpacks into, once it is there (studio/src/node/cfs-command.ts), so
- * the folder is named even before the first fetch.
+ * The Constructor Studio CLI (theia/studio-cli) and the gearbox engine
+ * (theia/gearbox-engine) arrive the same way, as pins of that manifest. Their
+ * users run what the pin unpacks into, once it is there -- the studio
+ * extension's `cfs` (studio/src/node/cfs-command.ts), gearbox-studio's engine,
+ * whose path it reads each time it starts one -- so the folder is named even
+ * before the first fetch.
  */
 const STUDIO_CLI = 'constructorfabric.studio-cli';
+const GEARBOX_ENGINE = 'constructorfabric.gearbox-engine';
 
-function studioCliRuntime() {
+/** `<plugins>/<id>-<version>/<id>/extension` for the manifest's pin of `id`. */
+function pinnedExtension(id) {
     let pins;
     try {
         pins = JSON.parse(fs.readFileSync(assistantsManifest, 'utf8')).assistants;
@@ -78,8 +82,18 @@ function studioCliRuntime() {
         return undefined;
     }
     const pin = (Array.isArray(pins) ? pins : [])
-        .find(p => typeof p?.id === 'string' && p.id.toLowerCase() === STUDIO_CLI && typeof p?.version === 'string');
-    return pin ? path.join(plugins, `${STUDIO_CLI}-${pin.version}`, STUDIO_CLI, 'extension', 'runtime') : undefined;
+        .find(p => typeof p?.id === 'string' && p.id.toLowerCase() === id && typeof p?.version === 'string');
+    return pin ? path.join(plugins, `${id}-${pin.version}`, id, 'extension') : undefined;
+}
+
+function studioCliRuntime() {
+    const extension = pinnedExtension(STUDIO_CLI);
+    return extension && path.join(extension, 'runtime');
+}
+
+function fetchedEngine() {
+    const extension = pinnedExtension(GEARBOX_ENGINE);
+    return extension && path.join(extension, 'bin', process.platform === 'win32' ? 'gearbox.exe' : 'gearbox');
 }
 
 const defaults = {
@@ -102,9 +116,10 @@ const defaults = {
     STUDIO_DESKTOP_ASSISTANTS: fs.existsSync(assistantsManifest) ? assistantsManifest : undefined,
     STUDIO_DESKTOP_PLUGINS: plugins,
     STUDIO_DESKTOP_VSIX_DIRS: path.dirname(process.execPath),
-    // The gearbox engine (gear catalogue, products, `.gdl`), when the build
-    // carries one; the session image has it on PATH instead.
-    GEARBOX_ENGINE: shippedEngine(),
+    // The gearbox engine (gear catalogue, products, `.gdl`): the one a build
+    // carries, else the one the manifest has the app fetch; the session image
+    // has it on PATH instead.
+    GEARBOX_ENGINE: shippedEngine() ?? fetchedEngine(),
     // `cfs` from the Constructor Studio CLI extension; the session image has
     // it on PATH instead.
     STUDIO_CFS_RUNTIME: studioCliRuntime(),

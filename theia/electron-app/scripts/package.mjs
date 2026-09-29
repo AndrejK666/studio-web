@@ -17,9 +17,9 @@
 // Either form takes `--gearbox <path to a gearbox executable>`: the engine
 // behind the gear catalogue, products and `.gdl`, shipped as
 // resources/bin/gearbox[.exe], where desktop-main.js points GEARBOX_ENGINE.
-// Without it the app still builds, and its catalogue says no engine is
-// installed. The desktop workflow builds one at the revision theia/Dockerfile
-// pins for the session image.
+// Without it the app fetches the engine on first start, when its assistants
+// manifest pins one (`assistants-manifest.mjs --gearbox-engine`, which the
+// desktop workflow uses); the flag is for a build that should carry its own.
 //
 // Run it after `theia build`. The Theia bundle in lib/ is self-contained — its
 // only external is `electron` — so the app is staged without node_modules:
@@ -61,7 +61,7 @@ if (values.gearbox && !existsSync(values.gearbox)) {
     process.exit(2);
 }
 if (!values.gearbox) {
-    console.warn('no --gearbox: this build ships no engine, so its gear catalogue will not load');
+    console.warn('no --gearbox: the app fetches the engine on first start if its manifest pins one');
 }
 // Claude Code and Codex are fetched by the app on first need (#480); the
 // installer carries only their manifest (scripts/assistants-manifest.mjs).

@@ -1,0 +1,118 @@
+name: Gearbox engine extension
+
+# The gearbox engine (gear catalogue, products, `.gdl`) as an extension a
+# desktop fetches on first start (theia/gearbox-engine), instead of inside the
+# installer. Built at the revision and with the Rust the session image uses:
+# theia/Dockerfile's `gearbox` stage is the one pin. The repository publishes
+# no release, so it is built from source.
+#
+# Each version -- theia/gearbox-engine/package.json's version plus the
+# revision, e.g. 0.1.0-3b64969 -- is published once, into its own release
+# `gearbox-engine-v<version>`, and never replaced: installed apps pin its
+# SHA-256. A new revision in the Dockerfile is a new release; a change to the
+# packaging alone needs that package.json's version raised.
+#
+# A pull request builds it and keeps the VSIX as an artifact. A push publishes
+# the version when its release is missing -- on the upstream that is main; a
+# fork publishes into its own releases, which is how a fork's desktop build
+# gets an engine to fetch.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - theia/Dockerfile
+      - theia/gearbox-engine/**
+      - .github/workflows/gearbox-engine.yml
+  push:
+    paths:
+      - theia/Dockerfile
+      - theia/gearbox-engine/**
+      - .github/workflows/gearbox-engine.yml
+
+concurrency:
+  group: gearbox-engine-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # windows-2022 for the same reason as desktop-windows.yml: its toolchain.
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A Windows checkout may carry CRLF; a stray CR would end up in the ref.
+          pin() { tr -d '\r' < theia/Dockerfile | sed -n "$1"; }
+          repo=$(pin 's/^ARG STUDIO_GEARBOX_REPO=//p')
+          ref=$(pin 's/^ARG STUDIO_GEARBOX_REF=//p')
+          rust=$(pin 's/^FROM rust:\([0-9.]*\)-.* AS gearbox$/\1/p')
+          if [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$rust" ]; then
+            echo "::error::theia/Dockerfile no longer pins the gearbox engine the way this step reads it"
+            exit 1
+          fi
+          version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
+          {
+            echo "GEARBOX_REPO=$repo"
+            echo "GEARBOX_REF=$ref"
+            echo "GEARBOX_RUST=$rust"
+            echo "ENGINE_VERSION=$version"
+            echo "ENGINE_TAG=gearbox-engine-v$version"
+          } >> "$GITHUB_ENV"
+      - name: Already published?
+        id: published
+        shell: bash
+        run: |
+          if gh release view "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "$ENGINE_TAG is already published; nothing to build"
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/cache@v4
+        if: steps.published.outputs.done != 'true'
+        with:
+          path: |
+            gearbox-src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: gearbox-windows-${{ env.GEARBOX_RUST }}-${{ env.GEARBOX_REF }}
+      - name: Build the engine
+        if: steps.published.outputs.done != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gearbox-src && cd gearbox-src
+          [ -d .git ] || git init -q .
+          git fetch -q --depth 1 "$GEARBOX_REPO" "$GEARBOX_REF"
+          git checkout -q --force FETCH_HEAD
+          rustup toolchain install "$GEARBOX_RUST" --profile minimal
+          CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
+            cargo "+$GEARBOX_RUST" build --release --locked -p gearbox-cli
+          ./target/release/gearbox.exe --version
+      - name: Pack
+        if: steps.published.outputs.done != 'true'
+        shell: bash
+        run: python theia/gearbox-engine/build_vsix.py --engine gearbox-src/target/release/gearbox.exe --ref "$GEARBOX_REF" --target win32-x64 --out dist
+      - uses: actions/upload-artifact@v6
+        if: steps.published.outputs.done != 'true'
+        with:
+          name: gearbox-engine-${{ env.ENGINE_VERSION }}
+          path: dist/*.vsix
+          if-no-files-found: error
+      - name: Publish
+        if: steps.published.outputs.done != 'true' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$ENGINE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "Gearbox engine $ENGINE_VERSION" \
+            --notes "The gearbox engine at $GEARBOX_REF, as the extension a desktop Studio fetches. Not an installer to download by hand." \
+            dist/*.vsix
