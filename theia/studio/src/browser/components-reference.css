@@ -251,3 +251,21 @@
     gap: 6px;
     padding: 2px 0;
 }
+
+.scr-chip:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.scr-chip-cat {
+    border-style: dashed;
+}
+
+.scr-cat {
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-excluded {
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-editorWarning-foreground);
+}

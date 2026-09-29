@@ -10,7 +10,10 @@ import {
     ReferenceEntry,
     activityText,
     addableGears,
+    categoryCounts,
     countText,
+    isComponent,
+    kindLabel,
     emptyMessage,
     filterEntries,
     kindCounts,
@@ -50,7 +53,10 @@ export class ComponentsReferenceWidget extends ReactWidget {
     protected state: State = { kind: 'loading' };
     protected query = '';
     protected kinds = new Set<string>();
+    protected categories = new Set<string>();
     protected addableOnly = false;
+    /** Show what is not a component (config, test support, docs, templates, examples, older copies). */
+    protected showExcluded = false;
     protected selected: string | undefined;
     /** The last "Add to product" outcome, per engine gear id. */
     protected addNotes = new Map<string, string>();
@@ -109,9 +115,17 @@ export class ComponentsReferenceWidget extends ReactWidget {
             );
         }
         const reference = this.state.reference;
-        const shown = filterEntries(reference.items, { query: this.query, kinds: this.kinds, addableOnly: this.addableOnly });
+        const shown = filterEntries(reference.items, {
+            query: this.query,
+            kinds: this.kinds,
+            categories: this.categories,
+            addableOnly: this.addableOnly,
+            excluded: this.showExcluded,
+        });
+        const components = reference.items.filter(isComponent);
+        const excludedCount = reference.items.length - components.length;
         const selected = shown.find(e => e.name === this.selected) ?? reference.items.find(e => e.name === this.selected);
-        const empty = emptyMessage(reference.items.length, shown.length);
+        const empty = emptyMessage(this.showExcluded ? excludedCount : components.length, shown.length);
         return (
             <div className='scr-root'>
                 <div className='scr-list'>
@@ -134,11 +148,28 @@ export class ComponentsReferenceWidget extends ReactWidget {
                                 key={kind}
                                 className={`scr-chip${this.kinds.has(kind) ? ' on' : ''}`}
                                 aria-pressed={this.kinds.has(kind)}
-                                onClick={() => { this.toggleKind(kind); }}
+                                disabled={this.showExcluded}
+                                onClick={() => { this.toggle(this.kinds, kind); }}
                             >
-                                {kind} <span className='scr-count'>{count}</span>
+                                {kindLabel(kind)} <span className='scr-count'>{count}</span>
                             </button>
                         ))}
+                    </div>
+                    <div className='scr-chips' role='group' aria-label='Filter by category'>
+                        {categoryCounts(reference.items).map(({ category, count }) => {
+                            const key = category ?? '';
+                            return (
+                                <button
+                                    key={key || '(none)'}
+                                    className={`scr-chip scr-chip-cat${this.categories.has(key) ? ' on' : ''}`}
+                                    aria-pressed={this.categories.has(key)}
+                                    disabled={this.showExcluded}
+                                    onClick={() => { this.toggle(this.categories, key); }}
+                                >
+                                    {category ?? 'no category'} <span className='scr-count'>{count}</span>
+                                </button>
+                            );
+                        })}
                         <label className='scr-addable'>
                             <input
                                 type='checkbox'
@@ -147,6 +178,16 @@ export class ComponentsReferenceWidget extends ReactWidget {
                             />
                             only gears the engine can add
                         </label>
+                        {excludedCount > 0 && (
+                            <label className='scr-addable' title='Configs, test support, docs, templates, examples and older copies of a component'>
+                                <input
+                                    type='checkbox'
+                                    checked={this.showExcluded}
+                                    onChange={e => { this.showExcluded = e.currentTarget.checked; this.update(); }}
+                                />
+                                not components ({excludedCount})
+                            </label>
+                        )}
                     </div>
                     <div className='scr-notes'>
                         {reference.sources.gearbox_corpus
@@ -163,7 +204,11 @@ export class ComponentsReferenceWidget extends ReactWidget {
                                 {shown.map(e => this.renderRow(e, reference))}
                             </ul>
                         )}
-                    <div className='scr-foot'>{shown.length} of {reference.items.length} components</div>
+                    <div className='scr-foot'>
+                        {this.showExcluded
+                            ? `${shown.length} of ${excludedCount} entries that are not components`
+                            : `${shown.length} of ${components.length} components`}
+                    </div>
                 </div>
                 <div className='scr-detail'>
                     {selected ? this.renderDetail(selected, reference) : <div className='scr-state'>Pick a component to read about it.</div>}
@@ -172,11 +217,11 @@ export class ComponentsReferenceWidget extends ReactWidget {
         );
     }
 
-    protected toggleKind(kind: string): void {
-        if (this.kinds.has(kind)) {
-            this.kinds.delete(kind);
+    protected toggle(set: Set<string>, key: string): void {
+        if (set.has(key)) {
+            set.delete(key);
         } else {
-            this.kinds.add(kind);
+            set.add(key);
         }
         this.update();
     }
@@ -194,9 +239,11 @@ export class ComponentsReferenceWidget extends ReactWidget {
             >
                 <div className='scr-row-head'>
                     <span className='scr-name'>{e.title ?? e.name}</span>
-                    <span className='scr-kind'>{e.kind}</span>
+                    <span className='scr-kind' title={e.kind_reason}>{kindLabel(e.kind)}</span>
+                    {e.category && <span className='scr-kind scr-cat' title={e.category_reason ?? undefined}>{e.category}</span>}
                     {e.engine.length > 0 && <span className='scr-engine' title='The Gearbox engine describes it'>gear.gdl</span>}
                 </div>
+                {e.excluded_reason && <div className='scr-excluded'>{e.excluded_reason}</div>}
                 {e.title && <div className='scr-sub'>{e.name}</div>}
                 {e.description && <div className='scr-purpose'>{e.description}</div>}
                 <div className='scr-meta'>
@@ -218,7 +265,14 @@ export class ComponentsReferenceWidget extends ReactWidget {
                 {e.title && <div className='scr-sub'>{e.name}</div>}
                 <p className='scr-purpose'>{e.description ?? 'No purpose recorded.'}</p>
                 <dl className='scr-facts'>
-                    <dt>Type</dt><dd>{e.kind}{e.category ? ` · ${e.category}` : ''}</dd>
+                    <dt>Type</dt><dd>{kindLabel(e.kind)}{e.kind_reason ? <div className='scr-muted'>{e.kind_reason}</div> : null}</dd>
+                    <dt>Category</dt>
+                    <dd>{e.category ?? 'none'}{e.category_reason ? <span className='scr-muted'> — from {e.category_reason}</span> : null}
+                        {e.source_categories && e.source_categories.length > 0
+                            ? <div className='scr-muted'>as the sources tag it: {e.source_categories.join(', ')}</div>
+                            : null}</dd>
+                    {e.excluded_reason && <><dt>Not listed</dt><dd>{e.excluded_reason}</dd></>}
+                    {e.aka && e.aka.length > 0 && <><dt>Also stored as</dt><dd>{e.aka.join(', ')}</dd></>}
                     <dt>Status</dt><dd>{e.status ?? '—'}</dd>
                     <dt>Release</dt><dd>{releaseText(e)}</dd>
                     <dt>Downloads</dt>

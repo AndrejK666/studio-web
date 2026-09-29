@@ -1,4 +1,6 @@
 import {
+    categoryCounts,
+    kindLabel,
     ReferenceEntry,
     ReferenceSources,
     activityText,
@@ -45,6 +47,7 @@ function entry(over: Partial<ReferenceEntry>): ReferenceEntry {
 
 const accountManagement = entry({
     name: 'cf-gears-account-management',
+    category: 'oss',
     title: 'Account Management',
     description: 'Reference multi-tenant account management',
     version: '0.10.0',
@@ -62,8 +65,12 @@ const accountManagement = entry({
     }],
 });
 const sdk = entry({ name: 'cf-gears-account-management-sdk', kind: 'sdk', version: '0.7.5', version_source: 'crates.io' });
-const uiKit = entry({ name: '@gears-frontx/ui-kit', kind: 'frontx', category: 'hai3', version: '0.4.0', version_source: 'declared' });
+const uiKit = entry({ name: '@gears-frontx/ui-kit', kind: 'frontend-library', category: null, version: '0.4.0', version_source: 'declared' });
 const draft = entry({ name: 'cf-gears-approval-service', status: 'draft' });
+const eslint = entry({
+    name: '@gears-frontx/eslint-config', kind: 'config', component: false,
+    excluded_reason: 'not a component (config): an internal package at internal/eslint-config',
+});
 
 const measured: ReferenceSources = {
     gearbox_corpus: 'MikeFalcon77/gears-rust@feature/gearbox (a0a42ce)',
@@ -76,21 +83,40 @@ const measured: ReferenceSources = {
 const unmeasured: ReferenceSources = { ...measured, activity_days: null, activity_problem: 'studio-insight is not configured' };
 
 describe('components reference model', () => {
-    const all = [accountManagement, sdk, uiKit, draft];
+    const all = [accountManagement, sdk, uiKit, draft, eslint];
 
-    it('counts kinds in the order the filter offers them', () => {
+    it('counts component kinds in the order the filter offers them, leaving non-components out', () => {
         expect(kindCounts(all)).toEqual([
             { kind: 'gear', count: 2 },
             { kind: 'sdk', count: 1 },
-            { kind: 'frontx', count: 1 },
+            { kind: 'frontend-library', count: 1 },
         ]);
+        expect(kindLabel('frontend-library')).toBe('frontend library');
+        expect(kindLabel('tool')).toBe('tool / CLI');
+    });
+
+    it('counts categories of components, unfiled last', () => {
+        expect(categoryCounts(all)).toEqual([
+            { category: 'oss', count: 1 },
+            { category: null, count: 3 },
+        ]);
+    });
+
+    it('shows what is not a component only behind its own filter', () => {
+        const none = new Set<string>();
+        expect(filterEntries(all, { query: '', kinds: none, addableOnly: false }).map(e => e.name))
+            .not.toContain('@gears-frontx/eslint-config');
+        expect(filterEntries(all, { query: '', kinds: none, addableOnly: false, excluded: true }).map(e => e.name))
+            .toEqual(['@gears-frontx/eslint-config']);
+        expect(filterEntries(all, { query: '', kinds: none, addableOnly: false, categories: new Set(['']) }).map(e => e.name))
+            .toEqual(['cf-gears-account-management-sdk', '@gears-frontx/ui-kit', 'cf-gears-approval-service']);
     });
 
     it('finds a component by its engine id and filters by kind', () => {
         const none = new Set<string>();
         expect(filterEntries(all, { query: 'account-management', kinds: none, addableOnly: false }).map(e => e.name))
             .toEqual(['cf-gears-account-management', 'cf-gears-account-management-sdk']);
-        expect(filterEntries(all, { query: '', kinds: new Set(['frontx']), addableOnly: false }).map(e => e.name))
+        expect(filterEntries(all, { query: '', kinds: new Set(['frontend-library']), addableOnly: false }).map(e => e.name))
             .toEqual(['@gears-frontx/ui-kit']);
         expect(filterEntries(all, { query: '', kinds: none, addableOnly: true }).map(e => e.name))
             .toEqual(['cf-gears-account-management']);
@@ -133,7 +159,7 @@ describe('components reference model', () => {
             asked.push(path);
             return answer(200, { items: [accountManagement], total: 1, truncated: false, sources: measured });
         });
-        expect(asked).toEqual(['/studio-components-catalog/v1/reference?days=90']);
+        expect(asked).toEqual(['/studio-components-catalog/v1/reference?days=90&include=all']);
         expect(ok.kind === 'ok' && ok.reference.items.length).toBe(1);
 
         const refused = await loadComponentsReference(async () => answer(401, {}));

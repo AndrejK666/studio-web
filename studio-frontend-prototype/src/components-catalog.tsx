@@ -370,6 +370,41 @@ function kitAsNode(kit: StudioKit): CatalogNode {
   };
 }
 
+/* ── what a component is, as the backend decides it ────────────────────────
+ *
+ * `/components` lays the reference's classification onto each node
+ * (`components_catalog/taxonomy.rs`): `component_kind` from one vocabulary,
+ * `component_category` from the platform's own categories, and
+ * `component_excluded` — the reason — for what is not a component (configs,
+ * test support, docs, templates, examples). Nodes that are older copies of
+ * another never arrive. A backend older than that sends none of the fields,
+ * and the stored `kind` is shown as before. */
+export const COMPONENT_KIND_LABELS: Record<string, string> = {
+  gear: "gear",
+  plugin: "plugin",
+  sdk: "SDK",
+  library: "library",
+  "micro-frontend": "micro-frontend",
+  "frontend-library": "frontend library",
+  tool: "tool / CLI",
+  kit: "kit",
+  config: "config",
+  "test-support": "test support",
+  docs: "docs",
+  template: "template",
+  example: "example",
+};
+/** The filter value that shows what is not a component instead. */
+export const NOT_COMPONENTS = "not-components";
+
+function componentKind(g: CatalogNode): string {
+  const k = g.value.component_kind ?? g.value.kind ?? (g.type_id === KIT_TYPE ? "kit" : "gear");
+  return String(k);
+}
+function componentExcluded(g: CatalogNode): string | null {
+  return typeof g.value.component_excluded === "string" ? g.value.component_excluded : null;
+}
+
 export function ComponentsCatalog({
   token,
   tenantId,
@@ -654,6 +689,12 @@ export function ComponentsCatalog({
   };
 
   const nameOf = (g: CatalogNode) => String(g.value.name ?? g.instance_id);
+  /* The platform category the backend decided; the reconciled field only for
+     a backend that does not classify yet. */
+  const categoryOf = (g: CatalogNode): string =>
+    "component_kind" in g.value
+      ? String(g.value.component_category ?? "")
+      : String(resolved[nameOf(g)]?.category ?? "");
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -666,9 +707,11 @@ export function ComponentsCatalog({
       // place is what keeps the two agreeing.
       .filter((g) => componentTypes === null || componentTypes.has(g.type_id))
       .filter((g) => !typeFilter || g.type_id === typeFilter)
-      .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
-      .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
-      .filter((g) => !cat || (resolved[nameOf(g)]?.category ?? "").toLowerCase().includes(cat))
+      // What is not a component is shown only when asked for, and then alone.
+      .filter((g) => (kindFilter === NOT_COMPONENTS) === (componentExcluded(g) !== null))
+      .filter((g) => !kindFilter || kindFilter === NOT_COMPONENTS || componentKind(g) === kindFilter)
+      .filter((g) => !hideSdk || componentKind(g) !== "sdk")
+      .filter((g) => !cat || categoryOf(g).toLowerCase().includes(cat))
       .filter((g) => {
         if (!needle) return true;
         const name = String(g.value.name ?? "").toLowerCase();
@@ -690,7 +733,8 @@ export function ComponentsCatalog({
     if (!onCategories) return;
     const set = new Set<string>();
     for (const g of gears ?? []) {
-      const c = (resolved[nameOf(g)]?.category ?? "").trim();
+      if (componentExcluded(g) !== null) continue;
+      const c = categoryOf(g).trim();
       if (c) set.add(c);
     }
     onCategories(Array.from(set).sort((a, b) => a.localeCompare(b)));
@@ -1166,8 +1210,13 @@ function GearListRow({
      ("Web programming"), a gear.toml domain ("bss") or, for a FrontX package,
      its first npm keyword ("hai3", "eslint") -- three vocabularies in one
      column that claimed to be a fourth. The category stays, under the type. */
-  const kind = String(gear.value.kind ?? (gear.type_id === KIT_TYPE ? "kit" : "gear"));
-  const category = values.category?.b ?? null;
+  const kind = componentKind(gear);
+  const classified = "component_kind" in gear.value;
+  const category = classified
+    ? (typeof gear.value.component_category === "string" ? gear.value.component_category : null)
+    : values.category?.b ?? null;
+  const kindReason = typeof gear.value.component_kind_reason === "string" ? gear.value.component_kind_reason : undefined;
+  const excluded = componentExcluded(gear);
   const released = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
   /* A FrontX package is not on crates.io, so "Not published" was true and
      useless: the version its package.json declares is the one people use. */
@@ -1199,7 +1248,9 @@ function GearListRow({
         )}
       </td>
       <td>
-        <span className="pill">{kind}</span>
+        <span className="pill" title={excluded ?? kindReason}>
+          {COMPONENT_KIND_LABELS[kind] ?? kind}
+        </span>
         {category && category !== kind && <div className="gcat-sub">{category}</div>}
       </td>
       <td>
