@@ -52,10 +52,14 @@ pub trait TheiaEventSink: Send + Sync {
 /// The publisher is resolved lazily rather than at construction: gear init
 /// order is not guaranteed, and with no channel available this degrades to the
 /// structured trace it has always emitted.
+// The broker sink replaces this one under `theia-event-broker`
+// (`gear.rs` picks by feature), which leaves it unconstructed there.
+#[cfg_attr(feature = "theia-event-broker", allow(dead_code))]
 pub struct StudioEventsSink {
     hub: std::sync::Arc<toolkit::client_hub::ClientHub>,
 }
 
+#[cfg_attr(feature = "theia-event-broker", allow(dead_code))]
 impl StudioEventsSink {
     pub fn new(hub: std::sync::Arc<toolkit::client_hub::ClientHub>) -> Self {
         Self { hub }
@@ -144,9 +148,13 @@ mod broker {
         event: serde_json::Value,
     }
 
+    // event-broker-sdk 0.2.6 moved the topic and the partition key out of the
+    // producer and into the event type's GTS traits: the type registered as
+    // `EB_TYPE_ID` names its topic (`EB_TOPIC`) and keys partitions on the
+    // subject -- the workspace -- which keeps a workspace's events in order.
+    // Both identifiers are still placeholders pending that registration.
     impl TypedEvent for TheiaForwardedTypedEvent {
         const TYPE_ID: &'static str = EB_TYPE_ID;
-        const TOPIC: &'static str = EB_TOPIC;
         const SUBJECT_TYPE: &'static str = EB_SUBJECT_TYPE;
         const SOURCE: &'static str = "studio-theia";
 
@@ -156,11 +164,6 @@ mod broker {
 
         fn tenant_id(&self) -> Option<Uuid> {
             Some(self.tenant_id)
-        }
-
-        fn partition_key(&self) -> Option<Cow<'_, str>> {
-            // Per-workspace ordering: a workspace's events share one partition.
-            Some(Cow::Owned(self.workspace_id.to_string()))
         }
     }
 

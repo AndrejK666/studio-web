@@ -372,10 +372,12 @@ impl CatalogSink for GraphSink {
                 schema,
             })
             .collect();
-        self.client
-            .register_types(ctx, batch)
-            .await
-            .map_err(|e| anyhow!("register catalog types: {e}"))?;
+        self.client.register_types(ctx, batch).await.map_err(|e| {
+            anyhow!(
+                "register catalog types: {}",
+                crate::graph_error::explain(&e)
+            )
+        })?;
         Ok(())
     }
 
@@ -465,7 +467,12 @@ impl CatalogSink for GraphSink {
                     },
                 )
                 .await
-                .map_err(|e| anyhow!("graph-storage edge ingest: {e}"))?;
+                .map_err(|e| {
+                    anyhow!(
+                        "graph-storage edge ingest: {}",
+                        crate::graph_error::explain(&e)
+                    )
+                })?;
         }
         Ok(())
     }

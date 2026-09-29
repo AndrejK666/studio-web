@@ -414,6 +414,38 @@ mod tests {
         ("k8s.yaml", include_str!("../config/k8s.yaml")),
     ];
 
+    /// graph-storage validates a type's traits against what its base
+    /// declares, and the edge base declares none -- so an edge type carrying
+    /// any `x-gts-traits`, even an empty `full_text_search`, is refused, and
+    /// the refusal takes the whole registration batch with it. The compiler
+    /// cannot see this; connectors' edges broke every repository sync exactly
+    /// that way when the gear became strict (#512, S-12).
+    #[test]
+    fn no_edge_type_declares_traits() {
+        let offenders: Vec<String> = schemas()
+            .into_iter()
+            .filter(|e| e["registry"] == GRAPH_STORAGE)
+            .filter(|e| {
+                e["type_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("gts.cf.core.graph.edge.v1~"))
+            })
+            .filter(|e| e["schema"].get("x-gts-traits").is_some())
+            .map(|e| format!("{} ({})", e["type_id"], e["gear"]))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "edge types with traits: {offenders:?}"
+        );
+        // And the check is not vacuous: there are edge types to look at.
+        assert!(
+            schemas().iter().any(|e| e["type_id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("gts.cf.core.graph.edge.v1~"))),
+            "no edge types in the inventory -- the prefix above is stale"
+        );
+    }
+
     #[test]
     fn snapshot_matches_the_committed_inventory() -> anyhow::Result<()> {
         let committed = include_str!("../docs/gts-types.json");
