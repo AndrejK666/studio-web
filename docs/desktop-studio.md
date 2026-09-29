@@ -102,6 +102,15 @@ the leases it had. It names the installation and nothing else. It is not a
 credential: every lease call is authorized by the member's token, and a copied
 id only makes two machines look like one in the portal's list.
 
+Gearbox's Generate, Build and Run write inside the product's generated tree,
+`.gearbox/<product>/<profile>/` in the clone: the tree the engine generates,
+cargo's build output, and `config/<application>.local.yaml`, the run
+configuration with a Postgres section whose password is `${GEARS_PG_PASSWORD}`
+(a reference, not a value). **Start a local Postgres** creates a docker
+container `gbx-pg-<product>` on `127.0.0.1:5432` with the local development
+password `gears`, the value the Run terminal gets when `GEARS_PG_PASSWORD` is
+unset; it holds the product's development data and nothing of Studio's.
+
 One more, when the member opens an Orca agent's terminal: the IDE streams it
 over the Orca runtime's WebSocket, which takes a paired device. A session is
 paired when Orca starts in it; on the desktop the Orca app is already running,
