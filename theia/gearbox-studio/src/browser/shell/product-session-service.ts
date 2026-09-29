@@ -230,6 +230,37 @@ export class ProductSessionService {
   }
 
   /**
+   * `failStage`, and put the engine back on the session this open replaced.
+   *
+   * **Because a refused open used to take the whole application with it.** By the
+   * time a step refuses, the engine has already been re-initialized for this
+   * product -- its folder as the workspace, then its declared roots -- and nothing
+   * undid that. A product whose only source did not exist left the engine
+   * disconnected with that reason, and every later bare `load()` re-used the same
+   * session: Start said "Engine disconnected", New Product, New Gear and Continue
+   * were disabled, and Retry repeated the failure. The only way out anybody found
+   * was opening some other product. Measured, with a clone whose relative source
+   * pointed nowhere.
+   *
+   * Not for the `resolve` step: by then this product's catalogue loaded, and the
+   * panel shows the product with its error, which is the state to be in.
+   */
+  protected async failAndRestore(
+    stage: OpeningStage,
+    reason: string,
+    generation: number,
+    before: StudioSession | undefined,
+  ): Promise<false> {
+    this.failStage(stage, reason, generation);
+    // A different open has taken over: its session is the one that should stand.
+    if (!this.current(generation)) return false;
+    await (before === undefined
+      ? this.catalogue.resetToBootSession()
+      : this.catalogue.load(before));
+    return false;
+  }
+
+  /**
    * Stop the open at the step that refused, and say why.
    *
    * The message still goes to the message service -- a refusal a person did not
@@ -463,6 +494,10 @@ export class ProductSessionService {
   protected async doOpen(ref: ProductRef, generation: number): Promise<boolean> {
     const directory = parentOf(ref.path);
     const workspace = this.workspaceFor(ref.path, directory);
+    // What to go back to if this open stops before it has a catalogue of its own:
+    // the previous product's session, or the boot one when there was none. See
+    // `failAndRestore`.
+    const before = this.catalogue.currentSession();
 
     if (this.gears.current !== undefined) {
       await this.gears.close();
@@ -495,10 +530,13 @@ export class ProductSessionService {
     const notStarted = await this.catalogue.prepare({ roots: open.length > 0 ? open : [directory], workspace });
     if (!this.current(generation)) return false;
     if (notStarted !== undefined) {
-      return this.failStage(
+      // Upstream c30d111: a refused open puts the engine back on the session it
+      // replaced, rather than leaving it on a folder nobody kept.
+      return this.failAndRestore(
         "workspace",
         `The engine could not be started on ${ref.label}'s folder: ${notStarted}`,
         generation,
+        before,
       );
     }
 
@@ -554,7 +592,7 @@ export class ProductSessionService {
       this.catalogue.current,
       `${ref.label}'s gears could not be loaded from ${roots.join(", ")}`,
     );
-    if (!loaded.ok) return this.failStage("catalogue", loaded.reason, generation);
+    if (!loaded.ok) return this.failAndRestore("catalogue", loaded.reason, generation, before);
 
     this.enterStage("resolve", generation);
     // **The last checkpoint, immediately before the answer is installed.** Every

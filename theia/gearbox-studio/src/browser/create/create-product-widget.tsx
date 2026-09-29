@@ -22,6 +22,7 @@ import { repaintNow } from "../widgets/repaint";
 import { EngineConnectionService } from "../shell/engine-connection-service";
 import { ProductSessionService } from "../shell/product-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
+import { volumeOf } from "./paths";
 import { destinationAfterIdChange, pendingPreview, suggestedProductPath } from "./destination";
 import { corpusOffer, corpusSourceDecl, type CorpusCopy, type CorpusOffer } from "./corpus-source";
 
@@ -124,6 +125,17 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   protected destinationFollowsId = false;
   protected preview = "";
   protected previewTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The preview request the pane is waiting for, and whether it is still out.
+   *
+   * **Create is only as current as the preview beside it.** The pane is refreshed
+   * on a debounce plus an engine round trip, and for that window it still showed
+   * the previous answer -- "Choose a destination" after a destination had been
+   * typed -- beside a live Create. Every request takes a token; only the newest
+   * answer is installed, and `previewPending` holds Create until it has been.
+   */
+  protected previewToken = 0;
+  protected previewPending = false;
   protected roots: string[] = [];
   protected selectedRoots = new Set<string>();
   protected note: string | undefined;
@@ -279,6 +291,20 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
    * destination of `products//product.gdl`; a single space produced `id = " "`
    * and a product that opened and resolved with no diagnostics at all.
    */
+  /**
+   * Why the destination cannot be used, or `undefined`.
+   *
+   * **A relative path is refused here and by the engine.** It used to be joined
+   * to the engine's working directory -- `ide/browser-app`, wherever the backend
+   * was started -- so `relative/dir/product.gdl` previewed cleanly, with
+   * absolute sources, and would have written inside the IDE's own package.
+   */
+  protected destinationRefusal(): string | undefined {
+    const path = this.productPath();
+    if (path === "" || volumeOf(path) !== undefined) return undefined;
+    return `\`${path}\` is not an absolute path. Choose a folder, or give its full path.`;
+  }
+
   protected idRefusal(): string | undefined {
     const id = this.productId.trim();
     if (id === "") return "A product needs an id. Something like `payments-demo`.";
@@ -397,12 +423,35 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     // when the engine's dry run finally answers -- that can take a while
     // behind a catalogue load.
     this.preview = pendingPreview(this.preview, this.productPath(), this.suggestedProductPath());
+    const token = this.beginPreview();
     // Sent, not posted -- see `repaintNow`. `update()` posted the repaint, and
     // React put each controlled field back before it landed, so real typing
     // lost its keystrokes.
     repaintNow(this);
     if (this.previewTimer !== undefined) clearTimeout(this.previewTimer);
-    this.previewTimer = setTimeout(() => void this.refreshPreview(), 200);
+    this.previewTimer = setTimeout(() => void this.refreshPreview(token), 200);
+  }
+
+  /** Start a preview request: every earlier answer is now stale. */
+  protected beginPreview(): number {
+    this.previewToken += 1;
+    this.previewPending = true;
+    return this.previewToken;
+  }
+
+  /**
+   * Install `text` as the preview if `token` is still the newest request.
+   *
+   * An older answer arriving late is dropped rather than shown: the pane showed
+   * whichever request *replied* last, which is the trap ADR-0013 records for the
+   * gear wizard, and here it also decided whether Create was live.
+   */
+  protected settlePreview(token: number, text: string): boolean {
+    if (token !== this.previewToken) return false;
+    this.preview = text;
+    this.previewPending = false;
+    this.update();
+    return true;
   }
 
   /**
@@ -456,6 +505,11 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
       profileKind: this.profileKind,
       profileId: this.profileId,
       cloneFrom,
+      // **Local only.** A local clone's paths mean something from the file's own
+      // folder, so they are re-based to keep that meaning; a git clone is read
+      // out of a temporary checkout whose folder means nothing, and its paths are
+      // kept as the repository wrote them.
+      rebaseRelativePaths: this.mode === "clone-local",
       dryRun,
     };
   }
@@ -527,23 +581,35 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   }
 
   /** Dry-run the create against the candidate now chosen, and show the text. */
-  protected async previewChosenCandidate(): Promise<void> {
-    if (this.clone.status !== "reviewing" || this.clone.chosen === "") return;
+  protected async previewChosenCandidate(previewToken = this.beginPreview()): Promise<void> {
+    if (this.clone.status !== "reviewing" || this.clone.chosen === "") {
+      this.settlePreview(previewToken, this.preview);
+      return;
+    }
     const token = this.cloneToken;
     try {
       const from = await this.service.selectClonedProduct(this.clone.attemptId, this.clone.chosen);
       const dry = await this.service.createProduct({
         ...this.createParams(from, true),
       });
-      if (token !== this.cloneToken) return;
-      this.preview = dry.after;
+      // A clone abandoned meanwhile: its answer is not shown, but the request
+      // still has to end, or a re-review that then fails leaves the pane dimmed
+      // as "updating" for good. `settlePreview` is a no-op if a newer one exists.
+      if (token !== this.cloneToken) {
+        this.settlePreview(previewToken, this.preview);
+        return;
+      }
+      if (!this.settlePreview(previewToken, dry.after)) return;
       if (this.clone.status === "reviewing") this.clone = { ...this.clone, error: undefined };
     } catch (error) {
-      if (token !== this.cloneToken) return;
+      if (token !== this.cloneToken) {
+        this.settlePreview(previewToken, this.preview);
+        return;
+      }
       // Retryable: the checkout stands, and a person fixes a field and asks
       // again. Kept on the review state rather than replacing it.
       const reason = error instanceof Error ? error.message : String(error);
-      this.preview = reason;
+      if (!this.settlePreview(previewToken, reason)) return;
       if (this.clone.status === "reviewing") this.clone = { ...this.clone, error: reason };
     }
     this.update();
@@ -642,10 +708,9 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     super.onCloseRequest(message);
   }
 
-  protected async refreshPreview(): Promise<void> {
+  protected async refreshPreview(token = this.beginPreview()): Promise<void> {
     if (!this.engine.isConnected) {
-      this.preview = "";
-      this.update();
+      this.settlePreview(token, "");
       return;
     }
     if (this.mode === "clone-git") {
@@ -656,23 +721,23 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
       // there is nothing to preview, and after it the preview is the engine's
       // own dry run against the file that was actually found.
       if (this.clone.status === "reviewing") {
-        await this.previewChosenCandidate();
+        await this.previewChosenCandidate(token);
         return;
       }
-      this.preview =
+      this.settlePreview(
+        token,
         this.clone.status === "cloning"
           ? "Cloning…"
           : this.clone.status === "failed"
             ? this.clone.reason
             : this.gitUrl.trim() === ""
               ? "Enter a git URL, then Clone & Review."
-              : "Clone & Review first: the preview is the engine's answer about the file it finds.";
-      this.update();
+              : "Clone & Review first: the preview is the engine's answer about the file it finds.",
+      );
       return;
     }
     if (this.mode === "clone-local" && (this.cloneFrom === undefined || this.cloneFrom.trim() === "")) {
-      this.preview = "Choose a product.gdl to clone.";
-      this.update();
+      this.settlePreview(token, "Choose a product.gdl to clone.");
       return;
     }
     // **A preview needs a destination, because the destination decides the
@@ -681,25 +746,22 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     // The field is empty until somebody chooses; this says so rather than
     // previewing the suggestion and letting it be mistaken for the choice.
     if (this.productPath() === "") {
-      this.preview = `Choose a destination. Suggested: ${this.suggestedProductPath()}`;
-      this.update();
+      this.settlePreview(token, `Choose a destination. Suggested: ${this.suggestedProductPath()}`);
       return;
     }
-    const refusal = this.idRefusal();
+    const refusal = this.destinationRefusal() ?? this.idRefusal();
     if (refusal !== undefined) {
-      this.preview = refusal;
-      this.update();
+      this.settlePreview(token, refusal);
       return;
     }
     try {
       const result = await this.service.createProduct(
         this.createParams(this.mode === "clone-local" ? this.cloneFrom : undefined, true),
       );
-      this.preview = result.after;
+      this.settlePreview(token, result.after);
     } catch (error) {
-      this.preview = error instanceof Error ? error.message : String(error);
+      this.settlePreview(token, error instanceof Error ? error.message : String(error));
     }
-    this.update();
   }
 
   protected async browseCloneSource(): Promise<void> {
@@ -1004,7 +1066,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
             </div>
           ) : (
             <p className="gbx-create-sources-note" data-clone-sources-note>
-              sources kept from the cloned file
+              sources kept from the cloned file; relative paths re-based to the new folder
             </p>
           )}
           <div className="gbx-create-actions">
@@ -1021,7 +1083,9 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
               // are said in the preview pane; this is what stops the press.
               disabled={
                 !connected ||
+                this.previewPending ||
                 this.productPath() === "" ||
+                this.destinationRefusal() !== undefined ||
                 this.idRefusal() !== undefined ||
                 (cloning && this.mode === "clone-local" && !this.cloneFrom) ||
                 (this.mode === "clone-git" && this.clone.status !== "reviewing")
@@ -1040,7 +1104,12 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
             </button>
           </div>
         </div>
-        <pre className="gbx-create-preview" data-preview-ready={connected ? "true" : "false"}>
+        <pre
+          className={this.previewPending ? "gbx-create-preview gbx-create-preview-stale" : "gbx-create-preview"}
+          data-preview-ready={connected && !this.previewPending ? "true" : "false"}
+          aria-busy={this.previewPending}
+          title={this.previewPending ? "Updating preview…" : undefined}
+        >
           {connected ? this.preview : "Preview unavailable while the engine is disconnected."}
         </pre>
       </div>
@@ -1152,14 +1221,8 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     }
 
     const params = this.createParams(cloneFrom, false);
-    const ok = await this.edits.createProduct(
-      {
-        ...params,
-        preview: this.preview,
-      },
-      this.ownerIdentity,
-    );
-    if (!ok) {
+    const outcome = await this.edits.createProduct(params, this.ownerIdentity);
+    if (outcome === false) {
       // The checkout stands and a person fixes a field and retries. Only a
       // successful create discards it, below.
       if (this.clone.status === "reviewing") {
@@ -1168,10 +1231,19 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
       }
       return;
     }
-    // Terminal, and the only success path: the file has been copied into the
-    // product's own place, so the checkout has nothing left to hold.
+    // Terminal either way: the file has been written into the product's own
+    // place, so the checkout has nothing left to hold, and a second Create would
+    // be refused as "already exists".
     this.abandonClone();
     this.close();
+    if (outcome === "created") {
+      // The open has already said why it refused; what it cannot say is that the
+      // file exists, which is the one thing a person needs to know to fix it.
+      this.messages.warn(
+        `Created ${params.path}, but it could not be opened. Open its description to fix it.`,
+      );
+      return;
+    }
     // The product this just made is what a person wants to look at. Asked for
     // rather than assumed: `ProductViewContribution.mayTakeTheFront` will not
     // steal the front from a Gearbox surface, and this wizard was one.
