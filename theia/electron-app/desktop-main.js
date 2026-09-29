@@ -117,6 +117,14 @@ for (const [name, value] of Object.entries(defaults)) {
         process.env[name] = value;
     }
 }
+// `cfs` for the terminals, which start with this process's environment: the
+// CLI's bin ahead of any `cfs` the member installed. Named before the first
+// fetch too, since a shell looks a command up when it runs. (An extension's
+// terminal environment collection does not reach terminals when the extension
+// is deployed while the app runs.)
+if (process.env.STUDIO_CFS_RUNTIME) {
+    process.env.PATH = [path.join(process.env.STUDIO_CFS_RUNTIME, 'bin'), process.env.PATH].filter(Boolean).join(path.delimiter);
+}
 // Added to, not replaced: a THEIA_PLUGINS from the shell still counts.
 const fetched = fetchedAssistants();
 if (fetched.length) {

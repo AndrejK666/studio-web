@@ -2,9 +2,9 @@
 // home and the skill engine theia/cfs.json pins, in runtime/ beside this file
 // (built by build_vsix.py). A desktop fetches it like Claude Code and Codex
 // (#480); the studio extension's backend runs the same runtime, found by its
-// folder (STUDIO_CFS_RUNTIME, studio/src/node/cfs-command.ts). This file puts
-// `cfs` on the PATH of the terminals, where the member and the coding agents
-// type it.
+// folder (STUDIO_CFS_RUNTIME, studio/src/node/cfs-command.ts), and
+// electron-app/desktop-main.js puts runtime/bin on the terminals' PATH. This
+// file only says which `cfs` that is.
 
 const vscode = require('vscode');
 const { execFile } = require('child_process');
@@ -14,10 +14,6 @@ function activate(context) {
     const runtime = path.join(context.extensionPath, 'runtime');
     const log = vscode.window.createOutputChannel('Constructor Studio CLI');
     context.subscriptions.push(log);
-
-    const env = context.environmentVariableCollection;
-    env.description = 'Puts cfs, the Constructor Studio CLI, on the PATH';
-    env.prepend('PATH', path.join(runtime, 'bin') + path.delimiter);
 
     context.subscriptions.push(vscode.commands.registerCommand('studio-cli.version', () => {
         const python = process.platform === 'win32'
