@@ -7,6 +7,10 @@
 // -- connect to the Studio the link names, sign in if they have to, clone the
 // project's sources through Studio and open the folder -- so the link grants
 // nothing a click would not.
+//
+// Every call goes through desktop-studio-client.ts, as the two views' do, and
+// what the link changed -- the Studio, the sign-in, the open project -- is
+// announced to them, so they redraw now rather than on their next poll.
 
 import { inject, injectable } from '@theia/core/shared/inversify';
 import { MessageService } from '@theia/core/lib/common/message-service';
@@ -17,7 +21,10 @@ import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DESKTOP_LINK_OPEN, DESKTOP_LINK_SCHEME, DesktopLink, environmentFor, isCurrent, parseDesktopLink } from '../common/desktop-link';
 import { customEnvironment } from '../common/desktop-environments';
-import { DesktopStatus, desktopStatus, desktopUrl } from './desktop-studio-client';
+import { describeOpenProgress } from '../common/desktop-open-progress';
+import {
+    DesktopStatus, announceDesktopChange, desktopStatus, openStudioProject, startSignIn, switchStudio,
+} from './desktop-studio-client';
 
 /** How long a link waits for the member to finish signing in, in the browser. */
 const SIGN_IN_BUDGET_MS = 5 * 60_000;
@@ -69,16 +76,11 @@ export class DesktopLinkHandler implements OpenHandler {
         const title = link.name ?? link.project;
         const progress = await this.messages.showProgress({ text: `Opening ${title}…` });
         try {
-            const answer = await fetch(desktopUrl('open'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workspaceId: link.project, name: link.name }),
+            const path = await openStudioProject(link.project, link.name, update => {
+                progress.report({ message: describeOpenProgress(update) });
             });
-            const body = await answer.json() as { path?: string; error?: string };
-            if (!answer.ok || !body.path) {
-                throw new Error(body.error ?? `HTTP ${answer.status}`);
-            }
-            await this.workspaces.open(URI.fromFilePath(body.path), { preserveWindow: true });
+            await this.workspaces.open(URI.fromFilePath(path), { preserveWindow: true });
+            announceDesktopChange(this, 'opened');
         } finally {
             progress.cancel();
         }
@@ -109,26 +111,31 @@ export class DesktopLinkHandler implements OpenHandler {
             }
             target = { studioUrl: custom.studioUrl, issuer: custom.issuer };
         }
-        const answer = await fetch(desktopUrl('environment'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(target),
-        });
-        if (!answer.ok) {
-            throw new Error(((await answer.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${answer.status}`);
+        const refused = await switchStudio(target);
+        if (refused) {
+            throw new Error(refused);
         }
-        return answer.json() as Promise<DesktopStatus>;
+        announceDesktopChange(this, 'switched');
+        const switched = await desktopStatus();
+        if (!switched) {
+            throw new Error('the desktop backend did not answer after connecting');
+        }
+        return switched;
     }
 
     /** Start the member's sign-in in the system browser and wait for it. */
     protected async signIn(): Promise<DesktopStatus> {
-        await fetch(desktopUrl('sign-in'), { method: 'POST' });
+        const refused = await startSignIn();
+        if (refused) {
+            throw new Error(`sign-in could not start: ${refused}`);
+        }
         const progress = await this.messages.showProgress({ text: 'Sign in to Studio in the browser that just opened…' });
         try {
             const deadline = Date.now() + SIGN_IN_BUDGET_MS;
             while (Date.now() < deadline) {
                 const status = await desktopStatus();
                 if (status?.state === 'signed-in') {
+                    announceDesktopChange(this, 'signed-in');
                     return status;
                 }
                 if (status?.state === 'failed') {

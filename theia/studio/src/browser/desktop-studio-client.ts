@@ -63,7 +63,7 @@ export function signOut(): Promise<string | undefined> {
 }
 
 /** Connect to another Studio (the backend signs out of this one first); the error, if refused. */
-export function switchStudio(target: { id: string } | { studioUrl: string }): Promise<string | undefined> {
+export function switchStudio(target: { id: string } | { studioUrl: string; issuer?: string }): Promise<string | undefined> {
     return post('environment', target);
 }
 
@@ -99,12 +99,12 @@ export async function openedProject(root: string): Promise<string | undefined> {
 }
 
 /**
- * Clone a project's sources through Studio into `folder` and answer the local
- * path to open, calling `onProgress` while the backend reports it and never
+ * Clone a project's sources through Studio into `folder` (the backend picks one
+ * when there is none) and answer the local path to open, calling `onProgress` while the backend reports it and never
  * after. Throws with the backend's reason.
  */
 export async function openStudioProject(
-    workspaceId: string, folder: string, onProgress: (progress: OpenProgress) => void, pollMs = 400,
+    workspaceId: string, folder: string | undefined, onProgress: (progress: OpenProgress) => void, pollMs = 400,
 ): Promise<string> {
     let done = false;
     const poll = setInterval(async () => {
