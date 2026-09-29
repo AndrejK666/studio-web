@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 250,
+  "open_violations": 251,
   "operations": [
     {
       "method": "DELETE",
@@ -2703,6 +2703,25 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations",
+      "operation_id": "studio_kits.create_materialization",
+      "tag": "StudioKits",
+      "summary": "Record how an install the IDE ran itself went",
+      "authenticated": true,
+      "request": "ReportKitMaterializationDto",
+      "responses": [
+        "KitInstallationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },

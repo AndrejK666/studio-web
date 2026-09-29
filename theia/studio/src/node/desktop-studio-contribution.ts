@@ -319,6 +319,24 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         return !!this.config;
     }
 
+    /** The project a folder is a checkout of (`openedTenant`), for another desktop route. */
+    openedProject(folder: string): string | undefined {
+        return this.config ? openedTenant(this.settings, this.config, folder) : undefined;
+    }
+
+    /** A gear call to the connected Studio, as the signed-in member. */
+    async studioFetch(gearPath: string, init: RequestInit = {}): Promise<Response> {
+        const config = this.config;
+        const session = this.session;
+        if (!config || !session) {
+            throw new Error('not signed in to a Studio');
+        }
+        return fetch(`${config.studioUrl}${config.gatewayPrefix}${gearPath}`, {
+            ...init,
+            headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${await session.accessToken()}` },
+        });
+    }
+
     configure(app: express.Application): void {
         if (!this.config) {
             return;

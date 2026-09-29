@@ -35,6 +35,7 @@ All endpoints require the normal authenticated Studio security context.
 | `GET` | `/studio-kits/v1/projects/{project_id}/installations` | Read project desired state |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations` | Create or replace one request |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize` | Run the request in the live IDE |
+| `POST` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations` | Record an install a desktop IDE ran itself (the backend cannot call a desktop) |
 | `DELETE` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}` | Remove one request |
 
 Installations are persisted through Account Management tenant metadata using:

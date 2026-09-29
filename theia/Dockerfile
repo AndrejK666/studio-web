@@ -34,6 +34,8 @@ COPY studio/ studio/
 COPY drawio-editor/ drawio-editor/
 COPY product-ext/ product-ext/
 COPY gearbox-studio/ gearbox-studio/
+# Desktop only (electron-app depends on it), but a workspace: npm ci wants it here.
+COPY studio-kits-view/ studio-kits-view/
 COPY browser-app/ browser-app/
 COPY electron-app/package.json electron-app/package.json
 # mermaid-entry.mjs and katex-entry.mjs are the two separate bundles

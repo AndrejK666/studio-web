@@ -26,6 +26,7 @@
     "electron-updater": "6.8.9",
     "gearbox-studio": "0.1.0",
     "studio": "0.0.0",
+    "studio-kits-view": "0.1.0",
     "studio-product-ext": "0.0.0"
   },
   "devDependencies": {

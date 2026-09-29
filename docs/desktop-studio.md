@@ -368,6 +368,37 @@ extensions there. The code modes (Development, FULL) keep its tab on the rail
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
 
+### Studio kits in the Extensions view
+
+Kits are listed in the same view, as one more kind of entry beside the
+extensions (`theia/studio-kits-view`, an `ExtensionsSourceContribution` of
+`@theia/vsx-registry`; the package is a dependency of `electron-app` only).
+For the project open in the window:
+
+- **Installed**: the kits the project asked for, with their version and state
+  (installed, failed with its reason, or requested but not in this checkout).
+- **Recommended**: the rest of the catalogue (`GET /studio-kits/v1/catalog`).
+- **Search** finds kits with the extensions; `@kit` shows kits only.
+
+A kit belongs to the project, not to the app. **Install** calls the desktop
+backend (`POST /studio-desktop/kits/install`, `studio/src/node/desktop-kits.ts`),
+which does, for the folder open in the window:
+
+1. records the request, as the portal does (`POST …/installations`);
+2. installs the kit into that checkout with the CLI (`cfs init`, `cfs kit
+   install`, `cfs generate-agents`, through `KitInstallerImpl.installInto`);
+3. reports the outcome (`POST …/installations/{kit}/materializations`), which
+   updates the installation and the repository's row exactly as a session's
+   `materialize` would. The backend cannot call a desktop (ADR-0027), so this is
+   the desktop telling it. The repository id is the one a session's registry
+   gives the same checkout, so both update one row.
+
+**Remove** stops the project wanting the kit (`DELETE …/installations/{kit}`);
+the files already in the checkout stay, to be removed and committed by hand.
+New kit files are uncommitted after an install; the message says to commit
+them. A folder not opened from the Constructor Studio view has no project:
+its kits show, but Install is disabled.
+
 ### The assistant extensions
 
 Claude Code and Codex ship as the VS Code extensions product-ext drives. The
