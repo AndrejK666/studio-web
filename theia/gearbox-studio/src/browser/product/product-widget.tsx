@@ -410,10 +410,10 @@ export class ProductWidget extends ReactWidget {
           {state.products.length === 0 ? (
             <div className="gbx-empty">
               <p>
-                This workspace has no product yet: none of its checkouts holds a{" "}
-                <code>product.gdl</code> (at <code>&lt;checkout&gt;/product.gdl</code> or{" "}
-                <code>&lt;checkout&gt;/products/&lt;name&gt;/product.gdl</code>). The gears in it are
-                in the catalogue either way.
+                This workspace has no product yet: no <code>product.gdl</code> at{" "}
+                <code>product.gdl</code> or <code>products/&lt;name&gt;/product.gdl</code>, in the
+                opened folder or in any checkout directly under it. The gears in it are in the
+                catalogue either way.
               </p>
               <p>Create one from gears, or open a product description in the editor to resolve it.</p>
               <div className="gbx-product-actions">

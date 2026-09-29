@@ -35,6 +35,7 @@ import {
   keyFor,
 } from "../common/protocol";
 import { remoteKey } from "../common/git-remote";
+import { announceOpenedWorkspace } from "./shell/opened-workspace";
 
 /**
  * How many engine log lines are kept.
@@ -422,13 +423,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   }
 
   protected async announceOpenedWorkspace(): Promise<void> {
-    if (!this.workspaceService) return;
-    try {
-      await this.workspaceService.ready;
-      await this.service.useOpenedWorkspace(this.workspaceService.workspace?.resource.toString());
-    } catch {
-      // A backend from before this call, or no workspace yet: the defaults stand.
-    }
+    await announceOpenedWorkspace(this.service, this.workspaceService);
   }
 
   /** One load, against the session decided when it was asked for. */

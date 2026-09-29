@@ -18,9 +18,11 @@ import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service
 import { GearboxService, type CloneCandidate } from "../../common/protocol";
 import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
+import { repaintNow } from "../widgets/repaint";
 import { EngineConnectionService } from "../shell/engine-connection-service";
 import { ProductSessionService } from "../shell/product-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
+import { destinationAfterIdChange, pendingPreview, suggestedProductPath } from "./destination";
 import { corpusOffer, corpusSourceDecl, type CorpusCopy, type CorpusOffer } from "./corpus-source";
 
 export type CreateMode = "blank" | "clone-local" | "clone-git";
@@ -118,6 +120,8 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
   /** Editable destination; empty means use the default under the workspace. */
   protected destination = "";
   protected destinationTouched = false;
+  /** The destination came from "Use suggested", so it follows the id. */
+  protected destinationFollowsId = false;
   protected preview = "";
   protected previewTimer: ReturnType<typeof setTimeout> | undefined;
   protected roots: string[] = [];
@@ -222,6 +226,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     if (state?.id !== undefined) this.productId = state.id;
     if (state?.name !== undefined) this.name = state.name;
     this.destinationTouched = false;
+    this.destinationFollowsId = false;
     this.destination = "";
     void this.refreshPreview();
     this.update();
@@ -252,9 +257,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
    * Create without a destination is not possible.
    */
   protected suggestedProductPath(): string {
-    const root = this.workspaceRoot();
-    const id = this.productId.trim() === "" ? "new-product" : this.productId.trim();
-    return `${root}/products/${id}/product.gdl`.replace(/\\/g, "/");
+    return suggestedProductPath(this.workspaceRoot(), this.productId);
   }
 
   /** The chosen path, or `""` when nothing has been chosen. Never a guess. */
@@ -390,7 +393,14 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
    * so it is certainly worth showing.
    */
   protected schedulePreview(): void {
-    this.update();
+    // The hint about choosing a destination goes as soon as there is one, not
+    // when the engine's dry run finally answers -- that can take a while
+    // behind a catalogue load.
+    this.preview = pendingPreview(this.preview, this.productPath(), this.suggestedProductPath());
+    // Sent, not posted -- see `repaintNow`. `update()` posted the repaint, and
+    // React put each controlled field back before it landed, so real typing
+    // lost its keystrokes.
+    repaintNow(this);
     if (this.previewTimer !== undefined) clearTimeout(this.previewTimer);
     this.previewTimer = setTimeout(() => void this.refreshPreview(), 200);
   }
@@ -726,6 +736,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
     if (uri === undefined) return;
     const folder = uri.path.fsPath().replace(/\\/g, "/").replace(/\/+$/, "");
     this.destinationTouched = true;
+    this.destinationFollowsId = false;
     this.destination = `${folder}/product.gdl`;
     this.selectedRoots = new Set(this.selectableRoots());
     this.schedulePreview();
@@ -841,6 +852,12 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
               disabled={!connected}
               onChange={(e) => {
                 this.productId = e.target.value;
+                this.destination = destinationAfterIdChange(
+                  this.destination,
+                  this.destinationFollowsId,
+                  this.workspaceRoot(),
+                  this.productId,
+                );
                 this.schedulePreview();
               }}
             />
@@ -879,6 +896,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                 disabled={!connected}
                 onChange={(e) => {
                   this.destinationTouched = true;
+                  this.destinationFollowsId = false;
                   this.destination = e.target.value;
                   // Which roots may be sources depends on where the product
                   // lands, so the selection follows the destination.
@@ -906,6 +924,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                   disabled={!connected}
                   onClick={() => {
                     this.destinationTouched = true;
+                    this.destinationFollowsId = true;
                     this.destination = this.suggestedProductPath();
                     this.selectedRoots = new Set(this.selectableRoots());
                     this.schedulePreview();
