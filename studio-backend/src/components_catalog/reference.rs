@@ -116,6 +116,62 @@ pub struct ReferenceActivityDto {
     pub authors: u64,
 }
 
+/// One consumer waiting for a component, and how badly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReferenceDemandDto {
+    /// The consumer, as the roadmap source names its priority letter.
+    pub consumer: String,
+    /// 1 is the most urgent.
+    pub priority: u32,
+}
+
+/// One progress axis on the roadmap board (`Design`, `SDK`, …).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReferenceAxisDto {
+    pub label: String,
+    /// What the board says: `80%`, `Done`, `N/A`.
+    pub value: String,
+    /// The same as a number, null for `N/A`.
+    pub pct: Option<u32>,
+}
+
+/// Where a component is and whether its plan meets the demand for it: the
+/// roadmap board's answer beside the repository's.
+///
+/// Every part is optional and a component with none of them has no readiness
+/// at all (null), rather than a block of empty fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReferenceReadinessDto {
+    /// The board's stage (`In Dev`), and where it sits in the pipeline.
+    pub stage: Option<String>,
+    pub stage_at: Option<u32>,
+    pub stage_of: Option<u32>,
+    /// The repository's answer: `in development` … `mature`.
+    pub lifecycle: Option<String>,
+    /// The milestone and its due date, `YYYY-MM-DD`.
+    pub milestone: Option<String>,
+    pub due: Option<String>,
+    /// Whether the date is a commitment.
+    pub committed: Option<bool>,
+    /// Plan meets demand: `on track`, `check`, `at risk`, `delivered`,
+    /// `unplanned`; the lamp (`good`, `watch`, `bad`, `none`) and why.
+    pub plan: Option<String>,
+    pub plan_lamp: Option<String>,
+    pub plan_reasons: Vec<String>,
+    pub demand: Vec<ReferenceDemandDto>,
+    pub progress: Vec<ReferenceAxisDto>,
+    /// The newest release tag and when it was cut.
+    pub last_release: Option<String>,
+    pub released_on: Option<String>,
+    /// How many catalogued components depend on this one.
+    pub used_by: Option<u32>,
+    /// The board item, a link.
+    pub roadmap_item: Option<String>,
+}
+
 /// One component of the reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[toolkit_macros::api_dto(response)]
@@ -163,6 +219,9 @@ pub struct ComponentReferenceDto {
     pub profile_fields: Option<u32>,
     /// Null when the warehouse was not asked about it or had no row for it.
     pub activity: Option<ReferenceActivityDto>,
+    /// Stage, due date, demand and whether they meet. Null when neither the
+    /// roadmap board nor the repository says anything about it.
+    pub readiness: Option<ReferenceReadinessDto>,
     /// Every engine gear this component is, usually one.
     pub engine: Vec<ReferenceEngineGearDto>,
     pub related: Vec<ReferenceRelatedCrateDto>,
@@ -602,6 +661,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             profile_filled,
             profile_fields,
             activity: inputs.activity.and_then(|a| a.get(&name).cloned()),
+            readiness: readiness_of(&values),
             engine,
             related,
             name,
@@ -660,6 +720,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 profile_filled: None,
                 profile_fields: None,
                 activity: None,
+                readiness: None,
                 engine: vec![facts],
                 related,
             });
@@ -668,6 +729,102 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// A component's readiness, read off its resolved profile values: the
+/// roadmap board's fields and the repository scan's lifecycle, release and
+/// dependents. Null when none of them has an answer.
+fn readiness_of(values: &serde_json::Map<String, Value>) -> Option<ReferenceReadinessDto> {
+    let field = |k: &str| values.get(k).filter(|v| !v.is_null());
+    let brief = |k: &str| {
+        field(k)
+            .and_then(|v| v.get("b").or_else(|| v.get("v")))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let part = |k: &str, p: &str| {
+        field(k)
+            .and_then(|v| v.get(p))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    // `In Dev (3 of 6)`: where in the pipeline.
+    let (stage_at, stage_of) = part("stage", "v")
+        .and_then(|v| {
+            let tail = v.rsplit_once('(')?.1.trim_end_matches(')').to_string();
+            let (at, of) = tail.split_once(" of ")?;
+            Some((at.trim().parse().ok()?, of.trim().parse().ok()?))
+        })
+        .map_or((None, None), |(a, o)| (Some(a), Some(o)));
+    let array = |k: &str| {
+        field(k)
+            .and_then(|v| v.get("parts"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let demand: Vec<ReferenceDemandDto> = array("demand")
+        .iter()
+        .filter_map(|p| {
+            Some(ReferenceDemandDto {
+                consumer: p.get("consumer")?.as_str()?.to_string(),
+                priority: u32::try_from(p.get("priority")?.as_u64()?).ok()?,
+            })
+        })
+        .collect();
+    let progress: Vec<ReferenceAxisDto> = array("roadmap_progress")
+        .iter()
+        .filter_map(|p| {
+            Some(ReferenceAxisDto {
+                label: p.get("label")?.as_str()?.to_string(),
+                value: p.get("value")?.as_str()?.to_string(),
+                pct: p
+                    .get("pct")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok()),
+            })
+        })
+        .collect();
+    let plan = brief("convergence");
+    // The reasons are only reasons when the lamp is not green: a green plan's
+    // `v` is its brief repeated.
+    let plan_lamp = part("convergence", "s");
+    let plan_reasons: Vec<String> = match plan_lamp.as_deref() {
+        Some("bad" | "watch") => part("convergence", "v")
+            .map(|v| v.split("; ").map(str::to_string).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let out = ReferenceReadinessDto {
+        stage: brief("stage"),
+        stage_at,
+        stage_of,
+        lifecycle: brief("lifecycle"),
+        milestone: brief("milestone"),
+        due: part("milestone", "u"),
+        committed: brief("commitment").map(|c| c == "committed"),
+        plan,
+        plan_lamp,
+        plan_reasons,
+        demand,
+        progress,
+        last_release: brief("lastrelease"),
+        released_on: part("lastrelease", "u"),
+        used_by: field("consumers")
+            .and_then(|v| v.get("n"))
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok()),
+        roadmap_item: part("roadmap_item", "l"),
+    };
+    let empty = out.stage.is_none()
+        && out.lifecycle.is_none()
+        && out.milestone.is_none()
+        && out.plan.is_none()
+        && out.demand.is_empty()
+        && out.progress.is_empty()
+        && out.last_release.is_none();
+    (!empty).then_some(out)
 }
 
 /// The crates that belong with one component, each named from a source that
@@ -893,6 +1050,59 @@ mod tests {
             engine,
             activity: Some(&activity),
         })
+    }
+
+    #[test]
+    fn readiness_is_read_off_the_profile_and_absent_when_nothing_answers() {
+        let values: serde_json::Map<String, Value> = serde_json::from_value(serde_json::json!({
+            "stage": { "b": "In Dev", "v": "In Dev (3 of 6)" },
+            "milestone": { "b": "26.10", "v": "26.10 — due 2026-10-31", "u": "2026-10-31", "s": "good" },
+            "commitment": { "b": "not committed" },
+            "convergence": { "b": "check", "s": "watch", "v": "P1 for Acronis, but the date is not a commitment; the issue is closed but the board still says In Dev" },
+            "demand": { "b": "Acronis P1", "parts": [{ "letter": "A", "consumer": "Acronis", "priority": 1 }] },
+            "roadmap_progress": { "b": "Design Done", "parts": [{ "label": "Design", "value": "Done", "pct": 100 }, { "label": "SDK", "value": "N/A", "pct": null }] },
+            "lifecycle": { "b": "in qa" },
+            "lastrelease": { "b": "v0.2.8", "u": "2026-09-23" },
+            "consumers": { "b": "3", "n": 3 },
+            "roadmap_item": { "b": "#2890 CORE - Events Broker", "l": "https://github.com/o/r/issues/2890" }
+        }))
+        .unwrap();
+        let r = readiness_of(&values).unwrap();
+        assert_eq!(r.stage.as_deref(), Some("In Dev"));
+        assert_eq!((r.stage_at, r.stage_of), (Some(3), Some(6)));
+        assert_eq!(r.due.as_deref(), Some("2026-10-31"));
+        assert_eq!(r.committed, Some(false));
+        assert_eq!(r.plan_lamp.as_deref(), Some("watch"));
+        assert_eq!(r.plan_reasons.len(), 2);
+        assert_eq!(
+            r.demand,
+            vec![ReferenceDemandDto {
+                consumer: "Acronis".into(),
+                priority: 1
+            }]
+        );
+        assert_eq!(r.progress[1].pct, None);
+        assert_eq!(r.released_on.as_deref(), Some("2026-09-23"));
+        assert_eq!(r.used_by, Some(3));
+        assert_eq!(
+            r.roadmap_item.as_deref(),
+            Some("https://github.com/o/r/issues/2890")
+        );
+
+        // A green plan carries no reasons.
+        let mut green = values.clone();
+        green.insert(
+            "convergence".into(),
+            serde_json::json!({ "b": "on track", "s": "good", "v": "on track" }),
+        );
+        assert!(readiness_of(&green).unwrap().plan_reasons.is_empty());
+
+        // Nothing about readiness: no block at all.
+        let bare: serde_json::Map<String, Value> = serde_json::from_value(
+            serde_json::json!({ "description": { "b": "x" }, "consumers": { "n": 0 } }),
+        )
+        .unwrap();
+        assert!(readiness_of(&bare).is_none());
     }
 
     fn entry<'a>(all: &'a [ComponentReferenceDto], name: &str) -> &'a ComponentReferenceDto {

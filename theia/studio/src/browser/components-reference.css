@@ -251,3 +251,82 @@
     gap: 6px;
     padding: 2px 0;
 }
+
+/* Readiness: stage, plan and demand. Lamps are Theia's own status colours. */
+.scr-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+.scr-stage {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-descriptionForeground);
+    margin-left: auto;
+}
+
+.scr-stage.done { color: var(--theia-charts-green); }
+.scr-stage.late { color: var(--theia-charts-orange); }
+.scr-stage.early { color: var(--theia-charts-blue); }
+
+.scr-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 4px 0 2px;
+    font-size: var(--theia-ui-font-size0);
+}
+
+.scr-plan-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.scr-pill {
+    border: 1px solid var(--theia-editorGroup-border);
+    border-radius: 8px;
+    padding: 0 6px;
+}
+
+.scr-sched.good { color: var(--theia-charts-green); }
+.scr-sched.watch { color: var(--theia-charts-orange); }
+.scr-sched.bad { color: var(--theia-errorForeground); }
+.scr-sched.none { color: var(--theia-descriptionForeground); }
+
+.scr-due,
+.scr-demand {
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-warning.watch { color: var(--theia-charts-orange); }
+.scr-warning.bad { color: var(--theia-errorForeground); }
+
+.scr-readiness {
+    margin-bottom: 12px;
+}
+
+.scr-reasons {
+    margin: 4px 0 8px;
+    padding-left: 18px;
+}
+
+.scr-reasons.watch { color: var(--theia-charts-orange); }
+.scr-reasons.bad { color: var(--theia-errorForeground); }
+
+.scr-axes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.scr-axis.full .scr-dot { color: var(--theia-charts-green); }
+.scr-axis.part .scr-dot { color: var(--theia-charts-blue); }
+.scr-axis.na .scr-dot { color: var(--theia-descriptionForeground); }

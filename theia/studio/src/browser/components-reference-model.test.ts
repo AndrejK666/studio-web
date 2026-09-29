@@ -1,14 +1,19 @@
 import {
     ReferenceEntry,
     ReferenceSources,
+    ReferenceReadiness,
     activityText,
+    demandText,
     emptyMessage,
     filterEntries,
     kindCounts,
     loadComponentsReference,
     profilePercent,
+    planWarning,
     releaseText,
+    scheduleText,
     sourceText,
+    stageTone,
 } from './components-reference-model';
 
 function answer(status: number, body: unknown): Response {
@@ -100,11 +105,12 @@ describe('components reference model', () => {
         expect(releaseText(accountManagement)).toBe('0.10.0 · 12 versions');
         expect(releaseText(uiKit)).toBe('0.4.0 (declared, not on a registry)');
         expect(releaseText(draft)).toBe('Draft — documents only, no crate');
-        expect(releaseText(entry({}))).toBe('Not published');
+        // Nothing to say is said by saying nothing.
+        expect(releaseText(entry({}))).toBeNull();
     });
 
     it('tells not measured from nothing moved', () => {
-        expect(activityText(accountManagement, unmeasured)).toBe('Not measured');
+        expect(activityText(accountManagement, unmeasured)).toBeNull();
         expect(activityText(accountManagement, measured)).toBe('No activity recorded in 90 days');
         expect(activityText({ ...accountManagement, activity: { commits: 3, files_changed: 4, lines_added: 10, lines_removed: 2, authors: 1 } }, measured))
             .toBe('3 commits · +10 −2 · 1 authors');
@@ -118,7 +124,41 @@ describe('components reference model', () => {
     it('names the source by repository and directory', () => {
         expect(sourceText(accountManagement)).toBe('constructorfabric/gears-rust/gears/system/account-management');
         expect(sourceText(entry({ repository: 'https://github.com/constructorfabric/gears-rust' }))).toBe('constructorfabric/gears-rust');
-        expect(sourceText(entry({}))).toBe('Not recorded');
+        expect(sourceText(entry({}))).toBeNull();
+    });
+
+    const ready: ReferenceReadiness = {
+        stage: 'In Dev', stage_at: 3, stage_of: 6, lifecycle: 'in qa',
+        milestone: '26.10', due: '2026-10-31', committed: false,
+        plan: 'check', plan_lamp: 'watch', plan_reasons: ['P1 for Acronis, but the date is not a commitment'],
+        demand: [{ consumer: 'Virtuozzo', priority: 3 }, { consumer: 'Acronis', priority: 1 }],
+        progress: [{ label: 'Design', value: 'Done', pct: 100 }],
+        last_release: 'v0.2.8', released_on: '2026-09-23', used_by: 3, roadmap_item: null,
+    };
+
+    it('places a stage in its pipeline', () => {
+        expect(stageTone(ready)).toBe('early');
+        expect(stageTone({ ...ready, stage_at: 5 })).toBe('late');
+        expect(stageTone({ ...ready, stage_at: 6 })).toBe('done');
+        expect(stageTone({ ...ready, stage_at: 1 })).toBe('idle');
+        expect(stageTone(null)).toBe('idle');
+    });
+
+    it('says whether the date holds', () => {
+        const sep = new Date('2026-09-29T00:00:00Z');
+        expect(scheduleText(ready, sep)).toEqual({ text: 'Check', lamp: 'watch' });
+        expect(scheduleText({ ...ready, plan_lamp: 'good', plan: 'on track' }, sep)).toEqual({ text: 'On target', lamp: 'good' });
+        expect(scheduleText({ ...ready, due: '2026-07-31' }, sep)).toEqual({ text: '2 months late', lamp: 'bad' });
+        expect(scheduleText({ ...ready, due: null }, sep)).toEqual({ text: 'No date', lamp: 'none' });
+        expect(scheduleText({ ...ready, plan: 'delivered', due: '2026-01-31' }, sep)).toEqual({ text: 'Delivered', lamp: 'good' });
+        expect(scheduleText({ ...ready, milestone: null, plan: null }, sep)).toBeNull();
+    });
+
+    it('lists demand most urgent first and warns only on amber or red', () => {
+        expect(demandText(ready)).toBe('Acronis P1 · Virtuozzo P3');
+        expect(demandText({ ...ready, demand: [] })).toBeNull();
+        expect(planWarning(ready)).toEqual({ lamp: 'watch', text: 'P1 for Acronis, but the date is not a commitment' });
+        expect(planWarning({ ...ready, plan_lamp: 'good' })).toBeNull();
     });
 
     it('explains an empty list by why it is empty', () => {
