@@ -97,6 +97,15 @@ export function openedTenant(settings: DesktopSettings, config: DesktopStudioCon
     return undefined;
 }
 
+/**
+ * The folder the app opens when the member chose none, when it is only that: a
+ * deployment that pinned a workspace there (STUDIO_DESKTOP_WORKSPACE_ID) made
+ * it a project.
+ */
+export function startFolderOf(config: DesktopStudioConfig | undefined): string | undefined {
+    return config && !config.workspaceId ? config.workspaceRoot : undefined;
+}
+
 /** The Studios on offer, and the one a developer pinned, from the environment. */
 export function environmentsFrom(env: NodeJS.ProcessEnv): { list: DesktopEnvironment[]; pinned?: DesktopEnvironment; defaultId?: string } {
     const url = env.STUDIO_DESKTOP_URL?.trim().replace(/\/+$/, '');
@@ -212,6 +221,12 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     readonly state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     readonly error?: string;
     readonly user?: { readonly sub: string; readonly name?: string; readonly email?: string; readonly tenantId?: string };
+    /**
+     * The folder the app opens when the member has chosen none
+     * (`~/ConstructorStudio/workspace` in an installed app): a placeholder, not
+     * a project. The desktop landing page takes the main area while it is open.
+     */
+    readonly startFolder?: string;
 }
 
 function claimsOf(accessToken: string): Record<string, unknown> {
@@ -283,6 +298,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             current,
             switchable: !this.offered.pinned,
             state,
+            startFolder: startFolderOf(this.config),
             ...extra,
         };
     }
