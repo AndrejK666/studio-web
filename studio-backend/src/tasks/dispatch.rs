@@ -429,6 +429,22 @@ impl<'a> Patch<'a> {
     }
 }
 
+/// Whether a run's message has nothing left to do: the run succeeded, was
+/// cancelled, or failed.
+///
+/// `failed` belongs here as much as the other two. A run given up on
+/// ("gave up after N deliveries") is recorded as failed and its message
+/// rejected; if that message comes back -- a restart between the record and
+/// the rejection, a redelivery -- handling it again only re-enters the
+/// give-up path at the head of its partition, where every later run of the
+/// partition waits behind it. A person who wants it again retries it, which
+/// puts the run back to `queued` and enqueues a message of its own.
+fn settled(state: &str) -> bool {
+    state == RunState::Succeeded.as_str()
+        || state == RunState::Cancelled.as_str()
+        || state == RunState::Failed.as_str()
+}
+
 /// Both `summary` and `last_error` are read by a person, and a handler can
 /// hand us a page of provider HTML. Keep a sentence.
 fn cut(text: &str) -> String {
@@ -467,8 +483,9 @@ impl LeasedMessageHandler for TaskDispatcher {
         };
 
         // At-least-once: this may be a redelivery of something that already
-        // finished. Both terminal-and-done states are no-ops.
-        if row.state == RunState::Succeeded.as_str() || row.state == RunState::Cancelled.as_str() {
+        // finished -- including one given up on. Acknowledge it, so the
+        // partition moves on; see [`settled`].
+        if settled(&row.state) {
             return MessageResult::Ok;
         }
         if row.cancel_requested {
@@ -769,6 +786,18 @@ mod tests {
         let long = cut(&"я".repeat(900));
         assert_eq!(long.chars().count(), 500);
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn a_redelivered_message_of_a_finished_run_is_acknowledged_not_rerun() {
+        // Given up on, succeeded or cancelled: the message has nothing left to
+        // do, and holding it would hold its whole partition.
+        assert!(settled(RunState::Failed.as_str()));
+        assert!(settled(RunState::Succeeded.as_str()));
+        assert!(settled(RunState::Cancelled.as_str()));
+        // Waiting or mid-flight: the message is the work.
+        assert!(!settled(RunState::Queued.as_str()));
+        assert!(!settled(RunState::Running.as_str()));
     }
 
     #[test]

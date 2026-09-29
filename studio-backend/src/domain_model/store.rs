@@ -471,10 +471,12 @@ mod graph_backend {
                 .into_iter()
                 .map(|(type_id, schema)| TypeRegistration { type_id, schema })
                 .collect();
-            self.client
-                .register_types(ctx, batch)
-                .await
-                .map_err(|e| anyhow::anyhow!("register domain meta types: {e}"))?;
+            self.client.register_types(ctx, batch).await.map_err(|e| {
+                anyhow::anyhow!(
+                    "register domain meta types: {}",
+                    crate::graph_error::explain(&e)
+                )
+            })?;
             Ok(())
         }
 

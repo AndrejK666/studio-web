@@ -14,6 +14,7 @@ mod database_bootstrap; // config-discovered PostgreSQL provisioning + migration
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
 mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-0027)
+mod graph_error; // a gear refusal said in full: CanonicalError plus its field violations
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
@@ -26,6 +27,7 @@ mod kit_registry; // Git-backed kit catalogue + project-scoped desired installat
 mod llm_proxy; // OpenAI-compatible LLM proxy for Theia AI in IDE sessions (llm feature)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
+mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod registered_gears;

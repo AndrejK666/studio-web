@@ -55,8 +55,11 @@ struct DatabaseTarget {
 
 /// Print the discovered plan, or create missing databases and run migrations.
 ///
-/// This routine never removes databases, schemas, tables, or migration rows.
-/// Existing databases are left untouched and migrations are delegated to the
+/// This routine never removes databases, schemas or tables, and removes
+/// migration rows in one case only: an outbox created by toolkit-db before
+/// 0.16 has its outbox migration forgotten so that it runs again (see
+/// [`crate::outbox_repair`]; the migration is idempotent). Existing databases
+/// are otherwise left untouched and migrations are delegated to the
 /// framework's forward-only runner.
 pub async fn run(config: AppConfig, apply: bool) -> Result<()> {
     let effective: EffectiveConfig = serde_yaml::from_str(&config.to_yaml()?)
@@ -147,6 +150,31 @@ pub async fn run(config: AppConfig, apply: bool) -> Result<()> {
             .await
             .with_context(|| format!("create database '{}'", target.name))?;
         println!("  created {}", target.name);
+    }
+
+    // Outboxes from toolkit-db before 0.16, repaired before the migrations
+    // run -- still under the lock, so two bootstraps never race on one.
+    for target in &targets {
+        let mut config = bootstrap.config();
+        config.dbname(&target.name);
+        let (db, db_connection) = config
+            .connect(NoTls)
+            .await
+            .with_context(|| format!("connect to '{}' to check its outbox", target.name))?;
+        let db_task = tokio::spawn(async move {
+            let _ = db_connection.await;
+        });
+        let fixed = crate::outbox_repair::repair(&db)
+            .await
+            .with_context(|| format!("repair the outbox of '{}'", target.name))?;
+        if !fixed.is_empty() {
+            println!(
+                "  outbox  {}: trace column added to {:?}, {} outbox migration row(s) reset",
+                target.name, fixed.columns_added, fixed.migrations_reset
+            );
+        }
+        drop(db);
+        let _ = db_task.await;
     }
 
     let _ = client

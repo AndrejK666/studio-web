@@ -387,10 +387,12 @@ impl GraphStorageBackend {
                 schema,
             })
             .collect();
-        self.client
-            .register_types(ctx, batch)
-            .await
-            .map_err(|e| anyhow::anyhow!("register artifact types: {e}"))?;
+        self.client.register_types(ctx, batch).await.map_err(|e| {
+            anyhow::anyhow!(
+                "register artifact types: {}",
+                crate::graph_error::explain(&e)
+            )
+        })?;
         Ok(())
     }
 
@@ -585,7 +587,9 @@ impl GraphStore for GraphStorageBackend {
                 .client
                 .ingest(ctx, batch(chunk.to_vec(), Vec::new(), true))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage ingest: {e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("graph-storage ingest: {}", crate::graph_error::explain(&e))
+                })?;
             upserted += res.counts.nodes_inserted + res.counts.nodes_updated;
             revision = res.revision.revision;
         }
@@ -677,7 +681,12 @@ impl GraphStore for GraphStorageBackend {
                 .client
                 .ingest(ctx, batch(Vec::new(), chunk.to_vec(), false))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage edge ingest: {e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "graph-storage edge ingest: {}",
+                        crate::graph_error::explain(&e)
+                    )
+                })?;
             upserted += res.counts.edges_inserted + res.counts.edges_updated;
         }
         tracing::info!(
