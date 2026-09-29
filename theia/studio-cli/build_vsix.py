@@ -152,9 +152,15 @@ def write_shims(bin_dir):
         '@"%~dp0..\\python\\python.exe" -m studio_proxy %*\r\n',
         encoding="ascii",
     )
+    # The sh one serves Git Bash on Windows too, where the interpreter is
+    # python.exe and needs Windows paths (`pwd -W`).
     (bin_dir / "cfs").write_text(
-        '#!/bin/sh\nhere="$(cd "$(dirname "$0")/.." && pwd)"\n'
-        'HOME="$here/home" PYTHONUTF8=1 CFS_NO_VERSION_CHECK=1 exec "$here/python/bin/python3" -m studio_proxy "$@"\n',
+        '#!/bin/sh\n'
+        'here="$(cd "$(dirname "$0")/.." && { pwd -W 2>/dev/null || pwd; })"\n'
+        'python="$here/python/bin/python3"\n'
+        '[ -x "$python" ] || python="$here/python/python.exe"\n'
+        'HOME="$here/home" USERPROFILE="$here/home" PYTHONUTF8=1 CFS_NO_VERSION_CHECK=1 '
+        'exec "$python" -m studio_proxy "$@"\n',
         encoding="ascii",
     )
 
