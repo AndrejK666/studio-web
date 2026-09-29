@@ -42,6 +42,8 @@ pub struct Catalog {
     hub: Arc<ClientHub>,
     /// Product previews; `None` when no corpus workdir is configured.
     gearbox: Option<Arc<Gearbox>>,
+    /// What the components reference reuses between requests.
+    reference: Arc<ReferenceCache>,
 }
 
 impl Catalog {
@@ -54,6 +56,7 @@ impl Catalog {
             service,
             hub,
             gearbox,
+            reference: Arc::new(ReferenceCache::default()),
         }
     }
 
@@ -790,13 +793,50 @@ async fn list_gears(
         .list_component_nodes(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // The reference's classification, laid onto each node: what it is, what
+    // it is filed under, and why it is not a component when it is not. A
+    // node another supersedes is left out, so the portal's list is clean
+    // before the next sync deletes it. Never waits for a cold Gearbox cache.
+    let (entries, _, _, _) = reference_entries(&ctx, &catalog, 0, false).await?;
+    let by_instance: std::collections::HashMap<&str, &super::reference::ComponentReferenceDto> =
+        entries
+            .iter()
+            .filter_map(|e| e.instance_id.as_deref().map(|id| (id, e)))
+            .collect();
     Ok(Json(CatalogNodeListResponse {
         nodes: nodes
             .into_iter()
-            .map(|n| CatalogNodeDto {
-                type_id: n.type_id,
-                instance_id: n.instance_id,
-                value: n.value,
+            .filter_map(|n| {
+                let mut value = n.value;
+                if let Some(entry) = by_instance.get(n.instance_id.as_str()) {
+                    if entry.superseded_by.is_some() {
+                        return None;
+                    }
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("component_kind".into(), Value::String(entry.kind.clone()));
+                        obj.insert(
+                            "component_kind_reason".into(),
+                            Value::String(entry.kind_reason.clone()),
+                        );
+                        obj.insert(
+                            "component_category".into(),
+                            entry.category.clone().map_or(Value::Null, Value::String),
+                        );
+                        obj.insert(
+                            "component_excluded".into(),
+                            entry
+                                .excluded_reason
+                                .clone()
+                                .map_or(Value::Null, Value::String),
+                        );
+                        obj.insert("component_name".into(), Value::String(entry.name.clone()));
+                    }
+                }
+                Some(CatalogNodeDto {
+                    type_id: n.type_id,
+                    instance_id: n.instance_id,
+                    value,
+                })
             })
             .collect(),
         truncated,
@@ -1460,30 +1500,309 @@ async fn component_values(
 /// should show the same number for the same component.
 const DEFAULT_REFERENCE_DAYS: u32 = 90;
 
+/// How long the engine's catalogue is served from memory before a refresh is
+/// started in the background. The answer never waits for that refresh: the
+/// corpus checkout is a `git fetch` plus an engine run, seconds on a good day,
+/// and the commit it lands on is part of the cache key anyway.
+const ENGINE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How long the warehouse's activity is reused. It moves by the day; a
+/// catalogue change (a sync) invalidates it sooner.
+const ACTIVITY_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+#[derive(Clone)]
+struct EngineHit {
+    commit: Option<String>,
+    label: String,
+    index: Arc<super::reference::EngineIndex>,
+    at: std::time::Instant,
+}
+
+#[derive(Clone)]
+struct ActivityHit {
+    generation: u64,
+    at: std::time::Instant,
+    rows: Arc<std::collections::HashMap<String, super::reference::ReferenceActivityDto>>,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+#[derive(Clone)]
+struct BuiltHit {
+    generation: u64,
+    commit: Option<String>,
+    activity_at: Option<std::time::Instant>,
+    entries: Arc<Vec<super::reference::ComponentReferenceDto>>,
+    truncated: bool,
+    sources: super::reference::ReferenceSourcesDto,
+}
+
+/// What `/reference` (and the `/components` listing) reuse between requests.
+///
+/// Keyed so that a stale answer cannot be served: the engine's index by the
+/// corpus commit, activity and the built join by the catalogue generation
+/// (`CatalogService::generation`, moved by every sync and every profile or
+/// field-schema write), the tenant and the window.
+#[derive(Default)]
+pub struct ReferenceCache {
+    engine: tokio::sync::Mutex<Option<EngineHit>>,
+    engine_refreshing: std::sync::atomic::AtomicBool,
+    activity: tokio::sync::Mutex<std::collections::HashMap<(Uuid, u32), ActivityHit>>,
+    built: tokio::sync::Mutex<std::collections::HashMap<(Uuid, u32), BuiltHit>>,
+}
+
+/// Read the engine's catalogue into the cache.
+async fn load_engine(gearbox: &Gearbox) -> anyhow::Result<EngineHit> {
+    let (raw, commit) = gearbox.catalogue_json().await?;
+    let mut label = gearbox.corpus_label();
+    if let Some(c) = &commit {
+        label = format!("{label} ({})", &c[..c.len().min(7)]);
+    }
+    Ok(EngineHit {
+        index: Arc::new(super::reference::EngineIndex::from_catalogue(&raw)),
+        commit,
+        label,
+        at: std::time::Instant::now(),
+    })
+}
+
+/// Refresh the engine's catalogue in the background, once at a time.
+fn refresh_engine_later(gearbox: Arc<Gearbox>, cache: Arc<ReferenceCache>) {
+    use std::sync::atomic::Ordering;
+    if cache.engine_refreshing.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        match load_engine(&gearbox).await {
+            Ok(hit) => *cache.engine.lock().await = Some(hit),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: engine catalogue refresh failed; serving the last one")
+            }
+        }
+        cache.engine_refreshing.store(false, Ordering::SeqCst);
+    });
+}
+
+/// The engine's index, from memory when there is one. `wait` says whether a
+/// cold cache may be filled in this request (the reference) or only in the
+/// background (the `/components` listing, which must not wait on a clone).
+async fn engine_index(catalog: &Catalog, wait: bool) -> Result<Option<EngineHit>, String> {
+    let Some(gearbox) = &catalog.gearbox else {
+        return Err(
+            "Gearbox is not configured in this deployment (STUDIO_GEARBOX_WORKDIR is not set)"
+                .to_string(),
+        );
+    };
+    let hit = catalog.reference.engine.lock().await.clone();
+    match hit {
+        Some(hit) => {
+            if hit.at.elapsed() >= ENGINE_TTL {
+                refresh_engine_later(Arc::clone(gearbox), Arc::clone(&catalog.reference));
+            }
+            Ok(Some(hit))
+        }
+        None if wait => match load_engine(gearbox).await {
+            Ok(hit) => {
+                *catalog.reference.engine.lock().await = Some(hit.clone());
+                Ok(Some(hit))
+            }
+            Err(e) => Err(format!("the Gearbox catalogue could not be read: {e:#}")),
+        },
+        None => {
+            refresh_engine_later(Arc::clone(gearbox), Arc::clone(&catalog.reference));
+            Ok(None)
+        }
+    }
+}
+
+/// Every reference entry — components, non-components and superseded nodes —
+/// for this tenant, from the cache when the catalogue, the corpus commit and
+/// the activity it was built from are unchanged. Returns the entries, whether
+/// the listing was truncated, the sources, and whether the cache answered.
+async fn reference_entries(
+    ctx: &SecurityContext,
+    catalog: &Catalog,
+    days: u32,
+    wait_for_engine: bool,
+) -> ApiResult<(
+    Arc<Vec<super::reference::ComponentReferenceDto>>,
+    bool,
+    super::reference::ReferenceSourcesDto,
+    bool,
+)> {
+    use super::reference::{ReferenceInputs, ReferenceSourcesDto};
+
+    let tenant = ctx.subject_tenant_id();
+    let generation = catalog.service.generation();
+    let (engine, gearbox_problem) = match engine_index(catalog, wait_for_engine).await {
+        Ok(hit) => (hit, None),
+        Err(problem) => (None, Some(problem)),
+    };
+    let commit = engine.as_ref().and_then(|e| e.commit.clone());
+
+    let activity_hit = if days == 0 {
+        None
+    } else {
+        catalog
+            .reference
+            .activity
+            .lock()
+            .await
+            .get(&(tenant, days))
+            .filter(|a| a.generation == generation && a.at.elapsed() < ACTIVITY_TTL)
+            .cloned()
+    };
+    let delivery = if days == 0 {
+        None
+    } else {
+        catalog.delivery().ok()
+    };
+
+    // The whole answer, when nothing it was built from has moved.
+    if let Some(hit) = catalog.reference.built.lock().await.get(&(tenant, days))
+        && hit.generation == generation
+        && hit.commit == commit
+        && hit.activity_at == activity_hit.as_ref().map(|a| a.at)
+        && (engine.is_some() || gearbox_problem.is_some() || hit.sources.gearbox_corpus.is_none())
+        && (activity_hit.is_some() || delivery.is_none())
+    {
+        return Ok((
+            Arc::clone(&hit.entries),
+            hit.truncated,
+            hit.sources.clone(),
+            true,
+        ));
+    }
+
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let (nodes, truncated) = catalog
+        .service
+        .list_component_nodes(ctx)
+        .await
+        .map_err(internal)?;
+    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for node in catalog.service.list_profiles(ctx).await.map_err(internal)? {
+        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+    let schemas = catalog
+        .service
+        .list_field_schemas(ctx)
+        .await
+        .map_err(internal)?;
+
+    let mut activity_problem = None;
+    let activity = match (days, activity_hit, delivery) {
+        (0, _, _) => {
+            activity_problem = Some("activity was not asked for (days=0)".to_string());
+            None
+        }
+        (_, Some(hit), _) => Some(hit),
+        (_, None, None) => {
+            activity_problem =
+                Some("studio-insight is not configured in this deployment".to_string());
+            None
+        }
+        (_, None, Some(delivery)) => {
+            let components: Vec<Value> = nodes.iter().map(|n| n.value.clone()).collect();
+            match activity_of(delivery.as_ref(), &components, days).await {
+                Ok(answer) => {
+                    let hit = ActivityHit {
+                        generation,
+                        at: std::time::Instant::now(),
+                        from: answer.sources.from,
+                        to: answer.sources.to,
+                        rows: Arc::new(
+                            answer
+                                .items
+                                .into_iter()
+                                .map(|row| {
+                                    (
+                                        row.gear,
+                                        super::reference::ReferenceActivityDto {
+                                            commits: row.commits,
+                                            files_changed: row.files_changed,
+                                            lines_added: row.lines_added,
+                                            lines_removed: row.lines_removed,
+                                            authors: row.authors,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    };
+                    catalog
+                        .reference
+                        .activity
+                        .lock()
+                        .await
+                        .insert((tenant, days), hit.clone());
+                    Some(hit)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "components-catalog: reference activity unavailable");
+                    activity_problem =
+                        Some(format!("the delivery warehouse did not answer: {e:#}"));
+                    None
+                }
+            }
+        }
+    };
+
+    let entries = super::reference::build(&ReferenceInputs {
+        nodes: &nodes,
+        profiles: &profiles,
+        schemas: &schemas,
+        engine: engine.as_ref().map(|e| e.index.as_ref()),
+        activity: activity.as_ref().map(|a| a.rows.as_ref()),
+    });
+    let excluded = entries.iter().filter(|e| !e.component).count();
+    let sources = ReferenceSourcesDto {
+        gearbox_corpus: engine.as_ref().map(|e| e.label.clone()),
+        gearbox_problem: gearbox_problem.or_else(|| {
+            engine.is_none().then(|| {
+                "the Gearbox catalogue is still being read; reload in a moment".to_string()
+            })
+        }),
+        activity_days: activity.as_ref().map(|_| days),
+        activity_from: activity.as_ref().and_then(|a| a.from.clone()),
+        activity_to: activity.as_ref().and_then(|a| a.to.clone()),
+        activity_problem,
+        excluded: u32::try_from(excluded).unwrap_or(u32::MAX),
+        cached: false,
+    };
+    let entries = Arc::new(entries);
+    catalog.reference.built.lock().await.insert(
+        (tenant, days),
+        BuiltHit {
+            generation,
+            commit,
+            activity_at: activity.as_ref().map(|a| a.at),
+            entries: Arc::clone(&entries),
+            truncated,
+            sources: sources.clone(),
+        },
+    );
+    Ok((entries, truncated, sources, false))
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct ReferenceQuery {
     /// Activity window in days; `0` skips the warehouse. Defaults to 90.
     pub days: Option<u32>,
+    /// `components` (default) lists components only; `all` adds what is not
+    /// a component and what another node supersedes, each with its reason.
+    pub include: Option<String>,
 }
 
 /// GET /studio-components-catalog/v1/reference — the catalogue and the
 /// Gearbox engine's catalogue as one list (see [`super::reference`]).
-///
-/// Every half is read once for the whole list: the component nodes, their
-/// profiles and the field schemas from the graph, the engine's catalogue from
-/// the one corpus checkout, the activity from the warehouse (one round trip
-/// per repository). The engine and the warehouse are best-effort — a
-/// deployment without Gearbox or Insight still gets the catalogue, with the
-/// reason in `sources` instead of an error.
 async fn component_reference(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
     Query(query): Query<ReferenceQuery>,
 ) -> ApiResult<JsonBody<ComponentReferenceListDto>> {
-    use super::reference::{
-        EngineIndex, ReferenceActivityDto, ReferenceInputs, ReferenceSourcesDto,
-    };
-
     let days = query.days.unwrap_or(DEFAULT_REFERENCE_DAYS);
     if days > MAX_ACTIVITY_DAYS {
         return Err(StudioComponentsCatalogError::invalid_argument()
@@ -1494,119 +1813,32 @@ async fn component_reference(
             )
             .create());
     }
-
-    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
-    let (nodes, truncated) = catalog
-        .service
-        .list_component_nodes(&ctx)
-        .await
-        .map_err(internal)?;
-    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    for node in catalog
-        .service
-        .list_profiles(&ctx)
-        .await
-        .map_err(internal)?
-    {
-        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
-            profiles.insert(name.to_owned(), node.value);
+    let all = match query.include.as_deref() {
+        None | Some("components") => false,
+        Some("all") => true,
+        Some(other) => {
+            return Err(StudioComponentsCatalogError::invalid_argument()
+                .with_field_violation(
+                    "include",
+                    format!("must be `components` or `all`, got `{other}`"),
+                    "INVALID",
+                )
+                .create());
         }
-    }
-    let schemas = catalog
-        .service
-        .list_field_schemas(&ctx)
-        .await
-        .map_err(internal)?;
-
-    let (engine, gearbox_corpus, gearbox_problem) = match &catalog.gearbox {
-        None => (
-            None,
-            None,
-            Some(
-                "Gearbox is not configured in this deployment (STUDIO_GEARBOX_WORKDIR is not set)"
-                    .to_string(),
-            ),
-        ),
-        Some(gearbox) => match gearbox.catalogue_json().await {
-            Ok((raw, commit)) => {
-                let mut label = gearbox.corpus_label();
-                if let Some(c) = commit {
-                    label = format!("{label} ({})", &c[..c.len().min(7)]);
-                }
-                (Some(EngineIndex::from_catalogue(&raw)), Some(label), None)
-            }
-            Err(e) => (
-                None,
-                None,
-                Some(format!("the Gearbox catalogue could not be read: {e:#}")),
-            ),
-        },
     };
-
-    let mut activity: Option<std::collections::HashMap<String, ReferenceActivityDto>> = None;
-    let (mut activity_from, mut activity_to, mut activity_problem) = (None, None, None);
-    if days == 0 {
-        activity_problem = Some("activity was not asked for (days=0)".to_string());
-    } else {
-        match catalog.delivery() {
-            Err(_) => {
-                activity_problem =
-                    Some("studio-insight is not configured in this deployment".to_string());
-            }
-            Ok(delivery) => {
-                let components: Vec<Value> = nodes.iter().map(|n| n.value.clone()).collect();
-                match activity_of(delivery.as_ref(), &components, days).await {
-                    Ok(answer) => {
-                        activity_from = answer.sources.from;
-                        activity_to = answer.sources.to;
-                        activity = Some(
-                            answer
-                                .items
-                                .into_iter()
-                                .map(|row| {
-                                    (
-                                        row.gear,
-                                        ReferenceActivityDto {
-                                            commits: row.commits,
-                                            files_changed: row.files_changed,
-                                            lines_added: row.lines_added,
-                                            lines_removed: row.lines_removed,
-                                            authors: row.authors,
-                                        },
-                                    )
-                                })
-                                .collect(),
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %format!("{e:#}"), "components-catalog: reference activity unavailable");
-                        activity_problem =
-                            Some(format!("the delivery warehouse did not answer: {e:#}"));
-                    }
-                }
-            }
-        }
-    }
-
-    let items = super::reference::build(&ReferenceInputs {
-        nodes: &nodes,
-        profiles: &profiles,
-        schemas: &schemas,
-        engine: engine.as_ref(),
-        activity: activity.as_ref(),
-    });
+    let (entries, truncated, mut sources, cached) =
+        reference_entries(&ctx, &catalog, days, true).await?;
+    sources.cached = cached;
+    let items: Vec<_> = entries
+        .iter()
+        .filter(|e| all || e.component)
+        .cloned()
+        .collect();
     Ok(Json(ComponentReferenceListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         truncated,
-        sources: ReferenceSourcesDto {
-            gearbox_corpus,
-            gearbox_problem,
-            activity_days: activity.is_some().then_some(days),
-            activity_from,
-            activity_to,
-            activity_problem,
-        },
+        sources,
     }))
 }
 
@@ -2775,7 +3007,14 @@ pub fn register_routes(
              its manifests and its descriptor, not from a naming convention.\n\n\
              Gearbox and Insight are best-effort: without them the catalogue is still served \
              and `sources.gearbox_problem` / `sources.activity_problem` say why a half is \
-             missing. `days` (default 90, `0` to skip) is the activity window.",
+             missing. `days` (default 90, `0` to skip) is the activity window.\n\n\
+             KINDS AND CATEGORIES come from one vocabulary each (`kind`, `category`), with \
+             the evidence in `kind_reason` / `category_reason`. What is not a component \
+             (config, test support, docs, templates, examples) and nodes another supersedes \
+             (an older copy, a guessed name) are left out unless `include=all`; then they \
+             carry `component: false` and `excluded_reason`. `sources.excluded` counts them.\n\n\
+             Answers are cached per catalogue generation, corpus commit and activity window \
+             (`sources.cached`); a sync or a profile edit invalidates them.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -2784,6 +3023,11 @@ pub fn register_routes(
             "days",
             false,
             "Activity window in days, ending today (default 90; 0 skips the warehouse)",
+        )
+        .query_param(
+            "include",
+            false,
+            "`components` (default) or `all` (adds non-components and superseded nodes, with reasons)",
         )
         .handler(component_reference)
         .json_response_with_schema::<ComponentReferenceListDto>(

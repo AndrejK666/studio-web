@@ -22,6 +22,7 @@ mod scaffold;
 mod service;
 mod skeleton;
 mod sync_task;
+mod taxonomy;
 mod values;
 
 use std::sync::Arc;
@@ -159,6 +160,16 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         });
         if let Some(g) = &gearbox {
             service.set_gearbox(Arc::clone(g));
+            // Check the corpus out and run the engine once at start, so the
+            // first components reference does not pay for a clone.
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                let g = Arc::clone(g);
+                rt.spawn(async move {
+                    if let Err(e) = g.catalogue_json().await {
+                        tracing::warn!(error = %format!("{e:#}"), "studio-components-catalog: corpus warm-up failed");
+                    }
+                });
+            }
         }
         // A project without a gear repository is compared against its own
         // sources, which only its config names.

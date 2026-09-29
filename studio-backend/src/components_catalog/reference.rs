@@ -32,6 +32,17 @@
 //! An engine gear no component matches is listed on its own, with every
 //! portal field null: it can still be put into a product.
 //!
+//! ── Kinds, categories, and what is left out ─────────────────────────────────
+//!
+//! Every entry gets a kind and a category from one vocabulary each, decided
+//! from evidence in [`super::taxonomy`], with the evidence as `kind_reason` /
+//! `category_reason`. Entries that are not components (configs, test support,
+//! docs, templates, examples) and nodes that are older copies of another
+//! (`superseded`) carry `component: false` and an `excluded_reason`; the
+//! handler leaves them out unless asked (`?include=all`). The read is clean
+//! before any re-sync: superseded nodes are recognised from what is stored,
+//! and the next sync deletes them.
+//!
 //! ── Nulls ────────────────────────────────────────────────────────────────────
 //!
 //! Unknown is null, never zero. A crate with no downloads figure has
@@ -47,7 +58,8 @@ use serde_json::Value;
 
 use super::field_schema::TypeFieldSchema;
 use super::gts;
-use super::service::{CatalogNodeView, classify_kind};
+use super::service::CatalogNodeView;
+use super::taxonomy;
 
 // ── wire shapes ──────────────────────────────────────────────────────────────
 
@@ -173,21 +185,45 @@ pub struct ReferenceReadinessDto {
 }
 
 /// One component of the reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[toolkit_macros::api_dto(response)]
 pub struct ComponentReferenceDto {
     /// The catalogue name: the crate, the npm package, the kit slug — or, for
-    /// a gear only the engine knows, its crate name.
+    /// a gear only the engine knows, its crate name. A node stored under a
+    /// guessed name is listed under the real one, and the stored name is in
+    /// `aka`.
     pub name: String,
+    /// Names the same component is stored under.
+    pub aka: Vec<String>,
+    /// The graph node, so a client can match an entry to `/components`. Null
+    /// for a gear only the engine knows.
+    pub instance_id: Option<String>,
     /// A human name when one exists (the engine's `display_name`, a kit's
     /// title); null rather than the name repeated.
     pub title: Option<String>,
     /// The node type in the graph. Null for a gear only the engine knows.
     pub type_id: Option<String>,
-    /// What it IS: `gear`, `plugin`, `sdk`, `toolkit`, `frontx`, `kit`. Not a
-    /// crates.io category and not a package keyword — those are `category`.
+    /// What it IS, from one vocabulary (`taxonomy::Kind`): `gear`, `plugin`,
+    /// `sdk`, `library`, `micro-frontend`, `frontend-library`, `tool`, `kit`;
+    /// or, for what is not a component, `config`, `test-support`, `docs`,
+    /// `template`, `example`; or `superseded`.
     pub kind: String,
+    /// The evidence that decided `kind`.
+    pub kind_reason: String,
+    /// False for a non-component class or a superseded node.
+    pub component: bool,
+    /// Why it is left out of the default list. Null for a component.
+    pub excluded_reason: Option<String>,
+    /// For a superseded node: the entry listed instead.
+    pub superseded_by: Option<String>,
+    /// One of `taxonomy::CATEGORIES`, or null.
     pub category: Option<String>,
+    /// Where `category` came from (`gear.gdl`, `gear.toml`, `the category of
+    /// …`, a crates.io category).
+    pub category_reason: Option<String>,
+    /// The registry categories and scan tags as the sources spelled them,
+    /// kept apart because they are not this platform's categories.
+    pub source_categories: Vec<String>,
     pub description: Option<String>,
     /// `published` (a crate exists) or `draft` (documents only), from the
     /// repository scan. Null when no scan counted the crates.
@@ -242,6 +278,12 @@ pub struct ReferenceSourcesDto {
     pub activity_to: Option<String>,
     /// Why there is no activity, when there is none.
     pub activity_problem: Option<String>,
+    /// How many entries the default list leaves out: not components, and
+    /// older copies of another. `?include=all` lists them with the reason.
+    pub excluded: u32,
+    /// Whether this answer came from the cache (built for the same catalogue
+    /// generation and corpus commit).
+    pub cached: bool,
 }
 
 /// The reference, whole: one answer for the whole list, so a client never
@@ -457,16 +499,20 @@ fn directory_of(node: &Value, profile: Option<&Value>) -> Option<String> {
     (!scanned.is_empty() && !scanned.contains("://")).then(|| scanned.trim_matches('/').to_string())
 }
 
-fn kind_of(node: &CatalogNodeView, name: &str) -> String {
-    if let Some(k) = text(&node.value, "kind") {
-        return k.to_string();
-    }
-    if node.type_id == gts::KIT_TYPE {
-        "kit".to_string()
-    } else if node.type_id == gts::FRONTX_TYPE {
-        "frontx".to_string()
-    } else {
-        classify_kind(name).to_string()
+/// The brief (`b`, else `v`) of one resolved field, as text.
+fn brief<'v>(values: &'v serde_json::Map<String, Value>, key: &str) -> Option<&'v str> {
+    values
+        .get(key)
+        .and_then(|f| f.get("b").or_else(|| f.get("v")))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+}
+
+fn yes_no(values: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
+    match brief(values, key) {
+        Some("yes") => Some(true),
+        Some("no") => Some(false),
+        _ => None,
     }
 }
 
@@ -480,10 +526,140 @@ fn schema_for<'s>(schemas: &'s [TypeFieldSchema], type_id: &str) -> Option<&'s T
         .filter(|s| s.fields().next().is_some())
 }
 
-/// Build the reference. Pure: the handler reads the stores and hands them in.
+/// `gts.cf.studio.catalog.frontx.v1~` → `frontx node`.
+fn type_label(type_id: &str) -> String {
+    let leaf = type_id
+        .trim_end_matches('~')
+        .rsplit("catalog.")
+        .next()
+        .unwrap_or(type_id);
+    let leaf = leaf.strip_suffix(".v1").unwrap_or(leaf);
+    format!("{leaf} node")
+}
+
+/// Why one node is not listed as a component of its own.
+#[derive(Debug, Clone)]
+struct Superseded {
+    /// The node that is listed instead.
+    by: usize,
+    reason: String,
+}
+
+/// Which nodes are older copies of another, decided from what is stored — so
+/// the read is clean before any re-sync, and a sync then deletes them for good
+/// (`service::stale`, `service::misfiled_frontx`).
+///
+/// Two cases:
+///
+/// * **Two nodes, one name.** A FrontX package written as a gear node by an
+///   old scan, and again as a micro-frontend node by the current one. The node
+///   a scan recorded its source on wins; between two such, the one not filed
+///   as a gear.
+/// * **A guessed name.** A scan node keyed `cf-gears-<directory>` whose
+///   directory holds a crate the engine names differently, when that crate is
+///   catalogued under its own name too (`cf-gears-chat-engine` →
+///   `cf-chat-engine`). When the real name is not catalogued, the node is kept
+///   and takes the real name instead (`cf-gears-ledger` → `cf-gears-bss-ledger`).
+fn superseded(
+    nodes: &[CatalogNodeView],
+    names: &[String],
+    dirs: &[Option<String>],
+    engine: Option<&EngineIndex>,
+) -> Vec<Option<Superseded>> {
+    let mut out: Vec<Option<Superseded>> = vec![None; nodes.len()];
+
+    let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        by_name.entry(n.as_str()).or_default().push(i);
+    }
+    let score = |i: usize| {
+        let recorded = text(&nodes[i].value, "synced_from").is_some();
+        let not_gear = nodes[i].type_id != gts::GEAR_TYPE;
+        (u8::from(recorded) << 1) | u8::from(not_gear)
+    };
+    for (name, group) in &by_name {
+        if group.len() < 2 {
+            continue;
+        }
+        let best = *group
+            .iter()
+            .max_by_key(|i| (score(**i), std::cmp::Reverse(**i)))
+            .expect("a group has members");
+        for &i in group.iter().filter(|i| **i != best) {
+            out[i] = Some(Superseded {
+                by: best,
+                reason: format!(
+                    "a second node for {name} ({}, {}); the {} one is kept",
+                    type_label(&nodes[i].type_id),
+                    if text(&nodes[i].value, "synced_from").is_some() {
+                        "source recorded"
+                    } else {
+                        "written by an older scan, no source recorded"
+                    },
+                    if nodes[best].type_id == gts::FRONTX_TYPE {
+                        "micro-frontend-typed"
+                    } else {
+                        "newer"
+                    },
+                ),
+            });
+        }
+    }
+
+    let Some(engine) = engine else {
+        return out;
+    };
+    for (i, node) in nodes.iter().enumerate() {
+        if out[i].is_some() || node.type_id != gts::GEAR_TYPE {
+            continue;
+        }
+        let Some(dir) = dirs[i].as_deref() else {
+            continue;
+        };
+        if engine
+            .gears
+            .iter()
+            .any(|g| g.crate_name() == Some(names[i].as_str()))
+        {
+            continue; // its own name is a real crate
+        }
+        let slug = dir.rsplit('/').next().unwrap_or(dir);
+        let own_package = |g: &&RawGear| {
+            g.package
+                .path
+                .as_deref()
+                .is_some_and(|p| p == dir || p == format!("{dir}/{slug}"))
+        };
+        let Some(real) = engine
+            .gears
+            .iter()
+            .find(own_package)
+            .and_then(RawGear::crate_name)
+        else {
+            continue;
+        };
+        if let Some(winner) = names.iter().position(|n| n == real)
+            && winner != i
+            && out[winner].is_none()
+        {
+            out[i] = Some(Superseded {
+                by: winner,
+                reason: format!(
+                    "catalogued under the guessed name {}; the crate in {dir} is {real}, catalogued under its own name",
+                    names[i]
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// Build the reference: every entry, components and not, each with its kind,
+/// category and — for what is not a component of its own — the reason. The
+/// handler decides what to show. Pure: it reads nothing but its inputs.
 pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
-    let names: Vec<String> = inputs
-        .nodes
+    let nodes = inputs.nodes;
+    let names: Vec<String> = nodes
         .iter()
         .map(|n| {
             text(&n.value, "name")
@@ -491,23 +667,54 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 .unwrap_or_else(|| n.instance_id.clone())
         })
         .collect();
-    let in_catalogue: BTreeSet<&str> = names.iter().map(String::as_str).collect();
-    let dirs: Vec<Option<String>> = inputs
-        .nodes
+    let dirs: Vec<Option<String>> = nodes
         .iter()
         .zip(&names)
         .map(|(n, name)| directory_of(&n.value, inputs.profiles.get(name)))
         .collect();
+    let gone = superseded(nodes, &names, &dirs, inputs.engine);
+    let live = |i: usize| gone[i].is_none();
 
-    // Engine gear ids per component index, and the gears nobody claimed.
-    let mut claimed: Vec<Vec<String>> = vec![Vec::new(); inputs.nodes.len()];
+    // What a superseded node knew and its survivor did not (its profile, its
+    // directory, its source) is lent to the survivor.
+    let mut donors: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, g) in gone.iter().enumerate() {
+        if let Some(s) = g {
+            donors.entry(s.by).or_default().push(i);
+        }
+    }
+    let profile_of = |i: usize| -> Option<&Value> {
+        inputs.profiles.get(&names[i]).or_else(|| {
+            donors
+                .get(&i)?
+                .iter()
+                .find_map(|d| inputs.profiles.get(&names[*d]))
+        })
+    };
+    let dir_of = |i: usize| -> Option<String> {
+        dirs[i]
+            .clone()
+            .or_else(|| donors.get(&i)?.iter().find_map(|d| dirs[*d].clone()))
+    };
+    let lent = |i: usize, key: &str| -> Option<String> {
+        text(&nodes[i].value, key).map(str::to_string).or_else(|| {
+            donors
+                .get(&i)?
+                .iter()
+                .find_map(|d| text(&nodes[*d].value, key).map(str::to_string))
+        })
+    };
+
+    // Engine gears per live component: by crate name, then by directory.
+    let mut claimed: Vec<Vec<String>> = vec![Vec::new(); nodes.len()];
     let mut orphans: Vec<&RawGear> = Vec::new();
+    let mut canonical: Vec<Option<String>> = vec![None; nodes.len()];
     if let Some(engine) = inputs.engine {
         let mut by_path: Vec<&RawGear> = Vec::new();
         for gear in &engine.gears {
             match gear
                 .crate_name()
-                .and_then(|c| names.iter().position(|n| n == c))
+                .and_then(|c| (0..nodes.len()).find(|i| live(*i) && names[*i] == c))
             {
                 Some(i) => claimed[i].push(gear.id.clone()),
                 None => by_path.push(gear),
@@ -518,29 +725,38 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 orphans.push(gear);
                 continue;
             };
-            let hit = dirs
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| {
-                    // Only a component no gear claimed by crate name; and a
-                    // gear-typed one — a directory match to an npm package
-                    // or a kit would be a coincidence of layout.
+            let hit = (0..nodes.len())
+                .filter(|i| live(*i) && nodes[*i].type_id == gts::GEAR_TYPE)
+                .filter(|i| {
                     claimed[*i].iter().all(|id| {
                         engine
                             .by_id(id)
                             .is_some_and(|g| g.crate_name() != Some(names[*i].as_str()))
-                    }) && inputs.nodes[*i].type_id == gts::GEAR_TYPE
+                    })
                 })
-                .filter_map(|(i, d)| d.as_deref().map(|d| (i, d)))
+                .filter_map(|i| dirs[i].as_deref().map(|d| (i, d)))
                 .filter(|(_, d)| pkg == *d || pkg.starts_with(&format!("{d}/")))
                 .max_by_key(|(_, d)| d.len());
             match hit {
-                Some((i, _)) => claimed[i].push(gear.id.clone()),
+                Some((i, d)) => {
+                    let slug = d.rsplit('/').next().unwrap_or(d);
+                    if canonical[i].is_none() && (pkg == d || pkg == format!("{d}/{slug}")) {
+                        canonical[i] = gear.crate_name().map(str::to_string);
+                    }
+                    claimed[i].push(gear.id.clone());
+                }
                 None => orphans.push(gear),
             }
         }
     }
 
+    let display: Vec<String> = (0..nodes.len())
+        .map(|i| canonical[i].clone().unwrap_or_else(|| names[i].clone()))
+        .collect();
+    let in_catalogue: BTreeSet<&str> = (0..nodes.len())
+        .filter(|i| live(*i))
+        .flat_map(|i| [names[i].as_str(), display[i].as_str()])
+        .collect();
     let gear_of_crate: HashMap<&str, &str> = inputs
         .engine
         .map(|e| {
@@ -551,12 +767,24 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
         })
         .unwrap_or_default();
 
-    let mut out: Vec<ComponentReferenceDto> =
-        Vec::with_capacity(inputs.nodes.len() + orphans.len());
-    for (i, node) in inputs.nodes.iter().enumerate() {
-        let name = names[i].clone();
+    let mut out: Vec<ComponentReferenceDto> = Vec::with_capacity(nodes.len() + orphans.len());
+    for (i, node) in nodes.iter().enumerate() {
         let v = &node.value;
-        let profile = inputs.profiles.get(&name);
+        if let Some(s) = &gone[i] {
+            out.push(ComponentReferenceDto {
+                name: names[i].clone(),
+                instance_id: Some(node.instance_id.clone()),
+                type_id: Some(node.type_id.clone()),
+                kind: "superseded".to_string(),
+                kind_reason: s.reason.clone(),
+                component: false,
+                excluded_reason: Some(format!("superseded by {}: {}", display[s.by], s.reason)),
+                superseded_by: Some(display[s.by].clone()),
+                ..ComponentReferenceDto::default()
+            });
+            continue;
+        }
+        let profile = profile_of(i);
         let values = super::values::resolve(v, profile);
         let engine: Vec<ReferenceEngineGearDto> = inputs
             .engine
@@ -568,34 +796,96 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                     .collect()
             })
             .unwrap_or_default();
+        let dir = dir_of(i);
 
         let released = text(v, "max_stable_version")
             .or_else(|| text(v, "newest_version"))
             .or_else(|| text(v, "max_version"));
-        let declared = values
-            .get("version")
-            .and_then(|f| f.get("b").or_else(|| f.get("v")))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty());
+        let declared = brief(&values, "version");
         let (version, version_source) = match (released, declared) {
             (Some(r), _) => (Some(r.to_string()), Some("crates.io".to_string())),
             (None, Some(d)) => (Some(d.to_string()), Some("declared".to_string())),
             (None, None) => (None, None),
         };
 
+        let scanned_as = profile.and_then(|p| text(p, "source"));
         let mut sources: Vec<String> = Vec::new();
         if released.is_some() || v.get("downloads").is_some() {
             sources.push("crates.io".to_string());
         }
         if node.type_id == gts::KIT_TYPE {
             sources.push("kit manifest".to_string());
-        } else if text(v, "synced_from").is_some()
+        } else if lent(i, "synced_from").is_some()
             || profile.is_some_and(|p| p.get("auto").is_some())
         {
             sources.push("repository".to_string());
         }
         if !engine.is_empty() {
             sources.push("gearbox".to_string());
+        }
+
+        // ── kind ─────────────────────────────────────────────────────────
+        let is_npm = node.type_id == gts::FRONTX_TYPE
+            || names[i].starts_with('@')
+            || scanned_as == Some("frontx")
+            || text(v, "kind") == Some("frontx");
+        let roles: Vec<&str> = engine.iter().map(|g| g.role.as_str()).collect();
+        let engine_category = engine
+            .iter()
+            .find(|g| g.role == "service")
+            .or_else(|| engine.first())
+            .and_then(|g| g.category.as_deref());
+        let classified = taxonomy::classify(&taxonomy::Evidence {
+            name: &display[i],
+            is_kit: node.type_id == gts::KIT_TYPE,
+            is_npm,
+            path: dir.as_deref(),
+            gear_toml: scanned_as == Some("gears"),
+            gear_toml_plugin: yes_no(&values, "is_plugin"),
+            engine_roles: roles,
+            engine_category,
+            stored_kind: text(v, "kind"),
+            npm_bin: yes_no(&values, "npm_bin"),
+            npm_mfe: yes_no(&values, "npm_mfe"),
+            npm_private: yes_no(&values, "npm_private"),
+        });
+
+        // ── category ─────────────────────────────────────────────────────
+        let registry: Vec<&str> = v
+            .get("categories")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let scan_category = profile
+            .and_then(|p| p.get("auto"))
+            .and_then(|a| a.get("category"))
+            .and_then(|c| c.get("b").or_else(|| c.get("v")))
+            .and_then(Value::as_str)
+            .or_else(|| text(v, "category"));
+        let host = inputs.engine.and_then(|e| {
+            engine.iter().flat_map(|g| g.hosts.iter()).find_map(|h| {
+                let host = e.by_id(h)?;
+                Some((
+                    host.category.as_deref()?,
+                    host.crate_name().unwrap_or(h.as_str()),
+                ))
+            })
+        });
+        let categorised = if is_npm {
+            // npm keywords (`hai3`, `eslint`) are tags, not platform categories.
+            taxonomy::Categorised {
+                category: None,
+                reason: None,
+            }
+        } else {
+            taxonomy::categorise(engine_category, scan_category, host, &registry)
+        };
+        let mut source_categories: Vec<String> = registry.iter().map(|s| s.to_string()).collect();
+        if let Some(c) = scan_category
+            && !taxonomy::is_category(c)
+            && !source_categories.iter().any(|s| s == c)
+        {
+            source_categories.push(c.to_string());
         }
 
         let (profile_filled, profile_fields) = match schema_for(inputs.schemas, &node.type_id) {
@@ -609,8 +899,6 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             }
             None => (None, None),
         };
-
-        let category = super::values::category_of(v, profile);
         let description = text(v, "description").map(str::to_string).or_else(|| {
             values
                 .get("description")
@@ -628,26 +916,43 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
         let title = engine
             .first()
             .and_then(|g| g.display_name.clone())
-            .or_else(|| text(v, "title").filter(|t| *t != name).map(str::to_string));
-
+            .or_else(|| {
+                text(v, "title")
+                    .filter(|t| *t != names[i] && *t != display[i])
+                    .map(str::to_string)
+            });
         let related = related_crates(
-            &name,
+            &display[i],
             v,
             &engine,
             inputs.engine,
             &in_catalogue,
             &gear_of_crate,
-            inputs.nodes,
+            nodes,
             &names,
         );
-
+        let kind = classified.kind;
         out.push(ComponentReferenceDto {
-            kind: kind_of(node, &name),
+            name: display[i].clone(),
+            aka: if display[i] == names[i] {
+                Vec::new()
+            } else {
+                vec![names[i].clone()]
+            },
+            instance_id: Some(node.instance_id.clone()),
             title,
             type_id: Some(node.type_id.clone()),
-            category: (!category.is_empty()).then_some(category),
+            kind: kind.as_str().to_string(),
+            kind_reason: classified.reason.clone(),
+            component: kind.is_component(),
+            excluded_reason: (!kind.is_component())
+                .then(|| format!("not a component ({kind}): {}", classified.reason)),
+            superseded_by: None,
+            category: categorised.category,
+            category_reason: categorised.reason,
+            source_categories,
             description,
-            status: text(v, "status").map(str::to_string),
+            status: lent(i, "status"),
             version,
             version_source,
             num_versions: number(v, "num_versions"),
@@ -655,16 +960,19 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             recent_downloads: number(v, "recent_downloads"),
             updated_at,
             repository: text(v, "repository").map(str::to_string),
-            repo_path: dirs[i].clone(),
-            synced_from: text(v, "synced_from").map(str::to_string),
+            repo_path: dir,
+            synced_from: lent(i, "synced_from"),
             sources,
             profile_filled,
             profile_fields,
-            activity: inputs.activity.and_then(|a| a.get(&name).cloned()),
+            activity: inputs
+                .activity
+                .and_then(|a| a.get(&names[i]).or_else(|| a.get(&display[i])).cloned()),
+            // Read off the same resolved values, so a superseded node's
+            // profile, lent to its survivor, carries its readiness along.
             readiness: readiness_of(&values),
             engine,
             related,
-            name,
         });
     }
 
@@ -692,42 +1000,71 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 Some(engine),
                 &in_catalogue,
                 &gear_of_crate,
-                inputs.nodes,
+                nodes,
                 &names,
             );
+            let classified = taxonomy::classify(&taxonomy::Evidence {
+                name: &name,
+                path: gear.package.path.as_deref(),
+                engine_roles: vec![facts.role.as_str()],
+                engine_category: gear.category.as_deref(),
+                ..taxonomy::Evidence::default()
+            });
+            let categorised = taxonomy::categorise(gear.category.as_deref(), None, None, &[]);
+            let kind = classified.kind;
             out.push(ComponentReferenceDto {
                 name,
                 title: gear.display_name.clone(),
-                type_id: None,
-                kind: if gear.fills.is_some() {
-                    "plugin".to_string()
-                } else {
-                    "gear".to_string()
-                },
-                category: gear.category.clone(),
+                kind: kind.as_str().to_string(),
+                kind_reason: classified.reason.clone(),
+                component: kind.is_component(),
+                excluded_reason: (!kind.is_component())
+                    .then(|| format!("not a component ({kind}): {}", classified.reason)),
+                category: categorised.category,
+                category_reason: categorised.reason,
+                source_categories: gear
+                    .category
+                    .iter()
+                    .filter(|c| !taxonomy::is_category(c))
+                    .cloned()
+                    .collect(),
                 description: gear.description.clone(),
-                status: None,
-                version: None,
-                version_source: None,
-                num_versions: None,
-                downloads: None,
-                recent_downloads: None,
-                updated_at: None,
-                repository: None,
                 repo_path: gear.package.path.clone(),
-                synced_from: None,
                 sources: vec!["gearbox".to_string()],
-                profile_filled: None,
-                profile_fields: None,
-                activity: None,
-                readiness: None,
                 engine: vec![facts],
                 related,
+                ..ComponentReferenceDto::default()
             });
         }
     }
 
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // An SDK is filed where its gear is: the gear that names it as its SDK.
+    let owners: HashMap<String, (String, String)> = out
+        .iter()
+        .filter(|e| e.component && e.kind != "sdk")
+        .filter_map(|e| Some((e.category.clone()?, e)))
+        .flat_map(|(c, e)| {
+            e.related
+                .iter()
+                .filter(|r| r.role == "sdk")
+                .map(move |r| (r.name.clone(), (c.clone(), e.name.clone())))
+        })
+        .collect();
+    for e in out
+        .iter_mut()
+        .filter(|e| e.kind == "sdk" && e.category.is_none())
+    {
+        if let Some((c, of)) = owners.get(&e.name) {
+            e.category = Some(c.clone());
+            e.category_reason = Some(format!("the category of {of}"));
+        }
+    }
+
+    out.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then(a.component.cmp(&b.component).reverse())
+    });
     out
 }
 
@@ -963,6 +1300,11 @@ mod tests {
                     "package": { "crate_name": "cf-gears-mini-chat", "path": "gears/mini-chat/mini-chat" },
                     "fills": { "spec": "cf.toolkit.plugins.plugin.v1~cf.core.mini_chat_audit.plugin.v1~" }
                 },
+                "chat-engine": {
+                    "id": "chat-engine",
+                    "category": "gen-ai",
+                    "package": { "crate_name": "cf-chat-engine", "path": "gears/chat-engine/chat-engine" }
+                },
                 "api-contracts": {
                     "id": "api-contracts",
                     "description": "An example",
@@ -1011,6 +1353,33 @@ mod tests {
                 gts::FRONTX_TYPE,
                 json!({ "name": "@gears-frontx/ui-kit", "kind": "frontx", "category": "hai3", "synced_from": "constructorfabric/gears-frontx" }),
             ),
+            // The same package, written as a gear node by an older scan.
+            node(
+                gts::GEAR_TYPE,
+                json!({ "name": "@gears-frontx/ui-kit", "kind": "frontx", "category": "frontx" }),
+            ),
+            node(
+                gts::FRONTX_TYPE,
+                json!({ "name": "@gears-frontx/eslint-config", "kind": "frontx", "category": "eslint", "synced_from": "constructorfabric/gears-frontx", "repo_path": "internal/eslint-config" }),
+            ),
+            // One gear, twice: crates.io under its real name, the scan under
+            // the directory guess.
+            node(
+                gts::GEAR_TYPE,
+                json!({ "name": "cf-chat-engine", "kind": "gear", "categories": ["Artificial intelligence"], "max_stable_version": "0.3.8", "downloads": 583 }),
+            ),
+            node(
+                gts::GEAR_TYPE,
+                json!({ "name": "cf-gears-chat-engine", "kind": "gear", "status": "published", "synced_from": "constructorfabric/gears-rust" }),
+            ),
+            node(
+                gts::GEAR_TYPE,
+                json!({ "name": "cf-gears-rustls-fips-shim", "kind": "gear", "max_stable_version": "0.1.2" }),
+            ),
+            node(
+                gts::GEAR_TYPE,
+                json!({ "name": "cf-gears-cluster-conformance", "kind": "gear", "categories": ["Development tools"], "max_stable_version": "0.3.8" }),
+            ),
         ]
     }
 
@@ -1019,6 +1388,13 @@ mod tests {
             (
                 "cf-gears-ledger".to_string(),
                 json!({ "gear_name": "cf-gears-ledger", "auto": { "path": { "v": "gears/bss/ledger", "b": "gears/bss/ledger" } } }),
+            ),
+            (
+                "cf-gears-chat-engine".to_string(),
+                json!({ "gear_name": "cf-gears-chat-engine", "source": "gears", "auto": {
+                    "path": { "v": "gears/chat-engine", "b": "gears/chat-engine" },
+                    "adr": { "v": "28", "b": "28", "n": 28 }
+                } }),
             ),
             (
                 "@gears-frontx/ui-kit".to_string(),
@@ -1160,11 +1536,16 @@ mod tests {
     fn a_component_keyed_by_the_old_directory_guess_joins_by_directory() {
         let e = engine();
         let all = built(Some(&e));
-        let ledger = entry(&all, "cf-gears-ledger");
+        let ledger = entry(&all, "cf-gears-bss-ledger");
         assert_eq!(ledger.engine.len(), 1);
         assert_eq!(ledger.engine[0].id, "bss-ledger");
+        assert_eq!(
+            ledger.aka,
+            ["cf-gears-ledger"],
+            "listed under the real crate name"
+        );
         assert!(
-            all.iter().all(|x| x.name != "cf-gears-bss-ledger"),
+            all.iter().all(|x| x.name != "cf-gears-ledger"),
             "joined, so not listed a second time"
         );
     }
@@ -1184,7 +1565,11 @@ mod tests {
         let all = built(Some(&e));
         let only = entry(&all, "cf-api-contracts");
         assert_eq!(only.type_id, None);
-        assert_eq!(only.kind, "gear");
+        assert_eq!(
+            only.kind, "example",
+            "its gear.gdl files it under `example`"
+        );
+        assert!(!only.component);
         assert_eq!(only.downloads, None);
         assert_eq!(only.version, None);
         assert_eq!(only.activity, None);
@@ -1193,9 +1578,87 @@ mod tests {
         assert_eq!(only.engine[0].id, "api-contracts");
         assert_eq!(
             e.gears.len(),
-            6,
+            7,
             "the unparseable descriptor is skipped, not fatal"
         );
+    }
+
+    #[test]
+    fn a_second_node_for_the_same_package_is_superseded() {
+        let all = built(None);
+        let copies: Vec<&ComponentReferenceDto> = all
+            .iter()
+            .filter(|e| e.name == "@gears-frontx/ui-kit")
+            .collect();
+        assert_eq!(copies.len(), 2);
+        let old = copies.iter().find(|e| !e.component).unwrap();
+        assert_eq!(old.kind, "superseded");
+        assert_eq!(old.type_id.as_deref(), Some(gts::GEAR_TYPE));
+        assert_eq!(old.superseded_by.as_deref(), Some("@gears-frontx/ui-kit"));
+        assert!(
+            old.excluded_reason
+                .as_deref()
+                .unwrap()
+                .contains("older scan")
+        );
+    }
+
+    #[test]
+    fn a_guessed_name_is_superseded_by_the_real_crate_which_inherits_its_scan() {
+        let e = engine();
+        let all = built(Some(&e));
+        let guessed = entry(&all, "cf-gears-chat-engine");
+        assert_eq!(guessed.superseded_by.as_deref(), Some("cf-chat-engine"));
+        assert!(guessed.kind_reason.contains("guessed name"));
+        let real = entry(&all, "cf-chat-engine");
+        assert!(real.component);
+        assert_eq!(real.kind, "gear");
+        assert_eq!(real.category.as_deref(), Some("gen-ai"));
+        assert_eq!(real.category_reason.as_deref(), Some("gear.gdl"));
+        assert_eq!(
+            real.repo_path.as_deref(),
+            Some("gears/chat-engine"),
+            "the scan's directory"
+        );
+        assert_eq!(
+            real.synced_from.as_deref(),
+            Some("constructorfabric/gears-rust")
+        );
+        assert_eq!(real.status.as_deref(), Some("published"));
+        assert!(real.sources.contains(&"repository".to_string()));
+    }
+
+    #[test]
+    fn crates_that_are_not_gears_are_classified_by_evidence() {
+        let all = built(None);
+        let shim = entry(&all, "cf-gears-rustls-fips-shim");
+        assert_eq!(shim.kind, "library");
+        assert!(shim.component);
+        let conf = entry(&all, "cf-gears-cluster-conformance");
+        assert_eq!(conf.kind, "test-support");
+        assert!(!conf.component);
+        assert!(
+            conf.excluded_reason
+                .as_deref()
+                .unwrap()
+                .starts_with("not a component (test-support)")
+        );
+        assert_eq!(entry(&all, "@gears-frontx/eslint-config").kind, "config");
+    }
+
+    #[test]
+    fn plugins_and_sdks_are_filed_under_their_gear_s_category() {
+        let e = engine();
+        let all = built(Some(&e));
+        let kc = entry(&all, "cf-gears-keycloak-idp-plugin");
+        assert_eq!(kc.category.as_deref(), Some("oss"));
+        assert_eq!(
+            kc.category_reason.as_deref(),
+            Some("the category of cf-gears-account-management")
+        );
+        let sdk = entry(&all, "cf-gears-account-management-sdk");
+        assert_eq!(sdk.kind, "sdk");
+        assert_eq!(sdk.category.as_deref(), Some("oss"));
     }
 
     #[test]
@@ -1213,9 +1676,13 @@ mod tests {
     #[test]
     fn a_frontx_package_shows_its_declared_version_and_its_kind_not_its_keyword() {
         let all = built(None);
-        let ui = entry(&all, "@gears-frontx/ui-kit");
-        assert_eq!(ui.kind, "frontx");
-        assert_eq!(ui.category.as_deref(), Some("hai3"));
+        let ui = all
+            .iter()
+            .find(|e| e.name == "@gears-frontx/ui-kit" && e.component)
+            .expect("the live ui-kit entry");
+        assert_eq!(ui.kind, "frontend-library");
+        assert_eq!(ui.category, None, "an npm keyword is not a category");
+        assert_eq!(ui.source_categories, ["hai3"]);
         assert_eq!(ui.version.as_deref(), Some("0.4.0-alpha.1"));
         assert_eq!(ui.version_source.as_deref(), Some("declared"));
         assert_eq!(ui.repo_path.as_deref(), Some("packages/ui-kit"));
