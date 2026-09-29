@@ -478,7 +478,10 @@ Both are shared with the portal session, which has the same modes.
   name (`defaultExplorerMode`, `explorer-presentation-service.ts`). The
   Explorer's toggle is kept per mode, in the IDE's local storage under
   `studio.explorer.mode.<perspective id>`; the old single
-  `studio.explorer.mode` is read only by a build with no modes.
+  `studio.explorer.mode` is read only by a build with no modes. Files shown
+  is applied by that Explorer's filter alone (`StudioExplorerFilter`);
+  product-ext's `patchNavigatorFilter` steps aside for it, so "every file"
+  includes sources.
 - **Status bar.** The product hides every entry of Theia's it does not own.
   In the code modes a named list comes back — source control (`scm.*`),
   Problems, notifications, progress, connection status, the bottom-panel
