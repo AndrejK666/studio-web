@@ -113,7 +113,12 @@ const AGENTS: ModeAction = { command: 'studio.orca.toggle', icon: 'sparkle', lab
 // press, and a session collected them in the bottom panel.
 const TERMINAL: ModeAction = { command: 'workbench.action.terminal.toggleTerminal', icon: 'terminal', label: 'Terminal', title: 'Show the terminal, or open one' };
 const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control', label: 'Changes', title: 'What changed, and commit it' };
-const GIT_OPS: ModeAction = { command: 'studio.git-operations:toggle', icon: 'git-pull-request', label: 'Pushes & PRs', title: 'Commits and pushes waiting to go out' };
+// The desktop's Push (desktop-git-contribution.ts), with the pull-request link
+// the host prints. It named `studio.git-operations:toggle`, which nothing has
+// registered since the Operations panel replaced Git Operations (#304), so it
+// was never drawn. A session registers no Push: its pushes go through the
+// operations queue, and the panel is View > Operations.
+const GIT_OPS: ModeAction = { command: 'studio.desktop.git:push', icon: 'repo-push', label: 'Push', title: 'Push the branch to its remote, and open its pull request' };
 
 /** The modes that are one kind of work each; Full functionality is all of them. */
 const BY_WORK: readonly Mode[] = [

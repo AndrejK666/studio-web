@@ -15,6 +15,10 @@ import {
     CHECK_FOR_UPDATES_COMMAND_ID, DESKTOP_UPDATE_CHANNEL_PREFERENCE_SCHEMA, DesktopUpdateChannelContribution
 } from './desktop-update-channel';
 import { bindDesktopLanding } from '../browser/desktop-landing-contribution';
+import { DesktopGitContribution, DesktopWorkspaceSourcesController } from '../browser/desktop-git-contribution';
+import { DesktopSourcesWidget } from '../browser/desktop-sources-widget';
+import { WorkspaceSourcesFrontendController } from '../browser/workspace-sources-controller';
+import { WorkspaceSourcesWidget } from '../browser/workspace-sources-widget';
 
 export const CheckForUpdatesCommand: Command = {
     id: CHECK_FOR_UPDATES_COMMAND_ID,
@@ -63,7 +67,7 @@ export class CheckForUpdatesContribution implements CommandContribution, MenuCon
     }
 }
 
-export default new ContainerModule(bind => {
+export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(DesktopUpdates).toDynamicValue(ctx =>
         ElectronIpcConnectionProvider.createProxy<DesktopUpdates>(ctx.container, desktopUpdatesPath)
     ).inSingletonScope();
@@ -77,4 +81,14 @@ export default new ContainerModule(bind => {
     // The landing page while no Studio project is open, and the placeholder
     // folder's quiet (desktop-landing-contribution.ts).
     bindDesktopLanding(bind);
+    // Git on the desktop (desktop-git-contribution.ts): the ribbon's Push, Sync
+    // as fetch + fast-forward, and a Sources view of the project's clones in
+    // place of the session's canonical-config editor. The controller and the
+    // view are rebound, so everything that asks for them gets these; each falls
+    // back to the session's behaviour when no Studio is configured.
+    bind(DesktopGitContribution).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(DesktopGitContribution);
+    bind(FrontendApplicationContribution).toService(DesktopGitContribution);
+    rebind(WorkspaceSourcesFrontendController).to(DesktopWorkspaceSourcesController).inSingletonScope();
+    rebind(WorkspaceSourcesWidget).to(DesktopSourcesWidget);
 });

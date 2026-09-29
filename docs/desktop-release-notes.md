@@ -45,6 +45,27 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   Studio, instead of "Failed to load: HTTP 503" above a "no ingested
   artifacts" hint.
 
+### Git on the desktop
+
+- **Push is in the ribbon.** Development, Agent development and Full had a
+  "Pushes & PRs" button wired to a command removed in #304, so it never showed.
+  It is **Push** now: it pushes the current branch of the selected repository
+  (publishing a new branch on `origin`), and offers **Open pull request** when
+  the host prints the link.
+- **Sync does git.** It used to fail, twice, with "Workspace sync is
+  unavailable until a valid canonical config is active". It now fetches every
+  repository of the project and fast-forwards those that are only behind; a
+  branch with commits of its own is left alone and reported. One notification.
+- **Sources lists the repositories.** Instead of "Missing canonical config",
+  Create Config and Edit Raw TOML, it shows each clone's branch, what there is
+  to push and pull, and uncommitted files, with Sync and Push.
+- **No empty Gearbox menu.** With no product open, Building showed a Gearbox
+  menu that opened empty; a top-level menu with nothing to show is hidden now,
+  in a session too.
+- **The collaboration strip leaves you out.** Alone and signed out it said
+  "You is here"; it now names only other people, and counts only them in
+  "N others here" (a session too).
+
 ### Known limits
 
 - The rails and the right panel were checked on a local desktop build without
