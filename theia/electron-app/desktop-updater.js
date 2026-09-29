@@ -16,50 +16,29 @@
 // updater hands itself over as `globalThis.__studioDesktopUpdater`, since the
 // Theia electron-main modules are bundled apart from this file.
 //
-// Which channel: stable, unless the member asked for betas in the Studio view,
-// which writes `updates: "beta"` into ~/ConstructorStudio/settings.json. The
-// file is read before every check, so the choice takes effect without a
-// restart.
+// Which channel: what the member chose in Settings (`studio.desktop.updateChannel`),
+// which the desktop frontend reports here over IPC at start and on every
+// change, so the choice takes effect without a restart. The first check on
+// start waits for that report. See desktop-update-channel.js.
 //
 // Bundled into one file by `scripts/package.mjs` (esbuild), because the
 // packaged app ships without node_modules.
 
-const fs = require('fs');
-const path = require('path');
 const { app, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { channelFrom, channelChoice } = require('./desktop-update-channel.js');
 
 const RELEASES = 'https://github.com/constructorfabric/studio-web/releases/tag';
 const FIRST_CHECK_MS = 10_000;
+/** How long the first check waits for the window to report the member's channel. */
+const CHANNEL_WAIT_MS = 60_000;
 const EVERY_MS = 6 * 60 * 60 * 1000;
-
-/**
- * `beta` when the member asked for pre-releases, `latest` when they asked for
- * releases only. Without a choice, an installed pre-release follows betas --
- * whoever installed 0.3.0-beta.1 wants 0.3.0-beta.2, not to wait for 0.3.0 --
- * and a release follows releases.
- */
-function channelFrom(settingsFile, currentVersion = app.getVersion()) {
-    let chosen;
-    try {
-        chosen = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).updates;
-    } catch {
-        chosen = undefined;
-    }
-    if (chosen === 'beta') {
-        return 'beta';
-    }
-    if (chosen === 'stable') {
-        return 'latest';
-    }
-    return currentVersion.includes('-') ? 'beta' : 'latest';
-}
 
 /**
  * Start checking for updates. Only in an installed app: a checkout's
  * `theia start` and an unpacked zip have nothing to update in place.
  */
-function startUpdates({ settingsFile, log = console }) {
+function startUpdates({ log = console } = {}) {
     if (!app.isPackaged || process.env.STUDIO_DESKTOP_NO_UPDATES === '1') {
         return;
     }
@@ -111,8 +90,9 @@ function startUpdates({ settingsFile, log = console }) {
         log.warn(`[studio-desktop] update check failed: ${error instanceof Error ? error.message : error}`);
     });
 
+    const choice = channelChoice();
     const check = () => {
-        const channel = channelFrom(settingsFile);
+        const channel = channelFrom(choice.get(), app.getVersion());
         autoUpdater.channel = channel;
         autoUpdater.allowPrerelease = channel === 'beta';
         return autoUpdater.checkForUpdates();
@@ -123,13 +103,17 @@ function startUpdates({ settingsFile, log = console }) {
      * update downloads as on any check, and the restart question follows it.
      */
     globalThis.__studioDesktopUpdater = {
+        /** The member's choice in Settings: `auto`, `stable` or `beta`. */
+        setChannel(chosen) {
+            choice.set(chosen);
+        },
         async checkNow() {
             const current = app.getVersion();
             if (downloaded) {
                 void offer(downloaded);
                 return { state: 'ready', version: downloaded.version };
             }
-            const channel = channelFrom(settingsFile) === 'beta' ? 'beta' : 'stable';
+            const channel = channelFrom(choice.get(), current) === 'beta' ? 'beta' : 'stable';
             try {
                 const result = await check();
                 const version = result?.updateInfo?.version;
@@ -143,9 +127,10 @@ function startUpdates({ settingsFile, log = console }) {
     };
     app.whenReady().then(() => {
         const quietly = () => check().catch(() => undefined);
-        setTimeout(quietly, FIRST_CHECK_MS);
+        const waitForChannel = new Promise(resolve => setTimeout(resolve, CHANNEL_WAIT_MS));
+        setTimeout(() => void Promise.race([choice.reported, waitForChannel]).then(quietly), FIRST_CHECK_MS);
         setInterval(quietly, EVERY_MS).unref?.();
     });
 }
 
-module.exports = { startUpdates, channelFrom };
+module.exports = { startUpdates };

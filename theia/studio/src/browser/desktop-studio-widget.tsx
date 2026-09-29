@@ -5,8 +5,10 @@
 //
 // Top to bottom: the account (which Studio, who, switch, sign out), the project
 // this window has open as a card, the member's organizations → workspaces →
-// projects as a tree with a filter, and the app's own settings. What decides
-// anything about the tree is in desktop-studio-tree.ts, with its tests.
+// projects as a tree with a filter. What decides anything about the tree is in
+// desktop-studio-tree.ts, with its tests. The app's own settings -- which
+// updates it takes -- are in Settings (studio.desktop.updateChannel), and
+// Help → Check for Updates checks now: electron-browser/, desktop app only.
 
 import * as React from '@theia/core/shared/react';
 import { inject, injectable } from '@theia/core/shared/inversify';
@@ -17,7 +19,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
-import { CommandRegistry, CommandService } from '@theia/core/lib/common/command';
+import { CommandService } from '@theia/core/lib/common/command';
 import { StudioApi } from './studio-api';
 import { IDENTITY_VIEWER_COMMAND_ID } from './portal-bridge-contribution';
 import { DesktopEnvironmentChoice } from '../common/desktop-environments';
@@ -31,9 +33,6 @@ import { remoteGearCatalogueChanged, remoteGearCatalogueSignedIn } from './gearb
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
-/** Help → Check for Updates; registered only by the desktop app's electron module. */
-export const CHECK_FOR_UPDATES_COMMAND_ID = 'studio.desktop.checkForUpdates';
-
 /** How many sources listings are asked at once after the tree loads. */
 const SOURCES_CONCURRENCY = 4;
 
@@ -43,8 +42,6 @@ export interface DesktopStatus extends DesktopEnvironmentChoice {
     state: 'signed-out' | 'signing-in' | 'signed-in' | 'failed';
     error?: string;
     user?: { sub: string; name?: string; email?: string; tenantId?: string };
-    /** Which updates the app takes; absent from a backend that predates it. */
-    updates?: 'stable' | 'beta';
 }
 
 export function desktopUrl(path: string): string {
@@ -92,9 +89,6 @@ export class DesktopStudioWidget extends ReactWidget {
 
     @inject(CommandService)
     protected readonly commands: CommandService;
-
-    @inject(CommandRegistry)
-    protected readonly commandRegistry: CommandRegistry;
 
     @inject(StorageService)
     protected readonly storage: StorageService;
@@ -237,36 +231,6 @@ export class DesktopStudioWidget extends ReactWidget {
             </div>}
             {this.switchError && <p className='studio-desktop__error' role='alert'>{this.switchError}</p>}
         </div>;
-    }
-
-    /** Take pre-releases of the app too, or only releases. */
-    protected async setUpdates(beta: boolean): Promise<void> {
-        const answer = await fetch(desktopUrl('updates'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ channel: beta ? 'beta' : 'stable' }),
-        });
-        if (answer.ok) {
-            this.status = await answer.json() as DesktopStatus;
-            this.update();
-        }
-    }
-
-    /** The app's own settings: the update channel, and a check now. */
-    protected renderSettings(status: DesktopStatus): React.ReactNode {
-        const canCheck = !!this.commandRegistry.getCommand(CHECK_FOR_UPDATES_COMMAND_ID);
-        return <footer className='studio-desktop__settings' aria-label='App settings'>
-            <h3 className='studio-desktop__section-head'>App</h3>
-            <label className='studio-desktop__check'
-                title='Beta versions come out before a release, to try what is next. The app checks on start and offers each update once it has downloaded.'>
-                <input type='checkbox' checked={status.updates === 'beta'} onChange={e => void this.setUpdates(e.target.checked)} />
-                Get beta versions of the app
-            </label>
-            {canCheck && <button className='theia-button secondary studio-desktop__small-button'
-                onClick={() => void this.commands.executeCommand(CHECK_FOR_UPDATES_COMMAND_ID)}>
-                <span className='codicon codicon-sync' /> Check for Updates
-            </button>}
-        </footer>;
     }
 
     protected async signIn(): Promise<void> {
@@ -512,14 +476,12 @@ export class DesktopStudioWidget extends ReactWidget {
                     Sign in with Constructor ID
                 </button>
                 <p className='studio-desktop__muted'>Opens the sign-in page in your browser.</p>
-                {this.renderSettings(status)}
             </div>;
         }
         return <div className='studio-desktop'>
             {this.renderAccount(status, studio)}
             {this.renderCard()}
             {this.renderProjects()}
-            {this.renderSettings(status)}
         </div>;
     }
 

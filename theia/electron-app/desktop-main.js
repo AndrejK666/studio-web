@@ -95,9 +95,6 @@ const defaults = {
     STUDIO_WORKSPACE_ROOT: workspace,
     STUDIO_REPOSITORY_ROOT: workspace,
     STUDIO_DATA_DIR: data,
-    // The app's own version, for the Studio view's default update channel: an
-    // installed pre-release follows betas until the member chooses.
-    STUDIO_DESKTOP_VERSION: require('electron').app.getVersion(),
     // The built-in VS Code plugins ship as a resource beside the app.
     THEIA_DEFAULT_PLUGINS: `local-dir:${path.join(process.resourcesPath, 'plugins')}`,
     // The assistants' manifest, where they go, and where a member may put a
@@ -148,10 +145,9 @@ if (link >= 0 && !process.argv.includes('--open-url')) {
 }
 
 // Updates: checked on start and every few hours, offered once downloaded
-// (desktop-updater.js). The same settings file as the Studio view's choice of
-// Studio holds the member's choice of channel.
+// (desktop-updater.js), on the channel the member chose in Settings.
 try {
-    require('./desktop-updater.js').startUpdates({ settingsFile: path.join(home, 'settings.json') });
+    require('./desktop-updater.js').startUpdates();
 } catch (error) {
     // A build without the updater (a checkout, an old stage) still starts.
     console.warn(`[studio-desktop] updates are off: ${error}`);

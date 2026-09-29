@@ -1,7 +1,7 @@
 // The desktop Studio view, rendered against a fake Studio: the account block,
 // the open project's card, organizations told apart, a project with no
 // repositories said so on its row, a failed open said on its row, the filter,
-// the remembered collapse, and the app settings.
+// the remembered collapse -- and no app settings: those are in Settings.
 
 import 'reflect-metadata';
 // The real module imports the @theia/core/lib/browser barrel, whose
@@ -23,10 +23,12 @@ import { CommandRegistry, CommandService } from '@theia/core/lib/common/command'
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
-import { CHECK_FOR_UPDATES_COMMAND_ID, DesktopStudioWidget } from './desktop-studio-widget';
+import { DesktopStudioWidget } from './desktop-studio-widget';
 import { TENANT_TYPES } from './desktop-projects';
 
 const STUDIO = 'https://studio-dev.cfabric.org';
+/** Help → Check for Updates, registered by the desktop app's electron module. */
+const CHECK_FOR_UPDATES_COMMAND_ID = 'studio.desktop.checkForUpdates';
 const ORG = TENANT_TYPES.organization;
 const WS = TENANT_TYPES.workspace;
 const PRJ = TENANT_TYPES.project;
@@ -45,7 +47,7 @@ function studioRoutes(): Routes {
     const ok = (body: unknown): Answer => ({ status: 200, body });
     return {
         '/studio-desktop/status': ok({
-            enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: true, updates: 'beta',
+            enabled: true, studioUrl: STUDIO, state: 'signed-in', switchable: true,
             environments: [{ id: 'dev', label: 'Dev', studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio` }],
             current: { id: 'dev', label: 'Dev', studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio` },
             user: { sub: 'u-1', name: 'ANDREI KUCHMA', email: 'andrei@example.com' },
@@ -315,12 +317,15 @@ describe('the desktop Studio view', () => {
         expect(row('Studio-web')).toBeUndefined();
     });
 
-    it('keeps the beta channel and Check for Updates in the settings at the bottom', async () => {
-        const settings = widget.node.querySelector('.studio-desktop__settings')!;
-        expect(widget.node.querySelector('.studio-desktop')!.lastElementChild).toBe(settings);
-        expect(settings.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
-        await React.act(async () => { settings.querySelector<HTMLButtonElement>('button')!.click(); });
-        expect(executed).toContain(CHECK_FOR_UPDATES_COMMAND_ID);
+    it('has no App section: the beta channel is in Settings, Check for Updates in Help', () => {
+        // Even with the command registered, as it is on the desktop.
+        expect(widget.node.querySelector('.studio-desktop__settings')).toBeNull();
+        expect(widget.node.querySelector('input[type="checkbox"]')).toBeNull();
+        expect(widget.node.textContent).not.toContain('Check for Updates');
+        expect(widget.node.textContent).not.toMatch(/beta versions/i);
+        const heads = [...widget.node.querySelectorAll('.studio-desktop__section-head')].map(head => head.textContent);
+        expect(heads).not.toContain('App');
+        expect(executed).not.toContain(CHECK_FOR_UPDATES_COMMAND_ID);
     });
 });
 
@@ -352,7 +357,7 @@ describe('the desktop Studio view, before anything is known', () => {
         await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); MessageLoop.flush(); });
         expect(widget.node.textContent).toContain('You belong to no organization on this Studio yet');
         expect(widget.node.textContent).toContain('No Studio project is open here');
-        // No updater in this host: no button that would do nothing.
+        // Nor, signed out or in, an App section.
         expect(widget.node.textContent).not.toContain('Check for Updates');
         React.act(() => widget.dispose());
     });

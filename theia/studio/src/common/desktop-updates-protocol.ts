@@ -1,4 +1,5 @@
-// Help → Check for Updates on the desktop Studio (ADR-0027 phase 6).
+// The desktop Studio's updates (ADR-0027 phase 6): Help → Check for Updates,
+// and the channel the member chose in Settings.
 //
 // The updater lives in the Electron main process (theia/electron-app/
 // desktop-updater.js): it checks on start and every few hours, and asks once an
@@ -21,8 +22,13 @@ export type UpdateCheck =
     | { readonly state: 'ready'; readonly version: string }
     | { readonly state: 'failed'; readonly message: string };
 
+/** Which updates the app takes: `auto` follows the installed version (betas for a beta). */
+export type UpdateChannelChoice = 'auto' | 'stable' | 'beta';
+
 export interface DesktopUpdates {
     check(): Promise<UpdateCheck>;
+    /** Tell the updater the member's choice in Settings; it holds it until the next one. */
+    setChannel(choice: UpdateChannelChoice): Promise<void>;
 }
 
 /** Where desktop-updater.js hands itself over in the main process. */
