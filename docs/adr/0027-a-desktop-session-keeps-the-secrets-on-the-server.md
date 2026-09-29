@@ -98,6 +98,12 @@ copies `REGISTER.md` describes), installers, signing and update — is brought i
 out. An extension that behaves differently on the desktop does so through a
 runtime check, not a second copy.
 
+*Amended by ADR-0032:* the desktop assembly also has Theia's Extensions view
+(`@theia/vsx-registry`) and `theia/studio-kits-view`, which only
+`electron-app` depends on, and it fetches the assistants, `cfs` and the
+Gearbox engine as extensions instead of carrying them. Every other extension
+is the browser assembly's.
+
 ### 2. Sign-in is the member's own, through the system browser
 
 The desktop signs in against the Studio Keycloak realm with the authorization
@@ -179,6 +185,14 @@ ADR-0022's two directions are kept and both start on the desktop:
 The workspace screen offers "Open in desktop" beside "Open Studio". It is a
 `cfstudio://open?workspace={id}` link that the installed application registers
 for. It carries no token; the desktop signs in itself.
+
+*As built (#419, #447):* the project's IDE card offers **Web IDE** and
+**Desktop IDE**. The link is `cfstudio://open?studio=…&issuer=…&project=…&name=…`
+(`theia/studio/src/common/desktop-link.ts`): it names the Studio twice, since
+one Studio can be reached at more than one address and the issuer is what the
+desktop matches first. The app connects to that Studio (asking first when the
+build does not offer it), signs in if it has to, and clones and opens the
+project as a click in its Studio view would.
 
 ### Consequences
 
@@ -279,6 +293,15 @@ in the manner of a remote development extension.
 5. **Link and commands.** `cfstudio://` from the portal, and portal commands over
    `studio-events`.
 6. **Packaging.** Installers, signing and update, moved in from `studio-desktop`.
+
+State on 2026-09-29 (desktop 0.3.0-beta.5): phase 1 is built (#391); phase 2
+(#445); phase 3 (#450); of phase 5, the link (#419), not the commands; of
+phase 6, the Windows installer from CI (`desktop-windows.yml`, released per
+`desktop-v*` tag) and the update (*Help → Check for Updates*, #452; the
+channel as a setting, #506), not signing. Phase 4 is open. The refresh token
+in the OS keychain (§2) is not built: the sign-in lasts as long as the app
+runs. What each release changed is in
+[desktop-release-notes.md](../desktop-release-notes.md).
 
 ### Open questions
 

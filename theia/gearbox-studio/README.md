@@ -27,9 +27,12 @@ collab strip, Orca and the Explorer stay as they are.
   conflicts, lock, generate, start, create product and gear, add gear).
 - **Adapted:**
   - `node/gearbox-environment.ts` replaces Gearbox Studio's lookup of its own
-    Cargo checkout. The workspace is `/workspace` (`GEARBOX_WORKSPACE`), the
-    engine is `gearbox` on the PATH (`GEARBOX_ENGINE`), and the roots are the
-    checkouts under the workspace that hold a `gear.gdl` (`GEARBOX_ROOT`).
+    Cargo checkout. The workspace is `/workspace` (`GEARBOX_WORKSPACE`; on a
+    desktop, the folder the window names), the engine is `GEARBOX_ENGINE`,
+    else `gearbox` on the PATH (the session image carries it; a desktop
+    fetches it as an extension and points `GEARBOX_ENGINE` at it), and the
+    roots are the checkouts under the workspace that hold a `gear.gdl`
+    (`GEARBOX_ROOT`).
   - Every service that still arranges panels asks
     `shell/gearbox-shell-gate.ts` first, and acts only inside a Gearbox
     perspective.
@@ -68,12 +71,23 @@ collab strip, Orca and the Explorer stay as they are.
 - **The Gearbox menu** is labelled here (`menus.ts`, `GearboxMenuContribution`):
   Gearbox Studio labelled it from `ShellPolicy`, which is not ported, and
   Theia 1.75 draws only labelled top-level menus. Studio's mode allow-list keeps
-  it in Building and FULL SUPER POWER; its entries appear with a product open.
+  it in Building and Full functionality; its entries appear with a product open.
   Building's ribbon also carries Resolve and Lock.
 - **With no product open**, the Product view offers New, Open, Continue, the
   workspace's products and Recent (`product/product-empty-state.tsx`): the
   Start screen is not opened at start-up, and on the desktop product-ext's
   start page stands where it stood.
+- **An open waits for the gears in its own step**
+  (`ProductSessionService.awaitProjection`). The engine answers one request at
+  a time, and the product's `product/load` used to queue behind the whole
+  catalogue projection, with the view on "Reading the description…" for as
+  long as that took (90 s and more on a cold Windows start). The opening
+  checklist now counts the gears as they load, the product is handed to the
+  store only once they are in, and a projection silent for 120 s stops the
+  open with the reason and restores the previous product.
+- **An engine request is ended for silence, not for length**
+  (`silenceVerdict`): any output restarts its allowance, a silent engine is
+  ended at the timeout, and a busy one at ten times it.
 - **The screen scope is started, inside Building only**
   (`shell/studio-screen-scope.ts`): a closed or replaced product's Add Gear,
   Lock and Generate are withdrawn. It folds no panel and opens no Start

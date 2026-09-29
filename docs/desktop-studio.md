@@ -9,12 +9,13 @@ it, so nothing on the member's machine may hold a secret of the
 organization's. [ADR-0027](adr/0027-a-desktop-session-keeps-the-secrets-on-the-server.md)
 is the decision; this page is how to build, configure and run it.
 Changing it? [desktop-contributing.md](desktop-contributing.md) has the rules.
+What each release changed is in [desktop-release-notes.md](desktop-release-notes.md).
 
 What a member does:
 
-1. Starts **Constructor Studio**, picks the Studio in the **Constructor
-   Studio** view (Dev, Test, Local, or an address), and clicks **Sign in with
-   Constructor ID**.
+1. Starts **Constructor Studio**, picks the Studio on the landing page or in
+   the **Constructor Studio** view (Dev, Test, Local, or an address), and
+   clicks **Sign in with Constructor ID**.
 2. Signs in on the realm's own page, in the system browser. The app waits on a
    loopback port and takes the answer.
 3. Sees the projects they can reach — found the way the portal finds them:
@@ -23,6 +24,15 @@ What a member does:
    calls projects — and clicks one to open it: its sources are cloned through
    the Studio and the folder opens in the IDE. The organization is named only
    when there is more than one, as the portal hides it.
+
+Or the member clicks **Desktop IDE** on a project in the portal. The portal
+opens `cfstudio://open?studio=…&issuer=…&project=…&name=…`, a link the
+installer registers and that carries no token
+(`theia/studio/src/common/desktop-link.ts`). The app, started or already
+running, does what the three steps above do: it connects to the Studio the
+link names (asking first when this build does not offer it), signs in if it
+has to, and clones and opens the project
+(`browser/desktop-link-handler.ts`, ADR-0027 §6).
 
 ### The landing page
 
@@ -86,6 +96,13 @@ decides is in `desktop-studio-tree.ts`, with its tests):
 The app's own settings are not in the view: which updates it takes is in
 **Settings** ([Updates](#updates)), and *Help → Check for Updates…* checks now.
 
+The landing page and the view are two faces of one client: both call the
+desktop backend's routes through `desktop-studio-client.ts` and draw the same
+Studio picker (`desktop-studio-picker.tsx`). A sign-in, sign-out, Studio switch
+or open done in one is announced (`announceDesktopChange`, `onDesktopChange`),
+and the other refreshes without announcing again, so the two never disagree
+about who is signed in where.
+
 ## One IDE, two hosts
 
 `theia/studio` and `theia/product-ext` are the **same code** in the portal's
@@ -100,10 +117,15 @@ leave the web session exactly as it was. What keeps them apart today:
 - The frontend opens the Constructor Studio view only when
   `studio-desktop/status` answers `enabled`; in a session that request 404s and
   the view never shows.
-- Desktop-only logic lives in `desktop-*` files (`desktop-studio-widget.tsx`,
-  `desktop-projects.ts`, `node/desktop-*.ts`). Shared widgets call Studio
-  through `StudioApi.fetch('/<gear>/v1/...')` and must not care which host
-  answers it.
+- Desktop-only logic lives in `desktop-*` files (`desktop-studio-client.ts`,
+  `desktop-studio-widget.tsx`, `desktop-landing-*.ts(x)`, `desktop-projects.ts`,
+  `node/desktop-*.ts`). Shared widgets call Studio through
+  `StudioApi.fetch('/<gear>/v1/...')` and must not care which host answers it.
+- What a session must not even load is bound only by the electron frontend
+  module (`electron-browser/studio-electron-frontend-module.ts`: the landing
+  page, the update channel), or is a dependency of `electron-app` alone
+  (`@theia/vsx-registry`, `theia/studio-kits-view`). `browser-app` never loads
+  either.
 
 So, when improving the desktop:
 
@@ -127,9 +149,10 @@ The full rules, and the checks before a PR, are in
 | `git` credentials | `theia/studio/scripts/desktop-git-credentials.mjs` asks the IDE backend's token broker, over loopback, for a fresh Studio token | a per-run secret in the environment, worthless once the app exits |
 | Where a project is open | each window beats every 30 s; the IDE backend renews a lease at `<studio>/cf/studio-session/v1/desktop-sessions` as this device, and ends it when the window closes (ADR-0027 §4) | a random device id in `settings.json` |
 
-Nothing is written to disk but the member's choice of Studio
-(`~/ConstructorStudio/settings.json`) and the clones
-(`~/ConstructorStudio/workspaces/<workspace>`). `settings.json` also keeps
+What the desktop writes to disk is the member's choice of Studio
+(`~/ConstructorStudio/settings.json`), the clones
+(`~/ConstructorStudio/workspaces/<workspace>`), and the files the paragraphs
+below name, each with what it holds; none is a secret. `settings.json` also keeps
 `deviceId`, a random UUID drawn on the first lease, so that a restarted app renews
 the leases it had. It names the installation and nothing else. It is not a
 credential: every lease call is authorized by the member's token, and a copied
@@ -160,11 +183,16 @@ added to that Orca, so that it removes only those
 ([Projects in the member's Orca](#projects-in-the-members-orca)). It holds ids
 and paths, no secret.
 
-And the assistants: Claude Code and Codex are fetched on first start into
-`~/ConstructorStudio/plugins/<id>-<version>/`
-([The assistant extensions](#the-assistant-extensions)). That folder holds the
-extensions' code as open-vsx publishes it, checked against the digest the build
-recorded. It holds no secret; deleting it only means the app fetches them again.
+And the extensions the app brings ([The assistant extensions](#the-assistant-extensions)).
+Claude Code and Codex are installed from open-vsx on first start as the
+member's own extensions, where Theia keeps any extension the view installs;
+`~/ConstructorStudio/plugins/.open-vsx-installed.json` remembers which ids the
+app installed, so that one the member removed stays removed. The CLI and the
+Gearbox engine are unpacked into `~/ConstructorStudio/plugins/<id>-<version>/`,
+checked against the digest the build recorded. An uninstall that could not
+finish on Windows is recorded in `<data>/pending-plugin-removals.json` and
+finished on the next start. All of it is extension code and ids, no secret;
+deleting it only means the app fetches the extensions again.
 
 And the gear corpus: "Bring the gears here" (in the Catalogue, or inline in
 New Product) clones it once per machine and commit into
@@ -249,8 +277,9 @@ installed build is pointed somewhere else for a test.
 | `STUDIO_DESKTOP_BROWSER` | a command to open the sign-in page with, instead of the system browser |
 | `STUDIO_DESKTOP_AUTO_SIGN_IN` | `1` starts the sign-in at launch |
 | `GEARBOX_ENGINE` | the `gearbox` executable behind the gear catalogue; default the one the build ships (`resources/bin/`), else the one the manifest has the app fetch (the gearbox engine extension), else `gearbox` on `PATH` |
-| `STUDIO_DESKTOP_ASSISTANTS` | the assistants' manifest; default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
-| `STUDIO_DESKTOP_PLUGINS` | where the assistants are unpacked; default `~/ConstructorStudio/plugins` |
+| `STUDIO_DESKTOP_ASSISTANTS` | the manifest of the extensions the app brings (the assistants by open-vsx id, the CLI and the engine pinned); default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
+| `STUDIO_DESKTOP_PLUGINS` | where the pinned extensions (the CLI, the engine) are unpacked, and the open-vsx marker kept; default `~/ConstructorStudio/plugins` |
+| `STUDIO_CFS_RUNTIME` | the CLI extension's runtime folder, set before the first fetch; its `bin` goes first on the terminals' `PATH` |
 | `STUDIO_CORPUS_CACHE` | where the per-machine gear corpus copies are kept; default `~/ConstructorStudio/corpus` |
 | `STUDIO_DESKTOP_VSIX_DIRS` | more folders to look in for a VSIX put there by hand (`;` on Windows, `:` elsewhere); default the app's own folder |
 | `ORCA_CLI` | the `orca` executable the Agents panel runs, when Orca is installed somewhere [Agent development](#agent-development-orca) does not look |
@@ -372,7 +401,7 @@ Manual inputs are:
 A desktop has Theia's Extensions view (`@theia/vsx-registry`, in
 `electron-app` only; a browser session does not get it). It is open to all of
 open-vsx, as VS Code's is: the member searches, installs, updates and removes
-extensions there. The code modes (Development, FULL) keep its tab on the rail
+extensions there. The code modes (Development, Full functionality) keep its tab on the rail
 (`MODE_TABS`, `studio-chrome-mode.ts`). Extensions the app ships or brings
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
@@ -388,7 +417,7 @@ from source at the repository, revision and Rust that `theia/Dockerfile`'s
 - `.github/workflows/gearbox-engine.yml` builds it on `windows-2022` and
   publishes each version once, into a release `gearbox-engine-v<version>`. The
   version is `theia/gearbox-engine/package.json`'s (raised when the packaging
-  changes) and the revision: `0.1.0-3b64969`. A new revision in the Dockerfile
+  changes) and the revision: `0.1.0-55f7015` since #514. A new revision in the Dockerfile
   is a new release. Nothing is built when the release exists.
 - `assistants-manifest.mjs --gearbox-engine` pins that asset's SHA-256 into the
   installer's manifest, and the app fetches it like the CLI (a pinned entry,
@@ -495,8 +524,10 @@ start. The desktop binds an extension of Theia's handler in its place
 
 Anywhere but a Windows desktop the handler is Theia's, unchanged.
 
-**Behind a proxy.** The downloads are the backend's, which does not read the
-system proxy.
+**Behind a proxy.** The downloads are the IDE backend's, which does not read
+the system proxy. For the pinned entries (the CLI, the engine) a VSIX with the
+manifest's digest can be put by hand into `~/ConstructorStudio/plugins` or
+beside `Constructor Studio.exe`, and is taken instead of the download.
 
 ### The Constructor Studio CLI
 
@@ -601,6 +632,39 @@ The menu item and the preference exist only in the desktop app: they are a
 Electron IPC (`theia/studio/src/electron-browser`, `src/electron-main`), and a
 session's `browser-app` loads neither — a session's Settings has no Update
 Channel.
+
+## Building (Gearbox) on the desktop
+
+Building mode is the Gearbox port (`theia/gearbox-studio`, whose README says
+what is ported and how). What is particular to a member's machine:
+
+- **The engine** is the extension above; until it arrives the catalogue says
+  there is none, and it reloads by itself once it does.
+- **The gears.** A project opened from the Studio view is often one repository
+  with no gears of its own. The Catalogue then lists the backend's corpus
+  (`GET /studio-components-catalog/v1/gearbox/catalogue`, which answers only
+  where the backend runs Gearbox, as dev does), and **Bring the gears here**
+  clones it once per machine into the corpus cache described
+  [above](#how-it-connects-and-what-it-never-holds). New Product offers that
+  copy as a source, preselected when the workspace has no gears, and says
+  that a product declared on it resolves only on this machine.
+- **Products** are found under `<repository>/products/<name>/product.gdl`,
+  where New Product suggests one, as well as in each checkout. **Add gear**
+  with no product open opens New Product.
+- **Editing.** Gear settings, features, plugin options and profile fields go
+  into a draft; the strip at the head of the Product view writes it
+  (**Apply changes**) or drops it (**Discard**), beside **Resolve** and
+  **Close**. The **Gearbox** menu and the ribbon's Check group (Resolve,
+  Conflicts, Lock, Generate) act on the open product.
+- **Opening** a product waits for the engine to read the gears it declares,
+  and says how far it has got ("12 of 44 gears"). A cold open on Windows took
+  about 90 seconds in the measurements of #520; a warm one about 7. An open
+  whose gears make no progress for 120 s stops with the reason and restores
+  the product that was open before.
+- **Build and Run** after Generate need cargo and, on Windows, the MSVC linker
+  of the Visual Studio Build Tools; the panel checks both and links to what is
+  missing. **Start a local Postgres** needs docker. What they write is listed
+  [above](#how-it-connects-and-what-it-never-holds).
 
 ## Agent development (Orca)
 
@@ -763,8 +827,9 @@ secret. Deleting it only means Studio stops removing what it had added.
   first run.
 - The workspace a member opens is cloned, not synchronised: the Studio sees
   what they push, and nothing before it.
-- Desktop sessions are not yet visible in the portal, and the portal cannot yet
-  send a desktop a command (ADR-0027 phases 3–5).
+- The desktop's events do not reach the portal, and the portal cannot send a
+  desktop a command (ADR-0027 phases 4–5). The portal does show where a
+  project is open on a desktop (phase 3, #450).
 - Up to 0.3.0-beta.3, opening Codex on the desktop showed "Codex couldn't load
   its resources." Its webview's resources did load. The Codex CLI behind it
   exited at start because its `CODEX_HOME` did not exist. Two things caused
@@ -778,12 +843,22 @@ secret. Deleting it only means Studio stops removing what it had added.
   beta.3 has no workaround: every start draws a new anonymous home and removes
   it again. In a browser session, signing in to Codex from the product's
   assistant sign-in creates the directory, and reloading the page then works.
-- Codex cannot run in WSL on the desktop: its linux binaries are not unpacked
-  ([The assistant extensions](#the-assistant-extensions)).
-- The desktop's Codex can be older than the session's. The Dockerfile pin has
-  no win32 build, so the manifest pins the newest one that has.
-- The first start downloads about 440 MB of assistants. Until then the rail's
-  assistants say they are downloading.
+- Up to 0.3.0-beta.4, the pinned Codex was unpacked without its linux
+  binaries, so it could not run in WSL. Since the assistants come whole from
+  open-vsx (#513) that no longer applies to a new install; whether Codex then
+  runs in WSL has not been checked.
+- The desktop's Claude Code and Codex are the member's, at whatever version
+  open-vsx had when they were installed or last updated, so they can differ
+  from the session image's pins (ADR-0032).
+- The first start downloads the assistants from open-vsx (about 440 MB at the
+  September 2026 versions), the CLI (22 MB) and the engine (about 6 MB). Until
+  then the rail's assistants say they are installing.
+- Build and Run under Generate have been checked on a Windows machine without
+  MSVC, where the panel says the linker is missing, and not end to end on one
+  that has it (#514).
+- The first open of a product after a start is slow on Windows, about a
+  minute and a half cold, while the engine reads the corpus (#520).
+- A kit has not been installed end to end from a signed-in desktop (#517).
 - Pairing with Orca is a paste. Orca mints a pairing for this computer only
   from its own window, and has no CLI command for it.
 - The macOS and Linux Orca locations come from Orca's installers and its

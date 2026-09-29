@@ -1,6 +1,6 @@
 # Constructor Fabric Studio — Theia PoC
 
-Single-user Studio proof of concept built on Eclipse Theia 1.74.0. It provides
+Single-user Studio proof of concept built on Eclipse Theia 1.75.0. It provides
 a fixed Workspace, file editing, nested Git repository discovery, native source
 control views, a Workspace graph, Analyze/Audit panels, and an optional
 Markdown Save-to-Git pipeline.
@@ -51,7 +51,7 @@ Codex requests must contain text after the `@Codex` agent prefix. A request
 containing only `@Codex` is rejected by the Codex CLI as an empty prompt.
 
 The Codex and Claude Code path overrides are maintained as `patch-package`
-patches for Theia `1.74.0`; `npm install` applies them automatically. Recheck
+patches for Theia `1.75.0`; `npm install` applies them automatically. Recheck
 the patches whenever Theia is upgraded.
 
 The Workspace must already exist. In `push` mode its repository and any nested
@@ -239,8 +239,12 @@ platform, then `orca`/`orca-ide` on PATH, and resolved to an absolute path
 (the full order, and what the panel says in each failure state, is in
 [docs/desktop-studio.md › Agent development](../docs/desktop-studio.md#agent-development-orca)).
 A session container should set `ORCA_CLI` and run `orca serve --json
---project-root <workspace>` beside the IDE; on a developer machine the desktop
-app already provides one.
+--project-root <workspace>` beside the IDE; on a member's machine the Orca app
+is the runtime, and **Start Orca** opens it when it is closed. There, Studio
+asks once before adding the open project's repositories to that Orca
+(`studio.orca.addOpenedProjects`: always, not now, never) and removes only
+what it added when the project closes
+([Projects in the member's Orca](../docs/desktop-studio.md#projects-in-the-members-orca)).
 
 **Open** on an agent shows its terminal as a terminal tab in the middle of the
 workbench: all its output live, full-size, typing straight into it. The CLI
@@ -336,7 +340,9 @@ The panel offers the agents this container actually has, not the three names in
 `ORCA_AGENTS`: the runtime reports which of them resolve on PATH, and the
 absent ones are named under the buttons. An image built without one of the
 CLIs used to offer it anyway, and the agent answered `command not found`
-inside its TUI two clicks later.
+inside its TUI two clicks later. On a desktop the IDE's `PATH` is not the one
+Orca starts agents with, so there every agent stays on offer and a missing one
+is only a hint.
 
 What it costs, measured rather than estimated: **1.25 GB** of image (4.9 GB
 against 3.7 GB) and an Electron process per session. `STUDIO_ORCA_VERSION=`
@@ -580,7 +586,22 @@ npm run start:electron
 
 The Electron build is the desktop Studio (ADR-0027). How it signs in, which
 Studios it offers and how to package an installer are in
-[`docs/desktop-studio.md`](../docs/desktop-studio.md).
+[`docs/desktop-studio.md`](../docs/desktop-studio.md). It has what the browser
+build has, plus Theia's Extensions view (`@theia/vsx-registry`) and
+`studio-kits-view`, which only `electron-app` depends on (ADR-0032).
+
+### The packages
+
+| Package | What it is | Loaded by |
+|---|---|---|
+| `studio/` | the Studio extension: Studio views, the modes and ribbon, Orca, the desktop's backend and views | both |
+| `product-ext/` | the product surface: the Markdown editor, rails, comments, tracked changes; hand-written JavaScript | both |
+| `drawio-editor/` | the draw.io editor | both |
+| `gearbox-studio/` | Building mode: the Gearbox port ([README](gearbox-studio/README.md)) | both |
+| `studio-kits-view/` | Studio kits in the Extensions view | `electron-app` only |
+| `studio-cli/` | the Constructor Studio CLI packed as a VSIX the desktop fetches; not an npm workspace | the desktop, at run time |
+| `gearbox-engine/` | the `gearbox` executable packed as a VSIX the desktop fetches; not an npm workspace | the desktop, at run time |
+| `gdl-language/` | the plain VS Code `.gdl` client; the image uses gearbox-studio's native GDL support instead | neither |
 
 ### The two extensions, and their opposite layouts
 

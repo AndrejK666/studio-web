@@ -17,9 +17,21 @@ the web session is a regression, however small.
   answering `enabled` — never by `process.versions.electron`, `isElectron`, a
   build flag or the URL. One bundle is tested for both.
 - Desktop-only code lives in `desktop-*` files: `browser/desktop-studio-widget.tsx`,
-  `browser/desktop-projects.ts`, `node/desktop-*.ts`, `common/desktop-*.ts`.
-  Shared widgets stay host-agnostic and reach Studio through
-  `StudioApi.fetch('/<gear>/v1/...')`.
+  `browser/desktop-landing-*.ts(x)`, `browser/desktop-projects.ts`,
+  `node/desktop-*.ts`, `common/desktop-*.ts`. Shared widgets stay
+  host-agnostic and reach Studio through `StudioApi.fetch('/<gear>/v1/...')`.
+- The frontend calls the desktop backend's own routes (`/studio-desktop/*`)
+  through `browser/desktop-studio-client.ts`, and announces what changed with
+  `announceDesktopChange`, so the landing page and the Studio view stay in step.
+  Add a route there rather than a `fetch` in a widget.
+- What a session must not load at all is bound in
+  `electron-browser/studio-electron-frontend-module.ts` (the landing page, the
+  update channel), or is a dependency of `electron-app` only
+  (`@theia/vsx-registry`, `theia/studio-kits-view`). `browser-app` loads
+  neither.
+- Theia is extended, not patched (ADR-0032 §5): a changed behaviour of Theia's
+  goes through its extension points or a DI `rebind`, as the Windows
+  uninstall does.
 - A shared widget that needs something only the desktop lacks gets it from the
   desktop's `/studio-api` proxy, not from a desktop branch inside the widget.
 - The backend's `DesktopStudioContribution` mounts its routes only when a Studio
@@ -34,9 +46,12 @@ What ADR-0027 decided, and what review checks first:
   frontend, a file, a log line, a URL, or `.git/config`.
 - `git` asks the token broker through the credential helper; what is written
   into a clone is the helper's path, never a credential.
-- The only files the desktop writes are the member's choice of Studio
-  (`~/ConstructorStudio/settings.json`) and the clones. A new file needs a line
-  in desktop-studio.md saying what it holds and why it is not a secret.
+- Every file the desktop writes is listed in desktop-studio.md, *How it
+  connects, and what it never holds*: the member's choice of Studio
+  (`~/ConstructorStudio/settings.json`), the clones, the extensions under
+  `~/ConstructorStudio/plugins`, the corpus copies, the Orca pairing and
+  `orca-projects.json`, and what Gearbox's Generate, Build and Run write. A new
+  file needs a line there saying what it holds and why it is not a secret.
 - A source host's token stays in credstore; the desktop clones through
   `studio-git`, which attaches it server-side.
 
@@ -82,8 +97,9 @@ the Inversify modules, disposal for everything that listens.
 
 Keep the logic out of the widget. What decides — which Studio, which projects,
 which message — is a plain function next to it with a jest test
-(`desktop-projects.ts`, `missingSourcesMessage`), so it is testable without
-Electron or a Studio.
+(`desktop-projects.ts`, `desktop-studio-tree.ts`, `desktop-landing-state.ts`,
+`common/orca-availability.ts`), so it is testable without Electron or a
+Studio.
 
 ## Before opening the PR
 
@@ -131,7 +147,10 @@ Electron or a Studio.
    only proven there.
 
 4. **Update the docs** in the same PR: desktop-studio.md for anything a member,
-   an operator or a developer sees differently, this page when a rule changes.
+   an operator or a developer sees differently, this page when a rule changes,
+   and a line under the next release in
+   [desktop-release-notes.md](desktop-release-notes.md) for what a member
+   notices, with what was not verified under its Known limits.
 
 5. **Say what was verified, and how**, in the PR description: which stack, which
    member, what was seen. If the desktop app itself was not rebuilt and run, say

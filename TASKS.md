@@ -1,3 +1,67 @@
+# 2026-09-29 — desktop 0.3.0-beta.5
+
+What the release leaves open (its notes: `docs/desktop-release-notes.md`):
+
+- [x] A landing page, and the Studio view in order @andrejk666
+
+  The placeholder folder shows a landing page with Connect, the modes and
+  Work offline (#511); the Constructor Studio view has an account block, the
+  open project's card and a tree (#492); both call one client (#527); the
+  update channel is a setting (#506).
+
+- [ ] The portal link handler calls the shared desktop client @andrejk666
+
+  `desktop-link-handler.ts` still makes its own `/studio-desktop` calls (open,
+  environment, sign-in), reads an error body without a catch, and announces
+  nothing, so the landing page and the view learn of a link-driven change on
+  their next poll. Left by #527. #533.
+
+- [ ] Run Build and Run end to end on a Windows desktop with MSVC @andrejk666
+
+  #514 checked the toolchain probe on a machine without the MSVC linker and
+  the local Postgres against docker, not a generated product built and run on
+  a machine that has the Build Tools. #534.
+
+- [ ] A per-machine catalogue cache for the Gearbox engine @andrejk666
+
+  The first open after a start waits about 90 s on a cold Windows machine
+  while the engine projects the corpus (#520 made the wait visible). TODO:
+  link the PR when it lands. #535.
+
+- [ ] Gearbox engine bugs, worked around in Studio until the engine fixes them @andrejk666
+
+  - `add_source` breaks a product `product/create` wrote (GBX0101); Studio
+    closes the source list first (`node/sources-list.ts`).
+    [gearbox#1](https://github.com/MikeFalcon77/gearbox/issues/1)
+  - A scaffolded gear is not catalogued, and a corpus host's plugin cannot be
+    scaffolded; New Gear says so.
+    [gearbox#2](https://github.com/MikeFalcon77/gearbox/issues/2)
+  - `gearbox generate` from the CLI on Windows writes `\\?\C://` paths;
+    Studio's RPC path is not affected.
+    [gearbox#3](https://github.com/MikeFalcon77/gearbox/issues/3)
+  - The generated config has no database section; Run writes
+    `config/<app>.local.yaml`.
+    [gearbox#4](https://github.com/MikeFalcon77/gearbox/issues/4)
+
+  Drop each workaround with the engine pin that fixes it.
+
+- [ ] Point dev's Gearbox corpus at constructorfabric/gears-rust @andrejk666
+
+  `values-dev` names `MikeFalcon77/gears-rust` `feature/gearbox`, the branch
+  that carries `gear.gdl`, until constructorfabric/gears-rust#4793 merges
+  (#490).
+
+- [ ] After the weftgraph deploy on studio-dev @andrejk666
+
+  Update the stored edge types with `scripts/graph-storage-update-edge-types.sh`
+  and then drop the script (#532); drop `outbox_repair` once toolkit-db
+  upgrades old outboxes itself (#531). From #512 and #521.
+
+- [ ] Look at the Components readiness in a running IDE @andrejk666
+
+  #510's Readiness block and row facts were unit-tested, not seen in a
+  session or on a desktop; dev after the deploy is the first place.
+
 # 2026-09-29 — the desktop's tools as extensions (ADR-0032)
 
 What was built today, and what it left open:
@@ -91,7 +155,10 @@ What was left out on purpose, or worked around to get a binary on one machine:
   `desktop-windows.yml`; electron-builder signs when `CSC_LINK` /
   `CSC_KEY_PASSWORD` are set. macOS additionally needs notarization.
 
-- [ ] Hand out installers from CI only @andrejk666
+- [x] Hand out installers from CI only @andrejk666
+
+  Done: `desktop-windows.yml` builds on `windows-2022` and every `desktop-v*`
+  tag publishes its installer as a GitHub release.
 
   The first binary was built on a developer machine without MSVC:
   `node-pty` and `keytar` from their N-API prebuilds, `native-keymap` and
@@ -107,7 +174,10 @@ What was left out on purpose, or worked around to get a binary on one machine:
   ADR-0027 §2 keeps the refresh token in the OS keychain through Electron's
   `safeStorage`; that part is not built.
 
-- [ ] Automatic updates @andrejk666
+- [x] Automatic updates @andrejk666
+
+  Done: the app updates from the rolling `desktop-updates` release, *Help →
+  Check for Updates* (#452), and stable or beta as a setting (#506).
 
   An installed build never learns there is a newer one. electron-updater
   against the releases above; decide the channel (one per stand, or one
@@ -137,13 +207,20 @@ What was left out on purpose, or worked around to get a binary on one machine:
   `windows-latest` moved to Visual Studio 2026, which the node-gyp 10.x in
   theia's tree cannot find. Move the job back when the tree's node-gyp knows it.
 
-- [ ] Make the desktop look like a desktop @andrejk666
+- [x] Make the desktop look like a desktop @andrejk666
+
+  Done: a landing page instead of the product's start page in the placeholder
+  (#511), the Studio view reworked (#492), and the Agents panel's desktop
+  states, without the session's image advice (#496).
 
   The window still carries session furniture: `product-ext`'s welcome page and
   an Orca panel that reports a runtime this machine may not have, and the
   Studio view is narrow enough to wrap every line.
 
-- [ ] Open a project from the portal in the local desktop Studio @andrejk666
+- [x] Open a project from the portal in the local desktop Studio @andrejk666
+
+  Done: `cfstudio://open?studio=…&issuer=…&project=…&name=…` (#419), and the
+  portal's IDE card offers Desktop IDE (#447).
 
   A separate track. Today a member starts the desktop app, signs in and picks
   a workspace in its own Studio view. The portal should offer "Open in desktop"
@@ -164,12 +241,12 @@ What was left out on purpose, or worked around to get a binary on one machine:
   Needs `studio-git` deployed (#391) for the clone, and the desktop installer
   (#395).
 
-- [ ] ADR-0027 phases 3–5: leases, events, commands @andrejk666
+- [ ] ADR-0027 phases 4–5: events, commands @andrejk666
 
-  The portal does not know a workspace is open on a desktop, the desktop's
-  events do not reach the ingress, and the portal cannot send it a command.
-  `runtime: desktop` leases in `studio-session`, the ingress's desktop
-  authentication path, and commands over `studio-events`.
+  Phase 3 is built: desktop leases, and the portal shows where a project is
+  open (#450). Still open: the desktop's events do not reach the ingress, and
+  the portal cannot send it a command. The ingress's desktop authentication
+  path, and commands over `studio-events`.
 
 # 2026-09-25 — "signed in as Vasil, and it was not Vasil"
 
