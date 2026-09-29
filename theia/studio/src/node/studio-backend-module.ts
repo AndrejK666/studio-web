@@ -5,6 +5,8 @@ import { mountStudioControlApi } from './studio-control-api';
 import { DesktopStudioContribution } from './desktop-studio-contribution';
 import { DesktopAssistantsContribution } from './desktop-assistants';
 import { DesktopKitsContribution } from './desktop-kits';
+import { DesktopPluginDeployerHandler } from './desktop-plugin-uninstall';
+import { PluginDeployerHandlerImpl } from '@theia/plugin-ext/lib/hosted/node/plugin-deployer-handler-impl';
 import { StudioEventForwarder, resolveForwarderConfig } from './studio-event-forwarder';
 import { BackendApplicationContribution } from '@theia/core/lib/node';
 import { ConnectionHandler, Disposable, DisposableCollection, RpcConnectionHandler } from '@theia/core/lib/common';
@@ -665,7 +667,7 @@ function isCanonicalProjectionMode(mode: WorkspaceRuntimeMode): mode is 'canonic
     return mode === 'canonical-active' || mode === 'canonical-shadow';
 }
 
-export default new ContainerModule(bind => {
+export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(StudioRuntimeConfigService).toSelf().inSingletonScope();
     bind(WorkspaceBoundary).toSelf().inSingletonScope();
     bind(RepositoryRegistry).toSelf().inSingletonScope();
@@ -751,6 +753,10 @@ export default new ContainerModule(bind => {
     bind(BackendApplicationContribution).toService(DesktopAssistantsContribution);
     bind(DesktopKitsContribution).toSelf().inSingletonScope();
     bind(BackendApplicationContribution).toService(DesktopKitsContribution);
+    // Uninstalling an extension on a Windows desktop: Theia's handler, extended
+    // (desktop-plugin-uninstall.ts). PluginDeployerHandler follows, bound to
+    // this service by plugin-ext.
+    rebind(PluginDeployerHandlerImpl).to(DesktopPluginDeployerHandler).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioRuntimeClient>(studioRuntimeServicePath, client => {
             const endpoint = ctx.container.get(StudioRuntimeEndpoint);
