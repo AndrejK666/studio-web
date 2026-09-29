@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { readinessOf } from "./readiness";
 import { responsibilityOf } from "./responsibility";
 import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
 import { RoadmapReportDialog } from "./roadmap-report-view";
@@ -897,6 +898,7 @@ export function ComponentsCatalog({
                     <th>Component and purpose</th>
                     <th>Type</th>
                     <th>Release</th>
+                    <th>Build readiness</th>
                     <th className="gcat-num">Downloads</th>
                     <th>Activity · {activityDays} days</th>
                     <th>Review</th>
@@ -1356,6 +1358,9 @@ function GearListRow({
           </>
         ) : null}
       </td>
+      <td>
+        <ReadinessCell values={values} />
+      </td>
       <td className="gcat-num">{gear.value.downloads != null ? numText(gear.value.downloads) : null}</td>
       <td>
         {moved ? (
@@ -1467,6 +1472,39 @@ interface Axis {
   label: string;
   value: string;
   pct: number | null;
+}
+
+/**
+ * SPEC / SDK / IMPL as the board sets them, with what the repository shows
+ * underneath -- ticked spec markers, requirement IDs the code cites -- and a
+ * flag where the board is well ahead of it (readiness.ts).
+ */
+function ReadinessCell({ values }: { values: Values }) {
+  const r = readinessOf(values as Parameters<typeof readinessOf>[0]);
+  if (!r) return <span className="gcat-absent">Not planned</span>;
+  return (
+    <div className="gcat-ready">
+      {r.bars.length > 0 && (
+        <div className="gcat-ready-bars">
+          {r.bars.map((b) => (
+            <span key={b.axis} className="gcat-ready-bar" title={`${b.label} on the roadmap board: ${b.pct === null ? "N/A" : `${b.pct}%`}`}>
+              <span className="gcat-ready-k">{b.axis}</span>
+              <span className="gcat-bar">
+                <span className="gcat-bar-fill" style={{ width: `${b.pct ?? 0}%` }} />
+              </span>
+              <span className="gcat-ready-v">{b.pct === null ? "—" : `${b.pct}%`}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {r.evidence.length > 0 && <div className="gcat-sub">{r.evidence.map((e) => e.text).join(" · ")}</div>}
+      {r.gaps.length > 0 && (
+        <div className="gcat-ready-gap" title={r.gaps.join("\n")}>
+          Board ahead of the repository
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** The roadmap's progress axes, labelled short enough to sit in a row. */
@@ -3220,6 +3258,13 @@ const GCAT_CSS = `
 /* A missing value says WHICH missing it is, so it reads as a finding rather
    than as a gap in the rendering. Muted and italic: present, not shouting. */
 .gcat .gcat-absent { color:var(--muted-foreground); font-style:italic; font-size:12px; white-space:nowrap; }
+/* Build readiness: three short bars, the repository's evidence, and a flag. */
+.gcat .gcat-ready { display:flex; flex-direction:column; gap:3px; min-width:150px; }
+.gcat .gcat-ready-bars { display:flex; flex-direction:column; gap:2px; }
+.gcat .gcat-ready-bar { display:grid; grid-template-columns:34px 1fr 32px; align-items:center; gap:6px; font-size:11px; }
+.gcat .gcat-ready-k { font-family:var(--studio-mono); font-size:10px; color:var(--studio-muted); }
+.gcat .gcat-ready-v { text-align:right; font-variant-numeric:tabular-nums; }
+.gcat .gcat-ready-gap { font-size:11px; font-weight:600; color:var(--studio-warning); }
 /* Review: the top check, and a list that opens in place without opening the row. */
 .gcat .gcat-review summary { list-style:none; cursor:pointer; display:flex; flex-direction:column; gap:2px; }
 .gcat .gcat-review summary::-webkit-details-marker { display:none; }

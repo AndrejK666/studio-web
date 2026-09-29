@@ -252,22 +252,38 @@ impl SpecStats {
                 }
             }
         }
-        let bytes = body.as_bytes();
-        let mut i = 0;
-        while let Some(at) = body[i..].find("cpt-") {
-            let start = i + at;
-            // A word boundary before it: `xcpt-` is not an ID.
-            let bounded = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-            let end = body[start + 4..]
-                .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
-                .map_or(body.len(), |e| start + 4 + e);
-            let id = body[start..end].trim_end_matches('-');
-            if bounded && id.len() > 4 {
-                self.ids.insert(id.to_string());
-            }
-            i = end.max(start + 4);
-        }
+        collect_cpt_ids(body, &mut self.ids);
     }
+}
+
+/// Every traceability ID (`cpt-…`) in `body`, into `out`. The same reading
+/// for a specification and for code, so an ID a spec declares and the code
+/// cites compare as equal.
+pub fn collect_cpt_ids(body: &str, out: &mut BTreeSet<String>) {
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while let Some(at) = body[i..].find("cpt-") {
+        let start = i + at;
+        // A word boundary before it: `xcpt-` is not an ID.
+        let bounded = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let end = body[start + 4..]
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+            .map_or(body.len(), |e| start + 4 + e);
+        let id = body[start..end].trim_end_matches('-');
+        if bounded && id.len() > 4 {
+            out.insert(id.to_string());
+        }
+        i = end.max(start + 4);
+    }
+}
+
+/// How many of the specs' requirement IDs the production code cites, and how
+/// many there are: `None` when the specs declare none, which is not 0 of 0.
+pub fn requirements_in_code(
+    spec: &BTreeSet<String>,
+    code: &BTreeSet<String>,
+) -> Option<(usize, usize)> {
+    (!spec.is_empty()).then(|| (spec.intersection(code).count(), spec.len()))
 }
 
 /// A requirement marker: ``- [x] `p1` `` → (ticked, priority).
@@ -340,6 +356,10 @@ pub struct CodeStats {
     pub health: bool,
     /// GTS types the code names (`gts::Something`).
     pub gts_types: BTreeSet<String>,
+    /// Traceability IDs (`cpt-…`) the production code cites -- a
+    /// `@cpt-…` marker or a comment naming the requirement it implements.
+    /// Tests are left out: a test citing one says it is checked, not built.
+    pub cpt_ids: BTreeSet<String>,
 }
 
 impl CodeStats {
@@ -355,6 +375,7 @@ impl CodeStats {
             self.integration += lines;
         } else {
             self.code += lines;
+            collect_cpt_ids(body, &mut self.cpt_ids);
         }
         if body.contains("readyz") || body.contains("healthz") {
             self.health = true;

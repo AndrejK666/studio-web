@@ -1146,6 +1146,21 @@ impl RepoEnricher {
             if code.code > 0 {
                 f.insert("health".into(), boolean(code.health));
             }
+            // IMPL of build readiness: the requirements the specs declare that
+            // the code says it implements. Only a checkout reads every file.
+            if let Some((cited, declared)) =
+                repo_facts::requirements_in_code(&spec.ids, &code.cpt_ids)
+            {
+                let mut v = text(
+                    &format!("{cited} of {declared} requirement IDs in code"),
+                    None,
+                    None,
+                );
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("n".into(), json!(cited * 100 / declared));
+                }
+                f.insert("impl_trace".into(), v);
+            }
             if !code.gts_types.is_empty() {
                 let names: Vec<String> = code.gts_types.into_iter().collect();
                 let mut v = text(&format!("{} types", names.len()), None, None);

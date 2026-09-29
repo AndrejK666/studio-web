@@ -191,3 +191,41 @@ fn experts_and_sign_off_leave_bots_out() {
     assert_eq!(experts(&commits, 3), vec!["Artifizer", "diffora"]);
     assert_eq!(sign_off(&commits), (2, 3));
 }
+
+#[test]
+fn production_code_cites_requirements_and_tests_do_not_count() {
+    let mut code = CodeStats::default();
+    code.add("src/parser.rs", "// @cpt-file-parser-fr-upload implements the upload\nfn upload() {}\n// cpt-file-parser-fr-local-parse\n");
+    code.add(
+        "src/parser_tests.rs",
+        "// covers cpt-file-parser-fr-limits\n",
+    );
+    code.add("tests/api.rs", "// cpt-file-parser-fr-info\n");
+
+    assert_eq!(
+        code.cpt_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "cpt-file-parser-fr-local-parse",
+            "cpt-file-parser-fr-upload"
+        ]
+    );
+}
+
+#[test]
+fn requirements_in_code_count_what_the_specs_declare_and_the_code_cites() {
+    let mut spec = SpecStats::default();
+    spec.add("- [x] `p1` - **ID**: `cpt-file-parser-fr-upload`\n- [ ] `p1` - **ID**: `cpt-file-parser-fr-limits`\n- [ ] `p2` - **ID**: `cpt-file-parser-fr-info`\n");
+    let mut code = CodeStats::default();
+    // One cited, and one the code names that no spec of this gear declares.
+    code.add(
+        "src/lib.rs",
+        "// @cpt-file-parser-fr-upload\n// @cpt-other-gear-fr-x\n",
+    );
+
+    assert_eq!(requirements_in_code(&spec.ids, &code.cpt_ids), Some((1, 3)));
+    assert_eq!(
+        requirements_in_code(&BTreeSet::new(), &code.cpt_ids),
+        None,
+        "no spec IDs is not 0 of 0"
+    );
+}
