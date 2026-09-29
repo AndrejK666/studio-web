@@ -1264,6 +1264,11 @@ pub struct GearActivityDto {
     /// Null when no pull request in the window touched this gear. Not zeros:
     /// nobody opened one is a different fact from the question not being asked.
     pub pull_requests: Option<GearPullRequestsDto>,
+    /// The same totals for the window of the same length just before, when
+    /// the caller asked with `compare=previous`; what a trend is measured
+    /// against. Null when not asked, or when no pull request touched the gear
+    /// then.
+    pub pull_requests_previous: Option<GearPullRequestsDto>,
     /// Ascending by date, gaps filled with zeros so a quiet week reads as
     /// quiet rather than as missing.
     pub points: Vec<ActivityPointDto>,
@@ -1302,6 +1307,10 @@ pub struct GearActivityListDto {
 pub struct ActivityQuery {
     /// How many days back to look, ending today. Defaults to 30.
     pub days: Option<u32>,
+    /// `previous` also counts pull requests over the window of the same
+    /// length just before, as `pull_requests_previous`. Anything else, or
+    /// nothing, asks the warehouse once per repository, as before.
+    pub compare: Option<String>,
 }
 
 /// GET /studio-components-catalog/v1/activity — what moved, per gear.
@@ -1335,7 +1344,20 @@ async fn gear_activity(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
-    let answer = activity_of(delivery.as_ref(), &components, days)
+    let compare_previous = match query.compare.as_deref() {
+        None => false,
+        Some("previous") => true,
+        Some(other) => {
+            return Err(StudioComponentsCatalogError::invalid_argument()
+                .with_field_violation(
+                    "compare",
+                    format!("must be \"previous\", got \"{other}\""),
+                    "INVALID",
+                )
+                .create());
+        }
+    };
+    let answer = activity_of(delivery.as_ref(), &components, days, compare_previous)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(answer))
@@ -1349,12 +1371,15 @@ async fn activity_of(
     delivery: &dyn crate::insight::port::ComponentDelivery,
     components: &[Value],
     days: u32,
+    compare_previous: bool,
 ) -> anyhow::Result<GearActivityListDto> {
     let plan = super::activity::plan_requests(components);
 
     let from = super::activity::days_ago(days);
+    let previous = super::activity::previous_window(days);
     let mut pages = Vec::with_capacity(plan.len());
     let mut pr_pages = Vec::with_capacity(plan.len());
+    let mut previous_pages = Vec::new();
     let mut repositories = Vec::with_capacity(plan.len());
     for repo in &plan {
         let query = crate::insight::port::DeliveryQuery {
@@ -1372,26 +1397,42 @@ async fn activity_of(
         if let Ok(page) = delivery.pull_requests(&query).await {
             pr_pages.push(page);
         }
+        if compare_previous {
+            let earlier = crate::insight::port::DeliveryQuery {
+                from: Some(previous.0.clone()),
+                to: Some(previous.1.clone()),
+                ..query
+            };
+            // As above: the comparison is an extra, and losing it loses
+            // only the comparison.
+            if let Ok(page) = delivery.pull_requests(&earlier).await {
+                previous_pages.push(page);
+            }
+        }
     }
 
     let (rows, truncated, window) = super::activity::index_of(&pages, &pr_pages);
+    let (earlier, earlier_truncated) = super::activity::pull_requests_by_gear(&previous_pages);
+    let pr_dto = |pr: crate::insight::port::PullRequestTotals| GearPullRequestsDto {
+        open: pr.open,
+        merged: pr.merged,
+        closed: pr.closed,
+        total: pr.total,
+        merged_cycle_hours: pr.merged_cycle_hours,
+        authors: pr.authors,
+    };
     let items: Vec<GearActivityDto> = rows
         .into_iter()
         .map(|row| GearActivityDto {
+            // Before `gear`, which moves the name this looks up by.
+            pull_requests_previous: earlier.get(&row.gear).cloned().map(pr_dto),
             gear: row.gear,
             commits: row.commits,
             files_changed: row.files_changed,
             lines_added: row.lines_added,
             lines_removed: row.lines_removed,
             authors: row.authors,
-            pull_requests: row.pull_requests.map(|pr| GearPullRequestsDto {
-                open: pr.open,
-                merged: pr.merged,
-                closed: pr.closed,
-                total: pr.total,
-                merged_cycle_hours: pr.merged_cycle_hours,
-                authors: pr.authors,
-            }),
+            pull_requests: row.pull_requests.map(pr_dto),
             points: row
                 .points
                 .into_iter()
@@ -1410,7 +1451,7 @@ async fn activity_of(
         sources: ActivitySourcesDto {
             from: window.as_ref().map(|(f, _)| f.clone()),
             to: window.map(|(_, t)| t),
-            truncated,
+            truncated: truncated || earlier_truncated,
             repositories,
         },
     })
@@ -1807,7 +1848,7 @@ async fn reference_entries(
         }
         (_, None, Some(delivery)) => {
             let components: Vec<Value> = nodes.iter().map(|n| n.value.clone()).collect();
-            match activity_of(delivery.as_ref(), &components, days).await {
+            match activity_of(delivery.as_ref(), &components, days, false).await {
                 Ok(answer) => {
                     let hit = ActivityHit {
                         generation,
@@ -3040,6 +3081,11 @@ pub fn register_routes(
             "days",
             false,
             "How many days back to look, ending today (default 30)",
+        )
+        .query_param(
+            "compare",
+            false,
+            "`previous` also returns pull requests over the window of the same length just before, as `pull_requests_previous`",
         )
         .handler(gear_activity)
         .json_response_with_schema::<GearActivityListDto>(
