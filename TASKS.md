@@ -3,14 +3,12 @@
 What #496 left open when it made Orca discovery, states and worktree scoping
 right on the desktop:
 
-- [ ] Decide whether the open project's repositories go into Orca automatically @andrejk666
+- [x] Decide whether the open project's repositories go into Orca automatically @andrejk666
 
-  Today the Agents panel offers a button, "Add this project's repositories to
-  Orca", and adds nothing silently: Orca's repository list is the member's own
-  and holds work unrelated to Studio. Decided for now: keep the button. To
-  decide later: automatic, the button, or a one-time "always add projects
-  opened in Studio" preference; and whether closing a project removes them.
-  #497.
+  Decided (#497), built in #499: Studio asks once — always / not now / never
+  (`studio.orca.addOpenedProjects`, changeable from the Agents panel) — and
+  when a project closes it removes from Orca only the repositories Studio
+  added itself, never while an agent is running or changes are uncommitted.
 
 - [ ] Pair with the local Orca without pasting a link @andrejk666
 
