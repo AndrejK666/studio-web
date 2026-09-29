@@ -465,3 +465,5 @@ electron-app/scripts/*
 # A capture left behind by a debugging session, and a file created by a shell
 # expansion that never ran. Neither belongs in the tree.
 *.har
+studio-cli/dist/
+studio-cli/__pycache__/

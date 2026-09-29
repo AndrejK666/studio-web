@@ -2,7 +2,11 @@
 // The assistants' manifest for a desktop installer (#480).
 //
 //   node electron-app/scripts/assistants-manifest.mjs --dockerfile Dockerfile \
-//       [--target win32-x64] --out assistants.json
+//       [--target win32-x64] [--studio-cli <repository>/releases/download] --out assistants.json
+//
+// `--studio-cli` adds the Constructor Studio CLI (theia/studio-cli), which the
+// app fetches and deploys the same way: the version theia/cfs.json pins, from
+// the release the studio-cli workflow publishes it in.
 //
 // Claude Code and Codex are not in the installer. The app fetches them on
 // first need (studio/src/node/desktop-assistants.ts), and trusts only what
@@ -88,12 +92,48 @@ async function resolve(pin, target) {
     }
 }
 
+export const STUDIO_CLI_ID = 'constructorfabric.studio-cli';
+
+/** The Constructor Studio CLI extension's version: studio-cli/build_vsix.py's `extension_version`. */
+export function studioCliVersion(pin) {
+    return `${String(pin.engine).replace(/^v/, '')}-${String(pin.ref).slice(0, 7)}.${pin.extension.build}`;
+}
+
+/** Where the studio-cli workflow publishes one target's VSIX: a release per version. */
+export function studioCliUrl(releases, version, target) {
+    return `${releases.replace(/\/+$/, '')}/studio-cli-v${version}/${STUDIO_CLI_ID}-${version}-${target}.vsix`;
+}
+
+/**
+ * The Constructor Studio CLI (theia/studio-cli), at the version theia/cfs.json
+ * pins, from `releases` (a repository's `…/releases/download`). A release the
+ * studio-cli workflow has not published yet is a warning: the build goes on
+ * without it, and its IDE reaches `cfs` only where the member installed one.
+ */
+async function studioCliEntry(cfsJson, releases, target) {
+    const version = studioCliVersion(JSON.parse(readFileSync(cfsJson, 'utf8')));
+    const url = studioCliUrl(releases, version, target);
+    const response = await fetch(url);
+    if (!response.ok) {
+        console.log(`::warning::${url} answered ${response.status}: this build ships no Constructor Studio CLI (run the studio-cli workflow)`);
+        return undefined;
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    console.log(`${STUDIO_CLI_ID} ${version} (${target}): ${(bytes.length / 1048576).toFixed(0)} MB, sha256 ${sha256}`);
+    return { id: STUDIO_CLI_ID, label: 'Constructor Studio CLI', version, target, url, sha256 };
+}
+
 async function main() {
     const { values } = parseArgs({
         options: {
             dockerfile: { type: 'string' },
             target: { type: 'string', default: 'win32-x64' },
             out: { type: 'string' },
+            // `<repository>/releases/download`, where the studio-cli workflow
+            // publishes the CLI extension; the version comes from cfs.json.
+            'studio-cli': { type: 'string' },
+            'cfs-json': { type: 'string' },
         },
     });
     if (!values.dockerfile || !values.out) {
@@ -124,6 +164,13 @@ async function main() {
         const entry = manifestEntry(meta, values.target, seen);
         console.log(`${entry.id} ${entry.version} (${values.target}): ${(bytes.length / 1048576).toFixed(0)} MB, sha256 ${seen}`);
         assistants.push(entry);
+    }
+    if (values['studio-cli']) {
+        const cfsJson = values['cfs-json'] ?? resolvePath(values.dockerfile, '..', 'cfs.json');
+        const cli = await studioCliEntry(cfsJson, values['studio-cli'], values.target);
+        if (cli) {
+            assistants.push(cli);
+        }
     }
     writeFileSync(values.out, `${JSON.stringify({ assistants }, null, 2)}\n`);
     console.log(`wrote ${values.out}`);
