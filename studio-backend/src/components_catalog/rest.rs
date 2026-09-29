@@ -1493,18 +1493,53 @@ pub struct ReferenceCache {
     built: tokio::sync::Mutex<std::collections::HashMap<(Uuid, u32), BuiltHit>>,
 }
 
-/// Read the engine's catalogue into the cache.
+/// Where the last engine catalogue is kept across restarts, beside the corpus
+/// checkout. Not a secret: it is the engine's projection of a public corpus.
+fn engine_cache_file(gearbox: &Gearbox) -> std::path::PathBuf {
+    gearbox.workdir().join("components-reference-engine.json")
+}
+
+/// Read the engine's catalogue into the cache, and keep a copy on disk so the
+/// first reference after a restart does not wait for a fetch and an engine run.
 async fn load_engine(gearbox: &Gearbox) -> anyhow::Result<EngineHit> {
     let (raw, commit) = gearbox.catalogue_json().await?;
     let mut label = gearbox.corpus_label();
     if let Some(c) = &commit {
         label = format!("{label} ({})", &c[..c.len().min(7)]);
     }
+    let saved = serde_json::json!({ "commit": commit, "label": label, "catalogue": &*raw });
+    if let Ok(bytes) = serde_json::to_vec(&saved)
+        && let Err(e) = tokio::fs::write(engine_cache_file(gearbox), bytes).await
+    {
+        tracing::debug!(error = %e, "components-catalog: engine catalogue not saved");
+    }
     Ok(EngineHit {
         index: Arc::new(super::reference::EngineIndex::from_catalogue(&raw)),
         commit,
         label,
         at: std::time::Instant::now(),
+    })
+}
+
+/// The engine catalogue a previous run saved, marked old so that a refresh
+/// starts at once. `None` when there is none or it does not parse.
+async fn load_engine_from_disk(gearbox: &Gearbox) -> Option<EngineHit> {
+    let bytes = tokio::fs::read(engine_cache_file(gearbox)).await.ok()?;
+    let saved: Value = serde_json::from_slice(&bytes).ok()?;
+    let catalogue = saved.get("catalogue")?;
+    Some(EngineHit {
+        index: Arc::new(super::reference::EngineIndex::from_catalogue(catalogue)),
+        commit: saved
+            .get("commit")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        label: saved
+            .get("label")
+            .and_then(Value::as_str)
+            .map_or_else(|| gearbox.corpus_label(), str::to_string),
+        at: std::time::Instant::now()
+            .checked_sub(ENGINE_TTL)
+            .unwrap_or_else(std::time::Instant::now),
     })
 }
 
@@ -1535,7 +1570,16 @@ async fn engine_index(catalog: &Catalog, wait: bool) -> Result<Option<EngineHit>
                 .to_string(),
         );
     };
-    let hit = catalog.reference.engine.lock().await.clone();
+    let mut hit = catalog.reference.engine.lock().await.clone();
+    if hit.is_none()
+        && let Some(saved) = load_engine_from_disk(gearbox).await
+    {
+        let mut slot = catalog.reference.engine.lock().await;
+        if slot.is_none() {
+            *slot = Some(saved);
+        }
+        hit = slot.clone();
+    }
     match hit {
         Some(hit) => {
             if hit.at.elapsed() >= ENGINE_TTL {

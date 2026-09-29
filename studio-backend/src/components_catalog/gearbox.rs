@@ -1527,6 +1527,12 @@ impl Gearbox {
         repo_key(&self.current_source().url)
     }
 
+    /// The directory the corpus is checked out under; also where the
+    /// components reference keeps its last engine catalogue across restarts.
+    pub fn workdir(&self) -> &Path {
+        &self.cfg.workdir
+    }
+
     /// The corpus the catalogue, previews and facts are read from, as a label.
     pub fn corpus_label(&self) -> String {
         self.current_source().label

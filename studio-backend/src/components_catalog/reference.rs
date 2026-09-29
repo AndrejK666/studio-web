@@ -538,7 +538,7 @@ fn superseded(
                         "written by an older scan, no source recorded"
                     },
                     if nodes[best].type_id == gts::FRONTX_TYPE {
-                        "micro-frontend-typed"
+                        "FrontX-typed"
                     } else {
                         "newer"
                     },
