@@ -82,7 +82,8 @@ and only its window can issue a pairing. So the first **Open** on an agent (or
 link* — and keeps it in `~/ConstructorStudio/orca-pairing`, readable by the
 member only. It is Orca's token for this machine's own runtime on
 `127.0.0.1`, not a Studio secret; revoking it in Orca, or deleting the file,
-undoes it.
+undoes it. How Studio finds Orca at all is
+[Agent development](#agent-development-orca).
 
 And the assistants: Claude Code and Codex are fetched on first start into
 `~/ConstructorStudio/plugins/<id>-<version>/`
@@ -166,6 +167,7 @@ installed build is pointed somewhere else for a test.
 | `STUDIO_DESKTOP_ASSISTANTS` | the assistants' manifest; default the build's `resources/assistants.json`. Unset (a checkout's `theia start`), nothing is fetched |
 | `STUDIO_DESKTOP_PLUGINS` | where the assistants are unpacked; default `~/ConstructorStudio/plugins` |
 | `STUDIO_DESKTOP_VSIX_DIRS` | more folders to look in for a VSIX put there by hand (`;` on Windows, `:` elsewhere); default the app's own folder |
+| `ORCA_CLI` | the `orca` executable the Agents panel runs, when Orca is installed somewhere [Agent development](#agent-development-orca) does not look |
 
 With none of the first three set, the IDE is an ordinary editor and the Studio
 view does not open.
@@ -374,6 +376,101 @@ module talking to an `electronMain` one over Theia's Electron IPC
 (`theia/studio/src/electron-browser`, `src/electron-main`), and a session's
 `browser-app` loads neither.
 
+## Agent development (Orca)
+
+The **Agents** panel and the **Agent development** mode drive
+[Orca](https://github.com/stablyai/orca), the runtime that gives each agent
+task its own git worktree and runs `claude`, `codex` or `opencode` in it. Studio
+bundles none of Orca. It runs Orca's CLI with `--json` (`orca-cli.ts`,
+`orca-service.ts`) and streams an agent's terminal over Orca's WebSocket with
+the client Orca ships next to its CLI (`orca-terminal-bridge.ts`). In a session
+the image carries Orca and the container starts it. On the desktop, Orca is the
+member's own install.
+
+### How Studio finds Orca
+
+The backend looks for the `orca` executable in this order
+(`findOrcaBinary`). The first one found wins. Only a found one is remembered,
+so installing Orca while Studio runs needs a **Refresh**, not a restart.
+
+| | Where |
+|---|---|
+| any OS | `ORCA_CLI`, when set. It is authoritative: pointing it at nothing reads as "not installed" |
+| Windows | `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` (the default per-user install), then `%ProgramFiles%\Orca\resources\bin\orca.exe` |
+| macOS | `/Applications/Orca.app/Contents/Resources/bin/orca`, `~/Applications/Orca.app/…`, then the shell command Orca's *Install CLI* links: `/usr/local/bin/orca`, `/opt/homebrew/bin/orca`, `~/.local/bin/orca` |
+| Linux | `/opt/Orca/resources/bin/orca-ide` and `/usr/bin/orca-ide` (the .deb/.rpm), `/usr/local/bin/orca`, then `~/.local/bin/orca-ide` and `~/.local/bin/orca` (where an AppImage's *Install CLI* links it) |
+| last | `orca`, then `orca-ide`, on `PATH` |
+
+The explicit locations matter. An app started from the Start menu, the Dock or
+a desktop launcher does not get a login shell's `PATH`, so `~/.local/bin` and
+Homebrew's prefix are often not on it. On Windows only `.exe`/`.com` can be
+spawned without a shell, so an `orca.cmd` found on `PATH` is followed to the
+`orca.exe` beside it. Every name found on `PATH` is resolved to an absolute
+path, because the terminal bridge loads Orca's client from next to it.
+
+### How it connects, and what "ready" means
+
+- **The panel** needs only the CLI. `orca status --json` finds the running Orca
+  through the metadata file Orca writes into its own user-data folder
+  (`%APPDATA%\orca`, `~/Library/Application Support/orca`,
+  `$XDG_CONFIG_HOME/orca`, or `ORCA_USER_DATA_PATH`). It then asks over a named
+  pipe or a unix socket. No TCP port is involved, so a firewall cannot get in
+  the way. **Ready** means that call answered `runtime.reachable: true`.
+- **An agent's terminal tab** needs the runtime's WebSocket
+  (`ws://127.0.0.1:6768`) and a paired device: see the pairing paragraph under
+  [How it connects](#how-it-connects-and-what-it-never-holds). Without a
+  pairing the panel works, and only **Open** on an agent asks for one.
+- **Studio can start Orca.** **Start Orca** runs `orca open`, which launches
+  the app and waits for its runtime. Only off a session: there the container
+  starts Orca.
+- **Viewer credentials do not hide Orca.** `viewer-credentials-env.js` moves
+  `HOME`/`CODEX_HOME` for the *plugin host* (and `HOME` only on Linux). The CLI
+  runs in the IDE backend, which keeps the member's own home.
+
+| | Session (`browser-app`) | Desktop (`electron-app`) |
+|---|---|---|
+| Orca | in the image (`STUDIO_ORCA_VERSION`), `ORCA_CLI=/usr/bin/orca-ide` | the member's install, found as above |
+| Started by | the entrypoint, `orca serve --json` (headless) | the member, or **Start Orca** |
+| Pairing | the entrypoint writes it (`STUDIO_ORCA_PAIRING_FILE`) | pasted once, kept in `~/ConstructorStudio/orca-pairing` |
+| Repositories | the session's sources, registered on the first open | whatever the member added to Orca, grouped below |
+| Which host | the backend says `host: session` (it has `STUDIO_SESSION_TOKEN`) | `host: local` |
+
+### What the member sees
+
+`orcaAvailability()` (`common/orca-availability.ts`) decides the words and the
+buttons from the status. Every state has a way forward:
+
+| State | Desktop says | Buttons | In a session |
+|---|---|---|---|
+| no executable found | "Orca is not installed on this computer, or not where Studio looks…", with the `ORCA_CLI` hint | **Get Orca** (the releases page), **Refresh** | "This session image was built without the Orca runtime…" |
+| installed, not running (`not_running`, `stale_bootstrap`) | "Orca is installed but not running…" | **Start Orca**, **Refresh** | restart the session; the log is `orca-serve.log` |
+| starting (`starting`, `graph_not_ready`) | "Orca is starting…" | **Refresh** | same |
+| the CLI failed (timeout, refusal) | the reason, and "Open the Orca app, or start it here" | **Start Orca**, **Refresh** | the reason, and `orca serve` |
+| ready | "ready · 1.4.211 · desktop" | **Refresh** | "ready · … · headless" |
+| ready, not paired | a note that terminals open once paired | **Pair with Orca** | never: a session pairs itself |
+| Orca older than 1.4.197 | a note to update Orca if something fails | — | same |
+
+A terminal tab that cannot attach says why: no pairing, or a pairing Orca no
+longer accepts (revoked, or Orca reinstalled with a new key). For both it
+offers to pair again. If Orca is closed, it says to open Orca.
+
+### Worktrees
+
+A member's Orca knows every repository they ever added to it, and every
+repository has a worktree on `main`. So the panel groups worktrees by
+repository (`orca repo list`, `common/orca-worktree-groups.ts`). The open
+project's repositories come first, and the rest are behind **Other
+repositories in Orca (N)**. With no project open, the panel says so and lists
+them all. When Orca does not know the open project's repositories, the panel
+offers **Add this project's repositories to Orca**. It does not add them on
+its own, because that changes the member's Orca. A session registers them on
+the first open, since its runtime starts empty. A new task is created in the
+selected worktree's repository (`--repo id:…`). Before this, Orca guessed it
+from the backend's working directory, which on a desktop is no checkout. The
+agents Studio did not find on its own `PATH` are "not in this image" only in a
+session. On a desktop they are a hint, and every agent stays on offer: Orca
+starts an agent with its own environment.
+
 ## Known limits
 
 - The installer is not code-signed, so Windows SmartScreen asks before the
@@ -401,3 +498,7 @@ module talking to an `electronMain` one over Theia's Electron IPC
   no win32 build, so the manifest pins the newest one that has.
 - The first start downloads about 440 MB of assistants. Until then the rail's
   assistants say they are downloading.
+- Pairing with Orca is a paste. Orca mints a pairing for this computer only
+  from its own window, and has no CLI command for it.
+- The macOS and Linux Orca locations come from Orca's installers and its
+  *Install CLI* code (1.4.211). No Studio build has run on either OS yet.
