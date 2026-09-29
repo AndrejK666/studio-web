@@ -161,7 +161,8 @@ const BY_WORK: readonly Mode[] = [
             {
                 label: 'Corpus',
                 actions: [{ command: 'gearbox.catalogue.browse', icon: 'library', label: 'Catalogue', title: 'Every gear the corpus describes' },
-                    { command: 'studio.components-reference:toggle', icon: 'book', label: 'Components', title: 'Every component: what it is, how alive it is, where it comes from' }],
+                    { command: 'studio.components-reference:toggle', icon: 'book', label: 'Components', title: 'Every component: what it is, how alive it is, where it comes from' },
+                    { command: 'studio.roadmap-report:toggle', icon: 'milestone', label: 'Roadmap', title: 'What the roadmap board plans, whether the plan holds, and who is waiting' }],
             },
             {
                 label: 'Check',

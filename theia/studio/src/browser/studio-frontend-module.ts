@@ -66,6 +66,8 @@ import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
 import { ComponentsReferenceContribution } from './components-reference-contribution';
 import { ComponentsReferenceWidget } from './components-reference-widget';
+import { RoadmapReportContribution } from './roadmap-report-contribution';
+import { RoadmapReportWidget } from './roadmap-report-widget';
 
 import '../../src/browser/style/index.css';
 import '../../src/browser/markdown-editor/markdown-editor.css';
@@ -262,6 +264,14 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ComponentsReferenceWidget.ID,
         createWidget: () => ctx.container.get<ComponentsReferenceWidget>(ComponentsReferenceWidget)
+    })).inSingletonScope();
+    // The roadmap report: what the roadmap board plans and whether the plan
+    // holds, from one backend read; saved as a workbook through the file dialog.
+    bindViewContribution(bind, RoadmapReportContribution);
+    bind(RoadmapReportWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: RoadmapReportWidget.ID,
+        createWidget: () => ctx.container.get<RoadmapReportWidget>(RoadmapReportWidget)
     })).inSingletonScope();
     bindViewContribution(bind, ArtifactGraphContribution);
     bind(ArtifactGraphWidget).toSelf();

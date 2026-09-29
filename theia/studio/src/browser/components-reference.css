@@ -370,3 +370,86 @@
     padding-left: 18px;
     color: var(--theia-descriptionForeground);
 }
+
+/* Roadmap report: a summary of small tables over the full list. */
+
+.srr-root {
+    height: 100%;
+    overflow: auto;
+    padding: 10px 14px 16px;
+    box-sizing: border-box;
+}
+
+.srr-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.srr-lead {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.srr-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px 20px;
+    margin-bottom: 12px;
+}
+
+.srr-summary h3 {
+    margin: 0 0 4px;
+    font-size: var(--theia-ui-font-size1);
+    font-weight: 600;
+}
+
+.srr-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.srr-table th,
+.srr-table td {
+    text-align: left;
+    padding: 3px 6px;
+    border-bottom: 1px solid var(--theia-editorGroup-border);
+    vertical-align: top;
+}
+
+.srr-table th {
+    color: var(--theia-descriptionForeground);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.srr-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.srr-table .nowrap {
+    white-space: nowrap;
+}
+
+.srr-table td.bad {
+    color: var(--theia-errorForeground);
+}
+
+.srr-table td.watch {
+    color: var(--theia-editorWarning-foreground);
+}
+
+.srr-rows {
+    margin-top: 8px;
+}
+
+.srr-issue {
+    margin-left: 6px;
+    opacity: 0.7;
+}
+
+.srr-overdue {
+    margin: 4px 0 8px;
+}
