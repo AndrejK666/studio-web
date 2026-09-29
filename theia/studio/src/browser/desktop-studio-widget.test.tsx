@@ -36,6 +36,10 @@ const FABRIC_B = { id: '7d41aa90-2222-4000-8000-000000000002', name: 'Constructo
 const FABRIC_C = { id: 'c31da936-3333-4000-8000-000000000003', name: 'Constructor Fabric', tenant_type: ORG };
 const TYPO = { id: 'e5e5e5e5-4444-4000-8000-000000000004', name: 'Constractor Fabric', tenant_type: ORG };
 
+// Each test renders the whole view and lets its fetches settle: generous on a
+// loaded CI runner, where the 5 s default was seen to expire in the setup.
+jest.setTimeout(30_000);
+
 interface Answer { status: number; body: unknown }
 type Routes = Record<string, Answer | (() => Answer | Promise<Answer>)>;
 
