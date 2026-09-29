@@ -47,6 +47,7 @@ import {
   OPENING_LABEL,
   OPENING_STAGES,
   ProductSessionService,
+  projectionProgress,
   type OpeningState,
 } from "../shell/product-session-service";
 import {
@@ -2156,6 +2157,13 @@ function renderOpening(
             <li key={stage} className={`gbx-opening-step gbx-opening-${state}`} data-step={stage}>
               <span className={`${STEP_ICON[state]} gbx-opening-icon`} />
               <span>{OPENING_LABEL[stage]}</span>
+              {/* Constructor Studio: the long step says how far it has got. */}
+              {state === "busy" && stage === "catalogue" && opening.status === "opening" &&
+                projectionProgress(opening.progress) !== "" && (
+                  <span className="gbx-opening-progress" data-opening-progress>
+                    {" — "}{projectionProgress(opening.progress)}
+                  </span>
+                )}
             </li>
           );
         })}

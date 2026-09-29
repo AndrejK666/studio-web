@@ -44,8 +44,11 @@ import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service
 
 import { CatalogueStore } from "../catalogue-store";
 import {
+  GO,
   catalogueUsable,
   openedSuccessfully,
+  projectionStalled,
+  type Outcome,
   sourceRootsOf,
   sourcesUsable,
   type OpeningStage,
@@ -60,6 +63,7 @@ import { isInside, parentOf, resolveFrom } from "./source-paths";
 export {
   OPENING_LABEL,
   OPENING_STAGES,
+  projectionProgress,
   type OpeningStage,
 } from "./opening-outcome";
 
@@ -89,7 +93,13 @@ export interface RecentEntry extends ProductRef {
  */
 export type OpeningState =
   | { readonly status: "idle" }
-  | { readonly status: "opening"; readonly stage: OpeningStage; readonly product: ProductRef }
+  | {
+      readonly status: "opening";
+      readonly stage: OpeningStage;
+      readonly product: ProductRef;
+      /** Constructor Studio: the catalogue's projection, while the `catalogue` step waits for it. */
+      readonly progress?: { readonly completed: number; readonly total: number };
+    }
   | {
       readonly status: "failed";
       readonly stage: OpeningStage;
@@ -217,6 +227,67 @@ export class ProductSessionService {
   /** Whether this open is still the one being waited for. */
   protected current(generation: number): boolean {
     return this.generation === generation;
+  }
+
+  /**
+   * Constructor Studio: how long the projection may go without progress before
+   * the open stops and says so. Minutes on a cold desktop are normal; this is
+   * for a projection that has stopped, not one that is slow.
+   */
+  protected projectionStallMs = 120_000;
+
+  /**
+   * Constructor Studio: wait until the catalogue has projected every gear, and
+   * narrate it.
+   *
+   * **This is where an open spends its time, and it used to spend it hidden.**
+   * `CatalogueStore.load` resolves once the engine has *started* the load, and
+   * the engine answers one request at a time -- so the store's `product/load`
+   * sent next was answered only when the whole projection had finished: 7 s
+   * warm, 90 s and more cold on this corpus (measured on Windows), minutes on a
+   * desktop opened just after start. For all of it the Product view said
+   * "Reading the description…" with nothing moving, which reads as a hang.
+   * Waiting here instead keeps the checklist on "loading the gears it
+   * declares — 12 of 44 gears", and the store's requests are answered at once.
+   *
+   * A projection that stops moving for `projectionStallMs` stops the open with
+   * a reason; one abandoned for another open just returns.
+   */
+  protected awaitProjection(ref: ProductRef, generation: number): Promise<Outcome> {
+    const settled = (): boolean => this.catalogue.current.status !== "loading";
+    if (settled()) return Promise.resolve(GO);
+    return new Promise<Outcome>((resolve) => {
+      let seen = -1;
+      let movedAt = Date.now();
+      const finish = (outcome: Outcome): void => {
+        subscription.dispose();
+        clearInterval(timer);
+        resolve(outcome);
+      };
+      const check = (): void => {
+        if (!this.current(generation) || settled()) return finish(GO);
+        const { completed, total, rows } = this.catalogue.current;
+        const moved = completed + rows.filter((row) => row.kind === "projected").length;
+        if (moved !== seen) {
+          seen = moved;
+          movedAt = Date.now();
+          this.reportProjection(generation, completed, total);
+        } else if (Date.now() - movedAt >= this.projectionStallMs) {
+          finish({ ok: false, reason: projectionStalled(ref.label, completed, total, Math.round(this.projectionStallMs / 1000)) });
+        }
+      };
+      const subscription = this.catalogue.onChanged(check);
+      const timer = setInterval(check, 1000);
+      check();
+    });
+  }
+
+  protected reportProjection(generation: number, completed: number, total: number): void {
+    if (!this.current(generation) || this.openingState.status !== "opening") return;
+    const previous = this.openingState.progress;
+    if (previous?.completed === completed && previous.total === total) return;
+    this.openingState = { ...this.openingState, progress: { completed, total } };
+    this.onDidChangeOpeningEmitter.fire(this.openingState);
   }
 
   /** Move to the next step of the open in flight. Ignored once it has ended. */
@@ -588,6 +659,10 @@ export class ProductSessionService {
     const session: StudioSession = { roots, workspace };
     await this.catalogue.load(session);
     if (!this.current(generation)) return false;
+    // Constructor Studio: the projection, before the product -- see `awaitProjection`.
+    const projected = await this.awaitProjection(ref, generation);
+    if (!this.current(generation)) return false;
+    if (!projected.ok) return this.failAndRestore("catalogue", projected.reason, generation, before);
     const loaded = catalogueUsable(
       this.catalogue.current,
       `${ref.label}'s gears could not be loaded from ${roots.join(", ")}`,
