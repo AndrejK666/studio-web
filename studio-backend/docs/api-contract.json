@@ -610,6 +610,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/reference",
+      "operation_id": "studio_components_catalog.list_component_reference",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The components reference: the catalogue joined with the Gearbox engine's gears",
+      "authenticated": true,
+      "responses": [
+        "ComponentReferenceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/tasks/{id}",
       "operation_id": "studio_components_catalog.task_status",
       "tag": "StudioComponentsCatalog",

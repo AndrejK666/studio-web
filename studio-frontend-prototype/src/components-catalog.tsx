@@ -1161,12 +1161,33 @@ function GearListRow({
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
-  const category = values.category?.b ?? "gear";
-  const version = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
+  /* The Type column says what the component IS (gear, plugin, sdk, toolkit,
+     frontx, kit). It used to show `category`, which is a crates.io category
+     ("Web programming"), a gear.toml domain ("bss") or, for a FrontX package,
+     its first npm keyword ("hai3", "eslint") -- three vocabularies in one
+     column that claimed to be a fourth. The category stays, under the type. */
+  const kind = String(gear.value.kind ?? (gear.type_id === KIT_TYPE ? "kit" : "gear"));
+  const category = values.category?.b ?? null;
+  const released = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
+  /* A FrontX package is not on crates.io, so "Not published" was true and
+     useless: the version its package.json declares is the one people use. */
+  const declared = released ? null : values.version?.b ?? null;
+  const version = released ?? declared;
   const lamps = fields.map((f) => lampOf(f, values)).filter((l): l is Lamp => !!l);
   const bad = lamps.filter((l) => l === "bad").length;
   const watch = lamps.filter((l) => l === "watch").length;
-  const repository = typeof gear.value.repository === "string" ? gear.value.repository : null;
+  /* A component only a repository scan produced (a draft gear, a FrontX
+     package) has no crates.io `repository`, but the scan recorded where it
+     read it: `synced_from` and, since the scan keeps it, `repo_path`. "Not
+     recorded" was wrong for every one of them. */
+  const scannedFrom = typeof gear.value.synced_from === "string" && gear.value.synced_from ? gear.value.synced_from : null;
+  const repoPath = typeof gear.value.repo_path === "string" && gear.value.repo_path ? gear.value.repo_path : null;
+  const repository =
+    typeof gear.value.repository === "string" && gear.value.repository
+      ? gear.value.repository
+      : scannedFrom
+        ? `https://github.com/${scannedFrom}${repoPath ? `/tree/HEAD/${repoPath}` : ""}`
+        : null;
   const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
 
   return (
@@ -1178,7 +1199,8 @@ function GearListRow({
         )}
       </td>
       <td>
-        <span className="pill">{category}</span>
+        <span className="pill">{kind}</span>
+        {category && category !== kind && <div className="gcat-sub">{category}</div>}
       </td>
       <td>
         {/* No version at all is not "0" and not a blank: crates.io has no
@@ -1186,7 +1208,9 @@ function GearListRow({
         {version ? (
           <>
             <code className="gcat-version">{String(version)}</code>
-            <div className="gcat-sub">{numText(gear.value.num_versions)} versions</div>
+            <div className="gcat-sub">
+              {declared ? "declared, not on crates.io" : `${numText(gear.value.num_versions)} versions`}
+            </div>
           </>
         ) : (
           <span className="gcat-absent">Not published</span>

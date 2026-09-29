@@ -22,6 +22,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
 use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
+use super::reference::ComponentReferenceListDto;
 use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -1235,7 +1236,22 @@ async fn gear_activity(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
-    let plan = super::activity::plan_requests(&components);
+    let answer = activity_of(delivery.as_ref(), &components, days)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(answer))
+}
+
+/// What moved in each of `components` over the last `days`, from the
+/// warehouse: one round trip per repository in the plan, never per component.
+/// Shared by `/activity` and `/reference`, so the two cannot disagree on a
+/// number.
+async fn activity_of(
+    delivery: &dyn crate::insight::port::ComponentDelivery,
+    components: &[Value],
+    days: u32,
+) -> anyhow::Result<GearActivityListDto> {
+    let plan = super::activity::plan_requests(components);
 
     let from = super::activity::days_ago(days);
     let mut pages = Vec::with_capacity(plan.len());
@@ -1250,12 +1266,7 @@ async fn gear_activity(
             limit: u32::try_from(repo.components.len()).ok(),
         };
         repositories.push(repo.repository.clone());
-        pages.push(
-            delivery
-                .metrics(&query)
-                .await
-                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?,
-        );
+        pages.push(delivery.metrics(&query).await?);
         // Pull requests are a second question with its own coverage, so they
         // get their own failure: a warehouse without them is not a reason to
         // lose the commit activity as well.
@@ -1294,7 +1305,7 @@ async fn gear_activity(
                 .collect(),
         })
         .collect();
-    Ok(Json(GearActivityListDto {
+    Ok(GearActivityListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         sources: ActivitySourcesDto {
@@ -1303,7 +1314,7 @@ async fn gear_activity(
             truncated,
             repositories,
         },
-    }))
+    })
 }
 
 // ── what a component's fields actually say ───────────────────────────────────
@@ -1381,6 +1392,163 @@ async fn component_values(
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
         truncated,
+    }))
+}
+
+// ── the components reference ─────────────────────────────────────────────────
+
+/// The window the reference measures activity over when the caller does not
+/// say: the portal's Components page defaults to ninety days, and the two
+/// should show the same number for the same component.
+const DEFAULT_REFERENCE_DAYS: u32 = 90;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ReferenceQuery {
+    /// Activity window in days; `0` skips the warehouse. Defaults to 90.
+    pub days: Option<u32>,
+}
+
+/// GET /studio-components-catalog/v1/reference — the catalogue and the
+/// Gearbox engine's catalogue as one list (see [`super::reference`]).
+///
+/// Every half is read once for the whole list: the component nodes, their
+/// profiles and the field schemas from the graph, the engine's catalogue from
+/// the one corpus checkout, the activity from the warehouse (one round trip
+/// per repository). The engine and the warehouse are best-effort — a
+/// deployment without Gearbox or Insight still gets the catalogue, with the
+/// reason in `sources` instead of an error.
+async fn component_reference(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<ReferenceQuery>,
+) -> ApiResult<JsonBody<ComponentReferenceListDto>> {
+    use super::reference::{
+        EngineIndex, ReferenceActivityDto, ReferenceInputs, ReferenceSourcesDto,
+    };
+
+    let days = query.days.unwrap_or(DEFAULT_REFERENCE_DAYS);
+    if days > MAX_ACTIVITY_DAYS {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "days",
+                format!("must be between 0 and {MAX_ACTIVITY_DAYS}, got {days}"),
+                "INVALID",
+            )
+            .create());
+    }
+
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let (nodes, truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(internal)?;
+    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for node in catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(internal)?
+    {
+        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
+            profiles.insert(name.to_owned(), node.value);
+        }
+    }
+    let schemas = catalog
+        .service
+        .list_field_schemas(&ctx)
+        .await
+        .map_err(internal)?;
+
+    let (engine, gearbox_corpus, gearbox_problem) = match &catalog.gearbox {
+        None => (
+            None,
+            None,
+            Some(
+                "Gearbox is not configured in this deployment (STUDIO_GEARBOX_WORKDIR is not set)"
+                    .to_string(),
+            ),
+        ),
+        Some(gearbox) => match gearbox.catalogue_json().await {
+            Ok((raw, commit)) => {
+                let mut label = gearbox.corpus_label();
+                if let Some(c) = commit {
+                    label = format!("{label} ({})", &c[..c.len().min(7)]);
+                }
+                (Some(EngineIndex::from_catalogue(&raw)), Some(label), None)
+            }
+            Err(e) => (
+                None,
+                None,
+                Some(format!("the Gearbox catalogue could not be read: {e:#}")),
+            ),
+        },
+    };
+
+    let mut activity: Option<std::collections::HashMap<String, ReferenceActivityDto>> = None;
+    let (mut activity_from, mut activity_to, mut activity_problem) = (None, None, None);
+    if days == 0 {
+        activity_problem = Some("activity was not asked for (days=0)".to_string());
+    } else {
+        match catalog.delivery() {
+            Err(_) => {
+                activity_problem =
+                    Some("studio-insight is not configured in this deployment".to_string());
+            }
+            Ok(delivery) => {
+                let components: Vec<Value> = nodes.iter().map(|n| n.value.clone()).collect();
+                match activity_of(delivery.as_ref(), &components, days).await {
+                    Ok(answer) => {
+                        activity_from = answer.sources.from;
+                        activity_to = answer.sources.to;
+                        activity = Some(
+                            answer
+                                .items
+                                .into_iter()
+                                .map(|row| {
+                                    (
+                                        row.gear,
+                                        ReferenceActivityDto {
+                                            commits: row.commits,
+                                            files_changed: row.files_changed,
+                                            lines_added: row.lines_added,
+                                            lines_removed: row.lines_removed,
+                                            authors: row.authors,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %format!("{e:#}"), "components-catalog: reference activity unavailable");
+                        activity_problem =
+                            Some(format!("the delivery warehouse did not answer: {e:#}"));
+                    }
+                }
+            }
+        }
+    }
+
+    let items = super::reference::build(&ReferenceInputs {
+        nodes: &nodes,
+        profiles: &profiles,
+        schemas: &schemas,
+        engine: engine.as_ref(),
+        activity: activity.as_ref(),
+    });
+    Ok(Json(ComponentReferenceListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        truncated,
+        sources: ReferenceSourcesDto {
+            gearbox_corpus,
+            gearbox_problem,
+            activity_days: activity.is_some().then_some(days),
+            activity_from,
+            activity_to,
+            activity_problem,
+        },
     }))
 }
 
@@ -2527,6 +2695,45 @@ pub fn register_routes(
             StatusCode::OK,
             "The reconciled fields",
         )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/reference")
+        .operation_id("studio_components_catalog.list_component_reference")
+        .summary("The components reference: the catalogue joined with the Gearbox engine's gears")
+        .description(
+            "One entry per component, for a screen that lists them all and lets a person \
+             take a gear into a product. It joins what the Components page shows (crates.io \
+             release and downloads, the repository scan, the profile ratio, delivery activity) \
+             with what the Gearbox engine reads from each `gear.gdl` (engine id, service or \
+             plugin, extension points, hosts, plugins).\n\n\
+             THE JOIN IS THE CRATE NAME: the engine's `package.crate_name` is the catalogue's \
+             component name. A component catalogued before the scan read crate names is joined \
+             by the directory it was read from instead. One crate can be several engine gears \
+             (`engine` is a list); an engine gear no component matches is listed on its own \
+             with `type_id: null` and every portal fact null.\n\n\
+             UNKNOWN IS NULL, NEVER ZERO. `related` names a gear's SDK and plugin crates from \
+             its manifests and its descriptor, not from a naming convention.\n\n\
+             Gearbox and Insight are best-effort: without them the catalogue is still served \
+             and `sources.gearbox_problem` / `sources.activity_problem` say why a half is \
+             missing. `days` (default 90, `0` to skip) is the activity window.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "days",
+            false,
+            "Activity window in days, ending today (default 90; 0 skips the warehouse)",
+        )
+        .handler(component_reference)
+        .json_response_with_schema::<ComponentReferenceListDto>(
+            openapi,
+            StatusCode::OK,
+            "The reference",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

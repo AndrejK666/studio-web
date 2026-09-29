@@ -67,6 +67,20 @@ pub struct RepoGear {
     /// path, and it carries that itself rather than being flattened into a
     /// shape built for something else.
     pub payload: Option<Value>,
+    /// The directory the component was read from, relative to the repository
+    /// root (`gears/bss/ledger`, `packages/ui-kit`). Written onto the node as
+    /// `path`, so the activity plan can name the directory instead of guessing
+    /// it from the crate name, and so the components reference can join a
+    /// component to the Gearbox descriptor that lives under the same tree.
+    /// `None` for a component that is not a directory of its own (a kit read
+    /// from a manifest at the root).
+    pub dir: Option<String>,
+    /// Every crate a gear directory declares (`[package] name` of each
+    /// `Cargo.toml` in it, not counting nested gears), the gear's own first.
+    /// This is how a gear's SDK and helper crates are named without deriving
+    /// them from a naming convention. Empty for a component that is not a
+    /// Rust gear.
+    pub crates: Vec<String>,
 }
 
 /// What a repository source contributes: platform gears, FrontX
@@ -218,6 +232,8 @@ impl RepoEnricher {
                     kind: Some("kit".to_string()),
                     category: Some("kit".to_string()),
                     payload: Some(payload),
+                    dir: (!dir.is_empty()).then(|| dir.clone()),
+                    crates: Vec::new(),
                 });
             }
         }
@@ -241,8 +257,44 @@ impl RepoEnricher {
         let mut out: Vec<RepoGear> = Vec::with_capacity(gear_dirs.len());
         for dir in &gear_dirs {
             let slug = dir.rsplit('/').next().unwrap_or(dir).to_string();
+            // The crates this gear directory declares, read from their own
+            // manifests. The component is keyed by the gear's REAL crate name,
+            // because that is the key crates.io and the Gearbox engine both
+            // use; `cf-gears-<directory>` was a guess, and it was wrong for
+            // every gear whose crate is named otherwise (`gears/bss/ledger` is
+            // `cf-gears-bss-ledger`, `gears/chat-engine` is `cf-chat-engine`),
+            // which catalogued each of them twice under two names.
+            let mut manifests: Vec<(String, String)> = Vec::new();
+            for rel in gear_manifests(dir, &gear_dirs, paths)
+                .into_iter()
+                .take(MAX_GEAR_MANIFESTS)
+            {
+                if let Some(body) = self.read_file(auth, &format!("{dir}/{rel}")).await {
+                    manifests.push((rel, body));
+                }
+            }
+            let named: Vec<(String, String)> = manifests
+                .iter()
+                .filter_map(|(rel, body)| cargo_package_name(body).map(|n| (rel.clone(), n)))
+                .collect();
+            let crate_name =
+                primary_crate(&slug, &named).unwrap_or_else(|| format!("cf-gears-{slug}"));
+            let mut crates: Vec<String> = vec![crate_name.clone()];
+            for (_, name) in &named {
+                if !crates.contains(name) {
+                    crates.push(name.clone());
+                }
+            }
             let (fields, uml) = self
-                .gear_fields(auth, dir, &slug, paths, codeowners.as_deref())
+                .gear_fields(
+                    auth,
+                    dir,
+                    &slug,
+                    &crate_name,
+                    &manifests,
+                    paths,
+                    codeowners.as_deref(),
+                )
                 .await;
             let description = brief_of(&fields, "description");
             let category = brief_of(&fields, "category");
@@ -258,7 +310,7 @@ impl RepoEnricher {
                 _ => None,
             };
             out.push(RepoGear {
-                crate_name: format!("cf-gears-{slug}"),
+                crate_name,
                 description,
                 source_repo: self.repo.clone(),
                 fields,
@@ -266,6 +318,8 @@ impl RepoEnricher {
                 kind,
                 category,
                 payload: None,
+                dir: Some(dir.clone()),
+                crates: if named.is_empty() { Vec::new() } else { crates },
             });
         }
         info!(gears = out.len(), "studio-gears-catalog: gears discovered");
@@ -307,6 +361,7 @@ impl RepoEnricher {
         let mut claimed: Vec<String> = Vec::new();
         let mut out: Vec<RepoGear> = Vec::new();
         let mut containers = 0usize;
+        let mut templates = 0usize;
 
         for p in manifests {
             let dir = parent_dir(p);
@@ -329,13 +384,22 @@ impl RepoEnricher {
                 containers += 1;
                 continue;
             }
+            // A template's manifest is not a package: `template-mfe` ships a
+            // `package.json` named `@gears-frontx/{{mfeName}}-mfe`, filled in
+            // when somebody scaffolds from it. Catalogued as-is it became a
+            // component literally called `{{mfeName}}`. Skipped without being
+            // claimed, so a real package nested under it still counts.
+            if is_template_manifest(&body) {
+                templates += 1;
+                continue;
+            }
             claimed.push(dir.clone());
             out.push(self.frontx_component(auth, &dir, &body, paths).await);
         }
 
         info!(
             components = out.len(),
-            containers, repo = %self.repo, git_ref = %self.git_ref,
+            containers, templates, repo = %self.repo, git_ref = %self.git_ref,
             "studio-gears-catalog: frontx components discovered"
         );
         Ok(out)
@@ -438,6 +502,8 @@ impl RepoEnricher {
             kind: Some("frontx".to_string()),
             category,
             payload: None,
+            dir: Some(dir.to_string()),
+            crates: Vec::new(),
         }
     }
 
@@ -587,11 +653,14 @@ impl RepoEnricher {
 
     // ── field extraction ─────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     async fn gear_fields(
         &self,
         auth: &ConnectionAuth,
         dir: &str,
         slug: &str,
+        self_crate: &str,
+        manifests: &[(String, String)],
         paths: &[&str],
         codeowners: Option<&str>,
     ) -> (Value, Vec<Value>) {
@@ -706,15 +775,19 @@ impl RepoEnricher {
             boolean(rel.iter().any(|p| p.to_lowercase().contains("openapi"))),
         );
 
-        // dependencies on other gears, read from the Cargo manifests (capped).
+        // dependencies on other gears, read from this gear's own Cargo
+        // manifests (already fetched, capped by the caller).
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let self_crate = format!("cf-gears-{slug}");
-        for pth in rel.iter().filter(|p| p.ends_with("Cargo.toml")).take(6) {
-            if let Some(body) = self.read_file(auth, &format!("{dir}/{pth}")).await {
-                for d in cargo_gear_deps(&body) {
-                    if d != self_crate {
-                        deps.insert(d);
-                    }
+        let own: std::collections::BTreeSet<String> = manifests
+            .iter()
+            .filter_map(|(_, body)| cargo_package_name(body))
+            .map(|n| n.strip_suffix("-sdk").map(str::to_string).unwrap_or(n))
+            .chain(std::iter::once(self_crate.to_string()))
+            .collect();
+        for (_, body) in manifests {
+            for d in cargo_gear_deps(body) {
+                if !own.contains(&d) {
+                    deps.insert(d);
                 }
             }
         }
@@ -997,6 +1070,98 @@ fn parent_dir(path: &str) -> String {
         Some(i) => path[..i].to_string(),
         None => String::new(),
     }
+}
+
+/// At most this many `Cargo.toml` files are read per gear directory. A gear is
+/// its crate, its SDK and a helper or two; more than this is a tree the scan
+/// should not be walking file by file.
+const MAX_GEAR_MANIFESTS: usize = 8;
+
+/// The `Cargo.toml` files that belong to the gear in `dir`, relative to it,
+/// shallowest first: every manifest under the directory except those inside a
+/// NESTED gear directory (a plugin with its own `gear.toml` is a component of
+/// its own and names its own crate) or a tree that never holds a published
+/// crate (build output, fixtures, examples, fuzz targets).
+fn gear_manifests(dir: &str, gear_dirs: &[String], paths: &[&str]) -> Vec<String> {
+    let prefix = format!("{dir}/");
+    let nested: Vec<String> = gear_dirs
+        .iter()
+        .filter(|g| g.as_str() != dir && g.starts_with(&prefix))
+        .map(|g| format!("{g}/"))
+        .collect();
+    let mut out: Vec<String> = paths
+        .iter()
+        .filter(|p| p.ends_with("/Cargo.toml"))
+        .filter(|p| p.starts_with(&prefix))
+        .filter(|p| !nested.iter().any(|n| p.starts_with(n.as_str())))
+        .filter_map(|p| p.strip_prefix(&prefix))
+        .filter(|rel| {
+            !rel.split('/').any(|seg| {
+                SKIP_SEGMENTS.contains(&seg)
+                    || matches!(seg, "target" | "examples" | "fuzz" | "benches" | "tests")
+            })
+        })
+        .map(str::to_string)
+        .collect();
+    out.sort_by_key(|p| (p.matches('/').count(), p.clone()));
+    out
+}
+
+/// `[package] name` of one `Cargo.toml`, or `None` for a virtual workspace
+/// manifest (which names no package).
+pub(crate) fn cargo_package_name(body: &str) -> Option<String> {
+    let mut in_package = false;
+    for raw in body.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_package = line.trim_matches(|c| c == '[' || c == ']').trim() == "package";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "name" {
+            return unquote(value);
+        }
+    }
+    None
+}
+
+/// Which of a gear directory's crates IS the gear, out of `(relative manifest
+/// path, package name)` pairs. In order: a package at the directory itself
+/// (`gears/system/api-gateway/Cargo.toml`); a package in the subdirectory named
+/// like the gear (`gears/bss/ledger/ledger/`), which is how `gears-rust` lays
+/// out a gear beside its SDK; the only direct child that is not an SDK.
+/// `None` when none of those decides, and the caller falls back to the name
+/// the directory suggests.
+fn primary_crate(slug: &str, named: &[(String, String)]) -> Option<String> {
+    if let Some((_, name)) = named.iter().find(|(rel, _)| rel == "Cargo.toml") {
+        return Some(name.clone());
+    }
+    let own = format!("{slug}/Cargo.toml");
+    if let Some((_, name)) = named.iter().find(|(rel, _)| *rel == own) {
+        return Some(name.clone());
+    }
+    let children: Vec<&String> = named
+        .iter()
+        .filter(|(rel, name)| rel.matches('/').count() == 1 && !name.ends_with("-sdk"))
+        .map(|(_, name)| name)
+        .collect();
+    match children.as_slice() {
+        [only] => Some((*only).clone()),
+        _ => None,
+    }
+}
+
+/// Whether a `package.json` is a scaffolding template rather than a package:
+/// its name still carries an unfilled `{{placeholder}}`.
+fn is_template_manifest(body: &str) -> bool {
+    parse_package_json(body)
+        .0
+        .is_some_and(|name| name.contains("{{") || name.contains("}}"))
 }
 
 /// The owner of the most specific CODEOWNERS rule matching `dir`.
@@ -1921,5 +2086,144 @@ cf-gears-types-registry = { git = "https://github.com/x/y" }
                 "serde",
             ]
         );
+    }
+
+    // ---- which crate a gear directory is -----------------------------------
+
+    /// The shape of `gears-rust` for the gears the old `cf-gears-<dir>` guess
+    /// got wrong, checked against the Gearbox engine's catalogue of the same
+    /// corpus (`package.crate_name` / `package.path`).
+    fn rust_tree() -> Vec<&'static str> {
+        vec![
+            "gears/bss/ledger/gear.toml",
+            "gears/bss/ledger/ledger/Cargo.toml",
+            "gears/bss/ledger/ledger-sdk/Cargo.toml",
+            "gears/bss/rate-provider/gear.toml",
+            "gears/bss/rate-provider/rate-provider/Cargo.toml",
+            "gears/bss/rate-provider/plugins/ecb-plugin/gear.toml",
+            "gears/bss/rate-provider/plugins/ecb-plugin/Cargo.toml",
+            "gears/chat-engine/gear.toml",
+            "gears/chat-engine/chat-engine/Cargo.toml",
+            "gears/chat-engine/chat-engine-sdk/Cargo.toml",
+            "gears/chat-engine/chat-engine/tests/fixtures/Cargo.toml",
+            "gears/system/api-gateway/gear.toml",
+            "gears/system/api-gateway/Cargo.toml",
+            "gears/approval-service/gear.toml",
+            "gears/approval-service/docs/PRD.md",
+        ]
+    }
+
+    fn gear_dirs_of(tree: &[&str]) -> Vec<String> {
+        tree.iter()
+            .filter(|p| p.ends_with("/gear.toml"))
+            .map(|p| parent_dir(p))
+            .collect()
+    }
+
+    #[test]
+    fn a_gear_owns_its_manifests_but_not_a_nested_gear_s() {
+        let tree = rust_tree();
+        let dirs = gear_dirs_of(&tree);
+        assert_eq!(
+            gear_manifests("gears/bss/rate-provider", &dirs, &tree),
+            vec!["rate-provider/Cargo.toml".to_string()],
+            "the ECB plugin has its own gear.toml and names its own crate"
+        );
+        assert_eq!(
+            gear_manifests("gears/chat-engine", &dirs, &tree),
+            vec![
+                "chat-engine-sdk/Cargo.toml".to_string(),
+                "chat-engine/Cargo.toml".to_string()
+            ],
+            "a fixture crate is not the gear's"
+        );
+        assert!(gear_manifests("gears/approval-service", &dirs, &tree).is_empty());
+    }
+
+    #[test]
+    fn the_package_name_is_read_from_the_package_table_only() {
+        let body = "[workspace]\nmembers = []\n\n[package]\nname = \"cf-gears-bss-ledger\" # the gear\nversion = \"0.1.0\"\n\n[dependencies]\nname = \"not-this\"\n";
+        assert_eq!(
+            cargo_package_name(body).as_deref(),
+            Some("cf-gears-bss-ledger")
+        );
+        assert_eq!(cargo_package_name("[workspace]\nmembers = [\"a\"]\n"), None);
+    }
+
+    fn named(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(r, n)| (r.to_string(), n.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn the_gear_is_the_crate_at_its_directory_or_named_like_it() {
+        assert_eq!(
+            primary_crate(
+                "api-gateway",
+                &named(&[("Cargo.toml", "cf-gears-api-gateway")])
+            )
+            .as_deref(),
+            Some("cf-gears-api-gateway")
+        );
+        assert_eq!(
+            primary_crate(
+                "ledger",
+                &named(&[
+                    ("ledger-sdk/Cargo.toml", "cf-gears-bss-ledger-sdk"),
+                    ("ledger/Cargo.toml", "cf-gears-bss-ledger"),
+                ])
+            )
+            .as_deref(),
+            Some("cf-gears-bss-ledger")
+        );
+        assert_eq!(
+            primary_crate(
+                "chat-engine",
+                &named(&[
+                    ("chat-engine-sdk/Cargo.toml", "cf-chat-engine-sdk"),
+                    ("chat-engine/Cargo.toml", "cf-chat-engine"),
+                ])
+            )
+            .as_deref(),
+            Some("cf-chat-engine"),
+            "the crate is not always cf-gears-<dir>"
+        );
+    }
+
+    #[test]
+    fn otherwise_the_only_child_that_is_not_an_sdk_or_nothing() {
+        assert_eq!(
+            primary_crate(
+                "x",
+                &named(&[
+                    ("core/Cargo.toml", "cf-x-core"),
+                    ("x-sdk/Cargo.toml", "cf-x-sdk")
+                ])
+            )
+            .as_deref(),
+            Some("cf-x-core")
+        );
+        assert_eq!(
+            primary_crate(
+                "x",
+                &named(&[("a/Cargo.toml", "cf-a"), ("b/Cargo.toml", "cf-b")])
+            ),
+            None,
+            "two candidates: undecided, not a coin toss"
+        );
+        assert_eq!(primary_crate("approval-service", &[]), None);
+    }
+
+    #[test]
+    fn a_template_manifest_is_not_a_package() {
+        assert!(is_template_manifest(
+            r#"{"name":"@gears-frontx/{{mfeName}}-mfe","version":"0.0.0"}"#
+        ));
+        assert!(!is_template_manifest(
+            r#"{"name":"@gears-frontx/ui-kit","version":"0.4.0"}"#
+        ));
+        assert!(!is_template_manifest("not json"));
     }
 }
