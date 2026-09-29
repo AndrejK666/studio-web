@@ -14,6 +14,15 @@ import {
   useGearActivity,
 } from "./gear-activity";
 import type { ActivityIndex, GearActivity } from "./gear-activity";
+import {
+  COMPONENT_KIND_LABELS,
+  componentExcluded,
+  componentKind,
+  inKindFilter,
+  kindChips,
+  syncedSources,
+} from "./component-kinds";
+import type { KindChip } from "./component-kinds";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -467,11 +476,9 @@ export function ComponentsCatalog({
   const [sources, setSources] = useState<Sources>(() => loadSources());
   const [showSources, setShowSources] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
-  // Which component type the cards below are. Empty means every type.
+  // Which component kind the list shows (a `component-kinds` filter value).
+  // Empty means every component.
   const [typeFilter, setTypeFilter] = useState("");
-  // `gts_id -> title`, read from the types-registry. A type with no title falls
-  // back to its own identifier rather than to a guess.
-  const [typeTitles, setTypeTitles] = useState<Record<string, string>>({});
   // `gts_id -> schema`, read from the catalogue: what each component type's
   // page is made of. Served rather than compiled in, so a workspace can change
   // a page without a release.
@@ -498,29 +505,6 @@ export function ComponentsCatalog({
       return next;
     });
 
-  // The registry names the types; the catalogue says which of them have
-  // components. Neither alone makes the selector below.
-  useEffect(() => {
-    let live = true;
-    api
-      .gtsTypeTitles(token)
-      .then(({ entities }) => {
-        if (!live) return;
-        const next: Record<string, string> = {};
-        for (const e of entities ?? []) {
-          const title = e.content?.title?.trim();
-          if (title) next[e.gts_id] = title;
-        }
-        setTypeTitles(next);
-      })
-      .catch(() => {
-        // A registry that will not answer costs the labels, not the selector.
-        if (live) setTypeTitles({});
-      });
-    return () => {
-      live = false;
-    };
-  }, [token]);
 
   // The presentation of every component type, in one read. The server has
   // already laid this tenant's own schemas over the built-ins, so what comes
@@ -712,8 +696,17 @@ export function ComponentsCatalog({
   };
 
   const nameOf = (g: CatalogNode) => String(g.value.name ?? g.instance_id);
+  /* The platform category the backend decided; the reconciled field only for
+     a backend that does not classify yet. */
+  const categoryOf = (g: CatalogNode): string =>
+    "component_kind" in g.value
+      ? String(g.value.component_category ?? "")
+      : String(resolved[nameOf(g)]?.category ?? "");
 
-  const visible = useMemo(() => {
+  /* Every filter but the kind. The chips count over this list and the table
+     shows `base` narrowed by the chosen kind, both through `inKindFilter`, so
+     a chip's number is the number of rows it shows. */
+  const base = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const cat = categoryFilter.trim().toLowerCase();
     const rows = (gears ?? [])
@@ -723,10 +716,8 @@ export function ComponentsCatalog({
       // already applied the marks to what it sent -- but applying it in one
       // place is what keeps the two agreeing.
       .filter((g) => componentTypes === null || componentTypes.has(g.type_id))
-      .filter((g) => !typeFilter || g.type_id === typeFilter)
-      .filter((g) => !kindFilter || String(g.value.kind ?? "gear") === kindFilter)
-      .filter((g) => !hideSdk || !nameOf(g).endsWith("-sdk"))
-      .filter((g) => !cat || (resolved[nameOf(g)]?.category ?? "").toLowerCase().includes(cat))
+      .filter((g) => !hideSdk || componentKind(g) !== "sdk")
+      .filter((g) => !cat || categoryOf(g).toLowerCase().includes(cat))
       .filter((g) => {
         if (!needle) return true;
         const name = String(g.value.name ?? "").toLowerCase();
@@ -741,14 +732,21 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, typeFilter, kindFilter, hideSdk, sortMode, categoryFilter, profiles, componentTypes]);
+  }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes]);
+
+  /* The chip above the table wins over the filter rail's kind; either way it
+     is one value, applied by the same predicate the chips counted with. */
+  const kindChosen = typeFilter || kindFilter;
+  const visible = useMemo(() => base.filter((g) => inKindFilter(g, kindChosen)), [base, kindChosen]);
+  const chips = useMemo(() => kindChips(base), [base]);
 
   // Report the distinct categories present, so the filter rail can offer them.
   useEffect(() => {
     if (!onCategories) return;
     const set = new Set<string>();
     for (const g of gears ?? []) {
-      const c = (resolved[nameOf(g)]?.category ?? "").trim();
+      if (componentExcluded(g) !== null) continue;
+      const c = categoryOf(g).trim();
       if (c) set.add(c);
     }
     onCategories(Array.from(set).sort((a, b) => a.localeCompare(b)));
@@ -773,6 +771,9 @@ export function ComponentsCatalog({
   const activity = useGearActivity(token, activityDays);
 
   const syncing = sync.endsWith("…");
+  /* What filled the catalogue, read off the nodes -- the picker below is only
+     this browser's choice for the NEXT sync. */
+  const filledFrom = useMemo(() => syncedSources(gears ?? []).join(" + "), [gears]);
   const sourceSummary = [
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
@@ -805,7 +806,7 @@ export function ComponentsCatalog({
           <div className="gcat-topbar">
             <div className="crumb">
               <h1>Components</h1>
-              <span className="asof">gears · frontx · crates.io</span>
+              <span className="asof">{filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}</span>
             </div>
             <div className="tools">
               <div className="seg" role="tablist" aria-label="View mode">
@@ -832,7 +833,7 @@ export function ComponentsCatalog({
                 onClick={() => setShowSources((v) => !v)}
                 aria-expanded={showSources}
               >
-                Sources{sourceSummary ? ` · ${sourceSummary}` : ""}
+                Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
               </button>
               <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
                 {syncing ? "Syncing…" : "Sync"}
@@ -850,12 +851,7 @@ export function ComponentsCatalog({
             />
           )}
 
-          <TypePicker
-            gears={gears}
-            titles={typeTitles}
-            value={typeFilter}
-            onChange={setTypeFilter}
-          />
+          <KindPicker chips={chips} value={kindChosen} onChange={setTypeFilter} />
 
           <p className="gcat-sub">
             A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
@@ -1115,59 +1111,37 @@ function RoadmapSourceEditor({
   );
 }
 
-/** The component types the catalogue actually holds, as a row of chips.
+/** The component kinds in the list, as a row of chips.
  *
- *  A component type is a GTS type, not a label: `catalog.gear.v1~`,
- *  `catalog.kit.v1~`, `catalog.frontx.v1~`. Each is a different shape with
- *  different fields, and mixing them in one list means every card is read
- *  against a schema that may not be its own.
- *
- *  The row is built from the nodes present rather than from a list in this
- *  file, so a type the catalogue starts carrying appears here without an edit,
- *  and one it stops carrying stops taking up room. Names come from the
- *  types-registry, which ADR-0013 makes the catalogue of meaning for exactly
- *  this purpose; an unnamed type falls back to its own identifier rather than
- *  to a prettified guess.
+ *  Built by `kindChips` from the same list and the same predicate the table
+ *  uses (`component-kinds.ts`), so "gear 35" is thirty-five rows. It used to
+ *  count graph node types -- "Gear 105 · Micro-frontend 12" -- over a table
+ *  that classified the same nodes into eight kinds. What is not a component
+ *  gets its own chip, with its count, rather than hiding without a trace.
  */
-function TypePicker({
-  gears,
-  titles,
+function KindPicker({
+  chips,
   value,
   onChange,
 }: {
-  gears: CatalogNode[] | null;
-  titles: Record<string, string>;
+  chips: KindChip[];
   value: string;
   onChange: (next: string) => void;
 }) {
-  const counts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const g of gears ?? []) m.set(g.type_id, (m.get(g.type_id) ?? 0) + 1);
-    return [...m.entries()].sort((a, b) => (titles[a[0]] ?? a[0]).localeCompare(titles[b[0]] ?? b[0]));
-  }, [gears, titles]);
-
-  // One type is no choice, and none is nothing to choose from.
-  if (counts.length < 2) return null;
-
-  const total = counts.reduce((n, [, c]) => n + c, 0);
+  // "All" alone is no choice.
+  if (chips.length < 2) return null;
   return (
     <div className="gcat-types">
       <span className="gcat-types-label">Type</span>
-      <button
-        className={`gcat-type${value === "" ? " on" : ""}`}
-        onClick={() => onChange("")}
-        title="Every component type"
-      >
-        All <span className="gcat-type-n">{total}</span>
-      </button>
-      {counts.map(([id, n]) => (
+      {chips.map((c) => (
         <button
-          key={id}
-          className={`gcat-type${value === id ? " on" : ""}`}
-          onClick={() => onChange(value === id ? "" : id)}
-          title={id}
+          key={c.value || "all"}
+          className={`gcat-type${value === c.value ? " on" : ""}`}
+          onClick={() => onChange(value === c.value ? "" : c.value)}
+          title={c.value === "" ? "Every component" : c.label}
         >
-          {titles[id] ?? id} <span className="gcat-type-n">{n}</span>
+          {c.value === "" || c.value === "not-components" ? c.label : (COMPONENT_KIND_LABELS[c.value] ?? c.label)}{" "}
+          <span className="gcat-type-n">{c.count}</span>
         </button>
       ))}
     </div>
@@ -1317,8 +1291,13 @@ function GearListRow({
      ("Web programming"), a gear.toml domain ("bss") or, for a FrontX package,
      its first npm keyword ("hai3", "eslint") -- three vocabularies in one
      column that claimed to be a fourth. The category stays, under the type. */
-  const kind = String(gear.value.kind ?? (gear.type_id === KIT_TYPE ? "kit" : "gear"));
-  const category = values.category?.b ?? null;
+  const kind = componentKind(gear);
+  const classified = "component_kind" in gear.value;
+  const category = classified
+    ? (typeof gear.value.component_category === "string" ? gear.value.component_category : null)
+    : values.category?.b ?? null;
+  const kindReason = typeof gear.value.component_kind_reason === "string" ? gear.value.component_kind_reason : undefined;
+  const excluded = componentExcluded(gear);
   const released = gear.value.max_stable_version ?? gear.value.newest_version ?? null;
   /* A FrontX package is not on crates.io, so "Not published" was true and
      useless: the version its package.json declares is the one people use. */
@@ -1350,7 +1329,9 @@ function GearListRow({
         )}
       </td>
       <td>
-        <span className="pill">{kind}</span>
+        <span className="pill" title={excluded ?? kindReason}>
+          {COMPONENT_KIND_LABELS[kind] ?? kind}
+        </span>
         {category && category !== kind && <div className="gcat-sub">{category}</div>}
       </td>
       <td>

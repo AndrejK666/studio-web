@@ -881,6 +881,20 @@ pub struct CatalogService {
     /// Reads a project's own sources, for a project with no gear repository.
     account_management:
         std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,
+    /// Bumped whenever the catalogue changes through this service (a sync, a
+    /// profile, a field schema), so a cached read built from the old state is
+    /// known to be old. See [`Self::generation`].
+    generation: Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Bumps the catalogue generation when dropped — at the end of a write, so a
+/// reader that cached what it saw DURING the write is invalidated by it.
+pub(crate) struct Changed(Arc<std::sync::atomic::AtomicU64>);
+
+impl Drop for Changed {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl CatalogService {
@@ -896,7 +910,22 @@ impl CatalogService {
             connectors,
             gearbox: std::sync::OnceLock::new(),
             account_management: std::sync::OnceLock::new(),
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// The catalogue's generation: a counter that moves whenever a write
+    /// through this service finishes. A cache keyed by it is never served
+    /// after the data it was built from changed here.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// A guard that bumps the generation when the write it guards ends.
+    fn changed(&self) -> Changed {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Changed(Arc::clone(&self.generation))
     }
 
     pub fn set_gearbox(&self, gearbox: Arc<super::gearbox::Gearbox>) {
@@ -1133,6 +1162,7 @@ impl CatalogService {
         sources: SyncSources,
         progress: &SyncReporter,
     ) -> anyhow::Result<CatalogCounts> {
+        let _changed = self.changed();
         self.sink.register_types(ctx).await?;
 
         // Gear node value per crate name; version nodes/edges accumulate aside.
@@ -1515,6 +1545,7 @@ impl CatalogService {
         gear_name: &str,
         profile: Value,
     ) -> anyhow::Result<GtsNode> {
+        let _changed = self.changed();
         let gear_name = gear_name.trim();
         if gear_name.is_empty()
             || gear_name.len() > 128
@@ -1763,6 +1794,7 @@ impl CatalogService {
         ctx: &SecurityContext,
         mut record: TypeFieldSchema,
     ) -> anyhow::Result<TypeFieldSchema> {
+        let _changed = self.changed();
         let inherited = field_schema::builtin_component(&record.describes);
         if !record.adds_anything(inherited) {
             self.sink
@@ -1836,6 +1868,7 @@ impl CatalogService {
         ctx: &SecurityContext,
         describes: &str,
     ) -> anyhow::Result<()> {
+        let _changed = self.changed();
         let describes = describes.trim();
         if !is_gts_type_id(describes) {
             anyhow::bail!("`describes` must be a GTS type id, got `{describes}`");

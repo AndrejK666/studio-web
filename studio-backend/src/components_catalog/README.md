@@ -29,7 +29,33 @@ feature it falls back to an in-memory store, so the catalogue still works.
 |---|---|
 | `POST /sync` → `GET /tasks/{id}` | refresh the catalogue from crates.io, then poll |
 | `GET /components`, `GET /versions` | the catalogue itself |
-| `GET /reference` | the catalogue joined with the Gearbox engine's gears, one entry per component — the IDE's Components view ([`reference.rs`](reference.rs)) |
+| `GET /reference` | the catalogue joined with the Gearbox engine's gears, one entry per component — the IDE's Components view ([`reference.rs`](reference.rs)); `?include=all` adds what is not a component, with the reason |
+
+## Kinds and categories
+
+One vocabulary each, decided from evidence in [`taxonomy.rs`](taxonomy.rs) and
+served with the evidence (`kind_reason`, `category_reason`) by `/reference` and
+laid onto `/components` nodes (`component_kind`, `component_category`,
+`component_excluded`).
+
+- **Kinds:** `gear` (a `gear.gdl` service or a `gear.toml`), `plugin`, `sdk`,
+  `library` (toolkit and every other crate), `micro-frontend` (module
+  federation), `frontend-library`, `tool` (a `bin` / CLI), `kit`.
+- **Not components**, left out of the default list with a reason: `config`,
+  `test-support`, `docs`, `template`, `example`. Older copies of a component
+  (a second node for one name, a scan node under a guessed crate name) are
+  `superseded`; the read drops them before any re-sync, and the next sync
+  deletes them.
+- **Categories:** the engine's own set (`api-ingress`, `bss`,
+  `core-functionality`, `core-platform-integration`, `gen-ai`, `oss`,
+  `serverless`), taken from `gear.gdl`, then `gear.toml`, then the gear a
+  plugin or SDK belongs to, then an unambiguous crates.io category. Otherwise
+  null; the raw registry categories and npm tags stay in `source_categories`.
+
+`/reference` is cached per catalogue generation (moved by every sync, profile
+and field-schema write), corpus commit and activity window, and the engine's
+catalogue is kept on disk beside the corpus so a restart does not wait for a
+fetch.
 | `GET /types`, `GET /types/counts` | graph types and how many objects each holds |
 | `GET`/`PUT`/`DELETE /field-schemas[/{describes}]` | the shapes describing catalogue fields |
 | `GET`/`POST /projects/{id}/gear-repo` | which repository a project's gears live in |
