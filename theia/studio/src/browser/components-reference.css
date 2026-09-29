@@ -330,3 +330,21 @@
 .scr-axis.full .scr-dot { color: var(--theia-charts-green); }
 .scr-axis.part .scr-dot { color: var(--theia-charts-blue); }
 .scr-axis.na .scr-dot { color: var(--theia-descriptionForeground); }
+
+.scr-chip:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.scr-chip-cat {
+    border-style: dashed;
+}
+
+.scr-cat {
+    color: var(--theia-descriptionForeground);
+}
+
+.scr-excluded {
+    font-size: var(--theia-ui-font-size0);
+    color: var(--theia-editorWarning-foreground);
+}

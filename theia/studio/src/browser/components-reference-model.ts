@@ -90,10 +90,20 @@ export interface ReferenceReadiness {
 
 export interface ReferenceEntry {
     readonly name: string;
+    readonly aka?: readonly string[];
+    readonly instance_id?: string | null;
     readonly title: string | null;
     readonly type_id: string | null;
+    /** One vocabulary, decided by the backend (`components_catalog/taxonomy.rs`). */
     readonly kind: string;
+    readonly kind_reason?: string;
+    /** False for config, test support, docs, templates, examples and superseded nodes. */
+    readonly component?: boolean;
+    readonly excluded_reason?: string | null;
+    readonly superseded_by?: string | null;
     readonly category: string | null;
+    readonly category_reason?: string | null;
+    readonly source_categories?: readonly string[];
     readonly description: string | null;
     readonly status: string | null;
     readonly version: string | null;
@@ -122,6 +132,8 @@ export interface ReferenceSources {
     readonly activity_from: string | null;
     readonly activity_to: string | null;
     readonly activity_problem: string | null;
+    readonly excluded?: number;
+    readonly cached?: boolean;
 }
 
 export interface ComponentsReference {
@@ -148,7 +160,9 @@ export async function loadComponentsReference(
 ): Promise<ReferenceLoad> {
     let res: Response;
     try {
-        res = await fetchApi(`${REFERENCE_PATH}?days=${days}`);
+        // `include=all`: the view hides what is not a component itself, behind a
+        // filter that shows each one with its reason, rather than asking twice.
+        res = await fetchApi(`${REFERENCE_PATH}?days=${days}&include=all`);
     } catch (e) {
         return { kind: 'error', message: `Studio could not be reached: ${e instanceof Error ? e.message : String(e)}` };
     }
@@ -178,13 +192,52 @@ export function failureMessage(status: number): string {
     }
 }
 
-/** The kinds, in the order the filter offers them; anything else follows. */
-const KIND_ORDER = ['gear', 'plugin', 'sdk', 'toolkit', 'frontx', 'kit'];
+/** The component kinds, in the order the filter offers them; anything else follows. */
+const KIND_ORDER = ['gear', 'plugin', 'sdk', 'library', 'micro-frontend', 'frontend-library', 'tool', 'kit'];
+
+/** How a kind reads on a chip. */
+export const KIND_LABELS: Record<string, string> = {
+    'gear': 'gear',
+    'plugin': 'plugin',
+    'sdk': 'SDK',
+    'library': 'library',
+    'micro-frontend': 'micro-frontend',
+    'frontend-library': 'frontend library',
+    'tool': 'tool / CLI',
+    'kit': 'kit',
+    'config': 'config',
+    'test-support': 'test support',
+    'docs': 'docs',
+    'template': 'template',
+    'example': 'example',
+    'superseded': 'superseded',
+};
+
+export function kindLabel(kind: string): string {
+    return KIND_LABELS[kind] ?? kind;
+}
+
+/** Whether an entry is a component (older backends send no flag: assume yes). */
+export function isComponent(e: ReferenceEntry): boolean {
+    return e.component !== false;
+}
+
+/** How many entries per category, components only, unfiled last. */
+export function categoryCounts(items: readonly ReferenceEntry[]): Array<{ category: string | null; count: number }> {
+    const counts = new Map<string | null, number>();
+    for (const e of items.filter(isComponent)) {
+        counts.set(e.category, (counts.get(e.category) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+        .map(([category, count]) => ({ category, count }))
+        .sort((a, b) => (a.category === null ? 1 : 0) - (b.category === null ? 1 : 0)
+            || (a.category ?? '').localeCompare(b.category ?? ''));
+}
 
 /** How many entries of each kind, for the filter chips, in a stable order. */
 export function kindCounts(items: readonly ReferenceEntry[]): Array<{ kind: string; count: number }> {
     const counts = new Map<string, number>();
-    for (const e of items) {
+    for (const e of items.filter(isComponent)) {
         counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
     }
     const rank = (k: string) => {
@@ -202,6 +255,10 @@ export interface ReferenceFilter {
     readonly kinds: ReadonlySet<string>;
     /** Only what can be put into a product (has an engine gear). */
     readonly addableOnly: boolean;
+    /** Empty means every category; `''` stands for "no category". */
+    readonly categories?: ReadonlySet<string>;
+    /** Show what is not a component (and superseded nodes) instead of the components. */
+    readonly excluded?: boolean;
 }
 
 /**
@@ -212,7 +269,14 @@ export interface ReferenceFilter {
 export function filterEntries(items: readonly ReferenceEntry[], filter: ReferenceFilter): ReferenceEntry[] {
     const needle = filter.query.trim().toLowerCase();
     return items.filter(e => {
-        if (filter.kinds.size > 0 && !filter.kinds.has(e.kind)) {
+        if (isComponent(e) === (filter.excluded === true)) {
+            return false;
+        }
+        if (filter.kinds.size > 0 && !filter.excluded && !filter.kinds.has(e.kind)) {
+            return false;
+        }
+        if (filter.categories && filter.categories.size > 0 && !filter.excluded
+            && !filter.categories.has(e.category ?? '')) {
             return false;
         }
         if (filter.addableOnly && e.engine.length === 0) {
@@ -221,7 +285,7 @@ export function filterEntries(items: readonly ReferenceEntry[], filter: Referenc
         if (!needle) {
             return true;
         }
-        const hay = [e.name, e.title, e.description, e.category, ...e.engine.map(g => g.id)]
+        const hay = [e.name, e.title, e.description, e.category, ...(e.aka ?? []), ...e.engine.map(g => g.id)]
             .filter((s): s is string => typeof s === 'string')
             .join('\n')
             .toLowerCase();

@@ -2631,11 +2631,14 @@ function FilterPanel({
                 <select value={filters.gearKind} onChange={(e) => set({ gearKind: e.target.value })}>
                   <option value="">All kinds</option>
                   <option value="gear">gear</option>
-                  <option value="sdk">sdk</option>
                   <option value="plugin">plugin</option>
-                  <option value="toolkit">toolkit</option>
-                  <option value="frontx">frontx</option>
+                  <option value="sdk">SDK</option>
+                  <option value="library">library</option>
+                  <option value="micro-frontend">micro-frontend</option>
+                  <option value="frontend-library">frontend library</option>
+                  <option value="tool">tool / CLI</option>
                   <option value="kit">kit</option>
+                  <option value="not-components">not components (config, tests, docs, templates, examples)</option>
                 </select>
               </div>
               <div className="filter-group">
