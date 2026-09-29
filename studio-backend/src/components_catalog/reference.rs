@@ -252,10 +252,7 @@ struct RawGear {
 
 impl RawGear {
     fn crate_name(&self) -> Option<&str> {
-        self.package
-            .crate_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
+        self.package.crate_name.as_deref().filter(|s| !s.is_empty())
     }
 
     /// The spec of the point this plugin fills: `fills.spec`, which is what
@@ -391,7 +388,12 @@ fn directory_of(node: &Value, profile: Option<&Value>) -> Option<String> {
     if let Some(p) = text(node, "repo_path") {
         return Some(p.trim_matches('/').to_string());
     }
-    let scanned = profile?.get("auto")?.get("path")?.get("v")?.as_str()?.trim();
+    let scanned = profile?
+        .get("auto")?
+        .get("path")?
+        .get("v")?
+        .as_str()?
+        .trim();
     // An old flat `repository` URL copied into `path` is not a directory.
     (!scanned.is_empty() && !scanned.contains("://")).then(|| scanned.trim_matches('/').to_string())
 }
@@ -490,7 +492,8 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
         })
         .unwrap_or_default();
 
-    let mut out: Vec<ComponentReferenceDto> = Vec::with_capacity(inputs.nodes.len() + orphans.len());
+    let mut out: Vec<ComponentReferenceDto> =
+        Vec::with_capacity(inputs.nodes.len() + orphans.len());
     for (i, node) in inputs.nodes.iter().enumerate() {
         let name = names[i].clone();
         let v = &node.value;
@@ -527,7 +530,9 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
         }
         if node.type_id == gts::KIT_TYPE {
             sources.push("kit manifest".to_string());
-        } else if text(v, "synced_from").is_some() || profile.is_some_and(|p| p.get("auto").is_some()) {
+        } else if text(v, "synced_from").is_some()
+            || profile.is_some_and(|p| p.get("auto").is_some())
+        {
             sources.push("repository".to_string());
         }
         if !engine.is_empty() {
@@ -541,10 +546,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                     .iter()
                     .filter(|k| values.get(**k).is_some_and(|x| !x.is_null()))
                     .count();
-                (
-                    u32::try_from(filled).ok(),
-                    u32::try_from(fields.len()).ok(),
-                )
+                (u32::try_from(filled).ok(), u32::try_from(fields.len()).ok())
             }
             None => (None, None),
         };
@@ -652,10 +654,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 recent_downloads: None,
                 updated_at: None,
                 repository: None,
-                repo_path: gear
-                    .package
-                    .path
-                    .clone(),
+                repo_path: gear.package.path.clone(),
                 synced_from: None,
                 sources: vec!["gearbox".to_string()],
                 profile_filled: None,
@@ -879,7 +878,13 @@ mod tests {
         let profiles = profiles();
         let activity = HashMap::from([(
             "cf-gears-account-management".to_string(),
-            ReferenceActivityDto { commits: 7, files_changed: 20, lines_added: 300, lines_removed: 40, authors: 3 },
+            ReferenceActivityDto {
+                commits: 7,
+                files_changed: 20,
+                lines_added: 300,
+                lines_removed: 40,
+                authors: 3,
+            },
         )]);
         build(&ReferenceInputs {
             nodes: &nodes,
@@ -891,7 +896,9 @@ mod tests {
     }
 
     fn entry<'a>(all: &'a [ComponentReferenceDto], name: &str) -> &'a ComponentReferenceDto {
-        all.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no entry {name}"))
+        all.iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no entry {name}"))
     }
 
     #[test]
@@ -974,7 +981,11 @@ mod tests {
         assert_eq!(only.profile_fields, None);
         assert_eq!(only.sources, ["gearbox"]);
         assert_eq!(only.engine[0].id, "api-contracts");
-        assert_eq!(e.gears.len(), 6, "the unparseable descriptor is skipped, not fatal");
+        assert_eq!(
+            e.gears.len(),
+            6,
+            "the unparseable descriptor is skipped, not fatal"
+        );
     }
 
     #[test]
@@ -1005,7 +1016,10 @@ mod tests {
         let all = built(None);
         let am = entry(&all, "cf-gears-account-management");
         let (filled, fields) = (am.profile_filled.unwrap(), am.profile_fields.unwrap());
-        assert!(fields > 10, "the gear schema has dozens of fields, got {fields}");
+        assert!(
+            fields > 10,
+            "the gear schema has dozens of fields, got {fields}"
+        );
         assert!(filled > 0 && filled < fields, "{filled}/{fields}");
     }
 

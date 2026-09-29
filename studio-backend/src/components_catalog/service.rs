@@ -2449,7 +2449,10 @@ mod prune_tests {
             .into_iter()
             .map(|n| n.instance_id.as_str())
             .collect();
-        assert_eq!(out, ["@gears-frontx/ui-kit", "@gears-frontx/{{mfeName}}-mfe"]);
+        assert_eq!(
+            out,
+            ["@gears-frontx/ui-kit", "@gears-frontx/{{mfeName}}-mfe"]
+        );
     }
 
     #[test]

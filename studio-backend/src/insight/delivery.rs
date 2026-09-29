@@ -163,8 +163,14 @@ mod matcher_tests {
 
     #[test]
     fn a_directory_name_is_a_segment_and_a_path_is_a_prefix() {
-        assert!(matches!(matcher_for("api-gateway"), ComponentMatch::Segment(s) if s == "api-gateway"));
-        assert!(matches!(matcher_for("gears/bss/ledger"), ComponentMatch::Prefix(p) if p == "gears/bss/ledger/"));
-        assert!(matches!(matcher_for("packages/ui-kit/"), ComponentMatch::Prefix(p) if p == "packages/ui-kit/"));
+        assert!(
+            matches!(matcher_for("api-gateway"), ComponentMatch::Segment(s) if s == "api-gateway")
+        );
+        assert!(
+            matches!(matcher_for("gears/bss/ledger"), ComponentMatch::Prefix(p) if p == "gears/bss/ledger/")
+        );
+        assert!(
+            matches!(matcher_for("packages/ui-kit/"), ComponentMatch::Prefix(p) if p == "packages/ui-kit/")
+        );
     }
 }

@@ -1423,8 +1423,7 @@ async fn component_reference(
     Query(query): Query<ReferenceQuery>,
 ) -> ApiResult<JsonBody<ComponentReferenceListDto>> {
     use super::reference::{
-        EngineIndex, ReferenceActivityDto, ReferenceInputs,
-        ReferenceSourcesDto,
+        EngineIndex, ReferenceActivityDto, ReferenceInputs, ReferenceSourcesDto,
     };
 
     let days = query.days.unwrap_or(DEFAULT_REFERENCE_DAYS);
@@ -1445,7 +1444,12 @@ async fn component_reference(
         .await
         .map_err(internal)?;
     let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    for node in catalog.service.list_profiles(&ctx).await.map_err(internal)? {
+    for node in catalog
+        .service
+        .list_profiles(&ctx)
+        .await
+        .map_err(internal)?
+    {
         if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
             profiles.insert(name.to_owned(), node.value);
         }
