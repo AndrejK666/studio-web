@@ -95,19 +95,36 @@ describe('the chrome a mode implies', () => {
         expect(preferences.set).toHaveBeenLastCalledWith('window.menuBarVisibility', 'classic', expect.anything());
     });
 
-    it('gives Source Control back to the workbench and not to writing', () => {
+    it('gives Source Control back where a mode names it, and not by the workbench/documents split', () => {
         const { contribution } = chrome('default');
         contribution.onDidInitializeLayout();
         const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
         // The product hides the SCM tab along with Debug, Test, Search and
         // Explorer. Right for a document, wrong for someone who just edited
-        // code and wants to commit it.
-        expect(css).toContain('body[data-studio-mode="workbench"] #shell-tab-scm-view-container');
-        // Explorer comes back per mode (MODE_TABS), never for every workbench
-        // mode at once: Building and Agent development do not ask for it.
-        expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-explorer-view-container');
-        expect(css).not.toContain('body[data-studio-perspective="gearbox.product"]');
-        expect(css).not.toContain('shell-tab-debug');
+        // code and wants to commit it — and a rule on data-studio-mode showed
+        // it in every mode but writing, Agent development included.
+        expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-');
+        for (const mode of ['default', 'studio.full', 'gearbox.product']) {
+            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
+        }
+        for (const mode of ['studio.documents', 'studio.orca-mode']) {
+            expect(css).not.toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
+        }
+        // Run and Debug and Testing belong to the code modes.
+        expect(css).toContain('body[data-studio-perspective="default"] #shell-tab-debug');
+        expect(css).toContain('body[data-studio-perspective="studio.full"] #shell-tab-test-view-container');
+        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-debug');
+    });
+
+    it('keeps the Extensions tab to the code modes', () => {
+        const { contribution } = chrome('default');
+        contribution.onDidInitializeLayout();
+        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+        expect(css).toContain('body[data-studio-perspective="default"] #shell-tab-vsx-extensions-view-container');
+        expect(css).toContain('body[data-studio-perspective="studio.full"] #shell-tab-vsx-extensions-view-container');
+        for (const mode of ['studio.documents', 'studio.orca-mode', 'gearbox.product']) {
+            expect(css).not.toContain(`body[data-studio-perspective="${mode}"] #shell-tab-vsx-extensions-view-container`);
+        }
     });
 
     it('beats the product’s paint rule on specificity, not on order', () => {
@@ -140,8 +157,8 @@ describe('the rail tabs a mode brings back', () => {
         expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
     });
 
-    it('gives the code modes their file tree and their search across files', () => {
-        for (const mode of ['default', 'studio.full']) {
+    it('gives the code modes and Agent development their file tree and their search across files', () => {
+        for (const mode of ['default', 'studio.full', 'studio.orca-mode']) {
             const { contribution } = chrome(mode);
             contribution.onDidInitializeLayout();
             const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';

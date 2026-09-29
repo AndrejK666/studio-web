@@ -21,6 +21,13 @@ export const DOCUMENTS_PERSPECTIVE_ID = 'studio.documents';
 export const ORCA_PERSPECTIVE_ID = 'studio.orca-mode';
 /** Everything at once: every view placed, nothing collapsed, the whole menu. */
 export const FULL_PERSPECTIVE_ID = 'studio.full';
+/**
+ * Building: Gearbox's product perspective. Registered by `theia/gearbox-studio`
+ * (`StudioGearboxPerspective`, its `PRODUCT_PERSPECTIVE`), named here only so
+ * this extension can say what that mode keeps on its rails without depending
+ * on the package that registers it.
+ */
+export const BUILDING_PERSPECTIVE_ID = 'gearbox.product';
 
 /**
  * How the two markdown editors are arbitrated.

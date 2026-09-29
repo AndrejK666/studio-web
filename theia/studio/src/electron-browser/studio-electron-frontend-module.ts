@@ -15,7 +15,6 @@ import {
     CHECK_FOR_UPDATES_COMMAND_ID, DESKTOP_UPDATE_CHANNEL_PREFERENCE_SCHEMA, DesktopUpdateChannelContribution
 } from './desktop-update-channel';
 import { bindDesktopLanding } from '../browser/desktop-landing-contribution';
-import { DesktopExtensionsPlacement } from './desktop-extensions-placement';
 
 export const CheckForUpdatesCommand: Command = {
     id: CHECK_FOR_UPDATES_COMMAND_ID,
@@ -78,7 +77,4 @@ export default new ContainerModule(bind => {
     // The landing page while no Studio project is open, and the placeholder
     // folder's quiet (desktop-landing-contribution.ts).
     bindDesktopLanding(bind);
-    // The Extensions tab in Workbench and Full (desktop-extensions-placement.ts).
-    bind(DesktopExtensionsPlacement).toSelf().inSingletonScope();
-    bind(FrontendApplicationContribution).toService(DesktopExtensionsPlacement);
 });
