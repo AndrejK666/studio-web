@@ -23,6 +23,8 @@ const {
    with the schema types it belongs to. */
 const { PreferenceContribution } = require('@theia/core/lib/common/preferences/preference-schema');
 const { CommandRegistry, CommandContribution } = require('@theia/core/lib/common/command');
+const { MenuContribution } = require('@theia/core/lib/common/menu');
+const { CommonMenus } = require('@theia/core/lib/browser/common-menus');
 const { KeybindingContribution } = require('@theia/core/lib/browser/keybinding');
 const { TabBarToolbarContribution } = require('@theia/core/lib/browser/shell/tab-bar-toolbar');
 const { MessageService } = require('@theia/core/lib/common/message-service');
@@ -2895,6 +2897,20 @@ const mod = new ContainerModule(bind => {
      * contribution runs second and the unregister lands on a binding that is
      * already there.
      */
+    /*
+     * New document at the top of File's "new" group, beside Theia's New Text
+     * File: the menu is where a person looks for it first, and until now only
+     * the start page and the palette reached it.
+     */
+    bind(MenuContribution).toConstantValue({
+        registerMenus(menus) {
+            menus.registerMenuAction(CommonMenus.FILE_NEW_TEXT, {
+                commandId: NEW_DOCUMENT_COMMAND.id,
+                label: NEW_DOCUMENT_COMMAND.label,
+                order: '0'
+            });
+        }
+    });
     bind(KeybindingContribution).toDynamicValue(() => ({
         registerKeybindings(keybindings) {
             keybindings.unregisterKeybinding('ctrlcmd+shift+f');

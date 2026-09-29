@@ -9,6 +9,36 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next
+
+### Doc editing and modes
+
+- **Analyze sees the document you are writing.** A Markdown document open in
+  Doc editing (the product's editor) was "No active document" to the Analyze
+  panel and to the ribbon's **Analyze**. The panel now names it and analyses
+  the text on screen, unsaved edits included.
+- **A document reaches a commit without leaving Doc editing.** The ribbon has
+  a **Git** group: **Changes** opens Source Control, with the commit message
+  and **Commit** (and **Pushes & PRs** where that view exists).
+- **New document is on the ribbon and at the top of File.** It creates a
+  Markdown file in the open project, its name as its first heading, as the
+  start page's button does.
+- **File offers New/Open Product and New/Open Gear only in Building and Full
+  functionality.** In Doc editing and Development they headed File and had
+  nothing to do with the work there; the command palette still has them.
+- **Traceability says to sign in** when the desktop is not signed in to a
+  Studio, instead of "Failed to load: HTTP 503" above a "no ingested
+  artifacts" hint.
+
+### Known limits
+
+- Source Control opened from Doc editing takes the side bar's place, and the
+  side bar has no Source Control icon in that mode to return to it; the
+  Explorer comes back from its own icon.
+- An analysis run needs a signed-in desktop and a project Studio knows.
+  Offline, the panel names the document and says the window is not connected
+  to a Studio project.
+
 ## 0.3.0-beta.5
 
 Everything merged since `desktop-v0.3.0-beta.4`. The installer is Windows

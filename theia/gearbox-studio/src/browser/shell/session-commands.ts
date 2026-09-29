@@ -22,7 +22,18 @@ import {
   OPEN_GEAR,
   OPEN_PRODUCT,
 } from "./session-command-ids";
-import { STUDIO_CONTEXT_KEY } from "./studio-context-service";
+import { GEAR_PERSPECTIVE, HOME_PERSPECTIVE, PRODUCT_PERSPECTIVE, STUDIO_CONTEXT_KEY } from "./studio-context-service";
+
+/**
+ * Where File offers New/Open Product and New/Open Gear: the Building mode (the
+ * Gearbox perspectives) and Constructor Studio's Full functionality
+ * (`studio.full`), keyed on Theia's own context key for the active
+ * perspective. In Doc editing and Development these four headed File and had
+ * nothing to do with the work there; the palette still reaches them.
+ */
+export const GEARBOX_FILE_ENTRIES_WHEN = [HOME_PERSPECTIVE, PRODUCT_PERSPECTIVE, GEAR_PERSPECTIVE, "studio.full"]
+  .map((id) => `activePerspectiveId == '${id}'`)
+  .join(" || ");
 
 export {
   CLOSE_GEAR,
@@ -87,21 +98,25 @@ export class SessionCommands implements CommandContribution, MenuContribution {
       commandId: NEW_PRODUCT.id,
       label: "New Product…",
       order: "0",
+      when: GEARBOX_FILE_ENTRIES_WHEN,
     });
     menus.registerMenuAction(FILE_PRODUCT, {
       commandId: OPEN_PRODUCT.id,
       label: "Open Product…",
       order: "1",
+      when: GEARBOX_FILE_ENTRIES_WHEN,
     });
     menus.registerMenuAction(FILE_PRODUCT, {
       commandId: NEW_GEAR.id,
       label: "New Gear…",
       order: "2",
+      when: GEARBOX_FILE_ENTRIES_WHEN,
     });
     menus.registerMenuAction(FILE_PRODUCT, {
       commandId: OPEN_GEAR.id,
       label: "Open Gear…",
       order: "2.5",
+      when: GEARBOX_FILE_ENTRIES_WHEN,
     });
     menus.registerMenuAction(FILE_PRODUCT, {
       commandId: CLOSE_PRODUCT.id,

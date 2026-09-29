@@ -20,6 +20,38 @@ export function studioApiUrl(path: string, location: Endpoint.Location = self.lo
     return endpoint + query;
 }
 
+/**
+ * The `reason` of the desktop's `/studio-api` 503 when nobody is signed in to
+ * Constructor Studio (`node/desktop-studio-contribution.ts`): the proxy
+ * answered without asking Studio anything. A session's gate never says it.
+ */
+export const STUDIO_SIGNED_OUT = 'signed-out';
+
+/** A gear call that did not answer 2xx: its status, and the reason the
+ *  answer names, when it names one. The message stays `HTTP <status>`. */
+export class StudioApiError extends Error {
+    constructor(readonly status: number, readonly reason?: string) {
+        super(`HTTP ${status}`);
+        this.name = 'StudioApiError';
+    }
+
+    static async from(res: Response): Promise<StudioApiError> {
+        let reason: string | undefined;
+        try {
+            const body = await res.json() as { reason?: unknown } | undefined;
+            reason = typeof body?.reason === 'string' ? body.reason : undefined;
+        } catch {
+            // Not JSON, or no body: the status is all there is.
+        }
+        return new StudioApiError(res.status, reason);
+    }
+}
+
+/** Whether a failed call failed because the desktop is not signed in. */
+export function isSignedOut(error: unknown): boolean {
+    return error instanceof StudioApiError && error.reason === STUDIO_SIGNED_OUT;
+}
+
 /** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
 const MAX_PAGE = 200;
 
@@ -72,7 +104,7 @@ export const StudioApi = {
         for (let offset = 0; ; offset += MAX_PAGE) {
             const res = await StudioApi.fetch(`${path}${separator}offset=${offset}&limit=${MAX_PAGE}`);
             if (!res.ok) {
-                throw new Error(`HTTP ${res.status}`);
+                throw await StudioApiError.from(res);
             }
             const body = await res.json() as Record<string, unknown>;
             const page = (body[key] as T[] | undefined) ?? [];

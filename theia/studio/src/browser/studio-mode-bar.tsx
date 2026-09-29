@@ -130,6 +130,9 @@ const BY_WORK: readonly Mode[] = [
             // The product's Search (product-ext), the same one as the rail button
             // and Ctrl+Shift+F: it reads comments, proposed changes and history
             // as well as the files.
+            // The product's New document (product-ext): a Markdown file in the
+            // open project, its name as its first heading.
+            { label: 'Document', actions: [{ command: 'studio.document.new', icon: 'new-file', label: 'New document', title: 'A new document in the project that is open' }] },
             { label: 'Find', actions: [{ command: 'studio.search.open', icon: 'search', label: 'Search', title: 'Search the project: documents, comments, proposed changes and history' }] },
             {
                 label: 'Specs',
@@ -138,6 +141,9 @@ const BY_WORK: readonly Mode[] = [
                     { command: 'studio.artifact-graph:toggle', icon: 'type-hierarchy', label: 'Traceability', title: 'The graph of what the specs reference and what references them' },
                 ],
             },
+            // A spec is finished when it is committed: the way there stays in
+            // the mode where it is written.
+            { label: 'Git', actions: [{ ...CHANGES, title: 'What changed in the documents, and commit it' }, GIT_OPS] },
             { label: 'Assist', actions: [{ ...AGENTS, title: 'Ask an agent about the specs' }] },
         ],
     },
