@@ -19,6 +19,7 @@ mod repo_enrich;
 mod repo_facts;
 mod rest;
 mod roadmap;
+mod roadmap_report;
 mod scaffold;
 mod service;
 mod skeleton;

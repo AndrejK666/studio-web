@@ -1079,7 +1079,9 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
 /// A component's readiness, read off its resolved profile values: the
 /// roadmap board's fields and the repository scan's lifecycle, release and
 /// dependents. Null when none of them has an answer.
-fn readiness_of(values: &serde_json::Map<String, Value>) -> Option<ReferenceReadinessDto> {
+pub(crate) fn readiness_of(
+    values: &serde_json::Map<String, Value>,
+) -> Option<ReferenceReadinessDto> {
     let field = |k: &str| values.get(k).filter(|v| !v.is_null());
     let brief = |k: &str| {
         field(k)

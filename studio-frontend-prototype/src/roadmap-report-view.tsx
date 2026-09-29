@@ -1,0 +1,229 @@
+/** The roadmap report dialog on the Components screen: what the board plans,
+ *  whether the plan holds, and a download of the same as a workbook with the
+ *  Roadmap and Summary sheets — the spreadsheet the platform team built from
+ *  the board by script, answered by the catalogue instead. */
+
+import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { api } from "./api";
+import { errText } from "./format";
+import { Modal } from "./modal";
+import { demandText, reportSheets, type RoadmapReport } from "./roadmap-report";
+import { makeXlsx } from "./xlsx";
+
+const LAMP: Record<string, string> = {
+  good: "var(--success, #16a34a)",
+  watch: "var(--warning, #d97706)",
+  bad: "var(--destructive, #dc2626)",
+};
+
+const TABLE: CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 };
+const TH: CSSProperties = {
+  textAlign: "left",
+  padding: "4px 6px",
+  borderBottom: "1px solid var(--border)",
+  color: "var(--muted-foreground)",
+  fontWeight: 500,
+  whiteSpace: "nowrap",
+};
+const TD: CSSProperties = { padding: "4px 6px", borderBottom: "1px solid var(--border)", verticalAlign: "top" };
+const DATE: CSSProperties = { ...TD, whiteSpace: "nowrap" };
+const NUM: CSSProperties = { ...TD, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function download(report: RoadmapReport, asOf = today()) {
+  const url = URL.createObjectURL(makeXlsx(reportSheets(report, asOf)));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `roadmap-${asOf}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function RoadmapReportDialog({ token, onClose }: { token: string; onClose: () => void }) {
+  const [report, setReport] = useState<RoadmapReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .roadmapReport(token)
+      .then((r) => live && setReport(r))
+      .catch((e) => live && setErr(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  const s = report?.summary;
+  return (
+    <Modal label="Roadmap report" onClose={onClose} cardStyle={{ width: "min(1100px, 100%)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>Roadmap report</h2>
+        <button className="iconbtn primary" disabled={!report?.total} onClick={() => report && download(report)}>
+          Download .xlsx
+        </button>
+        <button className="iconbtn" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      {err && <p className="gcat-err">{err}</p>}
+      {!report && !err && <p className="gcat-hint">Reading the board…</p>}
+      {report && s && (
+        <>
+          <p className="gcat-hint" style={{ margin: 0 }}>
+            {report.total} on the roadmap board
+            {report.not_on_board > 0 &&
+              ` · ${report.not_on_board} catalogued components are not on it — unplanned, or pin one through its Roadmap item field`}
+          </p>
+          {report.total === 0 ? (
+            <p className="gcat-hint">
+              Nothing matched. Turn on the Roadmap source under Sources and sync.
+            </p>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                <section>
+                  <h3 style={{ fontSize: 13, margin: "4px 0" }}>Stage</h3>
+                  <table style={TABLE}>
+                    <tbody>
+                      {s.by_stage.map((c) => (
+                        <tr key={c.label}>
+                          <td style={TD}>{c.label}</td>
+                          <td style={NUM}>{c.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+                <section>
+                  <h3 style={{ fontSize: 13, margin: "4px 0" }}>Plan</h3>
+                  <table style={TABLE}>
+                    <tbody>
+                      {s.by_plan.map((c) => (
+                        <tr key={c.label}>
+                          <td style={TD}>{c.label}</td>
+                          <td style={NUM}>{c.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+                <section>
+                  <h3 style={{ fontSize: 13, margin: "4px 0" }}>Milestone</h3>
+                  <table style={TABLE}>
+                    <thead>
+                      <tr>
+                        <th style={TH} />
+                        <th style={TH}>Due</th>
+                        <th style={TH}>All</th>
+                        <th style={TH}>Committed</th>
+                        <th style={TH}>At risk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.by_milestone.map((m) => (
+                        <tr key={m.milestone}>
+                          <td style={TD}>{m.milestone}</td>
+                          <td style={DATE}>{m.due ?? ""}</td>
+                          <td style={NUM}>{m.total}</td>
+                          <td style={NUM}>{m.committed || ""}</td>
+                          <td style={NUM}>{m.at_risk || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+                {s.by_consumer.length > 0 && (
+                  <section>
+                    <h3 style={{ fontSize: 13, margin: "4px 0" }}>Consumers</h3>
+                    <table style={TABLE}>
+                      <thead>
+                        <tr>
+                          <th style={TH} />
+                          <th style={TH}>P1</th>
+                          <th style={TH}>P2</th>
+                          <th style={TH}>P3</th>
+                          <th style={TH} title="P1 demand whose plan is at risk or needs a check">
+                            P1 off track
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {s.by_consumer.map((c) => (
+                          <tr key={c.consumer}>
+                            <td style={TD}>{c.consumer}</td>
+                            <td style={NUM}>{c.p1 || ""}</td>
+                            <td style={NUM}>{c.p2 || ""}</td>
+                            <td style={NUM}>{c.p3 || ""}</td>
+                            <td style={NUM}>{c.p1_not_on_track || ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                )}
+              </div>
+              {s.overdue.length > 0 && (
+                <p className="gcat-err" style={{ margin: 0 }}>
+                  Overdue: {s.overdue.join(", ")}
+                </p>
+              )}
+              <div style={{ overflowX: "auto" }}>
+                <table style={TABLE}>
+                  <thead>
+                    <tr>
+                      {["Component", "Stage", "Milestone", "Plan", "Demand", "Assignees", "Grade"].map((h) => (
+                        <th key={h} style={TH}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.items.map((row) => {
+                      const r = row.readiness;
+                      return (
+                        <tr key={row.name}>
+                          <td style={TD}>
+                            {r.roadmap_item ? (
+                              <a href={r.roadmap_item} target="_blank" rel="noreferrer" title={row.roadmap_title ?? ""}>
+                                {row.name}
+                              </a>
+                            ) : (
+                              row.name
+                            )}
+                          </td>
+                          <td style={TD}>{r.stage ?? ""}</td>
+                          <td style={DATE}>
+                            {r.milestone ?? ""}
+                            {r.due && <span style={{ color: "var(--muted-foreground)" }}> · {r.due}</span>}
+                            {r.committed && " · committed"}
+                          </td>
+                          <td style={TD} title={r.plan_reasons.join("\n")}>
+                            {r.plan && (
+                              <span style={{ color: LAMP[r.plan_lamp ?? ""] ?? "inherit" }}>{r.plan}</span>
+                            )}
+                            {r.plan_reasons.length > 0 && (
+                              <div style={{ color: "var(--muted-foreground)" }}>{r.plan_reasons.join("; ")}</div>
+                            )}
+                          </td>
+                          <td style={TD}>{demandText(r.demand)}</td>
+                          <td style={TD}>{row.assignees ?? ""}</td>
+                          <td style={TD}>{r.grade ?? ""}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}

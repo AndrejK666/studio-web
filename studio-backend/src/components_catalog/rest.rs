@@ -24,6 +24,7 @@ use toolkit_security::SecurityContext;
 use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
 use super::reference::ComponentReferenceListDto;
 use super::roadmap::{RoadmapFields, RoadmapSource};
+use super::roadmap_report::RoadmapReportDto;
 use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -1453,15 +1454,46 @@ async fn component_values(
     Extension(ctx): Extension<SecurityContext>,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<ComponentValuesListDto>> {
+    let (resolved, truncated) = resolved_components(&ctx, &catalog).await?;
+    let items: Vec<ComponentValuesDto> = resolved
+        .into_iter()
+        .map(|c| ComponentValuesDto {
+            name: c.name,
+            values: Value::Object(c.values),
+            category: c.category,
+        })
+        .collect();
+
+    Ok(Json(ComponentValuesListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        truncated,
+    }))
+}
+
+/// One catalogued component with its sources reconciled and graded.
+struct ResolvedComponent {
+    name: String,
+    category: String,
+    values: serde_json::Map<String, Value>,
+}
+
+/// Every catalogued component's reconciled, graded values, and whether the
+/// component listing was truncated: what the values table and the roadmap
+/// report both read.
+async fn resolved_components(
+    ctx: &SecurityContext,
+    catalog: &Catalog,
+) -> ApiResult<(Vec<ResolvedComponent>, bool)> {
     let (nodes, truncated) = catalog
         .service
-        .list_component_nodes(&ctx)
+        .list_component_nodes(ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
     let profile_nodes = catalog
         .service
-        .list_profiles(&ctx)
+        .list_profiles(ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     // Profiles are keyed by the component name they are about, which is
@@ -1477,11 +1509,11 @@ async fn component_values(
     // Without them the values are still answered, only ungraded.
     let schemas = catalog
         .service
-        .list_field_schemas(&ctx)
+        .list_field_schemas(ctx)
         .await
         .unwrap_or_default();
 
-    let items: Vec<ComponentValuesDto> = nodes
+    let items: Vec<ResolvedComponent> = nodes
         .into_iter()
         .filter_map(|node| {
             let name = node.value.get("name").and_then(Value::as_str)?.to_owned();
@@ -1491,19 +1523,31 @@ async fn component_values(
                 &mut values,
                 super::reference::schema_for(&schemas, &node.type_id),
             );
-            Some(ComponentValuesDto {
-                values: Value::Object(values),
+            Some(ResolvedComponent {
                 category: super::values::category_of(&node.value, profile),
+                values,
                 name,
             })
         })
         .collect();
+    Ok((items, truncated))
+}
 
-    Ok(Json(ComponentValuesListDto {
-        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
-        items,
-        truncated,
-    }))
+/// GET /studio-components-catalog/v1/roadmap-report — the roadmap report.
+async fn roadmap_report(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<RoadmapReportDto>> {
+    let (resolved, _) = resolved_components(&ctx, &catalog).await?;
+    let views: Vec<super::roadmap_report::ComponentValues<'_>> = resolved
+        .iter()
+        .map(|c| super::roadmap_report::ComponentValues {
+            name: &c.name,
+            category: &c.category,
+            values: &c.values,
+        })
+        .collect();
+    Ok(Json(super::roadmap_report::build(&views)))
 }
 
 // ── the components reference ─────────────────────────────────────────────────
@@ -3004,6 +3048,29 @@ pub fn register_routes(
             "Per-gear delivery activity",
         )
         .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/roadmap-report")
+        .operation_id("studio_components_catalog.get_roadmap_report")
+        .summary("The roadmap report: what the board plans, and whether the plan holds")
+        .description(
+            "One row per catalogued component the roadmap board plans -- stage, milestone and              due date, commitment, progress per axis, who needs it and how badly, whether the              plan meets that demand and why not, assignees, effort, lifecycle, last release,              grade -- soonest due first. `summary` is what a planning meeting reads first:              components per stage in pipeline order, per milestone (committed, at risk), per              consumer (P1/P2/P3, and P1 demand not on track), per plan state, and the overdue              ones.
+
+             `not_on_board` counts catalogued components with no board item: unplanned, or not              matched -- a person pins those through the component's `roadmap_item` field.
+
+             Typed JSON rather than a workbook: a client renders it, or writes the Roadmap and              Summary sheets itself.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(roadmap_report)
+        .json_response_with_schema::<RoadmapReportDto>(
+            openapi,
+            StatusCode::OK,
+            "The roadmap report",
+        )
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
