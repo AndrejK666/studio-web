@@ -1,0 +1,16 @@
+{
+  "registries": {
+    "open-vsx": "https://open-vsx.org"
+  },
+  "use": "open-vsx",
+  "rules": [
+    {
+      "ifExtensionIdMatches": "^(anthropic\\.claude-code|openai\\.chatgpt|constructorfabric\\..+)$",
+      "use": "open-vsx"
+    },
+    {
+      "ifExtensionIdMatches": ".*",
+      "use": null
+    }
+  ]
+}

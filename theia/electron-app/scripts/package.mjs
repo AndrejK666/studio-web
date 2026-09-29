@@ -158,6 +158,9 @@ await build({
             // them from an older build: the app fetches its own.
             { from: join(app, '..', 'plugins'), to: 'plugins', filter: ['**/*', ...assistantIds.map(id => `!${id}{,/**}`)] },
             { from: join(resources, 'studio-desktop.json'), to: 'studio-desktop.json' },
+            // What the Extensions view may list and install (desktop-main.js
+            // hands it to the backend as --ovsx-router-config).
+            { from: join(app, 'ovsx-router.json'), to: 'ovsx-router.json' },
             ...(values.assistants ? [{ from: join(resources, 'assistants.json'), to: 'assistants.json' }] : []),
             // cfs-map-adapter requires `__dirname/../../../.cf-studio/…` at
             // runtime; from resources/app/lib/backend that is resources/. The

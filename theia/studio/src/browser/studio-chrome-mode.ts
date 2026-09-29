@@ -111,7 +111,9 @@ export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
     // Their search is Theia's, across the files: code is found by its text,
     // and the product's Search reads documents, not code.
     [WORKBENCH_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
-    [FULL_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container'],
+    // FULL also keeps the Extensions view, where a desktop has one
+    // (@theia/vsx-registry in electron-app); a session has no such container.
+    [FULL_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container', 'vsx-extensions-view-container'],
 };
 
 /** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */
