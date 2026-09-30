@@ -36,38 +36,19 @@ database:
         #
         # toolkit-db caches one `Db` PER GEAR (manager.rs, `cache: DashMap<String, Db>`),
         # and a gear inherits this block unless it declares its own. This is
-        # therefore not "ten connections to pg_main" — it is ten PER GEAR, and
-        # this assembly configures fourteen gear databases. The previous value
-        # of 10 was a ceiling of 140 connections from one backend process
-        # against a server whose own ceiling is 100. It has not been hit
-        # because pools are lazy and one replica serves few people, which is
-        # the kind of margin that disappears without warning.
+        # therefore not "four connections to pg_main" — it is four PER GEAR, and
+        # this assembly configures fourteen gear databases: 13 x 4 = 52, plus
+        # the gears with their own override below, Keycloak, the bootstrap Job,
+        # the CloudNativePG manager and the reserved slots, 84 in all. A second
+        # replica needs 148, which is why `max_connections` is 150;
+        # deploy/k8s/cloudnative-pg/README.md carries the table and the memory
+        # that pays for it. Lowering this is not the way to make room (at 3 two
+        # replicas still need 118); raising it by one raises the ceiling by
+        # fourteen, so raise a single gear's own `pool` instead.
         #
-        # The budget, counted as ceilings against `max_connections: 100`:
-        #
-        #   13 gears x 4                                         52
-        #   graph-storage (its own override below)                8
-        #   studio-events (its own override below)                2
-        #   studio-artifact-ingest (its own override below)       2
-        #   Keycloak (KC_DB_POOL_MAX_SIZE in the chart)          10
-        #   backend-bootstrap Job, transient                      2
-        #   CloudNativePG instance manager + exporter             5
-        #   superuser_reserved_connections                        3
-        #                                                       ---
-        #                                                        84
-        #
-        # A SECOND REPLICA needs 128 for the backend alone, 148 with everyone
-        # else — which is why `max_connections` is 150 rather than the default
-        # 100 (deploy/k8s/cloudnative-pg/README.md carries the table and the
-        # memory that pays for it).
-        #
-        # Lowering this number is NOT the way to make room, and the arithmetic
-        # says so plainly: at 3 two replicas still come to 118, and only 2 per
-        # gear fits under 100 — three connections for a gear serving a burst
-        # is a queue, not a budget.
-        #
-        # Raising this by one raises the ceiling by fourteen. Raise a single
-        # gear's own `pool` instead.
+        # Keep a run of comment lines under 32: the config's YAML parser
+        # (granit-parser) refuses more before the next entry, and the backend
+        # then does not start.
         max_conns: 4
         # Nothing is held open for a gear nobody calls. Fourteen idle pools
         # each keeping a connection warm is fourteen connections spent on

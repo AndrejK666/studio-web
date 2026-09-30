@@ -349,6 +349,35 @@ mod config_expansion_tests {
         }
     }
 
+    /// Expansion is not loading: the loader parses the YAML itself, with a
+    /// parser of its own limits. k8s.yaml once carried 36 comment lines in a
+    /// row, granit-parser refuses more than 32 before the next entry, and the
+    /// backend in the cluster stopped at "Failed to extract config from
+    /// figment" while every test here passed. So each profile goes through
+    /// the loader `load_config` hands it to.
+    #[test]
+    fn every_profile_loads_through_the_config_loader() {
+        let _guard = lock();
+        for name in REQUIRED {
+            // SAFETY: process-global env mutation, serialized by ENV_LOCK.
+            unsafe { std::env::set_var(name, "test-value") };
+        }
+        for (name, text) in PROFILES {
+            let expanded =
+                expand_env_vars(text).unwrap_or_else(|e| panic!("{name} must expand: {e}"));
+            let tmp = std::env::temp_dir().join(format!(
+                "studio-backend-profile-test-{}-{name}",
+                std::process::id()
+            ));
+            std::fs::write(&tmp, expanded).expect("write the expanded profile");
+            let loaded = super::AppConfig::load_or_default(Some(&tmp));
+            let _ = std::fs::remove_file(&tmp);
+            if let Err(e) = loaded {
+                panic!("{name} must load: {e:#}");
+            }
+        }
+    }
+
     #[test]
     fn a_missing_required_variable_fails_naming_it() {
         let _guard = lock();
