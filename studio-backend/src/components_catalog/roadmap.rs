@@ -42,7 +42,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -227,26 +227,17 @@ projectV2(number:$number){
   }
 }";
 
-/// Resolve the GitHub connection a source names, or the tenant's first one.
+/// Resolve the GitHub connection a source names, or the tenant's first one
+/// this sync can read.
 async fn resolve_auth(
     connectors: &ConnectorService,
     ctx: &SecurityContext,
     tenant: Uuid,
     connection_id: Option<Uuid>,
 ) -> Result<ConnectionAuth> {
-    let id = match connection_id {
-        Some(id) => id,
-        None => {
-            connectors
-                .list(ctx, tenant)
-                .await?
-                .into_iter()
-                .find(|c| c.provider == "github")
-                .context("no GitHub connection in the roadmap's tenant")?
-                .id
-        }
-    };
-    let (_driver, auth, _conn) = connectors.driver_and_auth(ctx, tenant, id).await?;
+    let (_driver, auth, _conn) = connectors
+        .named_or_default(ctx, tenant, connection_id, "github")
+        .await?;
     Ok(auth)
 }
 

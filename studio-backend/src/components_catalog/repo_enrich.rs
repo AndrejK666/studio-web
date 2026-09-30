@@ -612,20 +612,9 @@ impl RepoEnricher {
     /// Resolve a GitHub connection's `ConnectionAuth` (base_url + token) via the
     /// connectors service — the token stays in credstore, we only borrow it.
     async fn resolve_auth(&self, ctx: &SecurityContext) -> Result<ConnectionAuth> {
-        let id = match self.connection_id {
-            Some(id) => id,
-            None => {
-                let conns = self.connectors.list(ctx, self.tenant).await?;
-                conns
-                    .into_iter()
-                    .find(|c| c.provider == "github")
-                    .context("no GitHub connection in the configured catalogue tenant")?
-                    .id
-            }
-        };
         let (_driver, auth, _conn) = self
             .connectors
-            .driver_and_auth(ctx, self.tenant, id)
+            .named_or_default(ctx, self.tenant, self.connection_id, "github")
             .await?;
         Ok(auth)
     }

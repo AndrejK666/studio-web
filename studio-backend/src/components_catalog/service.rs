@@ -1114,22 +1114,11 @@ impl CatalogService {
         source: &RepoSource,
     ) -> Option<super::gearbox::CorpusSource> {
         let connectors = self.connectors.as_ref()?;
-        let id = match source.connection_id {
-            Some(id) => id,
-            None => {
-                connectors
-                    .list(ctx, source.tenant)
-                    .await
-                    .ok()?
-                    .into_iter()
-                    .find(|c| c.provider == "github")?
-                    .id
-            }
-        };
-        let (driver, auth, _conn) = connectors
-            .driver_and_auth(ctx, source.tenant, id)
+        let (driver, auth, conn) = connectors
+            .named_or_default(ctx, source.tenant, source.connection_id, "github")
             .await
             .ok()?;
+        let id = conn.id;
         let url = driver.clone_url(&auth.base_url, &source.repo).ok()?;
         let (username, token) = driver.clone_credentials(&auth.token);
         let git_ref = match source.git_ref.trim() {
@@ -2484,19 +2473,9 @@ impl CatalogService {
             .connectors
             .as_ref()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
-        let id = match connection_id {
-            Some(id) => id,
-            None => {
-                connectors
-                    .list(ctx, tenant)
-                    .await?
-                    .into_iter()
-                    .find(|c| c.provider == "github")
-                    .ok_or_else(|| anyhow!("no GitHub connection for this tenant"))?
-                    .id
-            }
-        };
-        let (_driver, auth, _conn) = connectors.driver_and_auth(ctx, tenant, id).await?;
+        let (_driver, auth, _conn) = connectors
+            .named_or_default(ctx, tenant, connection_id, "github")
+            .await?;
 
         let http = reqwest::Client::new();
         super::scaffold::write_scaffold(
@@ -2530,19 +2509,9 @@ impl CatalogService {
             .connectors
             .as_ref()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
-        let id = match connection_id {
-            Some(id) => id,
-            None => {
-                connectors
-                    .list(ctx, tenant)
-                    .await?
-                    .into_iter()
-                    .find(|c| c.provider == "github")
-                    .ok_or_else(|| anyhow!("no GitHub connection for this tenant"))?
-                    .id
-            }
-        };
-        let (_driver, auth, _conn) = connectors.driver_and_auth(ctx, tenant, id).await?;
+        let (_driver, auth, _conn) = connectors
+            .named_or_default(ctx, tenant, connection_id, "github")
+            .await?;
         let http = reqwest::Client::new();
         let created =
             super::scaffold::create_repo(&http, &auth, owner, is_org, name, private).await?;
