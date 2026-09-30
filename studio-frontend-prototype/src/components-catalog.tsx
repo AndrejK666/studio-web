@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ApiError, api } from "./api";
 import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
+import { fieldTrend, type ComponentSnapshot, type FieldTrend } from "./field-trend";
 import { readinessOf } from "./readiness";
 import { responsibilityOf } from "./responsibility";
 import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
@@ -177,6 +178,38 @@ function lampOf(field: Field, values: Values): Lamp | null {
   const raw = values[field.key];
   if (!raw) return "grey";
   return LAMP_MAP[raw.s ?? "good"] ?? "good";
+}
+
+/** Each component's earliest snapshot in the window: what "since" compares with. */
+interface Baselines {
+  status: "off" | "loading" | "ready" | "error";
+  byName: Map<string, ComponentSnapshot>;
+}
+
+function useComponentBaselines(token: string, days: number): Baselines {
+  const [state, setState] = useState<Baselines>({ status: "off", byName: new Map() });
+  useEffect(() => {
+    if (!token) {
+      setState({ status: "off", byName: new Map() });
+      return;
+    }
+    let live = true;
+    setState((cur) => ({ ...cur, status: "loading" }));
+    api
+      .componentHistory(token, days)
+      .then((page) => {
+        if (live) setState({ status: "ready", byName: new Map(page.items.map((s) => [s.component, s])) });
+      })
+      // A backend without the history route: the page has no "since" to show,
+      // and says nothing rather than an error about a feature it lacks.
+      .catch(() => {
+        if (live) setState({ status: "error", byName: new Map() });
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, days]);
+  return state;
 }
 
 function groupHealth(group: Group, values: Values) {
@@ -774,6 +807,7 @@ export function ComponentsCatalog({
   // typing in the filter costs nothing more.
   const [activityDays, setActivityDays] = useState<number>(90);
   const activity = useGearActivity(token, activityDays);
+  const baselines = useComponentBaselines(token, activityDays);
 
   const syncing = sync.endsWith("…");
   /* What filled the catalogue, read off the nodes -- the picker below is only
@@ -803,6 +837,7 @@ export function ComponentsCatalog({
           activity={activity}
           activityDays={activityDays}
           onActivityDays={setActivityDays}
+          baselines={baselines}
           onBack={() => setSelected(null)}
           onSaved={(p) => setProfiles((cur) => ({ ...cur, [selected as string]: p }))}
         />
@@ -915,6 +950,7 @@ export function ComponentsCatalog({
                       schema={schemaFor(schemas, g.type_id)}
                       activity={activity.byGear.get(nameOf(g))}
                       activityDays={activityDays}
+                      baseline={baselines.byName.get(nameOf(g))}
                       onOpen={() => setSelected(nameOf(g))}
                     />
                   ))}
@@ -940,6 +976,7 @@ export function ComponentsCatalog({
                     values={resolved[nameOf(g)]?.values ?? {}}
                     schema={schemaFor(schemas, g.type_id)}
                     usedBy={resolved[nameOf(g)]?.values?.consumers?.n ?? null}
+                    baseline={baselines.byName.get(nameOf(g))}
                     onOpen={() => setSelected(nameOf(g))}
                   />
                 ))}
@@ -1284,6 +1321,7 @@ function GearListRow({
   schema,
   activity,
   activityDays,
+  baseline,
   onOpen,
 }: {
   gear: CatalogNode;
@@ -1292,10 +1330,13 @@ function GearListRow({
   schema: Schema;
   activity: GearActivity | undefined;
   activityDays: number;
+  /** The component as the window found it, when the catalogue kept a snapshot. */
+  baseline: ComponentSnapshot | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
+  const trend = useMemo(() => fieldTrend(fields, values, baseline), [fields, values, baseline]);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
   /* The Type column says what the component IS (gear, plugin, sdk, toolkit,
@@ -1404,6 +1445,11 @@ function GearListRow({
                 {watch}
               </span>
             )}
+          </div>
+        )}
+        {trend && trend.better + trend.worse > 0 && (
+          <div className="gcat-sub">
+            <TrendMark trend={trend} />
           </div>
         )}
       </td>
@@ -1597,6 +1643,7 @@ function GearListCard({
   values,
   schema,
   usedBy,
+  baseline,
   onOpen,
 }: {
   gear: CatalogNode;
@@ -1607,10 +1654,13 @@ function GearListCard({
   /** How many catalogued components depend on this one; `null` when unknown. */
   usedBy: number | null;
   activity?: GearActivity | undefined;
+  /** The component as the window found it, when the catalogue kept a snapshot. */
+  baseline: ComponentSnapshot | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
   const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
+  const trend = useMemo(() => fieldTrend(fields, values, baseline), [fields, values, baseline]);
   const category = values.category?.b ?? "gear";
   const stage = values.stage?.b ?? null;
   const tone = stageTone(values);
@@ -1655,6 +1705,7 @@ function GearListCard({
               {values.grade.b}
             </span>
           )}
+          <TrendMark trend={trend} />
         </span>
         <span className={`ccard-stage ${tone}`}>
           {stage && <span className="dot" />}
@@ -1864,6 +1915,7 @@ function GearDetail({
   activity,
   activityDays,
   onActivityDays,
+  baselines,
   onBack,
   onSaved,
 }: {
@@ -1881,6 +1933,7 @@ function GearDetail({
   activity: ActivityIndex;
   activityDays: number;
   onActivityDays: (days: number) => void;
+  baselines: Baselines;
   onBack: () => void;
   onSaved: (profile: Record<string, unknown>) => void;
 }) {
@@ -1975,6 +2028,9 @@ function GearDetail({
 
       {view === "filled" && <QualityPanel values={values} />}
       {view === "filled" && <ResponsibilityPanel values={values} />}
+      {view === "filled" && baselines.status === "ready" && (
+        <ChangesPanel trend={fieldTrend(schemaFields, values, baselines.byName.get(name))} days={activityDays} />
+      )}
 
       <div className="grid">
         {(view === "filled"
@@ -2089,6 +2145,62 @@ function ResponsibilityPanel({ values }: { values: Values }) {
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+const TONE_WORD = { better: "Better", worse: "Worse", neutral: "Changed" } as const;
+
+/** How many graded fields got worse and better since the window opened; nothing
+ *  when none moved, since "0 worse, 0 better" on every row is noise. */
+function TrendMark({ trend }: { trend: FieldTrend | undefined }) {
+  if (!trend || trend.better + trend.worse === 0) return null;
+  return (
+    <span className="trend-mark" title={`Graded fields that moved since ${trend.since}`}>
+      {trend.worse > 0 && <span className="act-trend act-trend-worse">▼ {trend.worse} worse</span>}
+      {trend.worse > 0 && trend.better > 0 && " · "}
+      {trend.better > 0 && <span className="act-trend act-trend-better">▲ {trend.better} better</span>}
+    </span>
+  );
+}
+
+/** What moved since the window opened, against the snapshot the catalogue
+ *  kept then. Worse first: that is what the reader came to find. */
+function ChangesPanel({ trend, days }: { trend: FieldTrend | undefined; days: number }) {
+  return (
+    <section className="panel changes" id="panel-changes">
+      <header>
+        <h2>Since {trend ? whenLabel(trend.since) || trend.since : `${days} days ago`}</h2>
+        <span className="cnt">
+          {trend
+            ? `${trend.changes.length} changed · ${trend.worse} worse · ${trend.better} better`
+            : "no snapshot yet"}
+        </span>
+      </header>
+      {!trend ? (
+        <p className="chg-empty">
+          The catalogue keeps one snapshot of each component a day, on every sync. None of this one is from the
+          window yet, so there is nothing to compare with.
+        </p>
+      ) : trend.changes.length === 0 ? (
+        <p className="chg-empty">Nothing changed since {trend.since}.</p>
+      ) : (
+        <table className="chg">
+          <tbody>
+            {trend.changes.map((c) => (
+              <tr key={c.key}>
+                <td className="chg-k">{c.label}</td>
+                <td className="chg-was">{c.before}</td>
+                <td className="chg-arrow">→</td>
+                <td>{c.now}</td>
+                <td>
+                  <span className={`act-trend act-trend-${c.tone}`}>{TONE_WORD[c.tone]}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   );
 }
@@ -3185,6 +3297,13 @@ const GCAT_CSS = `
 .gcat .resp-who { font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px; }
 .gcat .resp-who.none { font-weight:400; font-style:italic; color:var(--studio-muted); }
 .gcat .resp-src { font-size:10.5px; color:var(--studio-muted); }
+.gcat .trend-mark { white-space:nowrap; }
+.gcat .chg { width:100%; border-collapse:collapse; font-size:12.5px; }
+.gcat .chg td { padding:5px 14px; border-top:1px solid var(--studio-line); vertical-align:top; }
+.gcat .chg-k { font-weight:600; white-space:nowrap; }
+.gcat .chg-was { color:var(--studio-muted); text-decoration:line-through; }
+.gcat .chg td.chg-arrow { color:var(--studio-muted); width:1%; padding:5px 0; }
+.gcat .chg-empty { margin:0; padding:10px 14px 14px; font-size:12.5px; color:var(--studio-muted); }
 .gcat .qareas { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px 18px; padding:10px 14px 14px; }
 .gcat .qarea-head { display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px; }
 .gcat .qarea-head span { color:var(--studio-muted); font-variant-numeric:tabular-nums; }

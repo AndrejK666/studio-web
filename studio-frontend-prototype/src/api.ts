@@ -1,4 +1,5 @@
 import { parseProblem, type Problem } from "./problem";
+import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
@@ -3212,6 +3213,18 @@ export const api = {
   componentValues: (token: string) =>
     request<{ items: ComponentValues[]; total: number; truncated: boolean }>(
       "/studio-components-catalog/v1/component-values",
+      token,
+    ),
+
+  /** What the fields said before: without `component`, each component's
+   *  earliest snapshot in the last `days` days (the "before" a better/worse
+   *  mark compares with); with it, that component's every snapshot, oldest
+   *  first (`components_catalog/history.rs`). */
+  componentHistory: (token: string, days: number, component?: string) =>
+    request<{ items: ComponentSnapshot[]; total: number }>(
+      `/studio-components-catalog/v1/component-history?days=${days}${
+        component ? `&component=${encodeURIComponent(component)}` : ""
+      }`,
       token,
     ),
 

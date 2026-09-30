@@ -1512,66 +1512,101 @@ async fn component_values(
     }))
 }
 
-/// One catalogued component with its sources reconciled and graded.
-struct ResolvedComponent {
-    name: String,
-    category: String,
-    values: serde_json::Map<String, Value>,
+use super::service::ResolvedComponent;
+
+/// What one component's fields said on one day.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentSnapshotDto {
+    pub component: String,
+    /// `YYYY-MM-DD`, UTC.
+    pub date: String,
+    /// Per field id, the parts a comparison reads: `n` the number, `s` the
+    /// grade, `b` the badge (cut to 80 characters). A field with none of them
+    /// is not kept.
+    pub fields: serde_json::Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentHistoryDto {
+    pub items: Vec<ComponentSnapshotDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ComponentHistoryQuery {
+    /// How many days back, ending today. Defaults to 30.
+    pub days: Option<u32>,
+    /// One component's every snapshot in the window. Without it, each
+    /// component's earliest snapshot in the window.
+    pub component: Option<String>,
+}
+
+const DEFAULT_HISTORY_DAYS: u32 = 30;
+const MAX_HISTORY_DAYS: u32 = 366;
+
+/// GET /studio-components-catalog/v1/component-history — what the fields said before.
+async fn component_history(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<ComponentHistoryQuery>,
+) -> ApiResult<JsonBody<ComponentHistoryDto>> {
+    let days = query.days.unwrap_or(DEFAULT_HISTORY_DAYS);
+    if !(1..=MAX_HISTORY_DAYS).contains(&days) {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "days",
+                format!("must be between 1 and {MAX_HISTORY_DAYS}, got {days}"),
+                "INVALID",
+            )
+            .create());
+    }
+    let rows = match query.component.as_deref().map(str::trim) {
+        Some("") => {
+            return Err(StudioComponentsCatalogError::invalid_argument()
+                .with_field_violation("component", "must not be empty", "INVALID")
+                .create());
+        }
+        Some(name) => catalog.service.component_history(&ctx, name, days).await,
+        None => catalog.service.component_baselines(&ctx, days).await,
+    }
+    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+
+    let items: Vec<ComponentSnapshotDto> = rows
+        .into_iter()
+        .filter_map(|row| {
+            Some(ComponentSnapshotDto {
+                component: row.get("component")?.as_str()?.to_owned(),
+                date: row
+                    .get("date")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                fields: row
+                    .get("fields")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Default::default())),
+            })
+        })
+        .collect();
+    Ok(Json(ComponentHistoryDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
 }
 
 /// Every catalogued component's reconciled, graded values, and whether the
-/// component listing was truncated: what the values table and the roadmap
-/// report both read.
+/// component listing was truncated.
 async fn resolved_components(
     ctx: &SecurityContext,
     catalog: &Catalog,
 ) -> ApiResult<(Vec<ResolvedComponent>, bool)> {
-    let (nodes, truncated) = catalog
+    catalog
         .service
-        .list_component_nodes(ctx)
+        .resolved_components(ctx)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-
-    let profile_nodes = catalog
-        .service
-        .list_profiles(ctx)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    // Profiles are keyed by the component name they are about, which is
-    // `gear_name` on the node rather than the node's own name.
-    let mut profiles: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    for node in profile_nodes {
-        if let Some(name) = node.value.get("gear_name").and_then(Value::as_str) {
-            profiles.insert(name.to_owned(), node.value);
-        }
-    }
-
-    // The schemas, for the grade: a component is graded by its type's rules.
-    // Without them the values are still answered, only ungraded.
-    let schemas = catalog
-        .service
-        .list_field_schemas(ctx)
-        .await
-        .unwrap_or_default();
-
-    let items: Vec<ResolvedComponent> = nodes
-        .into_iter()
-        .filter_map(|node| {
-            let name = node.value.get("name").and_then(Value::as_str)?.to_owned();
-            let profile = profiles.get(&name);
-            let mut values = super::values::resolve(&node.value, profile);
-            super::quality::attach(
-                &mut values,
-                super::reference::schema_for(&schemas, &node.type_id),
-            );
-            Some(ResolvedComponent {
-                category: super::values::category_of(&node.value, profile),
-                values,
-                name,
-            })
-        })
-        .collect();
-    Ok((items, truncated))
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())
 }
 
 /// GET /studio-components-catalog/v1/roadmap-report — the roadmap report.
@@ -3155,6 +3190,46 @@ pub fn register_routes(
             StatusCode::OK,
             "The reconciled fields",
         )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/component-history")
+        .operation_id("studio_components_catalog.list_component_history")
+        .summary("What each component's fields said before: one snapshot per component per day")
+        .description(
+            "The catalogue answers what is true now; a sync rewrites the scan's answers in \
+             place. Every sync also keeps a snapshot of each component's fields, one per \
+             component per day (a later sync that day replaces it), with the parts a \
+             comparison reads: the number `n`, the grade `s`, and the badge `b`.\n\n\
+             With `component`: that component's every snapshot in the window, oldest first -- \
+             a trend.\n\n\
+             Without: each component's earliest snapshot from the window's start on -- the \
+             `before` to set against `component-values` for a better/worse mark. Read a week at \
+             a time from the start and stopping at the first week with any snapshot, so a \
+             component first seen after that week has no row: it is new in the window, and has \
+             nothing to compare with.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "days",
+            false,
+            "How many days back to look, ending today (default 30, at most 366)",
+        )
+        .query_param(
+            "component",
+            false,
+            "One component's every snapshot in the window, instead of each component's earliest",
+        )
+        .handler(component_history)
+        .json_response_with_schema::<ComponentHistoryDto>(
+            openapi,
+            StatusCode::OK,
+            "Component snapshots",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
