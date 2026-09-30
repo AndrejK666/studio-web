@@ -6922,9 +6922,16 @@ function ProjectFiles({
     setErr(null);
     try {
       // Scope to this project tenant (matches the file's project_id), then keep
-      // only hand-added files.
-      const { nodes } = await api.listArtifactNodes(token, "file", workspace.id);
-      const mine = (nodes ?? [])
+      // only hand-added files. Every page, not the first: a hand-added file
+      // past it used to be invisible, among a repository's thousands.
+      const nodes: import("./api").ArtifactNode[] = [];
+      for (let offset = 0; offset < 20_000; ) {
+        const page = await api.listArtifactNodes(token, "file", workspace.id, undefined, 200, { offset });
+        nodes.push(...(page.nodes ?? []));
+        offset += page.nodes?.length ?? 0;
+        if (!page.nodes?.length || offset >= (page.total ?? 0)) break;
+      }
+      const mine = nodes
         .filter((n) => {
           const v = (n.value ?? {}) as Record<string, unknown>;
           return v.origin === "manual";
@@ -7006,26 +7013,30 @@ function ProjectFiles({
         their organization/workspace/project scope and a durable file-version reference. Uploading
         the same name creates a new immutable version.
       </p>
-      {err && <p className="error">{err}</p>}
-      {files === null ? (
-        <p className="empty">Loading files…</p>
-      ) : files.length === 0 ? (
-        <p className="empty">No files yet — use “Add file…” to attach one.</p>
-      ) : (
-        <ul className="rows">
-          {files.map((f) => (
-            <li key={f.id}>
-              <div className="grow">
-                <div className="name">{f.path}</div>
-                <div className="sub">
-                  {typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : ""}
-                  {f.version_id ? ` · version ${f.version_id.slice(0, 8)}…` : ""}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {err && files !== null && <p className="error">{err}</p>}
+      <DataTable<NonNullable<typeof files>[number]>
+        list="project-files"
+        urlPrefix="files."
+        rows={files === null && err ? [] : files}
+        error={files === null ? err : null}
+        onRetry={() => void reload()}
+        rowKey={(f) => f.id}
+        rowLabel={(f) => f.path}
+        search={{ placeholder: "Search files" }}
+        searchText={(f) => [f.path]}
+        empty={{ title: "No files yet.", body: "Use “Add file…” to attach one." }}
+        columns={[
+          { id: "path", header: "File", compare: (a, b) => a.path.localeCompare(b.path), cell: (f) => <div className="name">{f.path}</div> },
+          {
+            id: "size",
+            header: "Size",
+            num: true,
+            compare: (a, b) => (a.size ?? -1) - (b.size ?? -1),
+            cell: (f) => (typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : "—"),
+          },
+          { id: "version", header: "Version", cell: (f) => <span className="sub">{f.version_id ? `${f.version_id.slice(0, 8)}…` : "—"}</span> },
+        ]}
+      />
     </div>
   );
 }
