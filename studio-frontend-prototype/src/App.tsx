@@ -3363,11 +3363,17 @@ function WorkspaceProjects({
   const [projectQuery, setProjectQuery] = useState("");
   // Which row's "…" menu is open.
   const [rowMenu, setRowMenu] = useState<string | null>(null);
-  // Any click elsewhere closes it. Registered after the click that opened it
-  // has already been handled, so that click does not close it again.
+  // Any click elsewhere closes it. "Elsewhere" is checked, not assumed: React
+  // runs this effect while the click that opened the menu is still bubbling,
+  // so the listener used to be added in time to hear that same click reach
+  // `document` and close the menu before it was ever seen. A click on a menu
+  // — this one's items, or another row's "…" — is the menu's own business.
   useEffect(() => {
     if (!rowMenu) return;
-    const close = () => setRowMenu(null);
+    const close = (e: MouseEvent) => {
+      if (e.target instanceof Element && e.target.closest(".prowmenu")) return;
+      setRowMenu(null);
+    };
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [rowMenu]);
