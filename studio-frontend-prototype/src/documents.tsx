@@ -562,7 +562,7 @@ function IngestedDocumentsView({
    *  One LLM round-trip per document, so it runs only on the leftovers and
    *  only when asked. Its answer is a proposal, not a decision — it lands as
    *  `detected` and still waits for a person. */
-  const refineWithSpecQuality = async (only?: DocBinding) => {
+  const refineWithSpecQuality = async (only?: DocBinding, pool: DocBinding[] = bindings) => {
     // Skip what a detector has already looked at. The verdict is in the graph
     // and shown in the list, so paying for it again buys nothing — including
     // when the answer was "recognised too little to place", which is a result.
@@ -572,15 +572,15 @@ function IngestedDocumentsView({
     // somebody chose to, and that is the point of sending it.
     const targets = only
       ? [only]
-      : bindings.filter((b) => b.state === "unknown" && !analysed(b));
-    const alreadyDone = bindings.filter((b) => b.state === "unknown" && analysed(b)).length;
+      : pool.filter((b) => b.state === "unknown" && !analysed(b));
+    const alreadyDone = pool.filter((b) => b.state === "unknown" && analysed(b)).length;
     if (targets.length === 0) {
       setNote(
         alreadyDone > 0
           ? `Nothing left to refine — Spec Quality has already looked at ${alreadyDone} of ${
               alreadyDone === 1 ? "these" : "them"
             }, and its verdict is in the list.`
-          : bindings.some((b) => b.state === "unknown")
+          : pool.some((b) => b.state === "unknown")
             ? "Run Scan first — Spec Quality needs each document's text, which the scan loads."
             : "Nothing undetermined to refine.",
       );
@@ -748,15 +748,15 @@ function IngestedDocumentsView({
    *  As with the purpose run, the verdict goes two places — the finding to the
    *  graph, the pass/fail to the binding, which is what a stage gating on
    *  `leak` waits for. */
-  const runLeakChecks = async (only?: DocBinding) => {
+  const runLeakChecks = async (only?: DocBinding, pool: DocBinding[] = bindings) => {
     const already = (b: DocBinding) =>
       (findings[b.node_id] ?? []).some((f) => f.detector === "leak");
     if (only && !only.type_key) {
       setNote("Leak judges a document against its type — give this one a type first.");
       return;
     }
-    const targets = only ? [only] : bindings.filter((b) => b.type_key && !already(b));
-    const alreadyDone = bindings.filter((b) => b.type_key && already(b)).length;
+    const targets = only ? [only] : pool.filter((b) => b.type_key && !already(b));
+    const alreadyDone = pool.filter((b) => b.type_key && already(b)).length;
 
     if (targets.length === 0) {
       setNote(
@@ -872,12 +872,12 @@ function IngestedDocumentsView({
    *
    *  Set-wise, like bloat, and for the same reason: "what does this reference"
    *  has no answer from one document. */
-  const runTraceCheck = async (only?: DocBinding) => {
-    const targets = withFile(only, bindings.filter((b) => b.type_key));
+  const runTraceCheck = async (only?: DocBinding, pool: DocBinding[] = bindings) => {
+    const targets = withFile(only, pool.filter((b) => b.type_key));
     if (targets.length < 2) {
       setNote(
         targets.length === 1
-          ? "Tracing is a question about two documents; this project has one."
+          ? "Tracing is a question about two documents; this view has one."
           : "No bound documents with text to trace. Run Scan first.",
       );
       return;
@@ -995,14 +995,14 @@ function IngestedDocumentsView({
    *  Unlike the other two runs this one cannot skip what it has already seen:
    *  a verdict about a set goes stale the moment the set changes, so adding one
    *  document re-judges all of them. */
-  const runBloatCheck = async (only?: DocBinding) => {
+  const runBloatCheck = async (only?: DocBinding, pool: DocBinding[] = bindings) => {
     // Duplication is between documents, so one file is compared with every
     // bound one rather than with itself.
-    const targets = withFile(only, bindings.filter((b) => b.type_key));
+    const targets = withFile(only, pool.filter((b) => b.type_key));
     if (targets.length < 2) {
       setNote(
         targets.length === 1
-          ? "Duplication is a question about two documents; this project has one."
+          ? "Duplication is a question about two documents; this view has one."
           : "No bound documents with text to compare. Run Scan first.",
       );
       return;
@@ -1168,6 +1168,17 @@ function IngestedDocumentsView({
     // forced a recompute.
   }, [rows, filter, typeFilter, originFilter]);
 
+  /** The files behind the rows the filters leave on screen — what the Spec
+   *  Quality menu runs on. Picking "Architecture Decision Record" and then
+   *  asking for leaks means the ADRs, not every bound file in the project. An
+   *  authored row has no binding and is sent from its own panel instead. */
+  const shownBindings = useMemo(() => {
+    const ids = new Set(shown.map((r) => r.id));
+    return bindings.filter((b) => ids.has(b.id));
+  }, [shown, bindings]);
+  const shownUndetermined = shownBindings.filter((b) => b.state === "unknown").length;
+  const shownTyped = shownBindings.filter((b) => b.type_key).length;
+
   /** Which page of `shown` is mounted. Back to the first whenever the view
    *  changes: a filter is a new question, and answering it from page 8 of the
    *  previous one would be a strange place to start reading. */
@@ -1241,33 +1252,35 @@ function IngestedDocumentsView({
           <details className="ing-menu">
             <summary className={busy ? "disabled" : undefined}>Spec Quality ▾</summary>
             <div className="ing-menu-list" onClick={(e) => (e.currentTarget.parentElement as HTMLDetailsElement).removeAttribute("open")}>
+              {/* Each run takes the files the filters leave on screen, so the
+                  counts are of this view, not of the project. */}
               <button
-                onClick={() => void refineWithSpecQuality()}
-                disabled={busy || counts["needs-review"] === 0}
-                title="Ask the Spec Quality purpose detector about the documents scoring could not place"
+                onClick={() => void refineWithSpecQuality(undefined, shownBindings)}
+                disabled={busy || shownUndetermined === 0}
+                title="Ask the Spec Quality purpose detector about the shown documents scoring could not place"
               >
-                Refine undetermined <span className="ing-count">{counts["needs-review"]}</span>
+                Refine undetermined <span className="ing-count">{shownUndetermined}</span>
               </button>
               <button
-                onClick={() => void runLeakChecks()}
-                disabled={busy || counts.bound === 0}
-                title="Check each bound document for content that belongs to another kind of document"
+                onClick={() => void runLeakChecks(undefined, shownBindings)}
+                disabled={busy || shownTyped === 0}
+                title="Check each shown document with a type for content that belongs to another kind of document"
               >
-                Check bound for leaks <span className="ing-count">{counts.bound}</span>
+                Leak <span className="ing-count">{shownTyped}</span>
               </button>
               <button
-                onClick={() => void runBloatCheck()}
-                disabled={busy || counts.bound < 2}
-                title="Find the documents that repeat each other"
+                onClick={() => void runBloatCheck(undefined, shownBindings)}
+                disabled={busy || shownTyped < 2}
+                title="Find the shown documents that repeat each other"
               >
-                Compare bound for duplication
+                Bloat <span className="ing-count">{shownTyped}</span>
               </button>
               <button
-                onClick={() => void runTraceCheck()}
-                disabled={busy || counts.bound < 2}
-                title="Build the reference graph between bound documents and find the ones nothing connects to"
+                onClick={() => void runTraceCheck(undefined, shownBindings)}
+                disabled={busy || shownTyped < 2}
+                title="Build the reference graph between the shown documents and find the ones nothing connects to"
               >
-                Trace references between bound
+                Trace <span className="ing-count">{shownTyped}</span>
               </button>
             </div>
           </details>
