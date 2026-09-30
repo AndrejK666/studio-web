@@ -148,10 +148,12 @@ const BY_WORK: readonly Mode[] = [
         menus: ['File', 'Edit', 'View', 'Help'],
         groups: [
             // Finding a document by what it says is how writing starts as often
-            // as browsing is, so it sits in the ribbon, not only behind a rail tab.
-            // The product's Search (product-ext), the same one as the rail button
-            // and Ctrl+Shift+F: it reads comments, proposed changes and history
-            // as well as the files.
+            // as browsing is, so it sits in the ribbon. The product's Search
+            // (product-ext): it reads comments, proposed changes and history as
+            // well as the files. The rail's magnifier and Ctrl+Shift+F are
+            // Theia's search across files, the same in every mode
+            // (studio-mode-layout.ts, RAIL); this is the only way to the
+            // product's, besides the palette.
             // The product's New document (product-ext): a Markdown file in the
             // open project, its name as its first heading.
             { label: 'Document', actions: [{ command: 'studio.document.new', icon: 'new-file', label: 'New document', title: 'A new document in the project that is open' }] },

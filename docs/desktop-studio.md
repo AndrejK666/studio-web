@@ -438,32 +438,54 @@ Manual inputs are:
 A desktop has Theia's Extensions view (`@theia/vsx-registry`, in
 `electron-app` only; a browser session does not get it). It is open to all of
 open-vsx, as VS Code's is: the member searches, installs, updates and removes
-extensions there. The code modes (Development, Full functionality) keep its tab on the rail,
-and no other mode shows it (`MODE_VIEWS`, `studio-mode-layout.ts`; see
-[What each mode keeps on its rails](#what-each-mode-keeps-on-its-rails)). Extensions the app ships or brings
+extensions there. Its tab is on the rail in every mode (`RAIL`,
+`studio-mode-layout.ts`; see
+[The rail, the same in every mode](#the-rail-the-same-in-every-mode)). Extensions the app ships or brings
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
 
-### What each mode keeps on its rails
+### The rail, the same in every mode
 
-One table, `MODE_VIEWS` in `theia/studio/src/browser/studio-mode-layout.ts`,
-says which views each mode keeps on its rails, in the desktop and in a session
-alike:
+The left rail is one toolset, as VS Code's activity bar is: switching modes
+never adds, removes or reorders a rail item. What a mode changes is its ribbon
+and its start page. One list, `RAIL` in
+`theia/studio/src/browser/studio-mode-layout.ts`, says what it holds, in the
+desktop and in a session alike. Top to bottom:
 
-| Mode | Left rail, beyond the Studio view and the mode's own panels |
+| Rail item | Drawn by |
 |---|---|
-| Doc editing | Explorer |
-| Development, Full functionality | Explorer, Search, Source Control, Run and Debug, Extensions (desktop only), Testing |
-| Agent development | Explorer, Search (Agents on the left, Source Control on the right) |
-| Building | Explorer, Source Control (beside the Gearbox Catalogue) |
+| Explorer, Search, Source Control, Run and Debug, Extensions (desktop only), Testing | Theia's view containers, at Theia's own ranks (`RAIL`) |
+| Collaboration (who is here, open threads, proposals) | product-ext, `mountCollabRail` |
+| Quality, only in a project whose `.studio/settings.json` turns `qualitySignals` on | product-ext, `mountQualityRail` |
+| Assistants: one entry that offers Claude Code and Codex | product-ext, `RAIL_ASSISTANTS` in `slot-strip.js` |
+| The Studio view (account and connection), at the foot, where VS Code keeps Accounts | `STUDIO_VIEW`; the foot is `railTabsCss` in `studio-chrome-mode.ts` |
 
-On startup and after every mode switch, `StudioModeLayout` places each of the
-mode's views that is missing, without opening it, and sets aside (detaches, it
-does not close) side views that another mode names and this one does not, so
-a view opened once in one mode no longer stays in another for good. Views no
+The Search on the rail, and Ctrl+Shift+F in every mode, is Theia's search across
+the files. The product's own Search, which also reads comments, proposed
+changes and history, is the ribbon's **Find → Search** in Doc editing and Full
+functionality, and **Studio: Search…** in the palette.
+
+A mode's own views sit beside the rail, not on it:
+
+| Mode | Its own views | Reached from |
+|---|---|---|
+| Development, Full functionality, Agent development | Agents (Orca), on the right | the ribbon's **Agents** (Doc editing has it too) |
+| Building | the Gearbox Catalogue, on the left with no rail tab (`OFF_RAIL`); the Inspector on the right | the ribbon's **Corpus → Catalogue**, **View → Catalogue** |
+| Doc editing | Analyze, in the bottom panel | the ribbon's **Specs → Analyze** |
+
+Claude Code and Codex are reached the same way in every mode: the rail's
+Assistants entry, Ctrl+Alt+K and Ctrl+Alt+X (⌥⌘K, ⌥⌘X), and **Studio: Assistants**
+in the palette. Agent development shows the agents beside what they changed:
+Source Control on the left, Agents on the right.
+
+On startup and after every mode switch, `StudioModeLayout` places each rail
+view and each of the mode's own side views that is missing, without opening it,
+and sets aside (detaches, it does not close) side views that another mode names
+and this one does not, so a view opened once in one mode no longer stays in
+another for good. The rail is every mode's, so it is never set aside. Views no
 mode names -- the assistants, AI chat, Object Details, a plugin's own view --
-stay where the member put them. The rail tabs (`MODE_TABS`) are read from the
-same table. A view opened from the View menu stays for as long as the member
+stay where the member put them. The rail tabs (`RAIL_TABS`) are read from the
+same list. A view opened from the View menu stays for as long as the member
 works in the mode. The Studio view is put back in any mode whose layout was
 saved before the view existed.
 

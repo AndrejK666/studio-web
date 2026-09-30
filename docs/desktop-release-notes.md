@@ -26,12 +26,32 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
   action, and the repositories and recent documents. A button is drawn only
   for a command this build has, and greyed out with the reason when it cannot
   run now. The same pages show in a portal session (Sync instead of Push).
+- **The left rail is the same in every mode, like VS Code's.** Explorer,
+  Search, Source Control, Run and Debug, Extensions and Testing, then
+  Collaboration, Quality where a project turns it on, one Assistants entry,
+  and the Studio view (account and connection) at the foot. A mode changes
+  its ribbon and its start page, not the rail.
+- **One search on the rail.** The rail's Search, and Ctrl+Shift+F in every
+  mode, is the search across files. The product's Search, which also reads
+  comments, proposed changes and history, is the ribbon's Find in Doc editing
+  and Full functionality, and "Studio: Search" in the palette.
+- **One Assistants entry instead of the Claude and Codex buttons.** It offers
+  Claude Code and Codex by name; Ctrl+Alt+K and Ctrl+Alt+X still open them
+  directly.
+- **A mode's own panels are no longer rail items.** Agents opens from the
+  ribbon's Agents and sits on the right in every mode that has it; Agent
+  development now shows Source Control on the left and the agents on the
+  right. Building's Gearbox Catalogue opens from the ribbon's Catalogue (or
+  View → Catalogue) and has no rail tab.
 
 ### Known limits
 
 - Recently opened files are Theia's editor history, saved when the app closes
   normally; the product's Markdown editor does not add to it (Doc editing's
   page keeps its own list of opened documents).
+- Checked on a local desktop build without the Extensions view (it predates
+  #513), so the Extensions tab's place on the rail is covered by unit tests
+  only; a portal session was not opened.
 
 ## 0.3.0-beta.6
 
