@@ -148,15 +148,18 @@ describe('the rail’s tabs, one list for every mode', () => {
         const { contribution } = chrome('gearbox.product');
         contribution.onDidInitializeLayout();
         expect(css()).toContain(`${tab('gearbox.catalogue')} { display: none !important; }`);
-        expect(css()).toContain(`${tab('studio.desktop')} { order: 1; margin-top: auto !important; }`);
+        expect(css()).toContain(`${tab('studio.desktop')} { order: 1; margin-top: auto !important; margin-bottom: 2px !important; }`);
     });
 
     it('beats the product’s wholesale hide on specificity: (1,2,0) over #shell-tab-…’s (1,0,0)', () => {
         expect(railTabsCss(['a'], [], 'f')).toContain('#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-a"] { display: grid !important; }');
     });
 
-    it('writes only the foot for an empty rail', () => {
-        expect(railTabsCss([], [], 'f')).toBe('#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-f"] { order: 1; margin-top: auto !important; }');
+    it('writes only the foot for an empty rail: a tab list as tall as the rail, and its last item at the bottom', () => {
+        expect(railTabsCss([], [], 'f')).toBe(
+            '#theia-left-content-panel .lm-TabBar-content-container > .lm-TabBar-content { min-height: 100%; }\n' +
+            '#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-f"] { order: 1; margin-top: auto !important; margin-bottom: 2px !important; }',
+        );
     });
 
     it('keeps writing’s bottom panel to Analyze', () => {

@@ -104,9 +104,9 @@ function railTab(id: string): string {
  *   - a mode's own left-hand views (OFF_RAIL) drawn without a tab: their ribbon
  *     opens them, and a tab there would come and go with the mode;
  *   - the Studio view at the rail's foot, where VS Code keeps Accounts. The tab
- *     list is a flex column as tall as the rail, so `margin-top: auto` on its
- *     last item is the foot; `order` makes it the last item whatever rank a
- *     layout saved before this change gave it.
+ *     list is a flex column, made as tall as the rail, so `margin-top: auto`
+ *     on its last item is the foot; `order` makes it the last item whatever
+ *     rank a layout saved before this change gave it.
  */
 export function railTabsCss(tabs: readonly string[] = RAIL_TABS, offRail: readonly string[] = OFF_RAIL, foot: string = STUDIO_VIEW.id): string {
     const rules: string[] = [];
@@ -116,7 +116,14 @@ export function railTabsCss(tabs: readonly string[] = RAIL_TABS, offRail: readon
     if (offRail.length > 0) {
         rules.push(offRail.map(railTab).join(',\n') + ' { display: none !important; }');
     }
-    rules.push(`${railTab(foot)} { order: 1; margin-top: auto !important; }`);
+    // The tab list is only as tall as its tabs inside a taller block
+    // container (measured: 308px in 598px); as tall as the rail, its last item
+    // can take the foot.
+    rules.push('#theia-left-content-panel .lm-TabBar-content-container > .lm-TabBar-content { min-height: 100%; }');
+    // 2px off the bottom: Theia's side tab bar hides, as overflowing, a tab
+    // whose bottom reaches the bar's height (`hideOverflowingTabs`, `>=`), and
+    // then shows its "more views" menu for it.
+    rules.push(`${railTab(foot)} { order: 1; margin-top: auto !important; margin-bottom: 2px !important; }`);
     return rules.join('\n');
 }
 

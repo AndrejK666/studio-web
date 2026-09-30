@@ -53,6 +53,7 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
         addWidget: jest.fn(async (w: FakeWidget, options: { area: 'left' | 'right' }) => { area.set(w.id, options.area); }),
         getCurrentWidget: jest.fn((side: 'left' | 'right') => (currentIn[side] ? made.get(currentIn[side]!) : undefined)),
         collapsePanel: jest.fn(async (side: 'left' | 'right') => { delete currentIn[side]; }),
+        revealWidget: jest.fn(async (id: string) => made.get(id)),
     };
     const widgets = {
         tryGetWidget: jest.fn((id: string) => made.get(id)),
@@ -80,7 +81,9 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
         await new Promise(resolve => setTimeout(resolve, 0));
     };
     const on = (side: 'left' | 'right'): string[] => [...area].filter(([, a]) => a === side).map(([id]) => id).sort();
-    return { layout, shell, widgets, switchTo, on, area, currentIn };
+    /** The left tabs in tab order (the fake's insertion order), as the rail shows them. */
+    const tabs = (): string[] => [...area].filter(([, a]) => a === 'left').map(([id]) => id);
+    return { layout, shell, widgets, switchTo, on, tabs, area, currentIn };
 }
 
 /** The rail on a desktop, sorted as `on()` sorts. */
@@ -176,10 +179,22 @@ describe('what a mode adds beside the rail', () => {
     });
 
     it('leaves a view where it already is', async () => {
-        const placed = Object.fromEntries(RAIL_LEFT.map(id => [id, 'left' as const]));
+        const placed = Object.fromEntries(RAIL.map(view => [view.id, 'left' as const]));
         const { layout, shell } = setup(DOCUMENTS_PERSPECTIVE_ID, placed);
         await layout.apply();
         expect(shell.addWidget).not.toHaveBeenCalled();
+    });
+
+    it('puts the rail back in its order when a perspective’s first visit put Source Control above Search', async () => {
+        const { layout, tabs, shell, currentIn } = setup(ORCA_PERSPECTIVE_ID, {
+            'explorer-view-container': 'left', 'scm-view-container': 'left', 'search-view-container': 'left',
+            'debug': 'left', 'vsx-extensions-view-container': 'left', 'test-view-container': 'left',
+        });
+        currentIn.left = 'scm-view-container';
+        await layout.apply();
+        expect(tabs()).toEqual(RAIL.map(view => view.id));
+        // The view that was open is open again.
+        expect(shell.revealWidget).toHaveBeenCalledWith('scm-view-container');
     });
 
     it('does not move a view the shell does not track as a rail tab (the navigator inside the explorer)', async () => {
@@ -274,7 +289,8 @@ describe('what a mode sets aside on entering it', () => {
         area.set('gearbox.catalogue', 'left');      // View > Gearbox Catalogue
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(on('left')).toContain('gearbox.catalogue');
-        expect(shell.getWidgets).toHaveBeenCalledTimes(2);   // the one pass on startup, left and right
+        // The one pass on startup: the rail's order, then left and right.
+        expect(shell.getWidgets).toHaveBeenCalledTimes(3);
         layout.onStop();
     });
 });

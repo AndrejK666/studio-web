@@ -241,6 +241,7 @@ export class StudioModeLayout implements FrontendApplicationContribution {
         for (const view of declaredViews(descriptors.find(d => d.id === mode))) {
             await this.place(view);
         }
+        await this.orderRail();
         const foreign = claimedElsewhere(mode, descriptors);
         for (const area of ['left', 'right'] as const) {
             for (const widget of this.shell.getWidgets(area)) {
@@ -278,6 +279,36 @@ export class StudioModeLayout implements FrontendApplicationContribution {
         }
         const widget = existing ?? await this.widgets.getOrCreateWidget(view.id);
         await this.shell.addWidget(widget, { area: view.area, rank: view.rank });
+    }
+
+    /**
+     * Puts the rail's tabs back in the rail's order, if something else ordered them.
+     *
+     * Theia applies a perspective's `viewPlacements` on its first visit without
+     * a rank, so a rail view a perspective names lands wherever the tab bar
+     * puts an unranked tab: measured on a fresh desktop profile, Agent
+     * development's Source Control went above Search, and Full, visited next,
+     * kept that order. Only when the order is wrong: re-adding a tab moves it,
+     * and the panel's open view is revealed again afterwards, unfocused.
+     */
+    protected async orderRail(): Promise<void> {
+        const rank = new Map(RAIL.map(view => [view.id, view.rank ?? 0]));
+        const onRail = this.shell.getWidgets('left').filter(widget => rank.has(widget.id));
+        const sorted = [...onRail].sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+        if (onRail.every((widget, index) => widget === sorted[index])) {
+            return;
+        }
+        const current = this.shell.getCurrentWidget('left');
+        for (const widget of onRail) {
+            // eslint-disable-next-line no-null/no-null
+            widget.parent = null;
+        }
+        for (const widget of sorted) {
+            await this.shell.addWidget(widget, { area: 'left', rank: rank.get(widget.id) });
+        }
+        if (current && onRail.includes(current)) {
+            await this.shell.revealWidget(current.id);
+        }
     }
 
     /** Whether this application can make the view at all (a session has no Extensions view). */
