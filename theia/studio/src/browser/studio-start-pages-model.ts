@@ -9,7 +9,8 @@
 // report.
 
 import { repositoryLine, type DesktopGitRepository } from '../common/desktop-git';
-import type { OrcaRuntimeStatus, OrcaWorktree } from '../common/orca-protocol';
+import type { OrcaRepository, OrcaRuntimeStatus, OrcaWorktree } from '../common/orca-protocol';
+import { groupWorktrees } from '../common/orca-worktree-groups';
 import type { StartRow, StartSection } from './start-page-hub';
 
 /** Rows per list; the layer caps again and counts the rest. */
@@ -181,6 +182,7 @@ export interface AssistantFacts {
     readonly label: string;
     /** The command that opens it; the row is left out when this build has none. */
     readonly command: string;
+    readonly args?: readonly unknown[];
 }
 
 /** What Orca's runtime row says, from its status. */
@@ -216,7 +218,12 @@ export function agentsSection(orca: StartRow | undefined, assistants: readonly A
         rows.push(orca);
     }
     for (const assistant of assistants) {
-        rows.push({ name: assistant.label, detail: `Open ${assistant.label} beside the project`, command: assistant.command });
+        rows.push({
+            name: assistant.label,
+            detail: `Open ${assistant.label} beside the project`,
+            command: assistant.command,
+            args: assistant.args ? [...assistant.args] : undefined,
+        });
     }
     return {
         id: 'agents.list',
@@ -244,7 +251,23 @@ export function worktreeRows(worktrees: readonly OrcaWorktree[], now: number, ma
         }));
 }
 
-export function worktreesSection(rows: readonly StartRow[], total: number, state: { reachable: boolean; error?: string }): StartSection {
+/**
+ * The worktrees of this project's repositories, as the Agents panel groups them
+ * (`groupWorktrees`): a member's own Orca knows every repository they ever
+ * added, and the page is about the project open here. The rest are counted.
+ */
+export function projectWorktrees(
+    worktrees: readonly OrcaWorktree[], repositories: readonly OrcaRepository[], projectRoot: string | undefined,
+): { worktrees: OrcaWorktree[]; elsewhere: number } {
+    const groups = groupWorktrees(worktrees, repositories, projectRoot);
+    const mine = groups.filter(group => group.inProject).flatMap(group => [...group.worktrees]);
+    return { worktrees: mine, elsewhere: worktrees.length - mine.length };
+}
+
+export function worktreesSection(
+    rows: readonly StartRow[], total: number, state: { reachable: boolean; error?: string; elsewhere?: number },
+): StartSection {
+    const elsewhere = state.elsewhere ?? 0;
     return {
         id: 'agents.worktrees',
         title: 'Worktrees',
@@ -253,9 +276,12 @@ export function worktreesSection(rows: readonly StartRow[], total: number, state
         more: Math.max(0, total - rows.length),
         empty: state.error
             ? `Orca could not list them: ${state.error}`
-            : state.reachable
-                ? 'No worktree yet. Start a task in the Agents panel and its agent gets its own.'
-                : 'Orca is not running, so its worktrees cannot be listed.',
+            : !state.reachable
+                ? 'Orca is not running, so its worktrees cannot be listed.'
+                : elsewhere
+                    ? 'Orca has no worktree of this project\'s repositories. The Agents panel adds them to Orca and starts a task.'
+                    : 'No worktree yet. Start a task in the Agents panel and its agent gets its own.',
+        note: elsewhere ? `${plural(elsewhere, 'worktree', 'worktrees')} of other repositories ${elsewhere === 1 ? 'is' : 'are'} in the Agents panel.` : undefined,
     };
 }
 

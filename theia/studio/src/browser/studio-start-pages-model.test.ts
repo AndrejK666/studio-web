@@ -1,5 +1,5 @@
 import {
-    agentsSection, agoText, branchOfStatusTitle, desktopRepositoryRow, modeOverview, orcaRow, recentFileRows,
+    agentsSection, agoText, branchOfStatusTitle, desktopRepositoryRow, modeOverview, orcaRow, projectWorktrees, recentFileRows,
     relativeTo, repositoriesSection, scmRepositoryRow, worktreeRows, worktreesSection, LIST_MAX,
 } from './studio-start-pages-model';
 import type { OrcaWorktree } from '../common/orca-protocol';
@@ -88,9 +88,9 @@ describe('the Agent development page', () => {
     });
 
     it('lists the assistants this build can open under Orca', () => {
-        const section = agentsSection({ name: 'Orca' }, [{ label: 'Claude Code', command: 'claude-vscode.sidebar.open' }]);
+        const section = agentsSection({ name: 'Orca' }, [{ label: 'Claude Code', command: 'studio.assistant.reveal', args: ['claude'] }]);
         expect(section.rows.map(r => r.name)).toEqual(['Orca', 'Claude Code']);
-        expect(section.rows[1].command).toBe('claude-vscode.sidebar.open');
+        expect(section.rows[1]).toEqual(expect.objectContaining({ command: 'studio.assistant.reveal', args: ['claude'] }));
         expect(agentsSection(undefined, []).rows).toEqual([]);
         expect(agentsSection(undefined, []).empty).toMatch(/No coding agent/);
     });
@@ -107,6 +107,22 @@ describe('the Agent development page', () => {
         expect(rows.map(r => r.name)).toEqual(['new', 'old', 'main']);
         expect(rows[0]).toEqual(expect.objectContaining({ tag: 'in-progress', meta: '2 min ago', detail: 'fix the login' }));
         expect(rows[2].tag).toBeUndefined();
+    });
+
+    it('keeps the worktrees of this project\'s repositories and counts the rest of a member\'s Orca', () => {
+        const wt = (id: string, path: string, repoId: string, isMain = false): OrcaWorktree => ({
+            id, path, branch: id, displayName: id, comment: '', status: '', isMain, repoId,
+        });
+        const { worktrees, elsewhere } = projectWorktrees(
+            [wt('main', 'C:/ws/api', 'r1', true), wt('task', 'C:/orca/wt/task', 'r1'), wt('other', 'C:/Repos/x', 'r2', true)],
+            [{ id: 'r1', path: 'C:/ws/api', displayName: 'api' }, { id: 'r2', path: 'C:/Repos/x', displayName: 'x' }],
+            'c:\\ws',
+        );
+        expect(worktrees.map(w => w.id).sort()).toEqual(['main', 'task']);
+        expect(elsewhere).toBe(1);
+        const none = worktreesSection([], 0, { reachable: true, elsewhere: 6 });
+        expect(none.empty).toMatch(/no worktree of this project/);
+        expect(none.note).toBe('6 worktrees of other repositories are in the Agents panel.');
     });
 
     it('says why there are no worktrees', () => {

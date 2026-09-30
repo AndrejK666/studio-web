@@ -27,7 +27,7 @@ import { ScmContribution } from '@theia/scm/lib/browser/scm-contribution';
 import { NavigationLocationService } from '@theia/editor/lib/browser/navigation/navigation-location-service';
 import URI from '@theia/core/lib/common/uri';
 import { FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
-import { OrcaService, type OrcaRuntimeStatus, type OrcaWorktree } from '../common/orca-protocol';
+import { OrcaService, type OrcaRepository, type OrcaRuntimeStatus, type OrcaWorktree } from '../common/orca-protocol';
 import { samePath } from '../common/desktop-git';
 import { desktopRepositories } from './desktop-git-client';
 import { isDesktopHost } from './desktop-git-contribution';
@@ -38,14 +38,20 @@ import {
     type StartAction, type StartPage, type StartPageContext, type StartPageModel, type StartRow, type StartSection,
 } from './start-page-hub';
 import {
-    agentsSection, desktopRepositoryRow, modeOverview, orcaRow, recentFileRows, repositoriesSection,
+    agentsSection, desktopRepositoryRow, modeOverview, orcaRow, projectWorktrees, recentFileRows, repositoriesSection,
     scmRepositoryRow, worktreeRows, worktreesSection, type AssistantFacts, type ModePrimary,
 } from './studio-start-pages-model';
 
-/** The assistants the product-ext rail opens (ai-context.js ASSISTANTS), by the plugins' own commands. */
+/**
+ * The assistants the product-ext rail opens (ai-context.js ASSISTANTS), through
+ * the rail's own command: the plugins' open commands do not reveal a view
+ * container that already exists. Disabled, with the reason, when the
+ * assistant's extension is not in this build.
+ */
+const REVEAL_ASSISTANT = 'studio.assistant.reveal';
 const ASSISTANTS: readonly AssistantFacts[] = [
-    { label: 'Claude Code', command: 'claude-vscode.sidebar.open' },
-    { label: 'Codex', command: 'chatgpt.openSidebar' },
+    { label: 'Claude Code', command: REVEAL_ASSISTANT, args: ['claude'] },
+    { label: 'Codex', command: REVEAL_ASSISTANT, args: ['codex'] },
 ];
 
 /** Stands for "open the Agents panel" where a command id would go: the panel's own command toggles. */
@@ -228,7 +234,8 @@ export class StudioStartPages implements FrontendApplicationContribution {
                 reason: 'this build has no Agents panel',
             },
             ...ASSISTANTS.map(assistant => ({
-                id: assistant.command, label: assistant.label, command: assistant.command,
+                id: `assistant-${String(assistant.args?.[0] ?? assistant.label)}`, label: assistant.label,
+                command: assistant.command, args: assistant.args ? [...assistant.args] : undefined,
                 title: `Open ${assistant.label} beside the project`,
             })),
             { id: 'changes', label: 'Changes', command: 'scmView:toggle', title: 'What the agents changed, and commit it' },
@@ -252,10 +259,16 @@ export class StudioStartPages implements FrontendApplicationContribution {
             statusError = reasonOf(error);
         }
         let worktrees: OrcaWorktree[] = [];
+        let elsewhere = 0;
         let worktreeError: string | undefined;
         if (status?.reachable) {
             try {
-                worktrees = await within(this.orca.listWorktrees(), ORCA_TIMEOUT_MS, 'Orca');
+                const [all, repositories] = await Promise.all([
+                    within(this.orca.listWorktrees(), ORCA_TIMEOUT_MS, 'Orca'),
+                    within(this.orca.listRepositories(), ORCA_TIMEOUT_MS, 'Orca').catch(() => [] as OrcaRepository[]),
+                ]);
+                const root = this.workspace.tryGetRoots()[0]?.resource.path.fsPath();
+                ({ worktrees, elsewhere } = projectWorktrees(all, repositories, root));
             } catch (error) {
                 worktreeError = reasonOf(error);
             }
@@ -267,7 +280,7 @@ export class StudioStartPages implements FrontendApplicationContribution {
                     ...agentsSection({ ...orcaRow(status, statusError), activate: this.orcaView ? () => this.openOrca() : undefined }, assistants),
                     column: 0,
                 },
-                { ...worktreesSection(rows, worktrees.length, { reachable: !!status?.reachable, error: worktreeError }), column: 1 },
+                { ...worktreesSection(rows, worktrees.length, { reachable: !!status?.reachable, error: worktreeError, elsewhere }), column: 1 },
             ],
         };
     }

@@ -67,7 +67,7 @@ const { ChangesStore } = require('./changes-store');
 const { ChangeLog } = require('./change-log');
 const { ChangesLifecycle } = require('./changes-lifecycle');
 const { HistoryStore } = require('./history-store');
-const { AI_MENU_CSS, seedClaude } = require('./ai-context');
+const { AI_MENU_CSS, seedClaude, revealAssistant, assistantForKey } = require('./ai-context');
 const { slotStrip, SLOT_STRIP_CSS } = require('./slot-strip');
 const { railNav, RAIL_NAV_CSS } = require('./rail-nav');
 const { welcomeView, WELCOME_CSS } = require('./welcome-view');
@@ -151,6 +151,14 @@ const SEARCH_COMMAND = {
  * created in the active project with its name as its first heading, so the
  * page that opens is already a document rather than an empty buffer.
  */
+/*
+ * An assistant beside the project, by key ('claude', 'codex'): what the rail's
+ * entries do, as a command the start pages (and the palette) can run.
+ */
+const REVEAL_ASSISTANT_COMMAND = {
+    id: 'studio.assistant.reveal'
+};
+
 const NEW_DOCUMENT_COMMAND = {
     id: 'studio.document.new',
     label: 'New document…',
@@ -2726,6 +2734,34 @@ function switchProjectHandler(container) {
  * line. Looked up by contribution instance rather than captured, so a layout
  * restore cannot leave this pointing at a dead object.
  */
+/*
+ * Open an assistant (Claude, Codex) beside the project, by key: the rail's own
+ * route (ai-context.js revealAssistant), which reveals the plugin's view
+ * container and gives the slot its width. The plugins' own open commands do not
+ * reveal a container that already exists, so a start page that ran them
+ * directly clicked into nothing. Disabled, saying so, when the assistant's
+ * extension is not in this build.
+ */
+function revealAssistantHandler(container, commands) {
+    const installed = key => {
+        const assistant = assistantForKey(key);
+        return !!assistant && !!commands.getCommand(assistant.openCommand);
+    };
+    return {
+        execute: key => revealAssistant({
+            shell: container.get(ApplicationShell),
+            commandRegistry: commands,
+            messageService: container.get(MessageService),
+            key
+        }),
+        isEnabled: key => installed(key),
+        disabledReason: key => {
+            const assistant = assistantForKey(key);
+            return assistant ? assistant.label + ' is not installed in this build' : 'no such assistant';
+        }
+    };
+}
+
 function searchHandler(container) {
     return {
         execute: () => {
@@ -2856,6 +2892,7 @@ const mod = new ContainerModule(bind => {
             commands.registerCommand(SEARCH_COMMAND, searchHandler(ctx.container));
             commands.registerCommand(NEW_DOCUMENT_COMMAND, newDocumentHandler(ctx.container));
             commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
+            commands.registerCommand(REVEAL_ASSISTANT_COMMAND, revealAssistantHandler(ctx.container, commands));
             /* Unconditional: the portal's handshake can arrive before anything
              * else this frontend does, and a command that is not there yet is
              * a sign-in silently dropped. */

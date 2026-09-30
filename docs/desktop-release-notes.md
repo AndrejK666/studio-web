@@ -9,6 +9,30 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next release
+
+### Modes
+
+- **Each mode has its own start page.** With no tab open, the centre shows the
+  page of the mode you are in, not Doc editing's everywhere. Doc editing keeps
+  its page (recent documents, threads, proposals). Development lists the
+  project's repositories -- branch, how far from the remote, what is not
+  committed -- and the files last opened, with Open file, Search in files,
+  Terminal and Push. Agent development lists Orca and the assistants, and
+  Orca's worktrees of this project, with Agents, Claude Code, Codex and
+  Changes. Building lists the workspace's products and Recent, the catalogue's
+  size, with New Product, Open Product, New gear and Catalogue. Full
+  functionality has a row per mode that switches to it and runs its first
+  action, and the repositories and recent documents. A button is drawn only
+  for a command this build has, and greyed out with the reason when it cannot
+  run now. The same pages show in a portal session (Sync instead of Push).
+
+### Known limits
+
+- Recently opened files are Theia's editor history, saved when the app closes
+  normally; the product's Markdown editor does not add to it (Doc editing's
+  page keeps its own list of opened documents).
+
 ## 0.3.0-beta.6
 
 Everything merged since `desktop-v0.3.0-beta.5`: the fixes for what a fresh
