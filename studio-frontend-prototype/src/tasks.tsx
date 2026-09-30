@@ -13,9 +13,10 @@
  * belongs to that organization's tenant and is not listed here.
  */
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api, type TaskRun, type TaskSchedule } from "./api";
+import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
 import { errText } from "./format";
 import { subscribeStudioEvents } from "./studio-events";
 
@@ -40,6 +41,7 @@ function stateBadge(state: string): string {
   }
 }
 
+/** The whole timestamp, for the details a run expands to. */
 function when(iso?: string | null): string {
   if (!iso) return "—";
   const at = new Date(iso);
@@ -67,82 +69,72 @@ function headline(run: TaskRun): string {
   return run.summary || run.last_error || run.progress || "—";
 }
 
-export function BackgroundWork({ token, query }: { token: string; query: string }) {
-  const [runs, setRuns] = useState<TaskRun[] | null>(null);
+export function BackgroundWork({ token }: { token: string; query?: string }) {
   const [schedules, setSchedules] = useState<TaskSchedule[] | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [taskTypes, setTaskTypes] = useState<string[]>([]);
-  const [state, setState] = useState<string>("");
-  const [taskType, setTaskType] = useState<string>("");
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState<string | null>(null);
-
-  const load = async () => {
-    const [runPage, typePage] = await Promise.all([
-      api.taskRuns(token, { state: state || undefined, taskType: taskType || undefined, limit: 200 }),
-      api.taskTypes(token),
-    ]);
-    setRuns(runPage.items);
-    setTaskTypes(typePage.items);
-    // The scheduler is optional — a deployment can run background work with
-    // nothing firing on its own — so its absence is a note, not an error.
-    try {
-      const schedulePage = await api.schedules(token);
-      setSchedules(schedulePage.items);
-    } catch {
-      setSchedules([]);
-    }
-  };
+  const [error, setError] = useState<string | null>(null);
+  // Bumped to read the page on screen again: a run moved, or time passed
+  // while something on the page was still moving.
+  const [tick, setTick] = useState(0);
+  const [live, setLive] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    const run = () =>
-      load().then(
-        () => {
-          if (!cancelled) setUnavailable(null);
-        },
-        (reason) => {
-          if (cancelled) return;
-          const text = errText(reason);
-          // 503 means studio-tasks has no database in this deployment, which
-          // is a configuration fact rather than a failure to report as one.
-          if (text.includes("not available in this deployment")) {
-            setUnavailable(text);
-            setRuns([]);
-            setSchedules([]);
-          } else {
-            setError(text);
-            setRuns([]);
-          }
-        },
-      );
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, state, taskType]);
+    api.taskTypes(token).then(
+      (page) => setTaskTypes(page.items),
+      () => setTaskTypes([]),
+    );
+  }, [token]);
+
+  const loadSchedules = useCallback(() => {
+    setScheduleError(null);
+    // The scheduler is optional — a deployment can run background work with
+    // nothing firing on its own — so its absence is an empty list, not an error.
+    api.schedules(token).then(
+      (page) => setSchedules(page.items),
+      () => setSchedules([]),
+    );
+  }, [token]);
+  useEffect(() => loadSchedules(), [loadSchedules, tick]);
+
+  // The backend pages, and narrows by state and task type. It has no text
+  // search, so the list offers none rather than searching one page of it.
+  const loadRuns = useCallback(
+    async (req: PageRequest): Promise<PageResult<TaskRun>> => {
+      try {
+        const page = await api.taskRuns(token, {
+          state: req.filters.state || undefined,
+          taskType: req.filters.type || undefined,
+          limit: req.limit,
+          offset: req.offset,
+        });
+        setUnavailable(null);
+        return { items: page.items, total: page.total ?? page.items.length };
+      } catch (reason) {
+        const text = errText(reason);
+        // 503 means studio-tasks has no database in this deployment: a
+        // configuration fact, said as one rather than as a failure.
+        if (text.includes("not available in this deployment")) {
+          setUnavailable(text);
+          return { items: [], total: 0 };
+        }
+        throw reason;
+      }
+    },
+    [token],
+  );
 
   // studio-tasks announces every run transition on studio-events, so the list
-  // refreshes when something actually happens rather than on a timer. The
-  // interval stays as a floor: it covers a deployment without the channel, and
-  // a reload is cheap next to a missed state change.
-  const live = (runs ?? []).some((r) => r.state === "queued" || r.state === "running");
+  // refreshes when something happens. The poll stays as a floor while a run on
+  // screen is still moving: it covers a deployment without the channel.
   useEffect(() => {
-    const refresh = () => {
-      load().catch(() => {
-        /* a failed refresh keeps the last good list */
-      });
-    };
-    // A busy run reports progress several times a second; one reload per burst
-    // is what the list actually needs.
     let coalesce: ReturnType<typeof setTimeout> | null = null;
     const refreshSoon = () => {
       if (coalesce) return;
       coalesce = setTimeout(() => {
         coalesce = null;
-        refresh();
+        setTick((t) => t + 1);
       }, 300);
     };
     const unsubscribe = subscribeStudioEvents(token, {
@@ -150,61 +142,23 @@ export function BackgroundWork({ token, query }: { token: string; query: string 
         if (event.subject_type === "task_run") refreshSoon();
       },
     });
-    const stop = () => {
+    const timer = live ? setInterval(() => setTick((t) => t + 1), LIVE_POLL_MS) : null;
+    return () => {
       if (coalesce) clearTimeout(coalesce);
+      if (timer) clearInterval(timer);
       unsubscribe();
     };
-    if (!live) return stop;
-    const timer = setInterval(refresh, LIVE_POLL_MS);
-    return () => {
-      clearInterval(timer);
-      stop();
-    };
-  }, [live, token, state, taskType]);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return runs ?? [];
-    return (runs ?? []).filter((run) =>
-      [run.task_type, run.state, headline(run), run.partition_key ?? "", run.id]
-        .join(" ")
-        .toLowerCase()
-        .includes(needle),
-    );
-  }, [runs, query]);
-
-  const counts = useMemo(() => {
-    const by: Record<string, number> = {};
-    for (const run of runs ?? []) by[run.state] = (by[run.state] ?? 0) + 1;
-    return by;
-  }, [runs]);
+  }, [token, live]);
 
   async function act(run: TaskRun, what: "cancel" | "retry") {
-    setBusyId(run.id);
     setError(null);
-    try {
-      if (what === "cancel") await api.cancelTaskRun(token, run.id);
-      else await api.retryTaskRun(token, run.id);
-      await load();
-    } catch (reason) {
-      setError(errText(reason));
-    } finally {
-      setBusyId(null);
-    }
+    if (what === "cancel") await api.cancelTaskRun(token, run.id);
+    else await api.retryTaskRun(token, run.id);
+    setTick((t) => t + 1);
   }
 
-  async function fire(schedule: TaskSchedule) {
-    setBusyId(schedule.id);
-    setError(null);
-    try {
-      await api.runScheduleNow(token, schedule.id);
-      await load();
-    } catch (reason) {
-      setError(errText(reason));
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const finished = (run: TaskRun) =>
+    run.state === "succeeded" || run.state === "failed" || run.state === "cancelled";
 
   return (
     <>
@@ -223,195 +177,172 @@ export function BackgroundWork({ token, query }: { token: string; query: string 
       {unavailable && <div className="hint">{unavailable}</div>}
 
       <div className="card">
-        <h2>Runs</h2>
-        <div className="chips" style={{ marginBottom: 12 }}>
-          <button className={`chip ${state === "" ? "on" : ""}`} onClick={() => setState("")}>
-            All <span className="chip-n">{(runs ?? []).length}</span>
-          </button>
-          {STATES.map((s) => (
-            <button
-              key={s}
-              className={`chip ${state === s ? "on" : ""}`}
-              onClick={() => setState(state === s ? "" : s)}
-            >
-              {s} <span className="chip-n">{counts[s] ?? 0}</span>
-            </button>
-          ))}
-          {taskTypes.length > 0 && (
-            <select
-              value={taskType}
-              onChange={(e) => setTaskType(e.target.value)}
-              style={{ marginLeft: 8 }}
-            >
-              <option value="">every task type</option>
-              {taskTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+        <DataTable<TaskRun>
+          list="runs"
+          title="Runs"
+          load={loadRuns}
+          reloadKey={tick}
+          onLoaded={(page) => setLive(page.items.some((r) => r.state === "queued" || r.state === "running"))}
+          rowKey={(run) => run.id}
+          rowLabel={(run) => `${run.task_type} ${run.id.slice(0, 8)}`}
+          filters={[
+            {
+              id: "state",
+              allLabel: "All states",
+              kind: "chips",
+              options: STATES.map((st) => ({ value: st, label: st })),
+            },
+            ...(taskTypes.length > 0
+              ? [
+                  {
+                    id: "type",
+                    allLabel: "Every task type",
+                    kind: "select" as const,
+                    options: taskTypes.map((t) => ({ value: t, label: t })),
+                  },
+                ]
+              : []),
+          ]}
+          extra={live ? <span className="sub">live · refreshing</span> : null}
+          empty={{ title: "Nothing has been queued yet." }}
+          columns={[
+            {
+              id: "task",
+              header: "Task",
+              cell: (run) => (
+                <>
+                  <div className="pname plain">{run.task_type}</div>
+                  <div className="sub">{run.id.slice(0, 8)}</div>
+                </>
+              ),
+            },
+            {
+              id: "state",
+              header: "State",
+              cell: (run) => (
+                <>
+                  <span className={`badge ${stateBadge(run.state)}`}>{run.state}</span>
+                  {run.cancel_requested && !finished(run) && (
+                    <div className="sub" style={{ marginTop: 4 }}>
+                      stop requested
+                    </div>
+                  )}
+                </>
+              ),
+            },
+            { id: "what", header: "What happened", cell: (run) => <span className="sub">{headline(run)}</span> },
+            { id: "tries", header: "Tries", num: true, cell: (run) => run.attempts },
+            { id: "took", header: "Took", cell: (run) => <span className="sub">{duration(run)}</span> },
+            { id: "started", header: "Started", cell: (run) => <When iso={run.started_at ?? run.created_at} /> },
+          ]}
+          expand={(run) => (
+            <div className="rows">
+              <Detail label="Run id" value={run.id} />
+              <Detail label="Requested by" value={run.requested_by} />
+              {run.partition_key && <Detail label="Ordered with" value={run.partition_key} />}
+              <Detail label="Created" value={when(run.created_at)} />
+              <Detail label="Finished" value={when(run.finished_at)} />
+              {run.progress && <Detail label="Last phase" value={run.progress} />}
+              {run.last_error && <Detail label="Error" value={run.last_error} />}
+              <Json label="Payload" value={run.payload} />
+              {run.result && <Json label="Result" value={run.result} />}
+            </div>
           )}
-          {live && <span className="sub" style={{ marginLeft: 8 }}>live · refreshing</span>}
-        </div>
-
-        {runs === null ? (
-          <p className="hint">Loading runs…</p>
-        ) : filtered.length === 0 ? (
-          <p className="empty">
-            {(runs ?? []).length === 0
-              ? "Nothing has been queued yet."
-              : "No runs match the filter."}
-          </p>
-        ) : (
-          <table className="ptable">
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>State</th>
-                <th>What happened</th>
-                <th>Tries</th>
-                <th>Took</th>
-                <th>Started</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((run) => {
-                const open = expanded === run.id;
-                const finished =
-                  run.state === "succeeded" || run.state === "failed" || run.state === "cancelled";
-                return (
-                  <Fragment key={run.id}>
-                    <tr className="prow">
-                      <td>
-                        <div className="pname plain">{run.task_type}</div>
-                        <div className="sub">{run.id.slice(0, 8)}</div>
-                      </td>
-                      <td>
-                        <span className={`badge ${stateBadge(run.state)}`}>{run.state}</span>
-                        {run.cancel_requested && !finished && (
-                          <div className="sub" style={{ marginTop: 4 }}>
-                            stop requested
-                          </div>
-                        )}
-                      </td>
-                      <td className="sub">{headline(run)}</td>
-                      <td className="sub">{run.attempts}</td>
-                      <td className="sub">{duration(run)}</td>
-                      <td className="sub">{when(run.started_at ?? run.created_at)}</td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button
-                          className="linklike"
-                          onClick={() => setExpanded(open ? null : run.id)}
-                        >
-                          {open ? "less" : "details"}
-                        </button>
-                        {!finished && (
-                          <button
-                            className="ghost"
-                            disabled={busyId === run.id || run.cancel_requested}
-                            onClick={() => act(run, "cancel")}
-                            title="Cooperative: a handler that never checks will not stop"
-                            style={{ marginLeft: 8 }}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                        {(run.state === "failed" || run.state === "cancelled") && (
-                          <button
-                            className="ghost"
-                            disabled={busyId === run.id}
-                            onClick={() => act(run, "retry")}
-                            style={{ marginLeft: 8 }}
-                          >
-                            Retry
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                    {open && (
-                      <tr>
-                        <td colSpan={7}>
-                          <div className="rows">
-                            <Detail label="Run id" value={run.id} />
-                            <Detail label="Requested by" value={run.requested_by} />
-                            {run.partition_key && (
-                              <Detail label="Ordered with" value={run.partition_key} />
-                            )}
-                            <Detail label="Created" value={when(run.created_at)} />
-                            <Detail label="Finished" value={when(run.finished_at)} />
-                            {run.progress && <Detail label="Last phase" value={run.progress} />}
-                            {run.last_error && <Detail label="Error" value={run.last_error} />}
-                            <Json label="Payload" value={run.payload} />
-                            {run.result && <Json label="Result" value={run.result} />}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+          actions={(run) => [
+            ...(run.state === "failed" || run.state === "cancelled"
+              ? [{ label: "Retry", onSelect: () => act(run, "retry") }]
+              : []),
+            ...(!finished(run)
+              ? [
+                  {
+                    label: "Cancel",
+                    disabled: run.cancel_requested,
+                    danger: {
+                      title: `Stop ${run.task_type} ${run.id.slice(0, 8)}?`,
+                      body:
+                        "A queued run will not start. A running one stops where its handler next checks — one that never checks runs to the end.",
+                      confirmLabel: "Stop the run",
+                    },
+                    onSelect: () => act(run, "cancel"),
+                  },
+                ]
+              : []),
+          ]}
+        />
       </div>
 
       <div className="card">
-        <h2>Schedules</h2>
-        {schedules === null ? (
-          <p className="hint">Loading schedules…</p>
-        ) : schedules.length === 0 ? (
-          <p className="empty">
-            Nothing is scheduled. Schedules are platform-level and fire under a database lock, so
-            one deployment fires each instant once however many replicas are running.
-          </p>
-        ) : (
-          <table className="ptable">
-            <thead>
-              <tr>
-                <th>Schedule</th>
-                <th>Runs</th>
-                <th>Cadence</th>
-                <th>Policies</th>
-                <th>Next</th>
-                <th>Last</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((schedule) => (
-                <tr key={schedule.id} className="prow">
-                  <td>
-                    <div className="pname plain">{schedule.name}</div>
-                    {!schedule.enabled && <span className="badge warn">disabled</span>}
-                  </td>
-                  <td className="sub">{schedule.task_type}</td>
-                  <td className="sub">
-                    {schedule.expression}
-                    <div className="sub">
-                      {schedule.expression_kind} · {schedule.timezone}
-                    </div>
-                  </td>
-                  <td className="sub">
-                    {schedule.concurrency} · {schedule.missed_policy}
-                    {schedule.missed_policy === "backfill" && ` (≤${schedule.max_catch_up_runs})`}
-                  </td>
-                  <td className="sub">{when(schedule.next_run_at)}</td>
-                  <td className="sub">{when(schedule.last_fired_at)}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button
-                      className="ghost"
-                      disabled={busyId === schedule.id}
-                      onClick={() => fire(schedule)}
-                    >
-                      Run now
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable<TaskSchedule>
+          list="schedules"
+          urlPrefix="sch."
+          title="Schedules"
+          rows={schedules}
+          error={scheduleError}
+          onRetry={loadSchedules}
+          rowKey={(sc) => sc.id}
+          rowLabel={(sc) => sc.name}
+          empty={{
+            title: "Nothing is scheduled.",
+            body:
+              "Schedules are platform-level and fire under a database lock, so one deployment fires each instant once however many replicas are running.",
+          }}
+          columns={[
+            {
+              id: "name",
+              header: "Schedule",
+              compare: (a, b) => a.name.localeCompare(b.name),
+              cell: (sc) => (
+                <>
+                  <div className="pname plain">{sc.name}</div>
+                  {!sc.enabled && <span className="badge warn">disabled</span>}
+                </>
+              ),
+            },
+            { id: "type", header: "Runs", cell: (sc) => <span className="sub">{sc.task_type}</span> },
+            {
+              id: "cadence",
+              header: "Cadence",
+              cell: (sc) => (
+                <span className="sub">
+                  {sc.expression}
+                  <div className="sub">
+                    {sc.expression_kind} · {sc.timezone}
+                  </div>
+                </span>
+              ),
+            },
+            {
+              id: "policies",
+              header: "Policies",
+              cell: (sc) => (
+                <span className="sub">
+                  {sc.concurrency} · {sc.missed_policy}
+                  {sc.missed_policy === "backfill" && ` (≤${sc.max_catch_up_runs})`}
+                </span>
+              ),
+            },
+            {
+              id: "next",
+              header: "Next",
+              compare: (a, b) => Date.parse(a.next_run_at) - Date.parse(b.next_run_at),
+              cell: (sc) => <When iso={sc.next_run_at} />,
+            },
+            { id: "last", header: "Last", cell: (sc) => <When iso={sc.last_fired_at} /> },
+          ]}
+          inline={(sc) => (
+            <button
+              className="ghost"
+              onClick={() =>
+                api.runScheduleNow(token, sc.id).then(
+                  () => setTick((t) => t + 1),
+                  (reason) => setError(errText(reason)),
+                )
+              }
+            >
+              Run now
+            </button>
+          )}
+        />
       </div>
 
       {taskTypes.length > 0 && (

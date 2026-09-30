@@ -280,6 +280,9 @@ interface CommonProps<T> {
   inline?: (row: T) => ReactNode;
   /** Details a ▸ toggle expands under the row. */
   expand?: (row: T) => ReactNode;
+  /** A panel the SCREEN opens under a row — an editor, a browser — from one
+   *  of the row's actions. Shown whenever it returns something. */
+  detail?: (row: T) => ReactNode;
   search?: { placeholder: string };
   filters?: Filter<T>[];
   /** Tiles as the other view; omitted, the list is a table only. */
@@ -307,6 +310,9 @@ interface LoadProps<T> extends CommonProps<T> {
   load: (req: PageRequest) => Promise<PageResult<T>>;
   /** Anything that should load the list again when it changes. */
   reloadKey?: unknown;
+  /** Told each page as it arrives — for a screen that refreshes while what
+   *  is on it is still moving. */
+  onLoaded?: (page: PageResult<T>) => void;
   rows?: never;
   searchText?: never;
 }
@@ -353,14 +359,20 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const [retryTick, setRetryTick] = useState(0);
   const load = props.load;
   const reloadKey = props.load ? (props as LoadProps<T>).reloadKey : undefined;
+  const onLoadedRef = useRef<((page: PageResult<T>) => void) | undefined>(undefined);
+  onLoadedRef.current = props.load ? (props as LoadProps<T>).onLoaded : undefined;
   const stateKey = JSON.stringify(state);
   useEffect(() => {
     if (!load) return;
     let live = true;
     setServerLoading(true);
-    setServerError(null);
     load({ q: state.q, filters: state.filters, sort: state.sort, offset: state.page * size, limit: size })
-      .then((page) => live && setServer(page))
+      .then((page) => {
+        if (!live) return;
+        setServerError(null);
+        setServer(page);
+        onLoadedRef.current?.(page);
+      })
       .catch((e) => live && setServerError(errText(e)))
       .finally(() => live && setServerLoading(false));
     return () => {
@@ -614,6 +626,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     <td colSpan={colCount}>{props.expand(row)}</td>
                   </tr>
                 ) : null,
+                (() => {
+                  const panel = props.detail?.(row);
+                  return panel ? (
+                    <tr key={`${key}:panel`} className="dt-detail">
+                      <td colSpan={colCount}>{panel}</td>
+                    </tr>
+                  ) : null;
+                })(),
               ];
             })}
           </tbody>

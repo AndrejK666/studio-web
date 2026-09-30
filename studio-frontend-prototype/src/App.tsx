@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
@@ -7829,16 +7829,15 @@ function ConnectionList({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, "ok" | "bad" | "testing">>({});
 
-  const counts = connections.reduce<Record<string, number>>((acc, c) => {
-    acc[c.provider] = (acc[c.provider] ?? 0) + 1;
-    return acc;
-  }, {});
-  const shown = typeFilter ? connections.filter((c) => c.provider === typeFilter) : connections;
   const nameOf = (p: string) => providers.find((x) => x.provider === p)?.display_name ?? p;
   const categoryOf = (p: string) => providers.find((x) => x.provider === p)?.category;
+  const categoryTitle = (p: string) => CATEGORIES.find((c) => c.key === categoryOf(p))?.title ?? "Other";
+  // A row stored on an ancestor is shared with sibling workspaces — worth
+  // saying, because removing it affects them too.
+  const inheritedOf = (c: Connection) => c.owner_tenant_id !== workspace.id;
+  const browsable = (c: Connection) => categoryOf(c.provider) === "source_code";
 
   const test = (c: Connection) => {
     setHealth((h) => ({ ...h, [c.id]: "testing" }));
@@ -7854,197 +7853,165 @@ function ConnectionList({
       });
   };
 
-  const remove = (c: Connection, inherited: boolean) => {
-    const warn = inherited
-      ? `"${c.label}" is shared with your other projects. Remove it for everyone?`
-      : `Remove connection "${c.label}" and its token?`;
-    if (!window.confirm(warn)) return;
-    void api
-      .deleteConnection(token, c.id, workspace.id)
-      .then(onChanged)
-      .catch((e) => onNote(errText(e)));
-  };
+  const providersPresent = [...new Set(connections.map((c) => c.provider))];
+  const categoriesPresent = CATEGORIES.filter(({ key }) => connections.some((c) => categoryOf(c.provider) === key));
 
-  if (loading) {
-    return (
-      <div className="card">
-        <h2>Connections</h2>
-        <p className="empty">Loading…</p>
-      </div>
-    );
-  }
-  if (connections.length === 0) {
-    return (
-      <div className="card">
-        <h2>Connections</h2>
-        <p className="empty">Nothing connected for this project yet.</p>
-      </div>
-    );
-  }
-
+  /* A table, not a grid of cards: two accounts of one provider differ only in
+     account, scope and health, and in columns the eye goes down one. The
+     editor and the repository browser open as a panel under their row. */
   return (
     <div className="card">
-      <h2>Connections</h2>
-
-      {/* Type chips: several connections of the same provider are normal —
-          two GitLab installations, a personal and an organization token. */}
-      <div className="chips">
-        {Object.entries(counts).map(([p, n]) => (
-          <button
-            key={p}
-            type="button"
-            className={`chip${typeFilter === p ? " on" : ""}`}
-            onClick={() => setTypeFilter(typeFilter === p ? null : p)}
-          >
-            {nameOf(p)} <span className="chip-n">{n}</span>
-          </button>
-        ))}
-        {typeFilter && (
-          <button type="button" className="chip" onClick={() => setTypeFilter(null)}>
-            Clear
+      <DataTable<Connection>
+        list="connections"
+        urlPrefix="conn."
+        title="Connections"
+        rows={loading ? null : connections}
+        rowKey={(c) => c.id}
+        rowLabel={(c) => c.label}
+        search={{ placeholder: "Search connections" }}
+        searchText={(c) => [c.label, c.account, c.base_url, nameOf(c.provider)]}
+        filters={[
+          {
+            id: "kind",
+            allLabel: "Every kind",
+            kind: "chips",
+            options: categoriesPresent.map(({ key, title }) => ({ value: key, label: title })),
+            match: (c, v) => categoryOf(c.provider) === v,
+          },
+          {
+            // Several of one provider are normal: two GitLab installations, a
+            // personal and an organization token.
+            id: "provider",
+            allLabel: "Every connector",
+            kind: "select",
+            options: providersPresent.map((p) => ({ value: p, label: nameOf(p) })),
+            match: (c, v) => c.provider === v,
+          },
+        ]}
+        empty={{ title: "Nothing connected for this project yet.", body: "Add a connector below." }}
+        columns={[
+          {
+            id: "connector",
+            header: "Connector",
+            className: "acell-lead",
+            compare: (a, b) => nameOf(a.provider).localeCompare(nameOf(b.provider)),
+            cell: (c) => (
+              <>
+                <span className="conn-logo-slot" aria-hidden>
+                  <ConnectorLogo provider={c.provider} label={nameOf(c.provider)} />
+                </span>
+                {nameOf(c.provider)}
+              </>
+            ),
+          },
+          { id: "kind", header: "Kind", cell: (c) => <span className="sub">{categoryTitle(c.provider)}</span> },
+          { id: "account", header: "Account", cell: (c) => c.account || <span className="ing-dash">—</span> },
+          { id: "label", header: "Label", compare: (a, b) => a.label.localeCompare(b.label), cell: (c) => c.label },
+          {
+            id: "url",
+            header: "URL",
+            className: "conn-url",
+            cell: (c) => <span title={c.base_url}>{c.base_url}</span>,
+          },
+          {
+            id: "health",
+            header: "Health",
+            cell: (c) => {
+              const h = health[c.id];
+              return (
+                <span
+                  className={`badge ${h === "ok" ? "ok" : h === "bad" ? "danger" : ""}`}
+                  title={h ? undefined : "Health is not cached — Test checks it now"}
+                >
+                  {h === "ok" ? "healthy" : h === "bad" ? "failing" : h === "testing" ? "testing…" : "not checked"}
+                </span>
+              );
+            },
+          },
+          {
+            id: "scope",
+            header: "Scope",
+            cell: (c) => (
+              <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
+                {inheritedOf(c) ? `${c.scope} · shared` : c.scope}
+              </span>
+            ),
+          },
+        ]}
+        inline={(c) => (
+          <button type="button" className="ghost" disabled={health[c.id] === "testing"} onClick={() => test(c)}>
+            Test
           </button>
         )}
-      </div>
-
-      {CATEGORIES.map(({ key, title }) => {
-        const group = shown.filter((c) => categoryOf(c.provider) === key);
-        if (group.length === 0) return null;
-        return (
-          <div key={key}>
-            <h3 className="group">{title}</h3>
-            {/* A table, not a grid of cards. Two GitHub accounts side by side
-                were two boxes whose only differences — the account, the scope,
-                whether anyone had tested it — sat at a different height in
-                each box, so comparing them meant reading both. In columns the
-                eye goes down one. The expandable editor and repository browser
-                keep working: each becomes a full-width row under its own. */}
-            <table className="ptable conn-table">
-              <thead>
-                <tr>
-                  <th>Connector</th>
-                  <th>Account</th>
-                  <th>Label</th>
-                  <th>URL</th>
-                  <th>Health</th>
-                  <th>Scope</th>
-                  <th aria-label="actions" />
-                </tr>
-              </thead>
-              <tbody>
-              {group.map((c) => {
-                const browsable = categoryOf(c.provider) === "source_code";
-                // A row stored on an ancestor is shared with sibling workspaces —
-                // worth saying, because removing it affects them too.
-                const inherited = c.owner_tenant_id !== workspace.id;
-                const h = health[c.id];
-                return (
-                  <Fragment key={c.id}>
-                  <tr>
-                    <td className="acell-lead">
-                      <span className="conn-logo-slot" aria-hidden>
-                        <ConnectorLogo provider={c.provider} label={nameOf(c.provider)} />
-                      </span>
-                      {nameOf(c.provider)}
-                    </td>
-                    <td>{c.account || <span className="ing-dash">—</span>}</td>
-                    <td>{c.label}</td>
-                    <td className="conn-url" title={c.base_url}>
-                      {c.base_url}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${h === "ok" ? "ok" : h === "bad" ? "danger" : ""}`}
-                        title={
-                          h
-                            ? undefined
-                            : "Health is not cached — press Test connection to check it now"
-                        }
-                      >
-                        {h === "ok"
-                          ? "healthy"
-                          : h === "bad"
-                            ? "failing"
-                            : h === "testing"
-                              ? "testing…"
-                              : "not checked"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${c.scope === "personal" ? "" : "workspace"}`}>
-                        {inherited ? `${c.scope} · shared` : c.scope}
-                      </span>
-                    </td>
-                    <td className="pactions">
-                      <button type="button" onClick={() => test(c)}>
-                        Test
-                      </button>
-                      <button
-                        type="button"
-                        disabled={inherited}
-                        title={
-                          inherited
-                            ? "Inherited connections are edited where they are defined \u2014 in the organization"
-                            : "Change the label or URL, or rotate the token"
-                        }
-                        onClick={() => setEditing(editing === c.id ? null : c.id)}
-                      >
-                        {editing === c.id ? "Cancel" : "Edit"}
-                      </button>
-                      {browsable && (
-                        <button type="button" onClick={() => setOpen(open === c.id ? null : c.id)}>
-                          {open === c.id ? "Hide repos" : "Repos"}
-                        </button>
-                      )}
-                      <button className="ghost" type="button" onClick={() => remove(c, inherited)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                  {(editing === c.id || (open === c.id && browsable)) && (
-                  <tr className="conn-expand">
-                    <td colSpan={7}>
-                    {editing === c.id && (
-                      <EditConnection
-                        token={token}
-                        connection={c}
-                        workspaceId={workspace.id}
-                        onNote={onNote}
-                        onDone={(changed) => {
-                          setEditing(null);
-                          if (changed) {
-                            // A rotated credential invalidates the cached
-                            // health badge: it was computed for the old token.
-                            setHealth((h) => {
-                              const next = { ...h };
-                              delete next[c.id];
-                              return next;
-                            });
-                            onChanged();
-                          }
-                        }}
-                      />
-                    )}
-                    {open === c.id && browsable && (
-                      <RepoBrowser
-                        token={token}
-                        connection={c}
-                        workspace={workspace}
-                        sourcesTick={sourcesTick}
-                        onSourcesChanged={onSourcesChanged}
-                        onNote={onNote}
-                      />
-                    )}
-                    </td>
-                  </tr>
-                  )}
-                  </Fragment>
-                );
-              })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+        actions={(c) => [
+          {
+            label: editing === c.id ? "Close editor" : "Edit",
+            // Inherited connections are edited where they are defined.
+            disabled: inheritedOf(c),
+            onSelect: () => {
+              setOpen(null);
+              setEditing(editing === c.id ? null : c.id);
+            },
+          },
+          ...(browsable(c)
+            ? [
+                {
+                  label: open === c.id ? "Hide repositories" : "Browse repositories",
+                  onSelect: () => {
+                    setEditing(null);
+                    setOpen(open === c.id ? null : c.id);
+                  },
+                },
+              ]
+            : []),
+          {
+            label: "Remove",
+            danger: {
+              title: inheritedOf(c) ? `Remove “${c.label}” for everyone?` : `Remove “${c.label}”?`,
+              body: inheritedOf(c)
+                ? "It is shared with your other projects, and removing it here removes it there too — with its token."
+                : "The connection and its stored token go. Sources attached through it stop syncing.",
+              confirmLabel: "Remove",
+            },
+            onSelect: async () => {
+              await api.deleteConnection(token, c.id, workspace.id);
+              onChanged();
+            },
+          },
+        ]}
+        detail={(c) =>
+          editing === c.id ? (
+            <EditConnection
+              token={token}
+              connection={c}
+              workspaceId={workspace.id}
+              onNote={onNote}
+              onDone={(changed) => {
+                setEditing(null);
+                if (changed) {
+                  // A rotated credential invalidates the cached health badge:
+                  // it was computed for the old token.
+                  setHealth((h) => {
+                    const next = { ...h };
+                    delete next[c.id];
+                    return next;
+                  });
+                  onChanged();
+                }
+              }}
+            />
+          ) : open === c.id && browsable(c) ? (
+            <RepoBrowser
+              token={token}
+              connection={c}
+              workspace={workspace}
+              sourcesTick={sourcesTick}
+              onSourcesChanged={onSourcesChanged}
+              onNote={onNote}
+            />
+          ) : null
+        }
+      />
     </div>
   );
 }

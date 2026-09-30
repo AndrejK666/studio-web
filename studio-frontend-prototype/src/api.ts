@@ -3611,14 +3611,15 @@ export const api = {
   /** Newest first. `state` and `taskType` narrow it server-side. */
   taskRuns: (
     token: string,
-    opts?: { state?: string; taskType?: string; limit?: number },
+    opts?: { state?: string; taskType?: string; limit?: number; offset?: number },
   ) => {
     const q = new URLSearchParams();
     if (opts?.state) q.set("state", opts.state);
     if (opts?.taskType) q.set("task_type", opts.taskType);
     if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
     const suffix = q.toString();
-    return request<{ items: TaskRun[] }>(
+    return request<{ items: TaskRun[]; total?: number }>(
       `/studio-tasks/v1/runs${suffix ? `?${suffix}` : ""}`,
       token,
     );
