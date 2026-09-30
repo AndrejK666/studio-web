@@ -33,6 +33,7 @@ import { createShellNavigation } from './navigation';
 import { levelOf } from '@/app/mfe/screenLevels';
 import { groupScreens } from './screenTokens';
 import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
+import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { createMaterializer } from './materialize';
 
 const screens = [
@@ -67,7 +68,7 @@ function fakeApp(initial: Partial<AppContextState>, extensions: readonly ScreenE
   return { app, state: () => state };
 }
 
-function setup(url: string, initial: Partial<AppContextState>, extensions: readonly ScreenExtension[] = screens) {
+function setup(url: string, initial: Partial<AppContextState>, extensions: readonly ScreenExtension[] = screens, session?: EditorSession) {
   const { history, adapter } = freshNavigationHistory(url);
   const navigation = createShellNavigation(history);
   const { app, state } = fakeApp(initial, extensions);
@@ -79,7 +80,7 @@ function setup(url: string, initial: Partial<AppContextState>, extensions: reado
     resolveProject: vi.fn(),
   };
   const warn = vi.fn();
-  const { materialize, transition, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn });
+  const { materialize, transition, retry } = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn, session });
   // `transition` stands in for the observer's report: in production every
   // `navigate` below would be followed by it.
   return { materialize, transition, retry, adapter, state, catalogs, warn, navigation, app };
@@ -149,6 +150,18 @@ describe('materialize', () => {
       expect(state().artifact).toEqual(ARTIFACT);
       expect(state().section).toBeNull();
       expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('tells the editor session of the editor with its project, and of leaving it', () => {
+      const session = { sync: vi.fn(), retry: vi.fn() };
+      const { materialize, transition, navigation } = setup(IN_EDITOR, { ...ready, projects: [ATLAS] }, screens, session);
+
+      materialize();
+      expect(session.sync).toHaveBeenLastCalledWith({ projectId: 'p1', orgId: 'o1', editor: true });
+
+      navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1', project: 'p1', section: 'artifacts' }, 'push');
+      transition();
+      expect(session.sync).toHaveBeenLastCalledWith({ projectId: 'p1', orgId: 'o1', editor: false });
     });
 
     it('clears the artifact when the address goes back to the artifact list', () => {

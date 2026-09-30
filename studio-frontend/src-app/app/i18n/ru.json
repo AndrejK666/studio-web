@@ -1,0 +1,13 @@
+{
+  "editor_session_launching": "Запускаем редактор…",
+  "editor_session_failed": "Редактор не запустился",
+  "editor_session_retry": "Попробовать снова",
+  "editor_session_reason_sources": "Не удалось прочитать репозитории проекта или подключения организации.",
+  "editor_session_reason_refused": "Запуск отклонён.",
+  "editor_session_reason_unavailable": "Этот проект недоступен.",
+  "editor_session_reason_run": "Не удалось запустить сессию.",
+  "editor_session_reason_stopped": "Сессия остановилась, не успев запуститься.",
+  "editor_session_reason_timeout": "Сессия не запустилась вовремя.",
+  "editor_session_reason_read": "Не удалось прочитать состояние сессии.",
+  "editor_session_reason_unexpected": "В редакторе произошла непредвиденная ошибка."
+}

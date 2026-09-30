@@ -1,4 +1,4 @@
-import { ProjectSource } from '../api/types';
+import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import { ArtifactIngestApiService, type NodesParams } from '../api/ArtifactIngestApiService';

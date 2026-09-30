@@ -1,5 +1,4 @@
-import { PROJECT_CONFIG_TYPE, type ProjectConfig } from '../api/types';
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, PROJECT_CONFIG_TYPE, type ProjectConfig } from '@constructor-studio/mfe-shared';
 import { apiRegistry, useApiQuery } from '@gears-frontx/react';
 
 /**

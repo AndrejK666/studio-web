@@ -1,5 +1,4 @@
-import { PROJECT_CONFIG_TYPE, type ProjectConfig } from '../api/types';
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, PROJECT_CONFIG_TYPE, type ProjectConfig } from '@constructor-studio/mfe-shared';
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-write:p1
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-project-parent:p1

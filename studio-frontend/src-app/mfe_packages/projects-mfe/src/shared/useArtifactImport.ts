@@ -1,4 +1,4 @@
-import { ProjectSource } from '../api/types';
+import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import { useCallback, useMemo } from 'react';
 import { eventBus, useAppSelector } from '@gears-frontx/react';
 import { useSourceConnections } from './useConnections';

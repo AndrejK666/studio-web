@@ -1,5 +1,4 @@
-import { ProjectSource } from '../../api/types';
-import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, type ProjectSource } from '@constructor-studio/mfe-shared';
 import React, { useEffect } from 'react';
 import {
   apiRegistry,

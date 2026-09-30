@@ -586,8 +586,8 @@ editor address with nothing the editor can open (a kind it does not know, no
 artifact, no project, or a project the lookup refuses) lands on the level's
 entry point instead, with a warning, the way a failed mount falls back. The
 editor screen is `space-mfe`, a frame
-package; while there is no session its frame shows the package's own static
-page (#321), and the artifact reaches the frame in #323.
+package; its frame shows the project's session once it is ready (#322), and
+the artifact reaches the frame in #323.
 
 **Implements**:
 - `cpt-studiofrontend-algo-shell-levels-click`

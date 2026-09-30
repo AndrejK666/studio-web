@@ -4,13 +4,11 @@
  * asks the registry for `screen.connections.list:title`.
  */
 
-import { useCallback } from 'react';
 import {
   useScreenTranslations,
-  useTranslation,
   type UseScreenTranslationsReturn,
 } from '@gears-frontx/react';
-import { loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
+import { createText, loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
 
 const SCREENSET = 'connections';
 const LIST_SCREEN = 'list';
@@ -41,18 +39,6 @@ export function useConnectionListScreenTranslations(): UseScreenTranslationsRetu
  */
 export function useConnectSourceScreenTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, CONNECT_SCREEN, loadConnectTranslations);
-}
-
-export type ScreenText = (
-  key: string,
-  params?: Record<string, string | number | boolean>
-) => string;
-
-function createText(namespace: string): () => ScreenText {
-  return function useScreenText(): ScreenText {
-    const { t } = useTranslation();
-    return useCallback<ScreenText>((key, params) => t(`${namespace}:${key}`, params), [t]);
-  };
 }
 
 export const useConnectionListText = createText(CONNECTION_LIST_NAMESPACE);

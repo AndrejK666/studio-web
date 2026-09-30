@@ -17,6 +17,7 @@ const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
 const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
+const LAUNCH_LABEL: &str = "cf.studio.launch_id";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionState {
@@ -105,6 +106,9 @@ pub struct Session {
     pub address: SessionAddress,
     pub state: SessionState,
     pub created_at_epoch_secs: u64,
+    /// One per launch, carried by the runtime as `cf.studio.launch_id`; `None`
+    /// for a session launched by a backend that did not write it.
+    pub launch_id: Option<Uuid>,
     /// Human-readable source summaries, e.g. "docs (git)".
     pub sources: Vec<String>,
     /// Per-session access token: the in-container gate only serves requests
@@ -117,6 +121,18 @@ pub struct Session {
     /// adopted sessions. Never handed to the browser — distinct from
     /// `session_token`.
     pub control_token: String,
+}
+
+impl Session {
+    /// The readiness probe's idempotency key: one per launch of this session.
+    /// Not the gate token — the key is stored in the clear.
+    pub fn readiness_key(&self) -> String {
+        match self.launch_id {
+            Some(launch) => format!("{}:{launch}", self.id),
+            // Launched before the label existed: its creation time is the best there is.
+            None => format!("{}:{}", self.id, self.created_at_epoch_secs),
+        }
+    }
 }
 
 /// What the runtime last said its sessions were, and when it said it.
@@ -242,6 +258,7 @@ impl SessionService {
                     } else {
                         a.created_at_epoch_secs
                     },
+                    launch_id: a.launch_id,
                     sources: a.sources,
                     session_token: a.session_token,
                     control_token: a.control_token,
@@ -597,7 +614,10 @@ impl SessionService {
                 // out of band (docker rm -f, host cleanup) is still in it —
                 // reusing then hands the portal a dead address.
                 if self.driver.is_running(&existing.handle).await {
-                    return Ok((existing, true));
+                    // Listed `starting` after a restart or on another replica:
+                    // one probe tells a live IDE from one still coming up.
+                    let id = existing.id;
+                    return Ok((self.probe(id).await.unwrap_or(existing), true));
                 }
                 tracing::warn!(
                     session_id = %existing.id,
@@ -820,11 +840,14 @@ impl SessionService {
             ));
         }
 
+        // Per launch, and on the runtime so every replica and every listing agree.
+        let launch_id = Uuid::new_v4();
         let labels: HashMap<String, String> = HashMap::from([
             (SESSION_LABEL.into(), "1".into()),
             (WS_LABEL.into(), workspace_id.to_string()),
             (TENANT_LABEL.into(), tenant_id.to_string()),
             (PORT_LABEL.into(), port.to_string()),
+            (LAUNCH_LABEL.into(), launch_id.to_string()),
         ]);
 
         let local_binds: Vec<LocalBind> = repos
@@ -874,7 +897,8 @@ impl SessionService {
                         "studio-session: launch lost a race for this workspace — \
                          reusing the session that won ({e:#})"
                     );
-                    return Ok((existing, true));
+                    let id = existing.id;
+                    return Ok((self.probe(id).await.unwrap_or(existing), true));
                 }
                 return Err(e);
             }
@@ -888,6 +912,7 @@ impl SessionService {
             address: launched.address,
             state: SessionState::Starting,
             created_at_epoch_secs: now_secs(),
+            launch_id: Some(launch_id),
             session_token,
             control_token,
             sources: root_repo
@@ -1492,6 +1517,9 @@ mod tests {
         caller(TENANT)
     }
 
+    /// The launch every listed test session is: fixed, so two listings agree.
+    const LISTED_LAUNCH: Uuid = Uuid::from_u128(0x1A);
+
     fn running_session(workspace: Uuid, port: u16) -> AdoptedSession {
         AdoptedSession {
             workspace_id: workspace,
@@ -1500,6 +1528,7 @@ mod tests {
             address: SessionAddress::Loopback { port },
             running: true,
             created_at_epoch_secs: 1_700_000_000,
+            launch_id: Some(LISTED_LAUNCH),
             session_token: "gate".into(),
             control_token: "s2s".into(),
             sources: vec!["docs (git)".into()],
@@ -1577,11 +1606,14 @@ mod tests {
         );
     }
 
+    /// One launched container: its workspace, its environment, its launch id.
+    type Launched = (Uuid, Vec<String>, Option<Uuid>);
+
     /// A runtime that launches: it keeps the environment each container was
     /// started with, and lists the container afterwards the way Docker does.
     #[derive(Default)]
     struct LaunchingRuntime {
-        launched: Mutex<Vec<(Uuid, Vec<String>)>>,
+        launched: Mutex<Vec<Launched>>,
     }
 
     #[async_trait]
@@ -1594,10 +1626,14 @@ mod tests {
         }
         async fn launch(&self, spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
             let workspace = spec.labels[super::WS_LABEL].parse()?;
+            let launch = spec
+                .labels
+                .get(super::LAUNCH_LABEL)
+                .and_then(|v| v.parse().ok());
             self.launched
                 .lock()
                 .unwrap()
-                .push((workspace, spec.env.clone()));
+                .push((workspace, spec.env.clone(), launch));
             Ok(LaunchedSession {
                 handle: spec.name.clone(),
                 address: SessionAddress::Loopback { port: spec.port },
@@ -1608,12 +1644,16 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|(ws, _)| handle == format!("cf-studio-session-{ws}"))
+                .any(|(ws, _, _)| handle == format!("cf-studio-session-{ws}"))
         }
         async fn is_reachable(&self, _address: &SessionAddress) -> bool {
             true
         }
-        async fn destroy(&self, _handle: &str) -> anyhow::Result<()> {
+        async fn destroy(&self, handle: &str) -> anyhow::Result<()> {
+            self.launched
+                .lock()
+                .unwrap()
+                .retain(|(ws, _, _)| handle != format!("cf-studio-session-{ws}"));
             Ok(())
         }
         async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
@@ -1622,8 +1662,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|(ws, _)| AdoptedSession {
+                .map(|(ws, _, launch)| AdoptedSession {
                     handle: format!("cf-studio-session-{ws}"),
+                    launch_id: *launch,
                     ..running_session(*ws, 41000)
                 })
                 .collect())
@@ -2014,5 +2055,184 @@ mod tests {
         assert_eq!(identity.workspace_id, ws);
         assert_eq!(identity.tenant_id, TENANT);
         assert!(elsewhere.resolve_control_token("forged").await.is_none());
+    }
+
+    /// EACH LAUNCH ITS OWN PROBE (#322). Keyed by the session id alone, a
+    /// relaunch was handed the first launch's run, ended long ago. And the key
+    /// has to survive the next listing, which replaces everything but the labels.
+    #[tokio::test]
+    async fn a_relaunch_gets_its_own_readiness_key() {
+        let root = std::env::temp_dir().join(format!("studio-session-relaunch-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let ws = Uuid::from_u128(0xD4);
+
+        let (first, existed) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the first launch");
+        assert!(!existed);
+        let listed = service.list(&ctx()).await;
+        assert_eq!(
+            listed[0].readiness_key(),
+            first.readiness_key(),
+            "the listing reads the launch back from the runtime"
+        );
+
+        assert!(service.stop(&ctx(), first.id).await.unwrap());
+        let (second, existed) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the relaunch");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(!existed, "a stopped session is launched again, not reused");
+        assert_eq!(first.id, second.id, "one session per workspace, by name");
+        assert_ne!(first.readiness_key(), second.readiness_key());
+    }
+
+    /// Repeated launches while one is starting follow the same probe.
+    #[tokio::test]
+    async fn two_launches_of_one_starting_session_share_a_readiness_key() {
+        let ws = Uuid::from_u128(0xD5);
+        let runtime = FakeRuntime::with(vec![running_session(ws, 41000)]);
+        *runtime.reachable.lock().unwrap() = false;
+        let service = service(runtime).await;
+
+        let (one, reused_one) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the first launch");
+        let (two, reused_two) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the second launch");
+
+        assert!(reused_one && reused_two);
+        assert_eq!(one.state, SessionState::Starting);
+        assert_eq!(one.readiness_key(), two.readiness_key());
+    }
+
+    /// The launch id is the runtime's, so every listing — this replica's next
+    /// one, another replica's, one after a restart — keys the same probe. A
+    /// session from a backend without the label falls back to its creation time.
+    #[tokio::test]
+    async fn a_listed_session_keeps_its_launch_id_across_refreshes() {
+        let ws = Uuid::from_u128(0xD7);
+        let legacy_ws = Uuid::from_u128(0xD8);
+        let mut legacy = running_session(legacy_ws, 41001);
+        legacy.launch_id = None;
+        let service = service(FakeRuntime::with(vec![running_session(ws, 41000), legacy])).await;
+        let id = session_id_for(ws);
+        let key_of = |sessions: &[super::Session], id: Uuid| {
+            sessions
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.readiness_key())
+        };
+
+        let first = service.list(&ctx()).await;
+        let second = service.list(&ctx()).await;
+
+        assert_eq!(key_of(&first, id), Some(format!("{id}:{LISTED_LAUNCH}")));
+        assert_eq!(key_of(&second, id), key_of(&first, id));
+        let legacy_id = session_id_for(legacy_ws);
+        assert_eq!(
+            key_of(&second, legacy_id),
+            Some(format!("{legacy_id}:1700000000"))
+        );
+    }
+
+    /// A LIVE IDE IS NOT MADE TO WAIT (#322). Listed `starting` after a restart
+    /// or on another replica; one probe on reuse answers `running`, so the
+    /// handler queues no run.
+    #[tokio::test]
+    async fn a_reused_starting_session_that_answers_is_running() {
+        let ws = Uuid::from_u128(0xD6);
+        let service = service(FakeRuntime::with(vec![running_session(ws, 41000)])).await;
+
+        let (session, reused) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the launch reuses the listed session");
+
+        assert!(reused);
+        assert_eq!(session.state, SessionState::Running);
+    }
+
+    /// Lists nothing until its one launch is refused, then lists the session
+    /// that won the name: a launch that lost a race.
+    struct LostRace {
+        winner: AdoptedSession,
+        lost: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl SessionDriver for LostRace {
+        async fn image_present(&self) -> bool {
+            true
+        }
+        async fn refresh_image(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn launch(&self, _spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
+            *self.lost.lock().unwrap() = true;
+            Err(anyhow!("409: the name is taken"))
+        }
+        async fn is_running(&self, _handle: &str) -> bool {
+            true
+        }
+        async fn is_reachable(&self, _address: &SessionAddress) -> bool {
+            true
+        }
+        async fn destroy(&self, _handle: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
+            Ok(if *self.lost.lock().unwrap() {
+                vec![self.winner.clone()]
+            } else {
+                vec![]
+            })
+        }
+    }
+
+    /// The other reuse path gets the same one probe.
+    #[tokio::test]
+    async fn a_launch_that_lost_a_race_answers_running_when_the_winner_does() {
+        let ws = Uuid::from_u128(0xD9);
+        let root = std::env::temp_dir().join(format!("studio-session-race-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LostRace {
+            winner: running_session(ws, 41000),
+            lost: Mutex::new(false),
+        });
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ..config()
+            },
+            runtime,
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+
+        let (session, reused) = service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the loser is handed the winner");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(reused);
+        assert_eq!(session.state, SessionState::Running);
     }
 }

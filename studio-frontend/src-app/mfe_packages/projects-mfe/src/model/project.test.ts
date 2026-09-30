@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { orderedStages, projectSubtitle } from './project';
-import type { ProjectConfig } from '../api/types';
+import type { ProjectConfig } from '@constructor-studio/mfe-shared';
 
 /**
  * A stand-in for what `GET /workspaces/{id}/stages` returns: already the

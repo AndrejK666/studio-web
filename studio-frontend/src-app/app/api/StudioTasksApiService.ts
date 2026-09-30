@@ -1,0 +1,59 @@
+/**
+ * Studio Tasks Domain - API Service
+ *
+ * One background run of `studio-tasks`, read by id and put back on the queue.
+ * Its transitions arrive on studio-events; these reads are for when the stream
+ * cannot say.
+ */
+
+import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import type { StudioRunEvent } from './StudioEventsApiService';
+
+export const STUDIO_TASKS_API_BASE_URL = '/cf/studio-tasks/v1';
+
+export type StudioRunState = StudioRunEvent['state'];
+
+/** `RunDto`. */
+export interface StudioRun {
+  id: string;
+  tenant_id: string;
+  task_type: string;
+  state: StudioRunState;
+  payload: unknown;
+  partition_key: string | null;
+  attempts: number;
+  progress: string | null;
+  summary: string | null;
+  result: Record<string, unknown> | null;
+  last_error: string | null;
+  cancel_requested: boolean;
+  requested_by: string;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+function runPath({ runId }: { runId: string }): string {
+  return `/runs/${encodeURIComponent(runId)}`;
+}
+
+export class StudioTasksApiService extends BaseApiService {
+  constructor() {
+    const restProtocol = new RestProtocol({ timeout: 30000 });
+    const restEndpoints = new RestEndpointProtocol(restProtocol);
+
+    super({ baseURL: STUDIO_TASKS_API_BASE_URL }, restProtocol, restEndpoints);
+  }
+
+  /** Read with `staleTime: 0`: the shared cache would answer one state per 30 s. */
+  readonly run = this.protocol(RestEndpointProtocol).queryWith<StudioRun, { runId: string }>(runPath);
+
+  /** Back on the queue. Refused for a run that succeeded or has not ended. */
+  retry(runId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<StudioRun, void>(
+      'POST',
+      `${runPath({ runId })}/retry`
+    );
+  }
+}

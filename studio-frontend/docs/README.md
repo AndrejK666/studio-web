@@ -36,6 +36,8 @@ exposes, a working example per use case, and **Traps**.
 | Resource | Service | Page |
 | --- | --- | --- |
 | studio-events | `StudioEventsApiService` | [studio-events.md](studio-events.md) |
+| studio-session | `StudioSessionApiService` | — |
+| studio-tasks | `StudioTasksApiService` | — |
 | studio-organizations | `OrganizationsApiService` | — |
 | studio-user | `AccountsApiService` | — |
 | studio-identity | `IdentityApiService` | — |

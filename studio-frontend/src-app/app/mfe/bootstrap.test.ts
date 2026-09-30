@@ -199,74 +199,26 @@ describe('bootstrapMFE (host-app)', () => {
     expect(mfeStylesheetHrefs([frameConfig as never])).toEqual([]);
   });
 
-  it("resolves a frame package's publicPath as the first frame url", async () => {
-    const federatedConfig = {
-      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
-      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
-    };
+  it('publishes no frame address at start-up, even with a frame package in the catalogue', async () => {
     const frameConfig = {
       entries: [
         {
-          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~acme.demo.mfe.frame.v1',
+          id: 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1',
           requiredProperties: [],
           actions: [],
           domainActions: [],
-          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~acme.demo.mfe.frame_url.v1~',
-          publicPath: 'http://localhost:3080/',
+          urlProperty: STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+          publicPath: 'http://localhost:3090/',
         },
       ],
     };
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify([frameConfig]), { status: 200 }));
 
-    const { firstFrameUrl } = await import('./bootstrap');
+    const { bootstrapMFE } = await import('./bootstrap');
+    await bootstrapMFE(mockApp as never);
 
-    expect(firstFrameUrl([federatedConfig as never, frameConfig as never])).toBe(
-      'http://localhost:3080/',
-    );
-  });
-
-  it("seeds space-mfe's address even when another frame package comes first", async () => {
-    const frame = (id: string, publicPath: string) => ({
-      entries: [
-        {
-          id,
-          requiredProperties: [],
-          actions: [],
-          domainActions: [],
-          urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~',
-          publicPath,
-        },
-      ],
-    });
-    const fixture = frame(
-      'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.fixture.mfe.main.v1',
-      'http://localhost:3080/'
-    );
-    const space = frame(
-      'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1',
-      'http://localhost:3090/'
-    );
-
-    const { seedFrameUrl } = await import('./bootstrap');
-
-    expect(seedFrameUrl([fixture as never, space as never])).toBe('http://localhost:3090/');
-    expect(seedFrameUrl([fixture as never])).toBe('http://localhost:3080/');
-  });
-
-  it('answers null when the catalogue has only federated packages', async () => {
-    const federatedConfig = {
-      manifest: { id: 'demo-manifest', metaData: { publicPath: '/mfes/demo-mfe/' } },
-      entries: [{ id: 'demo-entry', manifest: { id: 'demo-manifest' } }],
-    };
-
-    const { firstFrameUrl } = await import('./bootstrap');
-
-    expect(firstFrameUrl([federatedConfig as never])).toBeNull();
-  });
-
-  it('answers null for an empty catalogue', async () => {
-    const { firstFrameUrl } = await import('./bootstrap');
-
-    expect(firstFrameUrl([])).toBeNull();
+    const frameWrites = updateSharedProperty.mock.calls.filter(([id]) => id === STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL);
+    expect(frameWrites).toEqual([[STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL, null]]);
   });
 
   it('declares the frame address on the screen domain', () => {

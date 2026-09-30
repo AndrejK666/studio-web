@@ -3,7 +3,8 @@ import { Search } from "lucide-react";
 import { Button, Input, Skeleton } from "@gears-frontx/ui-kit";
 import { useMfeBridge } from "@gears-frontx/react";
 import { openWorkspaceForm } from "../../../actions/overlayActions";
-import { useWorkspacesText, type ScreenText } from "../../../i18n";
+import type { ScreenText } from "@constructor-studio/mfe-shared";
+import { useWorkspacesText } from "../../../i18n";
 import styles from "../WorkspacesScreen.module.css";
 
 interface WorkspacesToolbarProps {

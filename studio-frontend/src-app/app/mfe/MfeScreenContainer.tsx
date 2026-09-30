@@ -11,6 +11,7 @@ import {
   screenDomain,
 } from '@gears-frontx/react';
 import { bootstrapMFE } from './bootstrap';
+import { EditorSessionStatus } from './EditorSessionStatus';
 import type { MfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 export function MfeScreenContainer() {
@@ -44,18 +45,21 @@ export function MfeScreenContainer() {
   }, [app.mfeRegistry]);
 
   return (
-    <div className="flex-1 overflow-auto" data-mfe-screen-container>
+    <div className="relative flex-1 overflow-auto" data-mfe-screen-container>
       {status === 'failed' ? (
         <div className="p-6 text-label text-muted-foreground" role="alert" data-mfe-bootstrap-failed>
           Screens could not be loaded. Check the console for the manifest error.
         </div>
       ) : status === 'ready' && app.mfeRegistry ? (
-        <ExtensionDomainSlot
-          registry={app.mfeRegistry}
-          domainId={screenDomain.id}
-          className="h-full"
-          onAttached={startRouting}
-        />
+        <>
+          <ExtensionDomainSlot
+            registry={app.mfeRegistry}
+            domainId={screenDomain.id}
+            className="h-full"
+            onAttached={startRouting}
+          />
+          <EditorSessionStatus />
+        </>
       ) : null}
     </div>
   );

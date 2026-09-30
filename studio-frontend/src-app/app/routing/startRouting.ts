@@ -17,6 +17,7 @@ import {
   type RegisteredExtensionsSource,
 } from '@gears-frontx/routing';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
+import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { createMaterializer } from './materialize';
 import { createShellNavigation, type ShellNavigation } from './navigation';
 import { SCREEN_DOMAIN_KEY } from './route';
@@ -34,14 +35,15 @@ export interface RoutingHandle {
 export function startRouting(
   app: FrontXApp,
   catalogs: ContextCatalogs,
-  history: NavigationHistory = resolveNavigationHistory()
+  history: NavigationHistory = resolveNavigationHistory(),
+  session?: EditorSession
 ): RoutingHandle {
   const registry = app.mfeRegistry;
   if (!registry) throw new Error('[routing] the MFE registry is not available on the app');
 
   const navigation = createShellNavigation(history);
   const groups = groupScreens(registry.getExtensionsForDomain(screenDomain.id) as ScreenExtension[]);
-  const materializer = createMaterializer({ app, navigation, groups: () => groups, catalogs });
+  const materializer = createMaterializer({ app, navigation, groups: () => groups, catalogs, session });
 
   const source: RegisteredExtensionsSource<ScreenGroup> = {
     getRegistrations: () =>

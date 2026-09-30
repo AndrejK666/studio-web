@@ -25,6 +25,7 @@ import {
   setContextWorkspace,
 } from '@/app/slices/appContextSlice';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
+import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { EDITOR_SCREEN_TOKEN, routesEqual, type ShellRoute } from './route';
 import { groupOfExtension, groupOfToken, type ScreenGroup } from './screenTokens';
 import type { ShellNavigation } from './navigation';
@@ -56,6 +57,7 @@ export interface MaterializerDeps {
   groups: () => readonly ScreenGroup[];
   catalogs: ContextCatalogs;
   warn?: (message: string) => void;
+  session?: EditorSession;
 }
 
 export interface Materializer {
@@ -372,6 +374,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     publishStudioContext(app);
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
+
+    // @cpt-dod:cpt-studiofrontend-dod-editor-session-reuse-or-launch:p1
+    deps.session?.sync({
+      projectId: next.project ?? null,
+      orgId: next.org ?? null,
+      editor: group.token === EDITOR_SCREEN_TOKEN && next.project !== undefined,
+    });
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');
 

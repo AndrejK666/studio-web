@@ -55,5 +55,7 @@ declare module '@gears-frontx/react' {
     'app/context/workspace/scoped': void;
     /** The workspace read failed; the shell retries once so the chain regains its slot. */
     'app/context/workspaces/failed': void;
+    /** "Try again" on the editor whose session failed to come up. */
+    'app/editor/session/retry': void;
   }
 }

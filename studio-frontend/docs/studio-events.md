@@ -157,6 +157,15 @@ function useRunProgress() {
 `streamFrom` builds a distinct descriptor key per cursor, so changing the
 starting point opens a fresh connection rather than reusing the old one.
 
+A cursor of `0` is a real starting point — sequences start at 1 — so a tenant
+whose first events are the job's own gets them replayed too. And `streamFrom`
+does not deliver past a hole: a catch-up it cannot make, or a stream refused
+with 401/403, ends it, and `onComplete` fires. For `streamFrom`, then,
+`onComplete` means "cut" as well as "finished"; answer it by reading the job,
+and keep reading until it ends, as the editor's session does. `events`, opened
+without a cursor, keeps running through a failed catch-up and logs the gap it
+lost.
+
 ## Refresh a list without polling
 
 For a list, the event is a signal to reload, not the data itself. A busy run

@@ -1,10 +1,6 @@
 /**
- * The projects domain's own shapes. Everything that is account-management's
- * vocabulary — the tenant, the page envelope, `TENANT_TYPES`, `Me`, `User`,
- * `MetadataEntry` — now lives in `@constructor-studio/mfe-shared`, because it
- * was the same wire in two MFEs and the two copies had already drifted.
- *
- * What stays here is what only this MFE writes.
+ * A project's attributes, as the wizard writes them and the shell reads them
+ * to launch the editor's session.
  */
 
 /** Project attributes live in this tenant-metadata type, per tenant. */
@@ -25,9 +21,6 @@ export interface ProjectSource {
  * The free-form object under PROJECT_CONFIG_TYPE. The backend declares the
  * metadata type as a bare object ("shape enforced client-side"), so this
  * interface IS the contract.
- *
- * Do not add fields nothing writes: a `description` used to live here for a
- * second line in the mockups, and it could only ever render empty.
  */
 export interface ProjectConfig {
   mode?: ProjectMode;

@@ -40,6 +40,7 @@ owner: studio-team
   - [2.23 Contract, registries and bootstrap](#223-contract-registries-and-bootstrap)
   - [2.24 Deployment and delivery](#224-deployment-and-delivery)
   - [2.25 The organization's people](#225-the-organizations-people)
+  - [2.26 The editor's session](#226-the-editors-session)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
@@ -1279,6 +1280,51 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
   - [ ] `p1` - `cpt-studio-db-users`
 
+### 2.26 [The editor's session](../feature/editor-session.md)
+
+- [ ] `p1` - **ID**: `cpt-studio-feature-editor-session`
+
+- **Purpose**: The official portal's editor screen reaches the project's Theia session: the shell reuses a live one or launches it with the project's repositories, follows it until it answers, shows launching and failure, and hands the gate's address to the frame only. The backend's session API is in place, and this entry changes its readiness key and reuse probe; the rest is the portal slice of `cpt-studio-feature-ide-sessions`.
+
+- **Depends On**: `cpt-studio-feature-shell-levels`, `cpt-studio-feature-project-create`, `cpt-studio-feature-ide-sessions`
+
+- **Scope**:
+  - the shell's `studio-session` client, the launch effect, the editor's status over `space-mfe`'s slot
+  - the readiness probe's key in `studio-session`, so a relaunch is followed like a first launch
+
+- **Out of scope**:
+  - the artifact reaching the frame (#323), keeping the frame alive across screens (#310), stopping sessions
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-studio-fr-ide-session`
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-studio-principle-credentials-by-reference`
+
+- **Design Constraints Covered**:
+
+  - None
+
+- **Domain Model Entities**:
+  - Session, Tenant, Connection
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-studio-component-portal-shell`
+
+- **API**:
+  - `/studio-session/v1/sessions`, `/studio-events/v1`, `/account-management/v1/tenants/{id}/metadata`, `/studio-connector/v1/connections`
+
+- **Sequences**:
+
+  - [ ] `p1` - `cpt-studio-seq-open-ide-session`
+
+- **Data**:
+
+  - None
+
 ## 3. Feature Dependencies
 
 ```text
@@ -1294,7 +1340,8 @@ cpt-studio-feature-tenancy
     │       │       ├─→ cpt-studio-feature-workspaces-screen
     │       │       │       └─→ cpt-studio-feature-organization-overview
     │       │       └─→ cpt-studio-feature-project-create
-    │       │               └─→ cpt-studio-feature-project-artifacts
+    │       │               ├─→ cpt-studio-feature-project-artifacts
+    │       │               └─→ cpt-studio-feature-editor-session
     │       ├─→ cpt-studio-feature-connection-create
     │       └─→ cpt-studio-feature-reserved-areas
     ├─→ cpt-studio-feature-prototype-portal
@@ -1308,6 +1355,7 @@ cpt-studio-feature-tenancy
     │               ├─→ cpt-studio-feature-theia-bridge
     │               │       └─→ cpt-studio-feature-kits
     │               ├─→ cpt-studio-feature-ide-ai
+    │               ├─→ cpt-studio-feature-editor-session
     │               └─→ cpt-studio-feature-gears-products
     ├─→ cpt-studio-feature-background-work
     └─→ cpt-studio-feature-files
@@ -1320,6 +1368,7 @@ cpt-studio-feature-tenancy
 - `cpt-studio-feature-project-create` requires `cpt-studio-feature-workspace-scope` and `cpt-studio-feature-connection-create`: a project is created in the current workspace, and its repositories step reads connections.
 - `cpt-studio-feature-project-artifacts` requires `cpt-studio-feature-project-create` and `cpt-studio-feature-knowledge-graph`: it syncs the sources the wizard wrote into the graph.
 - `cpt-studio-feature-ide-sessions` requires `cpt-studio-feature-connections`: sessions clone sources with connection credentials.
+- `cpt-studio-feature-editor-session` requires `cpt-studio-feature-project-create` and `cpt-studio-feature-ide-sessions`: it launches the session with the sources the wizard wrote.
 - `cpt-studio-feature-kits` requires `cpt-studio-feature-theia-bridge`: materializing a kit is a control call into the session.
 - `cpt-studio-feature-documents` requires `cpt-studio-feature-knowledge-graph`: a binding names a graph file node.
 - `cpt-studio-feature-contract-registries` and `cpt-studio-feature-deployment` depend on no entry; every other entry rests on them.

@@ -1,5 +1,4 @@
-import { type ProjectConfig } from '../api/types';
-import { TENANT_TYPES, type Tenant, type User } from '@constructor-studio/mfe-shared';
+import { TENANT_TYPES, type ProjectConfig, type Tenant, type User } from '@constructor-studio/mfe-shared';
 /**
  * Tenants + their metadata -> what a screen renders.
  */

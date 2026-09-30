@@ -1,4 +1,4 @@
-import { ProjectMode } from '../api/types';
+import type { ProjectMode } from '@constructor-studio/mfe-shared';
 /**
  * What the New project wizard is collecting, before anything is sent.
  *

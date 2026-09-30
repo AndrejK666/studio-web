@@ -6,13 +6,11 @@
  * as they are.
  */
 
-import { useCallback } from 'react';
 import {
   useScreenTranslations,
-  useTranslation,
   type UseScreenTranslationsReturn,
 } from '@gears-frontx/react';
-import { loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
+import { createText, loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
 
 
 const SCREENSET = 'projects';
@@ -63,21 +61,6 @@ export function useProjectCreateScreenTranslations(): UseScreenTranslationsRetur
 /** Loads the New workspace form's dictionary. One call, in `NewWorkspaceForm`. */
 export function useWorkspaceCreateScreenTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, WORKSPACE_SCREEN, loadWorkspaceTranslations);
-}
-
-export type ScreenText = (
-  key: string,
-  params?: Record<string, string | number | boolean>
-) => string;
-
-function createText(namespace: string): () => ScreenText {
-  return function useScreenText(): ScreenText {
-    const { t } = useTranslation();
-    return useCallback<ScreenText>(
-      (key, params) => t(`${namespace}:${key}`, params),
-      [t]
-    );
-  };
 }
 
 export const useProjectListText = createText(PROJECT_LIST_NAMESPACE);

@@ -18,7 +18,7 @@ import { useProjectCreateText } from '../../../i18n';
 import { CREATE_SLICE_KEY, editDraft } from '../../../slices/createSlice';
 import { useCurrentUser } from '../../../shared/useCurrentUser';
 import { displayName } from '../../../model/project';
-import type { ProjectMode } from '../../../api/types.ts';
+import type { ProjectMode } from '@constructor-studio/mfe-shared';
 import styles from '../NewProjectWizard.module.css';
 
 /** Two letters at most, like the mockup's avatar. */

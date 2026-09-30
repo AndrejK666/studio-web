@@ -47,14 +47,19 @@ impl Sessions {
     /// launches sessions, and the caller falls back to asking for the record
     /// itself. Failing a launch because the queue is absent would trade a
     /// working IDE for a tidier contract.
-    async fn watch_until_ready(&self, ctx: &SecurityContext, session_id: Uuid) -> Option<Uuid> {
+    async fn watch_until_ready(&self, ctx: &SecurityContext, session: &Session) -> Option<Uuid> {
         let queue = self
             .hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
                 crate::tasks::TASK_QUEUE_INSTANCE_ID,
             ))
             .ok()?;
-        let payload = serde_json::to_value(super::ready_task::ReadyPayload { session_id }).ok()?;
+        let payload = serde_json::to_value(super::ready_task::ReadyPayload {
+            session_id: session.id,
+        })
+        .ok()?;
+        let partition = session.id.to_string();
+        let key = session.readiness_key();
         match queue
             .enqueue(
                 ctx,
@@ -64,8 +69,8 @@ impl Sessions {
                     payload,
                     // One probe per session, however many times a launch is
                     // retried: the session id is the natural key.
-                    partition_key: Some(&session_id.to_string()),
-                    idempotency_key: Some(&session_id.to_string()),
+                    partition_key: Some(&partition),
+                    idempotency_key: Some(&key),
                     coalesce_queued: false,
                     // The session is the thing being launched; telling its own
                     // IDE that it is ready would be addressed to a window that
@@ -78,7 +83,7 @@ impl Sessions {
             Ok(run_id) => Some(run_id),
             Err(e) => {
                 tracing::warn!(
-                    session = %session_id,
+                    session = %session.id,
                     "studio-session: could not queue the readiness probe ({e:#}) —                      the caller will have to ask for the session record itself"
                 );
                 None
@@ -322,10 +327,11 @@ async fn create_session(
     } else {
         StatusCode::CREATED
     };
-    // A session that is already running needs no probe; one that is starting
-    // gets a run, so it comes up whether or not the caller stays to watch.
+    // A running session needs no probe (`create` has probed a reused one); one
+    // that is starting gets a run, so it comes up whether or not the caller
+    // stays to watch.
     let ready_run_id = if session.state.as_str() == "starting" {
-        sessions.watch_until_ready(&ctx, session.id).await
+        sessions.watch_until_ready(&ctx, &session).await
     } else {
         None
     };

@@ -1,0 +1,24 @@
+import { describe, expect, it } from 'vitest';
+import { STUDIO_TASKS_API_BASE_URL, StudioTasksApiService } from './StudioTasksApiService';
+
+/**
+ * The descriptors, and nothing else: the effects suite replaces this service
+ * with a mock, so a wrong path or verb here would pass every other test.
+ */
+describe('StudioTasksApiService', () => {
+  const service = new StudioTasksApiService();
+
+  it('is mounted under the gateway prefix', () => {
+    expect(STUDIO_TASKS_API_BASE_URL).toBe('/cf/studio-tasks/v1');
+  });
+
+  it('reads one run by id, encoded in the path segment', () => {
+    expect(service.run({ runId: 'r-1' }).key.slice(0, 3)).toEqual(['/cf/studio-tasks/v1', 'GET', '/runs/r-1']);
+    expect(service.run({ runId: 'a/b' }).key[2]).toBe('/runs/a%2Fb');
+  });
+
+  it('puts a run back on the queue with a POST to its retry action', () => {
+    expect(service.retry('r-1').key).toEqual(['/cf/studio-tasks/v1', 'POST', '/runs/r-1/retry']);
+    expect(service.retry('a/b').key[2]).toBe('/runs/a%2Fb/retry');
+  });
+});

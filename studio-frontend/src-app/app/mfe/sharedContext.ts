@@ -66,15 +66,12 @@ export function publishSessionProfile(app: FrontXApp): void {
   publish(app, STUDIO_SHARED_PROPERTY_SESSION_PROFILE, sessionState(app).profile ?? null);
 }
 
+// @cpt-dod:cpt-studiofrontend-dod-editor-session-address:p1
 /**
- * The address a frame-entry MFE loads. Every publisher above is three lines
- * because it reads its own slice of the store; this one takes `url` as a
- * parameter instead because there is no store slice to read — the source of
- * truth is the generated manifest catalogue (see bootstrap.ts's
- * `seedFrameUrl`), which this module has no business knowing the shape of.
- * Seeded at start-up with space-mfe's static page (#321), or the fixture's
- * when space-mfe is absent. #322 is where the session gate's per-session address replaces
- * that seed; either way, the value changes, not this channel.
+ * The address a frame-entry MFE loads: `null` from start-up, the editor's
+ * session once it is ready (effects/editorSessionEffects.ts). A parameter, not
+ * a slice read: the address carries the gate's token and stays out of the
+ * store.
  */
 export function publishFrameUrl(app: FrontXApp, url: string | null): void {
   publish(app, STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL, url);

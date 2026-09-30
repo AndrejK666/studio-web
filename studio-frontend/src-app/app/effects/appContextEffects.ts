@@ -12,6 +12,7 @@
 import { eventBus, screenDomain, type FrontXApp, type ScreenExtension } from '@gears-frontx/react';
 import { levelOf, placementOf, sectionOf, type ScreenLevel } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
+import { createEditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
 import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
@@ -42,6 +43,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
 
   let routing: RoutingHandle | null = null;
   const catalogs = createContextCatalogs(app, () => routing?.materialize());
+  const editorSession = createEditorSession(app);
 
   const screens = (): ScreenExtension[] =>
     (app.mfeRegistry?.getExtensionsForDomain(screenDomain.id) ?? []) as ScreenExtension[];
@@ -95,7 +97,7 @@ export function registerAppContextEffects(app: FrontXApp): void {
       routing.retry();
       return;
     }
-    routing = startRouting(app, catalogs);
+    routing = startRouting(app, catalogs, undefined, editorSession);
   });
 
   eventBus.on('app/context/fetch', () => {
@@ -228,6 +230,8 @@ export function registerAppContextEffects(app: FrontXApp): void {
     if (!token) return;
     routing.navigation.navigate(routeFor(token, 'workspace'), 'push');
   });
+
+  eventBus.on('app/editor/session/retry', () => editorSession.retry());
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5

@@ -36,6 +36,7 @@ const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
 const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
+const LAUNCH_LABEL: &str = "cf.studio.launch_id";
 const POD_LABEL: &str = "cf.studio.pod";
 const THEIA_PORT: i32 = 3003;
 const SESSION_READY_PATH: &str = "/__studio_session_ready__";
@@ -635,6 +636,9 @@ impl SessionDriver for KubernetesDriver {
                     .as_ref()
                     .map(|t| t.0.as_second().max(0) as u64)
                     .unwrap_or(0),
+                launch_id: labels
+                    .get(LAUNCH_LABEL)
+                    .and_then(|v| v.parse::<Uuid>().ok()),
                 session_token,
                 control_token,
                 sources,

@@ -4,16 +4,24 @@ import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF } from '@gears-frontx/react';
 import { SHELL_SCHEMAS } from '@/app/mfe/schemas';
 import { Toaster } from '@/app/components/ui/sonner';
-import { AccountsApiService, STUDIO_MFE_ENTRY_IFRAME } from '@constructor-studio/mfe-shared';
-import { IdentityApiService, OrganizationsApiService, StudioEventsApiService } from '@/app/api';
+import { AccountsApiService, ConnectorsApiService, STUDIO_MFE_ENTRY_IFRAME } from '@constructor-studio/mfe-shared';
+import {
+  IdentityApiService,
+  OrganizationsApiService,
+  StudioEventsApiService,
+  StudioSessionApiService,
+  StudioTasksApiService,
+} from '@/app/api';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
+import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
 import { registerAppContextEffects } from '@/app/effects/appContextEffects'; // Top-bar context slot
 import { mfeBootstrapSlice } from '@/app/slices/mfeBootstrapSlice';
 import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
+import { editorSessionSlice } from '@/app/slices/editorSessionSlice';
 import { keycloakOidcProvider } from '@/app/auth/keycloakOidcProvider';
 import App from './App';
 
@@ -34,6 +42,11 @@ apiRegistry.register(OrganizationsApiService);
 // it, so a view is told instead of polling. Registered on the shell so every
 // MFE shares one stream.
 apiRegistry.register(StudioEventsApiService);
+// The editor's session: its launch, the run that says it is ready, and the
+// sources and connections it clones from.
+apiRegistry.register(StudioSessionApiService);
+apiRegistry.register(StudioTasksApiService);
+apiRegistry.register(ConnectorsApiService);
 
 // Initialize API services
 apiRegistry.initialize({});
@@ -73,6 +86,7 @@ app.actions.toggleMockMode(false);
 registerSlice(mfeBootstrapSlice);
 registerSlice(appContextSlice);
 registerSlice(appSessionSlice);
+registerSlice(editorSessionSlice);
 registerBootstrapEffects(app);
 registerAppContextEffects(app);
 

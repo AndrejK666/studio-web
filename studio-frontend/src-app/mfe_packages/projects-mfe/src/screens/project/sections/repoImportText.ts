@@ -1,4 +1,4 @@
-import type { ScreenText } from '../../../i18n';
+import type { ScreenText } from '@constructor-studio/mfe-shared';
 import type { RepoImport } from '../../../slices/artifactSyncSlice';
 
 /** One line per repository that did not come through, in the member's language. */

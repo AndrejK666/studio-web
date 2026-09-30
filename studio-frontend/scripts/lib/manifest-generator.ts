@@ -322,6 +322,11 @@ export class ManifestGenerator {
     };
   }
 
+  /**
+   * Where the frame package is served. Nothing reads it since #322 (the frame
+   * shows what its property holds); a frame package still needs one only
+   * because the catalogue shape names an address for every entry.
+   */
   private resolveFramePublicPath(packageDir: string, devUrl: string | undefined): string {
     if (this.globalBaseUrl !== null) {
       return this.globalBaseUrl.endsWith('/') ? this.globalBaseUrl : `${this.globalBaseUrl}/`;

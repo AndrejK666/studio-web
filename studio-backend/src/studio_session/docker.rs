@@ -24,6 +24,7 @@ const SESSION_LABEL: &str = "cf.studio.session";
 const WS_LABEL: &str = "cf.studio.workspace_id";
 const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
+const LAUNCH_LABEL: &str = "cf.studio.launch_id";
 const THEIA_PORT: &str = "3003/tcp";
 
 pub struct DockerDriver {
@@ -236,6 +237,9 @@ impl SessionDriver for DockerDriver {
                 address: SessionAddress::Loopback { port },
                 running: c.state.as_deref() == Some("running"),
                 created_at_epoch_secs: c.created.map(|v| v as u64).unwrap_or(0),
+                launch_id: labels
+                    .get(LAUNCH_LABEL)
+                    .and_then(|v| v.parse::<Uuid>().ok()),
                 session_token: env_value(&env, "STUDIO_SESSION_TOKEN")
                     .unwrap_or_default()
                     .to_string(),

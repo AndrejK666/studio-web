@@ -996,7 +996,7 @@ The FrontX host that mounts microfrontends and owns navigation (ADR-0006, ADR-00
 
 ##### Responsibility boundaries
 
-Never names an MFE package; the shell scans `src-app/mfe_packages/`. One exception until #322: `seedFrameUrl` names `space-mfe`'s entry so the frame address is the editor's rather than the fixture's; the session gate's address replaces that seed.
+Never names an MFE package; the shell scans `src-app/mfe_packages/`. The frame property starts `null`, and the editor's session publishes the gate's address to it once the session is ready (`cpt-studiofrontend-dod-editor-session-address`).
 
 ##### Related components (by ID)
 

@@ -45,8 +45,9 @@ export interface StudioEvent<P = unknown> {
 /**
  * What a `task.*` event carries: one transition of a `studio-tasks` run.
  *
- * The same fields `GET /studio-tasks/v1/runs/{id}` answers with, so a view can
- * be fed by either without a second mapping. `phase` arrives on
+ * The same run `GET /studio-tasks/v1/runs/{id}` answers with, under the
+ * event's own names: `run_id` for its `id`, `phase` for `progress`, `error`
+ * for `last_error`; `state` and `attempts` are the same. `phase` arrives on
  * `task.progress`; `summary` / `error` / `result` on the terminal ones.
  */
 export interface StudioRunEvent {
@@ -73,6 +74,32 @@ export interface StudioEventPage {
    * caller fell out of the server's retained window and lost events.
    */
   latest_seq: number;
+}
+
+/** The largest page `GET /events` serves (`limit` is clamped to 500). */
+const GAP_PAGE = 500;
+
+/**
+ * Everything published after `cursor` up to the tenant's high-water mark as
+ * of the first page, oldest first. Stops at that mark, or at an empty page —
+ * not at a short one, so a lowered server clamp cannot turn this back into a
+ * one-page read; whatever is published past the mark is on the live stream.
+ */
+export async function pageThrough(
+  read: (afterSeq: number, limit: number) => Promise<StudioEventPage>,
+  cursor: number,
+): Promise<StudioEvent[]> {
+  const events: StudioEvent[] = [];
+  let after = cursor;
+  let mark: number | null = null;
+  for (;;) {
+    const page = await read(after, GAP_PAGE);
+    mark ??= page.latest_seq;
+    events.push(...page.events);
+    const last = page.events[page.events.length - 1];
+    if (!last || last.seq >= mark) return events;
+    after = last.seq;
+  }
 }
 
 export class StudioEventsApiService extends BaseApiService {
@@ -102,19 +129,21 @@ export class StudioEventsApiService extends BaseApiService {
       new SseAuthPlugin({
         resume: {
           cursorOf: (event) => (event as StudioEvent | null)?.seq,
-          gap: async (cursor) => {
-            const page = await restProtocol.get<StudioEventPage>(
-              `/events?after_seq=${cursor}`,
-            );
-            return page.events;
-          },
+          gap: (cursor) =>
+            pageThrough(
+              (afterSeq, limit) =>
+                restProtocol.get<StudioEventPage>(`/events?after_seq=${afterSeq}&limit=${limit}`),
+              cursor,
+            ),
         },
       }),
     );
   }
 
   /**
-   * The live stream, from now on.
+   * The live stream, from now on. A reconnect replays what it missed, page by
+   * page ({@link pageThrough}); one that cannot keeps the stream and loses the
+   * gap, logged (`streamFrom` ends instead).
    *
    * For a job you are about to start, use {@link streamFrom} with a cursor
    * read beforehand — a task can finish before this connection is even open.
@@ -142,9 +171,11 @@ export class StudioEventsApiService extends BaseApiService {
     '/events?after_seq=0&limit=1',
   );
 
+  // @cpt-dod:cpt-studiofrontend-dod-editor-session-replay:p1
   /**
    * The live stream, resuming at `cursor` — anything published after it is
-   * replayed first, in order, without duplicates.
+   * replayed first, in order, without duplicates, `0` included. A replay that
+   * fails, or a refused stream, ends it: the consumer's `onComplete`.
    *
    * A distinct descriptor key per cursor, so `useApiStream` opens a fresh
    * connection when the starting point changes rather than reusing the old one.

@@ -156,6 +156,11 @@ describe('FetchEventSource', () => {
     const source = new FetchEventSource('/stream', { fetchImpl });
     const errors: unknown[] = [];
     source.onerror = (e) => errors.push(e);
+    // SseProtocol swallows `onerror`; `done` is what a waiting consumer hears.
+    let ended = false;
+    source.addEventListener('done', () => {
+      ended = true;
+    });
 
     await until(() => errors.length === 1, 'the error to surface');
     // Give the loop a chance to retry if it were going to.
@@ -163,6 +168,48 @@ describe('FetchEventSource', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(source.readyState).toBe(2); // CLOSED
+    // Nobody gave a cursor, so nobody is waiting on `done`: a refusal only stops the stream and fires `error`.
+    expect(ended).toBe(false);
+  });
+
+  it('tells a consumer waiting from a cursor that a refused stream is over', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));
+    const source = new FetchEventSource('/stream', {
+      fetchImpl,
+      resume: { cursorOf: (e) => (e as { seq: number }).seq, gap: async () => [], from: 0 },
+    });
+    let ended = false;
+    source.addEventListener('done', () => {
+      ended = true;
+    });
+
+    await until(() => ended, 'the consumer to be told');
+
+    expect(source.readyState).toBe(2); // CLOSED
+  });
+
+  it('says nothing to a consumer that closed the stream while a replay was still out', async () => {
+    let rejectGap: (error: Error) => void = () => undefined;
+    const gap = () =>
+      new Promise<readonly unknown[]>((_resolve, reject) => {
+        rejectGap = reject;
+      });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(sseResponse([])).mockImplementation(pending);
+    const source = new FetchEventSource('/stream', {
+      fetchImpl,
+      resume: { cursorOf: (e) => (e as { seq: number }).seq, gap, from: 0 },
+    });
+    let ended = false;
+    source.addEventListener('done', () => {
+      ended = true;
+    });
+
+    await until(() => source.readyState === 1, 'the connection to open');
+    source.close();
+    rejectGap(new Error('catch-up unavailable'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(ended).toBe(false);
   });
 
   it('routes named frames to listeners, not to onmessage', async () => {
@@ -182,5 +229,87 @@ describe('FetchEventSource', () => {
 
     // `done` is the protocol's completion signal, not an event for consumers.
     expect(messages).toEqual([]);
+  });
+
+  it('replays from a starting cursor of 0 on the first connect, before any live frame', async () => {
+    const gap = vi.fn(async (cursor: number) => (cursor === 0 ? [event(1), event(2)] : []));
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sseResponse([event(2), event(3)]))
+      .mockImplementation(pending);
+
+    const seen: number[] = [];
+    const source = new FetchEventSource('/stream', {
+      fetchImpl,
+      resume: { cursorOf: (e) => (e as { seq: number }).seq, gap, from: 0 },
+    });
+    source.onmessage = (e) => seen.push(JSON.parse(e.data as string).seq);
+
+    // Sequences start at 1: a cursor of 0 read before a launch is a real starting point.
+    await until(() => seen.length === 3, 'the replayed events and the live one');
+    source.close();
+
+    expect(gap).toHaveBeenCalledWith(0);
+    expect(seen).toEqual([1, 2, 3]);
+  });
+
+  it('reports a replay it could not make, and delivers nothing past the hole', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sseResponse([event(5)]))
+      .mockImplementation(pending);
+
+    const seen: number[] = [];
+    const source = new FetchEventSource('/stream', {
+      fetchImpl,
+      resume: {
+        cursorOf: (e) => (e as { seq: number }).seq,
+        gap: () => Promise.reject(new Error('catch-up unavailable')),
+        from: 0,
+      },
+    });
+    source.onmessage = (e) => seen.push(JSON.parse(e.data as string).seq);
+    let ended = false;
+    // `done` is what SseProtocol hands the consumer as `onComplete`.
+    source.addEventListener('done', () => {
+      ended = true;
+    });
+
+    await until(() => ended, 'the consumer to be told');
+
+    expect(seen).toEqual([]);
+    expect(source.readyState).toBe(2); // CLOSED
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a stream given no starting cursor running past a replay it could not make, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(sseResponse([event(1)], { keepAlive: false }))
+      .mockResolvedValueOnce(sseResponse([event(3)]))
+      .mockImplementation(pending);
+
+    const seen: number[] = [];
+    let ended = false;
+    const source = new FetchEventSource('/stream', {
+      fetchImpl,
+      resume: {
+        cursorOf: (e) => (e as { seq: number }).seq,
+        gap: () => Promise.reject(new Error('catch-up unavailable')),
+      },
+    });
+    source.onmessage = (e) => seen.push(JSON.parse(e.data as string).seq);
+    source.addEventListener('done', () => {
+      ended = true;
+    });
+
+    await until(() => seen.length === 2, 'the frame after the hole');
+    source.close();
+
+    expect(seen).toEqual([1, 3]);
+    expect(ended).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

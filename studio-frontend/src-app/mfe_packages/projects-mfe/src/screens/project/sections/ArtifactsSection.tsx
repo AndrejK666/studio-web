@@ -1,4 +1,4 @@
-import { ProjectSource } from '../../../api/types';
+import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import React from 'react';
 import {
   Button,

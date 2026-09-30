@@ -1,5 +1,5 @@
 /**
- * Every key of a screen's `en.json` is in its `ru.json`, in every MFE.
+ * Every key of a screen's `en.json` is in its `ru.json`, in every MFE and in the shell.
  *
  * `loadScreenTranslations` shows English where a locale is missing a key, so a
  * forgotten Russian string no longer renders as a raw key — it renders as
@@ -19,6 +19,9 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../mfe_packages');
 
+/** The shell's own dictionary, held to the same rule. */
+const SHELL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../i18n');
+
 const read = (file: string): Record<string, string> => JSON.parse(readFileSync(file, 'utf8'));
 
 const screens = readdirSync(PACKAGES)
@@ -30,7 +33,8 @@ const screens = readdirSync(PACKAGES)
       .map((screen) => path.join(root, screen, 'i18n'))
       .filter((dir) => existsSync(path.join(dir, 'en.json')))
   )
-  .map((dir) => ({ name: path.relative(PACKAGES, dir), dir }));
+  .map((dir) => ({ name: path.relative(PACKAGES, dir), dir }))
+  .concat({ name: 'app/i18n', dir: SHELL });
 
 describe('ru.json keeps up with en.json', () => {
   it('finds the screens it checks', () => {

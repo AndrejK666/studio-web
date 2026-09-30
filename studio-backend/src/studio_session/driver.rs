@@ -163,6 +163,9 @@ pub struct AdoptedSession {
     pub address: SessionAddress,
     pub running: bool,
     pub created_at_epoch_secs: u64,
+    /// `cf.studio.launch_id` — one per launch; `None` for a session launched
+    /// by a backend that did not write it.
+    pub launch_id: Option<Uuid>,
     /// `STUDIO_SESSION_TOKEN` recovered from the runtime (empty if the driver
     /// cannot read it back — the session is then adopted ungated).
     pub session_token: String,

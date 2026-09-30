@@ -1,0 +1,13 @@
+{
+  "editor_session_launching": "Starting the editor…",
+  "editor_session_failed": "The editor could not start",
+  "editor_session_retry": "Try again",
+  "editor_session_reason_sources": "The project's repositories or the organization's connections could not be read.",
+  "editor_session_reason_refused": "The launch was refused.",
+  "editor_session_reason_unavailable": "This project is not available.",
+  "editor_session_reason_run": "The session failed to start.",
+  "editor_session_reason_stopped": "The session stopped before it was ready.",
+  "editor_session_reason_timeout": "The session was not ready in time.",
+  "editor_session_reason_read": "The session's state could not be read.",
+  "editor_session_reason_unexpected": "The editor ran into an unexpected error."
+}

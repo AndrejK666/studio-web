@@ -10,6 +10,8 @@ vi.mock('./bootstrap', () => ({
   bootstrapMFE: (...args: never[]) => mockBootstrapMFE(...args),
 }));
 
+vi.mock('./EditorSessionStatus', () => ({ EditorSessionStatus: () => null }));
+
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<Record<string, never>>()),
   useFrontX: () => mockUseFrontX(),

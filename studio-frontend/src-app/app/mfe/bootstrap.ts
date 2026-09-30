@@ -86,7 +86,12 @@ interface MfeManifestConfig {
   schemas?: JSONSchema[];
 }
 
-/** A frame entry as the generator emits it: an address, and no module. */
+/**
+ * A frame entry as the generator emits it: an address, and no module. Nothing
+ * reads `publicPath` since #322 — the frame shows what the property holds; it
+ * stays only because the catalogue shape has one for every entry
+ * (`manifest-generator.ts`, `resolveFramePublicPath`).
+ */
 interface MfeEntryFrameConfig {
   id: string;
   requiredProperties: string[];
@@ -128,42 +133,6 @@ export function resolveRuntimePublicPaths(
       ),
     };
   });
-}
-
-/**
- * The address of the first frame entry in the catalogue. Read from the
- * generated manifests rather than hard-coded so it is right in development
- * (the package's own preview origin) and in a production image (/mfes/...)
- * without a second source of truth.
- *
- * Exported for a test: `publish()` in sharedContext.ts swallows a throw into
- * a `console.warn`, so a wrong answer here has no other failure mode than a
- * frame silently stuck on "Waiting for the address…" forever.
- */
-export function firstFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
-  for (const config of manifests) {
-    for (const entry of config.entries) {
-      const framed = entry as { urlProperty?: string; publicPath?: string };
-      if (framed.urlProperty && framed.publicPath) return framed.publicPath;
-    }
-  }
-  return null;
-}
-
-/** The editor's frame entry (#321). The fixture reads the same property, so the editor's address wins over catalogue order. */
-// TODO(#322): the session gate's address replaces this seed, and the shell stops naming space-mfe.
-const SPACE_FRAME_ENTRY =
-  'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
-
-/** The frame address to seed: `space-mfe`'s when it is in the catalogue, else the first frame entry's. */
-export function seedFrameUrl(manifests: readonly MfeManifestConfig[]): string | null {
-  for (const config of manifests) {
-    const space = config.entries.find((entry) => entry.id === SPACE_FRAME_ENTRY) as
-      | { publicPath?: string }
-      | undefined;
-    if (space?.publicPath) return space.publicPath;
-  }
-  return firstFrameUrl(manifests);
 }
 
 export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
@@ -524,6 +493,10 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   const derivedLanguage = app.i18nRegistry.getLanguage();
   registry.updateSharedProperty(FRONTX_SHARED_PROPERTY_LANGUAGE, derivedLanguage ?? 'en');
   publishStudioContext(app);
+  // No page before a session: the editor's session publishes its address once
+  // it is ready (effects/editorSessionEffects.ts). `null`, never `undefined`,
+  // for an MFE that requires the property.
+  publishFrameUrl(app, null);
 
   console.info(`[MFE Bootstrap] Fetching MFE manifests from ${MFE_MANIFESTS_URL}`);
   const response = await fetch(MFE_MANIFESTS_URL);
@@ -536,10 +509,6 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     (await response.json()) as MfeManifestConfig[],
     window.location.origin,
   );
-  // Seeded unconditionally, like publishStudioContext above: an MFE requiring
-  // this property should read `null`, never `undefined`, even when the
-  // catalogue turns out to have no frame entry (or no manifests at all).
-  publishFrameUrl(app, seedFrameUrl(manifests));
 
   if (manifests.length === 0) {
     console.warn(
