@@ -216,7 +216,15 @@ type PanelView = View | "dashboard";
 /** The sections whose list owns its search, filters and sort, above it and in
  *  the address (docs/list-standard.md). The side panel has nothing for them,
  *  and says where the controls went rather than showing ones nothing reads. */
-const LISTS_WITH_OWN_FILTERS: ReadonlySet<PanelView> = new Set<PanelView>(["projects", "people", "connectors", "tasks", "gears"]);
+const LISTS_WITH_OWN_FILTERS: ReadonlySet<PanelView> = new Set<PanelView>([
+  "projects",
+  "people",
+  "connectors",
+  "tasks",
+  "gears",
+  "chats",
+  "files",
+]);
 
 function activeFilterCount(view: PanelView, f: Filters): number {
   if (LISTS_WITH_OWN_FILTERS.has(view)) return 0;
@@ -5587,8 +5595,9 @@ function WorkspaceDashboard({
 
 /* ── Chats (mini-chat: threads, history, models) ── */
 
-function ChatsView({ token, filters }: { token: string; filters: Filters }) {
-  const [chats, setChats] = useState<import("./api").Chat[]>([]);
+/** `filters` is the side panel's; the list has its own search and model filter. */
+function ChatsView({ token }: { token: string; filters?: Filters }) {
+  const [chats, setChats] = useState<import("./api").Chat[] | null>(null);
   const [models, setModels] = useState<import("./api").Model[]>([]);
   const [open, setOpen] = useState<import("./api").Chat | null>(null);
   const [history, setHistory] = useState<import("./api").ChatMessage[]>([]);
@@ -5649,19 +5658,13 @@ function ChatsView({ token, filters }: { token: string; filters: Filters }) {
     }
   }
 
+  /** Throws, so the confirm dialog stays open with the reason. */
   async function remove(c: import("./api").Chat) {
-    try {
-      await api.deleteChat(token, c.id);
-      if (open?.id === c.id) setOpen(null);
-      await load();
-    } catch (e) {
-      setError(errText(e));
-    }
+    await api.deleteChat(token, c.id);
+    if (open?.id === c.id) setOpen(null);
+    await load();
   }
-
-  const visibleChats = chats
-    .filter((c) => matches(filters.query, c.title, c.model, c.id))
-    .filter((c) => !filters.model || c.model === filters.model);
+  const chatTitle = (c: import("./api").Chat) => c.title ?? c.id.slice(0, 8);
 
   return (
     <>
@@ -5672,28 +5675,41 @@ function ChatsView({ token, filters }: { token: string; filters: Filters }) {
       {error && <div className="error">{error}</div>}
 
       <div className="card">
-        {chats.length === 0 ? (
-          <p className="empty">No chats yet — start one from a project overview (Ask AI).</p>
-        ) : visibleChats.length === 0 ? (
-          <p className="empty">No chats match the current filters.</p>
-        ) : (
-          <ul className="rows">
-            {visibleChats.map((c) => (
-              <li key={c.id}>
-                <div className="grow" style={{ cursor: "pointer" }} onClick={() => openChat(c)}>
-                  <div className="name">{c.title ?? c.id.slice(0, 8)}</div>
-                  <div className="sub">
-                    {c.model} · {c.message_count} messages
-                  </div>
-                </div>
-                <button onClick={() => openChat(c)}>open</button>
-                <button className="ghost" onClick={() => remove(c)}>
-                  delete
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DataTable<import("./api").Chat>
+          list="chats"
+          rows={chats === null && error ? [] : chats}
+          error={chats === null ? error : null}
+          onRetry={() => void load()}
+          rowKey={(c) => c.id}
+          rowLabel={chatTitle}
+          onOpen={(c) => void openChat(c)}
+          search={{ placeholder: "Search chats" }}
+          searchText={(c) => [c.title, c.model, c.id]}
+          filters={[
+            {
+              id: "model",
+              allLabel: "Every model",
+              kind: "select",
+              options: models.map((m) => ({ value: m.model_id, label: m.display_name })),
+              match: (c, v) => c.model === v,
+            },
+          ]}
+          empty={{ title: "No chats yet.", body: "Start one from a project overview (Ask AI)." }}
+          columns={[
+            { id: "title", header: "Chat", compare: (a, b) => chatTitle(a).localeCompare(chatTitle(b)), cell: (c) => <div className="pname plain">{chatTitle(c)}</div> },
+            { id: "model", header: "Model", cell: (c) => <span className="sub">{c.model}</span> },
+            { id: "messages", header: "Messages", num: true, compare: (a, b) => a.message_count - b.message_count, cell: (c) => c.message_count },
+            { id: "updated", header: "Updated", compare: (a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at), cell: (c) => <When iso={c.updated_at} /> },
+          ]}
+          actions={(c) => [
+            { label: "Open", onSelect: () => openChat(c) },
+            {
+              label: "Delete",
+              danger: { title: `Delete chat “${chatTitle(c)}”?`, body: "Its messages go with it.", confirmLabel: "Delete" },
+              onSelect: () => remove(c),
+            },
+          ]}
+        />
       </div>
 
       {open && (
@@ -5730,7 +5746,8 @@ function ChatsView({ token, filters }: { token: string; filters: Filters }) {
 
 /* ── Files (file-storage: read-only until an upload sidecar is deployed) ── */
 
-function FilesView({ token, filters }: { token: string; filters: Filters }) {
+/** `filters` is the side panel's; the list has its own search. */
+function FilesView({ token }: { token: string; filters?: Filters }) {
   const [files, setFiles] = useState<import("./api").StoredFile[] | null>(null);
   const [storages, setStorages] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
@@ -5744,9 +5761,6 @@ function FilesView({ token, filters }: { token: string; filters: Filters }) {
       .catch((e) => setError(errText(e)));
   }, [token]);
 
-  const visibleFiles = (files ?? []).filter((f) =>
-    matches(filters.query, f.name, f.file_name, f.id),
-  );
 
   const storageItems: unknown[] | null = Array.isArray(storages)
     ? storages
@@ -5766,26 +5780,29 @@ function FilesView({ token, filters }: { token: string; filters: Filters }) {
       </p>
       {error && <div className="error">{error}</div>}
       <div className="card">
-        <h2>Files</h2>
-        {!files || files.length === 0 ? (
-          <p className="empty">
-            Nothing stored yet — files appear here once chats get attachments (or the upload
-            sidecar is deployed).
-          </p>
-        ) : visibleFiles.length === 0 ? (
-          <p className="empty">No files match the current filters.</p>
-        ) : (
-          <ul className="rows">
-            {visibleFiles.map((f) => (
-              <li key={f.id}>
-                <div className="grow">
-                  <div className="name">{f.name ?? f.file_name ?? f.id}</div>
-                  <div className="sub">{f.id}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DataTable<import("./api").StoredFile>
+          list="files"
+          title="Files"
+          rows={files === null && error ? [] : files}
+          error={files === null ? error : null}
+          rowKey={(f) => f.id}
+          rowLabel={(f) => f.name ?? f.file_name ?? f.id}
+          search={{ placeholder: "Search files" }}
+          searchText={(f) => [f.name, f.file_name, f.id]}
+          empty={{
+            title: "Nothing stored yet.",
+            body: "Files appear here once chats get attachments, or the upload sidecar is deployed.",
+          }}
+          columns={[
+            {
+              id: "name",
+              header: "File",
+              compare: (a, b) => (a.name ?? a.file_name ?? a.id).localeCompare(b.name ?? b.file_name ?? b.id),
+              cell: (f) => <div className="name">{f.name ?? f.file_name ?? f.id}</div>,
+            },
+            { id: "id", header: "Id", cell: (f) => <code className="sub">{f.id}</code> },
+          ]}
+        />
       </div>
       {storageItems && storageItems.length > 0 && (
         <div className="card">
@@ -6335,13 +6352,16 @@ function useKnownSecretRefs(token: string, workspaces: Workspace[]): SecretRow[]
 function SecretsView({
   token,
   workspaces,
-  filters,
 }: {
   token: string;
   workspaces: Workspace[];
-  filters: Filters;
+  /** The side panel's; the list has its own search. */
+  filters?: Filters;
 }) {
   const rows = useKnownSecretRefs(token, workspaces);
+  // The reference whose new value is being typed, under its row.
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [newValue, setNewValue] = useState("");
   const [status, setStatus] = useState<Record<string, "ok" | "broken" | "checking">>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -6352,29 +6372,18 @@ function SecretsView({
   }
 
   async function rotate(ref: string) {
-    const value = window.prompt(`New value for “${ref}” (e.g. a fresh PAT):`);
-    if (!value?.trim()) return;
+    const value = newValue.trim();
+    if (!value) return;
     setError(null);
     try {
-      await api.putSecret(token, ref, value.trim(), PAT_SECRET_TYPE);
+      await api.putSecret(token, ref, value, PAT_SECRET_TYPE);
+      setRotating(null);
+      setNewValue("");
       await check(ref);
     } catch (e) {
       setError(errText(e));
     }
   }
-
-  async function remove(ref: string) {
-    if (!window.confirm(`Delete secret “${ref}”? Project settings keep the reference — launches will clone without credentials until a new value is saved.`)) return;
-    setError(null);
-    try {
-      await api.deleteSecret(token, ref);
-      setStatus((s) => ({ ...s, [ref]: "broken" }));
-    } catch (e) {
-      setError(errText(e));
-    }
-  }
-
-  const visible = (rows ?? []).filter((r) => matches(filters.query, r.ref, r.usedBy.join(" ")));
 
   return (
     <>
@@ -6385,33 +6394,86 @@ function SecretsView({
         (the store has no list API — anything saved outside the portal won't appear here).
       </p>
       <div className="card">
-        {rows === null ? (
-          <p className="empty">Loading references from project settings…</p>
-        ) : visible.length === 0 ? (
-          <p className="empty">No secret references found in any project settings.</p>
-        ) : (
-          <ul className="rows">
-            {visible.map((r) => (
-              <li key={r.ref}>
-                <div className="grow">
-                  <div className="name"><code>{r.ref}</code></div>
-                  <div className="sub">used by: {r.usedBy.join(", ")}</div>
-                </div>
-                {status[r.ref] === "ok" && <span className="badge workspace">readable ✓</span>}
-                {status[r.ref] === "broken" && (
+        <DataTable<{ ref: string; usedBy: string[] }>
+          list="secrets"
+          rows={rows}
+          rowKey={(r) => r.ref}
+          rowLabel={(r) => r.ref}
+          search={{ placeholder: "Search secrets" }}
+          searchText={(r) => [r.ref, ...r.usedBy]}
+          empty={{ title: "No secret references found in any project settings." }}
+          columns={[
+            { id: "ref", header: "Reference", compare: (a, b) => a.ref.localeCompare(b.ref), cell: (r) => <code>{r.ref}</code> },
+            { id: "used", header: "Used by", cell: (r) => <span className="sub">{r.usedBy.join(", ")}</span> },
+            {
+              id: "health",
+              header: "Health",
+              cell: (r) =>
+                status[r.ref] === "ok" ? (
+                  <span className="badge workspace">readable</span>
+                ) : status[r.ref] === "broken" ? (
                   <span className="badge selfmanaged" title="Exists but unreadable (or missing) — rotate to heal">
-                    broken ✗
+                    broken
                   </span>
-                )}
-                <button className="ghost" disabled={status[r.ref] === "checking"} onClick={() => void check(r.ref)}>
-                  {status[r.ref] === "checking" ? "…" : "Check"}
+                ) : (
+                  <span className="sub">{status[r.ref] === "checking" ? "checking…" : "not checked"}</span>
+                ),
+            },
+          ]}
+          inline={(r) => (
+            <button className="ghost" disabled={status[r.ref] === "checking"} onClick={() => void check(r.ref)}>
+              Check
+            </button>
+          )}
+          actions={(r) => [
+            {
+              label: "Rotate",
+              onSelect: () => {
+                setNewValue("");
+                setRotating(rotating === r.ref ? null : r.ref);
+              },
+            },
+            {
+              label: "Delete",
+              danger: {
+                title: `Delete secret “${r.ref}”?`,
+                body: "Project settings keep the reference, and launches clone without credentials until a new value is saved.",
+                confirmLabel: "Delete",
+              },
+              onSelect: async () => {
+                await api.deleteSecret(token, r.ref);
+                setStatus((st) => ({ ...st, [r.ref]: "broken" }));
+              },
+            },
+          ]}
+          detail={(r) =>
+            rotating === r.ref ? (
+              <form
+                className="inline"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void rotate(r.ref);
+                }}
+              >
+                <input
+                  type="password"
+                  autoFocus
+                  aria-label={`New value for ${r.ref}`}
+                  placeholder="New value, e.g. a fresh PAT"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  style={{ minWidth: 280 }}
+                />
+                <button className="primary" disabled={!newValue.trim()}>
+                  Save
                 </button>
-                <button className="ghost" onClick={() => void rotate(r.ref)}>Rotate</button>
-                <button className="ghost" title="Delete the stored value" onClick={() => void remove(r.ref)}>✕</button>
-              </li>
-            ))}
-          </ul>
-        )}
+                <button type="button" className="ghost" onClick={() => setRotating(null)}>
+                  Cancel
+                </button>
+              </form>
+            ) : null
+          }
+        />
         {error && <div className="error">{error}</div>}
       </div>
     </>
