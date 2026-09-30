@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
+import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv, idpConsoleUrl } from "./env";
 import { errText, matches, relTime } from "./format";
@@ -22,19 +23,19 @@ import { ProjectsPortfolio } from "./projects";
 import { ConnectorLogo } from "./connector-logos";
 import { portfolioRollups, rollupText, type ProjectRollup } from "./rollups";
 import {
-  PROJECT_SORTS,
   REVIEW_FILTERS,
   inReviewFilter,
   kindLine,
   lastUpdate,
+  projectComparator,
   pullsCell,
   reviewOf,
   sortProjects,
   specsCell,
   teamText,
-  type ProjectSort,
   type ReviewFilter,
 } from "./project-rows";
+import { DataTable, When } from "./data-table";
 import { PeopleView } from "./people";
 import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
@@ -976,9 +977,15 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       : placeToPath({ view, crumb, projectTab, workspaceTab, activeOrgId, adminOpen, adminView });
     const replace = fromHistoryRef.current;
     fromHistoryRef.current = false;
-    if (window.location.pathname + window.location.search === path) return;
+    // The same place is compared by path and organization only: the rest of
+    // the query string is the list on screen (list-state.ts), and rewriting
+    // it here would drop a shared link's search before the list read it.
+    const target = new URL(path, window.location.origin);
+    const here = new URLSearchParams(window.location.search);
+    if (window.location.pathname === target.pathname && here.get("org") === target.searchParams.get("org")) return;
     if (replace) window.history.replaceState(null, "", path);
     else window.history.pushState(null, "", path);
+    window.dispatchEvent(new Event(URL_CHANGE_EVENT));
   }, [activeSpace, view, crumb, projectTab, workspaceTab, activeOrgId, adminOpen, adminView]);
 
   // Remember where the person is, so a reload puts them back rather than at
@@ -3357,26 +3364,6 @@ function WorkspaceProjects({
   const [rollups, setRollups] = useState<
     Record<string, ProjectRollup & { row?: import("./api").RollupRow }>
   >({});
-  // The toolbar above the table: which reviews, in what order, matching what.
-  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
-  const [projectSort, setProjectSort] = useState<ProjectSort>("priority");
-  const [projectQuery, setProjectQuery] = useState("");
-  // Which row's "…" menu is open.
-  const [rowMenu, setRowMenu] = useState<string | null>(null);
-  // Any click elsewhere closes it. "Elsewhere" is checked, not assumed: React
-  // runs this effect while the click that opened the menu is still bubbling,
-  // so the listener used to be added in time to hear that same click reach
-  // `document` and close the menu before it was ever seen. A click on a menu
-  // — this one's items, or another row's "…" — is the menu's own business.
-  useEffect(() => {
-    if (!rowMenu) return;
-    const close = (e: MouseEvent) => {
-      if (e.target instanceof Element && e.target.closest(".prowmenu")) return;
-      setRowMenu(null);
-    };
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [rowMenu]);
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -3455,7 +3442,6 @@ function WorkspaceProjects({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [rowBusy, setRowBusy] = useState<string | null>(null);
-  const [projectView, setProjectView] = useViewMode("projects.view");
 
   const reload = useCallback(async () => {
     setErr(null);
@@ -3975,27 +3961,11 @@ function WorkspaceProjects({
       setRowBusy(null);
     }
   };
-  const remove = async (p: { id: string; name: string }) => {
-    if (!window.confirm(`Delete project “${p.name}”? This cannot be undone.`)) return;
-    setRowBusy(p.id);
-    setErr(null);
-    try {
-      await api.deleteTenant(token, p.id);
-      await reload();
-      onChanged();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setRowBusy(null);
-    }
-  };
-
-  const shown = sortProjects(
-    (projects ?? [])
-      .map((p) => ({ ...p, row: rollups[p.id]?.row }))
-      .filter((p) => matches(projectQuery, p.name, p.row?.brief))
-      .filter((p) => reviewFilter === "all" || (!!p.row && inReviewFilter(reviewOf(p.row), reviewFilter))),
-    projectSort,
+  // Priority first, as the table has always opened: the project that most
+  // needs somebody at the top. A header click re-sorts from there.
+  const listed: ProjectListRow[] = sortProjects(
+    (projects ?? []).map((p) => ({ ...p, row: rollups[p.id]?.row })),
+    "priority",
   );
 
   return (
@@ -4580,236 +4550,208 @@ function WorkspaceProjects({
         </div>
       )}
       <div className="card">
-        <div className="card-head ptoolbar">
-          <div className="ptoolbar-title">
-            <ViewToggle mode={projectView} onChange={setProjectView} />
-            <h2>Projects{projects ? ` · ${projects.length}` : ""}</h2>
-          </div>
-          <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
-            + New project
-          </button>
-        </div>
-        {projects && projects.length > 0 && (
-          <div className="pfilters">
-            <select
-              aria-label="Review"
-              value={reviewFilter}
-              onChange={(e) => setReviewFilter(e.target.value as ReviewFilter)}
-            >
-              {REVIEW_FILTERS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Sort"
-              value={projectSort}
-              onChange={(e) => setProjectSort(e.target.value as ProjectSort)}
-            >
-              {PROJECT_SORTS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="search"
-              className="pfilters-search"
-              placeholder="Search"
-              aria-label="Search projects"
-              value={projectQuery}
-              onChange={(e) => setProjectQuery(e.target.value)}
-            />
-          </div>
-        )}
-        {projects === null ? (
-          <p className="empty">Loading…</p>
-        ) : projects.length === 0 ? (
-          <div className="empty" style={{ textAlign: "center", padding: "28px 12px" }}>
-            <div style={{ fontSize: 30, opacity: 0.4, marginBottom: 10 }}>▦</div>
-            <div style={{ marginBottom: 14 }}>
-              No projects yet — create one to get a codebase context (sources, IDE, artifacts).
-            </div>
-            <button className="primary" onClick={() => setCreating(true)}>
-              New project
+        <DataTable<ProjectListRow>
+          list="projects"
+          title="Projects"
+          rows={projects === null ? null : listed}
+          error={projects === null ? err : null}
+          onRetry={() => void reload()}
+          rowKey={(p) => p.id}
+          rowLabel={(p) => p.name}
+          onOpen={(p) => onOpenProject(p)}
+          search={{ placeholder: "Search projects" }}
+          searchText={(p) => [p.name, p.row?.brief]}
+          filters={[
+            {
+              id: "review",
+              allLabel: "All reviews",
+              kind: "chips",
+              options: REVIEW_FILTERS.filter((f) => f.id !== "all").map((f) => ({ value: f.id, label: f.label })),
+              match: (p, value) => !!p.row && inReviewFilter(reviewOf(p.row), value as ReviewFilter),
+            },
+          ]}
+          primary={
+            <button className="primary" onClick={() => (creating ? resetCreate() : setCreating(true))}>
+              + New project
             </button>
-          </div>
-        ) : shown.length === 0 ? (
-          <p className="empty">No project matches these filters.</p>
-        ) : projectView === "tiles" ? (
-          /* The same three rollups the columns carry. Renaming stays a table
-             affordance: an inline edit inside a card is a form pretending to
-             be a tile. */
-          <TileGrid>
-            {shown.map((p) => (
-              <VTile
-                key={p.id}
-                icon={<span aria-hidden>▦</span>}
-                title={p.name}
-                subtitle={<code>{p.id.slice(0, 8)}…</code>}
-                onClick={() => onOpenProject(p)}
-                tone={rollups[p.id]?.findings ? "attn" : undefined}
-                stats={[
-                  { label: "documents", value: rollupText(rollups[p.id]?.documents ?? null) },
-                  {
-                    label: "findings",
-                    value: rollups[p.id]?.findings ? (
-                      <span className="pnum-attn">{rollups[p.id]!.findings}</span>
+          }
+          empty={{
+            title: "No projects yet.",
+            body: "Create one to get a codebase context: sources, IDE, artifacts.",
+            action: (
+              <button className="primary" onClick={() => setCreating(true)}>
+                New project
+              </button>
+            ),
+          }}
+          columns={[
+            {
+              id: "name",
+              header: "Project",
+              compare: projectComparator<ProjectListRow>("name"),
+              cell: (p) => (
+                <div className="pcell">
+                  <span className={`pkind pkind-${p.row?.project_kind ?? "none"}`} aria-hidden>
+                    {p.row?.project_kind === "product" ? "◈" : p.row?.project_kind === "existing" ? "⌘" : "▦"}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    {editingId === p.id ? (
+                      <input
+                        value={editName}
+                        autoFocus
+                        aria-label={`New name for ${p.name}`}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void saveEdit(p.id);
+                          if (e.key === "Escape") cancelEdit();
+                        }}
+                        style={{ width: "100%" }}
+                      />
                     ) : (
-                      rollupText(rollups[p.id]?.findings ?? null)
-                    ),
-                  },
-                  { label: "repos", value: rollupText(rollups[p.id]?.repos ?? null) },
-                ]}
-              />
-            ))}
-          </TileGrid>
-        ) : (
-          <table className="ptable pprojects">
-            <thead>
-              {/* What each project needs from somebody, beside what it is
-                  called: its review first, because that is the column people
-                  open this screen to read. */}
-              <tr>
-                <th>Project</th>
-                <th>Review</th>
-                <th>Specs</th>
-                <th>Pull requests</th>
-                <th>Team</th>
-                <th>Last update</th>
-                <th aria-label="actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((p) => {
-                const editing = editingId === p.id;
-                const busyRow = rowBusy === p.id;
-                const row = rollups[p.id]?.row;
-                const review = row ? reviewOf(row) : null;
-                const specs = specsCell(row);
-                const pulls = pullsCell(row);
-                const last = lastUpdate(row);
-                return (
-                  <tr key={p.id} className="prow root">
-                    <td>
-                      <div className="pcell">
-                        <span className={`pkind pkind-${row?.project_kind ?? "none"}`} aria-hidden>
-                          {row?.project_kind === "product" ? "◈" : row?.project_kind === "existing" ? "⌘" : "▦"}
-                        </span>
-                        <div style={{ minWidth: 0 }}>
-                          {editing ? (
-                            <input
-                              value={editName}
-                              autoFocus
-                              onChange={(e) => setEditName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") void saveEdit(p.id);
-                                if (e.key === "Escape") cancelEdit();
-                              }}
-                              style={{ width: "100%" }}
-                            />
-                          ) : (
-                            <button type="button" className="pname" onClick={() => onOpenProject(p)}>
-                              {p.name}
-                            </button>
-                          )}
-                          <div className="sub pclip" title={row?.brief ?? undefined}>
-                            {kindLine(row)}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      {review ? (
-                        <div className={`preview preview-${review.tone}`}>
-                          <div className="preview-label">
-                            <span className="preview-dot" aria-hidden />
-                            {review.label}
-                          </div>
-                          {review.detail && <div className="sub">{review.detail}</div>}
-                        </div>
-                      ) : (
-                        <span className="sub">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <div>{specs.label}</div>
-                      {specs.detail && <div className="sub">{specs.detail}</div>}
-                    </td>
-                    <td>
-                      {pulls ? (
-                        <div className="ppulls">
-                          <div>
-                            <div>{pulls.label}</div>
-                            <div className="sub">{pulls.detail}</div>
-                          </div>
-                          {pulls.days.length > 0 && (
-                            <div className="ppulls-spark">
-                              <Spark days={pulls.days} />
-                              <div className="sub">Last {pulls.days.length} days</div>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="sub">Pull request activity unavailable</span>
-                      )}
-                    </td>
-                    <td>{teamText(row)}</td>
-                    <td>
-                      <div className={row?.last_at ? undefined : "sub"}>{last.when}</div>
-                      <div className="sub pclip" title={last.what}>
-                        {last.what}
-                      </div>
-                    </td>
-                    <td className="pactions">
-                      {editing ? (
-                        <>
-                          <button className="primary" disabled={busyRow || !editName.trim()} onClick={() => void saveEdit(p.id)}>
-                            {busyRow ? "Saving…" : "Save"}
-                          </button>
-                          <button className="ghost" disabled={busyRow} onClick={cancelEdit}>
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <div className="prowmenu">
-                          <button
-                            className="ghost"
-                            aria-label={`Actions for ${p.name}`}
-                            aria-haspopup="menu"
-                            aria-expanded={rowMenu === p.id}
-                            disabled={busyRow}
-                            onClick={() => setRowMenu(rowMenu === p.id ? null : p.id)}
-                          >
-                            …
-                          </button>
-                          {rowMenu === p.id && (
-                            <div className="prowmenu-list" role="menu" onMouseLeave={() => setRowMenu(null)}>
-                              <button role="menuitem" onClick={() => { setRowMenu(null); onOpenProject(p); }}>
-                                Open
-                              </button>
-                              <button role="menuitem" onClick={() => { setRowMenu(null); startEdit(p); }}>
-                                Rename
-                              </button>
-                              <button role="menuitem" className="danger" onClick={() => { setRowMenu(null); void remove(p); }}>
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
+                      <div className="pname">{p.name}</div>
+                    )}
+                    <div className="sub pclip" title={p.row?.brief ?? undefined}>
+                      {kindLine(p.row)}
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: "review",
+              header: "Review",
+              compare: projectComparator<ProjectListRow>("priority"),
+              cell: (p) => {
+                const review = p.row ? reviewOf(p.row) : null;
+                return review ? (
+                  <div className={`preview preview-${review.tone}`}>
+                    <div className="preview-label">
+                      <span className="preview-dot" aria-hidden />
+                      {review.label}
+                    </div>
+                    {review.detail && <div className="sub">{review.detail}</div>}
+                  </div>
+                ) : (
+                  <span className="sub">—</span>
                 );
-              })}
-            </tbody>
-          </table>
-        )}
+              },
+            },
+            {
+              id: "specs",
+              header: "Specs",
+              cell: (p) => {
+                const specs = specsCell(p.row);
+                return (
+                  <>
+                    <div>{specs.label}</div>
+                    {specs.detail && <div className="sub">{specs.detail}</div>}
+                  </>
+                );
+              },
+            },
+            {
+              id: "pulls",
+              header: "Pull requests",
+              cell: (p) => {
+                const pulls = pullsCell(p.row);
+                return pulls ? (
+                  <div className="ppulls">
+                    <div>
+                      <div>{pulls.label}</div>
+                      <div className="sub">{pulls.detail}</div>
+                    </div>
+                    {pulls.days.length > 0 && (
+                      <div className="ppulls-spark">
+                        <Spark days={pulls.days} />
+                        <div className="sub">Last {pulls.days.length} days</div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="sub">Pull request activity unavailable</span>
+                );
+              },
+            },
+            { id: "team", header: "Team", cell: (p) => teamText(p.row) },
+            {
+              id: "updated",
+              header: "Last update",
+              compare: projectComparator<ProjectListRow>("updated"),
+              cell: (p) => {
+                const last = lastUpdate(p.row);
+                return (
+                  <>
+                    <When iso={p.row?.last_at} className={p.row?.last_at ? undefined : "sub"} />
+                    <div className="sub pclip" title={last.what}>
+                      {last.what}
+                    </div>
+                  </>
+                );
+              },
+            },
+          ]}
+          inline={(p) =>
+            editingId === p.id ? (
+              <>
+                <button className="primary" disabled={rowBusy === p.id || !editName.trim()} onClick={() => void saveEdit(p.id)}>
+                  {rowBusy === p.id ? "Saving…" : "Save"}
+                </button>
+                <button className="ghost" disabled={rowBusy === p.id} onClick={cancelEdit}>
+                  Cancel
+                </button>
+              </>
+            ) : null
+          }
+          actions={(p) =>
+            editingId === p.id
+              ? []
+              : [
+                  { label: "Open", onSelect: () => onOpenProject(p) },
+                  { label: "Rename", onSelect: () => startEdit(p) },
+                  {
+                    label: "Delete",
+                    danger: {
+                      title: `Delete project “${p.name}”?`,
+                      body: "The project, its sources and its settings go. This cannot be undone.",
+                      confirmLabel: "Delete",
+                    },
+                    onSelect: async () => {
+                      await api.deleteTenant(token, p.id);
+                      await reload();
+                      onChanged();
+                    },
+                  },
+                ]
+          }
+          tile={(p, open) => (
+            <VTile
+              icon={<span aria-hidden>▦</span>}
+              title={p.name}
+              subtitle={kindLine(p.row)}
+              onClick={open}
+              tone={rollups[p.id]?.findings ? "attn" : undefined}
+              stats={[
+                { label: "documents", value: rollupText(rollups[p.id]?.documents ?? null) },
+                {
+                  label: "findings",
+                  value: rollups[p.id]?.findings ? (
+                    <span className="pnum-attn">{rollups[p.id]!.findings}</span>
+                  ) : (
+                    rollupText(rollups[p.id]?.findings ?? null)
+                  ),
+                },
+                { label: "repos", value: rollupText(rollups[p.id]?.repos ?? null) },
+              ]}
+            />
+          )}
+        />
       </div>
     </>
   );
 }
+
+/** One row of a workspace's project table: the project and what is counted for it. */
+type ProjectListRow = { id: string; name: string; row?: import("./api").RollupRow };
 
 /** A section the product's navigation lists but this prototype has no screen
  *  for. Named honestly on the page, with what it would show and what is

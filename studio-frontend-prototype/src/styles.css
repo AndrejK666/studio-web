@@ -2025,3 +2025,32 @@ ul.rows li.attached input[type="checkbox"] { cursor: not-allowed; }
 .prowmenu-list button { justify-content: flex-start; text-align: left; background: none; border: none; padding: 6px 10px; }
 .prowmenu-list button:hover { background: var(--accent); }
 .prowmenu-list button.danger { color: var(--destructive); }
+
+/* ── DataTable: the one list (data-table.tsx, docs/list-standard.md) ── */
+.dt { display: flex; flex-direction: column; gap: 8px; }
+.dt-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dt-toolbar-left, .dt-toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dt-toolbar-left { flex: 1; min-width: 0; }
+.dt-title { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
+.dt-count { color: var(--muted-foreground); font-weight: 400; font-variant-numeric: tabular-nums; }
+.dt-search { flex: 0 1 280px; min-width: 160px; }
+.dt-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.dt-chip-n { margin-left: 6px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.chip.on .dt-chip-n { color: inherit; }
+.dt-select { min-width: 140px; }
+.dt-sort { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font: inherit; color: inherit; }
+.dt-sort:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: 2px; border-radius: 4px; }
+.dt-sort-mark { font-size: 9px; color: var(--muted-foreground); }
+th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mark { color: var(--primary); }
+.dt-table tr.dt-open { cursor: pointer; }
+.dt-table tr.dt-open:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
+.dt-twisty-col { width: 1%; padding-right: 0; }
+.dt-twisty { min-width: 24px; padding: 0 4px; }
+.dt-table tr.dt-detail td { background: color-mix(in srgb, var(--background) 55%, transparent); }
+.dt-state { padding: 28px 12px; text-align: center; color: var(--muted-foreground); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.dt-empty-title { color: var(--foreground); font-weight: 500; }
+.dt-empty-body { max-width: 520px; }
+.dt-confirm { background: var(--popover); color: var(--popover-foreground); border-radius: var(--radius-lg, 12px); padding: 20px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgb(0 0 0 / 20%); }
+.dt-confirm h3 { margin: 0 0 8px; font-size: 16px; }
+.dt-confirm-body { color: var(--muted-foreground); margin-bottom: 12px; }
+.dt-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

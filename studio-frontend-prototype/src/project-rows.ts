@@ -104,16 +104,23 @@ export function sortProjects<T extends { name: string; row?: RollupRow }>(
   items: T[],
   sort: ProjectSort,
 ): T[] {
+  return [...items].sort(projectComparator<T>(sort));
+}
+
+/** The comparator behind each sort, for a table header to sort by. `updated`
+ *  is newest first, as the sort has always read. */
+export function projectComparator<T extends { name: string; row?: RollupRow }>(
+  sort: ProjectSort,
+): (a: T, b: T) => number {
   const key = (p: T) => p.row ?? ({} as RollupRow);
   const byName = (a: T, b: T) => a.name.localeCompare(b.name);
   const at = (p: T) => {
     const t = Date.parse(key(p).last_at ?? "");
     return Number.isNaN(t) ? -Infinity : t;
   };
-  const out = [...items];
-  if (sort === "name") return out.sort(byName);
-  if (sort === "updated") return out.sort((a, b) => at(b) - at(a) || byName(a, b));
-  return out.sort((a, b) => {
+  if (sort === "name") return byName;
+  if (sort === "updated") return (a, b) => at(b) - at(a) || byName(a, b);
+  return (a, b) => {
     const ra = key(a);
     const rb = key(b);
     const ta = TONE_RANK[reviewOf(ra).tone];
@@ -124,7 +131,7 @@ export function sortProjects<T extends { name: string; row?: RollupRow }>(
     const ca = (ra.specs_failing ?? 0) - (rb.specs_failing ?? 0);
     if (ca) return -ca;
     return byName(a, b);
-  });
+  };
 }
 
 const KIND_LABEL: Record<string, string> = {
