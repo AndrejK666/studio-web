@@ -40,6 +40,15 @@ pub struct NewRun<'a> {
     pub partition_key: Option<&'a str>,
     /// Makes a repeated enqueue one run. The scheduler always sets it.
     pub idempotency_key: Option<&'a str>,
+    /// Hand back a run that is still waiting to start, instead of queueing a
+    /// second one, when it has the same task type, partition key and payload.
+    ///
+    /// For work whose result depends only on when it runs, not on how often it
+    /// was asked for: a repository sync asked for twice while the first is
+    /// still queued produces the same graph once. Unlike `idempotency_key` it
+    /// only ever joins a run that has not started, so asking again after one
+    /// began still reads whatever changed meanwhile.
+    pub coalesce_queued: bool,
     /// Where to say so when this run ends, if anywhere: the workspace whose IDE
     /// session should be told.
     ///
@@ -64,6 +73,10 @@ pub struct RunQuery {
     pub limit: u64,
 }
 
+/// Task types that run on a partition of their own — long, and about a whole
+/// tenant rather than one thing in it (see [`TaskService::partition_for`]).
+const SOLO_TASK_TYPES: &[&str] = &["catalog.sync"];
+
 pub struct TaskService {
     db: Db,
     outbox: Arc<Outbox>,
@@ -83,7 +96,26 @@ impl TaskService {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
-        u32::try_from(hash % u64::from(PARTITIONS)).unwrap_or(0)
+        // Partition 0 is kept for `SOLO_TASK_TYPES`; every other key spreads
+        // over the rest.
+        1 + u32::try_from(hash % u64::from(PARTITIONS - 1)).unwrap_or(0)
+    }
+
+    /// The partition a run of `task_type` on `key` goes to.
+    ///
+    /// A partition runs one thing at a time, so two unrelated keys that hash
+    /// together wait for each other. For most work that costs seconds. For a
+    /// component catalog sync it cost a project's repository sync minutes: on
+    /// studio-dev `catalog` and `…:constructorfabric/studio-web` both landed on
+    /// partition 0, and a Re-sync sat `queued` for as long as the catalog read
+    /// gears-rust. The long, tenant-wide task types get a partition of their
+    /// own, so they can hold up nothing but themselves.
+    fn partition_for(task_type: &str, key: &str) -> u32 {
+        if SOLO_TASK_TYPES.contains(&task_type) {
+            0
+        } else {
+            Self::partition_of(key)
+        }
     }
 
     /// Record a run and queue it.
@@ -107,6 +139,13 @@ impl TaskService {
             .map(str::to_owned);
         if let Some(key) = key.as_deref()
             && let Some(existing) = self.find_by_idempotency_key(req.tenant, key).await?
+        {
+            return Ok(existing);
+        }
+        if req.coalesce_queued
+            && let Some(existing) = self
+                .find_waiting(req.tenant, task_type, req.partition_key, &req.payload)
+                .await?
         {
             return Ok(existing);
         }
@@ -139,7 +178,10 @@ impl TaskService {
             started_at: None,
             finished_at: None,
         };
-        let partition = Self::partition_of(partition_key.as_deref().unwrap_or(&id.to_string()));
+        let partition = Self::partition_for(
+            task_type,
+            partition_key.as_deref().unwrap_or(&id.to_string()),
+        );
 
         let outbox = Arc::clone(&self.outbox);
         let payload = encode_payload(req.tenant, id);
@@ -243,7 +285,10 @@ impl TaskService {
         // Reset and re-enqueue together: a row that says `queued` with nothing
         // on the queue is work that will never move again.
         let outbox = Arc::clone(&self.outbox);
-        let partition = Self::partition_of(row.partition_key.as_deref().unwrap_or(&id.to_string()));
+        let partition = Self::partition_for(
+            &row.task_type,
+            row.partition_key.as_deref().unwrap_or(&id.to_string()),
+        );
         let payload = encode_payload(tenant, id);
         self.db
             .transaction_ref_mapped::<_, (), anyhow::Error>(move |tx| {
@@ -300,6 +345,34 @@ impl TaskService {
             .filter(Condition::all().add(entity::Column::Id.eq(id)))
             .one(&conn)
             .await?)
+    }
+
+    /// A run of `task_type` on `partition_key` with this very payload that has
+    /// not started yet, if there is one — see [`NewRun::coalesce_queued`].
+    async fn find_waiting(
+        &self,
+        tenant: Uuid,
+        task_type: &str,
+        partition_key: Option<&str>,
+        payload: &Value,
+    ) -> anyhow::Result<Option<entity::Model>> {
+        let Some(partition_key) = partition_key.map(str::trim).filter(|k| !k.is_empty()) else {
+            return Ok(None);
+        };
+        let conn = self.db.conn()?;
+        let waiting = entity::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(
+                Condition::all()
+                    .add(entity::Column::TaskType.eq(task_type))
+                    .add(entity::Column::PartitionKey.eq(partition_key))
+                    .add(entity::Column::State.eq(RunState::Queued.as_str()))
+                    .add(entity::Column::CancelRequested.eq(false)),
+            )
+            .all(&conn)
+            .await?;
+        Ok(waiting.into_iter().find(|run| run.payload == *payload))
     }
 
     async fn find_by_idempotency_key(
@@ -397,10 +470,25 @@ mod tests {
     fn partitions_are_actually_used() {
         // A hash that mapped everything onto one partition would serialize
         // every tenant's work behind a single processor and still pass the
-        // test above.
+        // test above. Every partition but the solo one is in use.
         let seen: std::collections::BTreeSet<u32> = (0..500)
             .map(|n| TaskService::partition_of(&format!("key-{n}")))
             .collect();
-        assert_eq!(seen.len() as u32, PARTITIONS);
+        assert_eq!(seen.len() as u32, PARTITIONS - 1);
+        assert!(!seen.contains(&0));
+    }
+
+    /// The collision that held a Re-sync behind a catalog sync on studio-dev:
+    /// both keys hashed to partition 0. A catalog sync now has partition 0 to
+    /// itself, and nothing else can land there.
+    #[test]
+    fn a_catalog_sync_never_shares_a_partition_with_other_work() {
+        let catalog = TaskService::partition_for("catalog.sync", "catalog");
+        assert_eq!(catalog, 0);
+        let studio_web = "github:studio-connection-ddff5557-2231-4b27-bbf5-312805d5934e:\
+                          349c7f25-2566-42eb-87a2-4b490bbbaab6:constructorfabric/studio-web";
+        for key in ["catalog", studio_web, "connection-42"] {
+            assert_ne!(TaskService::partition_for("artifact.ingest", key), catalog);
+        }
     }
 }

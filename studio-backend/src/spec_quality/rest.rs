@@ -330,6 +330,7 @@ async fn enqueue_analysis(
                 // The upstream task id is the natural key — a resubmit that
                 // somehow produced the same one is the same analysis.
                 idempotency_key: Some(&upstream_task_id),
+                coalesce_queued: false,
                 notify_workspace_id: None,
             },
         )
@@ -438,6 +439,7 @@ async fn analyze_batch(
                 // upstream, and two at once only makes both slower.
                 partition_key: Some(&detector),
                 idempotency_key: None,
+                coalesce_queued: false,
                 notify_workspace_id: None,
             },
         )

@@ -205,6 +205,7 @@ impl GitProxy {
                         payload,
                         partition_key: Some(&partition_key),
                         idempotency_key: None,
+                        coalesce_queued: true,
                         // The project's IDE session, if one is open, hears that
                         // its sources moved — as after a Re-sync in the portal.
                         notify_workspace_id: Some(project_id),

@@ -433,6 +433,7 @@ impl SchedulerService {
                         // One schedule's runs never overtake each other.
                         partition_key: Some(&schedule.id.to_string()),
                         idempotency_key: Some(&key),
+                        coalesce_queued: false,
                         notify_workspace_id: None,
                     },
                 )
@@ -497,6 +498,7 @@ impl SchedulerService {
                     payload: schedule.payload.clone(),
                     partition_key: Some(&schedule.id.to_string()),
                     idempotency_key: Some(&key),
+                    coalesce_queued: false,
                     notify_workspace_id: None,
                 },
             )

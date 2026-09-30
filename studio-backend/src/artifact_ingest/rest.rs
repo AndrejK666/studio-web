@@ -538,6 +538,7 @@ async fn sync(
                 payload,
                 partition_key: Some(&partition_key),
                 idempotency_key: None,
+                coalesce_queued: true,
                 // A sync is the long job someone waits for, and the project it
                 // was asked for is the session they are waiting in. A
                 // workspace-scoped sync addresses nobody: a workspace tenant is

@@ -715,6 +715,7 @@ async fn sync(
                 // queue behind each other instead.
                 partition_key: Some("catalog"),
                 idempotency_key: None,
+                coalesce_queued: true,
                 notify_workspace_id: None,
             },
         )
