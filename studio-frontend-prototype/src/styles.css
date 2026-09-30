@@ -582,12 +582,17 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 /* Pressed reads as the brand tint rather than a darker grey — this control has
    a persistent state (the dock stays open), unlike the rest of the cluster. */
 .pill[aria-pressed="true"] { background: var(--studio-selection-subtle); color: var(--primary); }
-/* The assistant's glyph carries the same blue→violet sweep as the dock's mark,
-   so the two are recognisably one thing. */
-.pill-ai span {
-  background: linear-gradient(135deg, var(--primary), var(--studio-ai-violet));
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-}
+/* The assistant's sparkle is drawn in --studio-ai-violet here, on the rail and
+   in the dock head alike, so the three are recognisably one thing; the control
+   around it is the same muted pill as its neighbours. */
+.pill-ai,
+.pill-ai:hover:not(:disabled),
+.pill-ai[aria-pressed="true"] { color: var(--studio-ai-violet); }
+
+/* Every glyph from icons.tsx: a stroke in currentColor, sized by its own
+   width/height. Nudged onto the text baseline when it sits in a line of text;
+   in a grid or flex control it is centred by the control. */
+.icon { flex: none; vertical-align: -0.2em; }
 
 /* Everything below the bar. The IDE host and the portal content are siblings
    here, so the bar stays put while either one is showing. */
@@ -1142,6 +1147,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .stab-wrap .stab { padding-right: 4px; }
 .stab-x {
   border: none; background: none; cursor: pointer; flex: none;
+  display: inline-grid; place-items: center;
   padding: 0 8px 0 2px; height: 28px; font-size: 11px;
   color: var(--muted-foreground); border-radius: var(--radius-md);
 }
@@ -1152,7 +1158,10 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .space-tools { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 /* Sized to the tabs, not to a default button: a 36px control in a 6px-padded
    band makes it 48px tall and the section band beneath it stays 44. */
-.space-tools button { height: 28px; padding: 0 10px; font-size: var(--text-body-size); }
+.space-tools button {
+  height: 28px; padding: 0 10px; font-size: var(--text-body-size);
+  display: inline-grid; place-items: center;
+}
 .space-tools a { font-size: 12px; }
 .space-stop { font-size: 10px; color: var(--destructive); }
 .dirty-dot { color: var(--warning); margin-left: 6px; font-size: 10px; }
@@ -1673,16 +1682,17 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   padding: 0 8px 0 14px; min-height: var(--studio-section-height); flex: none;
   border-bottom: 1px solid var(--border);
 }
-/* The assistant's mark is the one place the product spends a second hue: a
-   blue→violet sweep, --primary into --studio-ai-violet. Everything else in the
-   shell is brand blue alone, which is what makes this read as "AI" at a glance
-   rather than as another button. */
+/* The assistant's mark is the one place the product spends a second hue,
+   --studio-ai-violet. Everything else in the shell is brand blue alone, which
+   is what makes this read as "AI" at a glance rather than as another button.
+   It is the same line sparkle as the header pill's, in the same colour — no
+   filled tile, so the rail and the header do not look like two icon sets. */
 .studio-ai .sa-mark {
-  width: 24px; height: 24px; border-radius: var(--radius-md);
+  width: 24px; height: 24px;
   display: grid; place-items: center; flex: none;
-  background: linear-gradient(135deg, var(--primary), var(--studio-ai-violet));
-  color: var(--primary-foreground); font-size: 13px;
+  color: var(--studio-ai-violet);
 }
+.studio-ai .sa-chip .icon { color: var(--studio-ai-violet); }
 .studio-ai .sa-title { font-weight: 600; font-size: 14px; flex: 1; }
 .studio-ai .sa-ctx {
   flex: 1; min-height: 0; overflow-y: auto;
@@ -1708,6 +1718,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
 .studio-ai .sa-input input { flex: 1; border-radius: var(--radius-full); }
 .studio-ai .sa-send {
   width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto; padding: 0;
+  display: grid; place-items: center;
   background: var(--primary); border-color: var(--primary); color: var(--primary-foreground);
 }
 /* Railed: 48px holding one control. The head's own padding would push the mark
@@ -1717,6 +1728,7 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
   width: 40px; height: 40px; flex: none; padding: 0;
   display: grid; place-items: center;
   border: none; background: none; border-radius: var(--radius-md);
+  color: var(--studio-ai-violet);
   cursor: pointer;
   transition: background-color var(--motion-micro) var(--ease-standard);
 }
