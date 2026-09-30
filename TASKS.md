@@ -97,12 +97,12 @@ What was built today, and what it left open:
   Needs a Studio running #517's backend: request → `cfs` in the checkout →
   the portal's row shows *installed* for that repository.
 
-- [ ] Pin the session's `cfs init` to its engine @andrejk666
+- [x] Pin the session's `cfs init` to its engine @andrejk666
 
-  In a session, `kit-installer` runs `cfs init` without `--version`, so the
-  proxy first updates its cache to the newest engine on GitHub and the
-  image's pin holds only until the first kit install. The desktop passes the
-  pin; the session should too (a web change).
+  The image records the engine it cached in `/opt/cfs/cfs.json` and names
+  it in `STUDIO_CFS_PIN`; `cfs` from PATH reads it, so `cfs init` gets
+  `--version` in a session as on the desktop. Measured on the image: unpinned,
+  the first init moved the cache from v1.6.2 to v1.7.0.
 
 - [ ] Publish the CLI and the engine on open-vsx @andrejk666
 

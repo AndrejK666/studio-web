@@ -31,6 +31,19 @@ describe('cfs command', () => {
         expect(cfsCommand({ STUDIO_CFS_COMMAND: '   ' })).toMatchObject({ executable: 'cfs' });
     });
 
+    it('pins cfs from PATH to the engine the session image recorded', async () => {
+        const pin = path.join(workspace, 'opt-cfs');
+        await fs.mkdir(pin, { recursive: true });
+        await fs.writeFile(path.join(pin, 'cfs.json'), '{"engine": "v1.6.2"}\n', 'utf8');
+
+        expect(cfsCommand({ STUDIO_CFS_PIN: pin })).toMatchObject({ executable: 'cfs', engine: 'v1.6.2' });
+        // No pin, or one that says nothing usable: unpinned, as before.
+        expect(cfsCommand({}).engine).toBeUndefined();
+        expect(cfsCommand({ STUDIO_CFS_PIN: path.join(workspace, 'missing') }).engine).toBeUndefined();
+        await fs.writeFile(path.join(pin, 'cfs.json'), '{"engine": "; rm -rf /"}', 'utf8');
+        expect(cfsCommand({ STUDIO_CFS_PIN: pin }).engine).toBeUndefined();
+    });
+
     it('refuses a configured command with a NUL byte', () => {
         expect(() => configuredCfsCommand({ STUDIO_CFS_COMMAND: 'cfs\0rm' })).toThrow('invalid NUL byte');
     });
