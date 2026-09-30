@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "./api";
-import type { ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
+import type { ComponentSource, ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
 import { fieldTrend, type ComponentSnapshot, type FieldTrend } from "./field-trend";
 import { readinessOf } from "./readiness";
@@ -292,6 +292,9 @@ interface RoadmapSel {
   number: string;
   /** `A=Acronis, C=Constructor` -- one entry per priority letter. */
   consumers: string;
+  /** The issues whose sub-issues are the gears: `owner/repo#123`, space- or
+   *  comma-separated. Empty: every board item is a gear. */
+  roots?: string;
 }
 
 /** `A=Acronis, C=Constructor` -> `{ A: "Acronis", C: "Constructor" }`. */
@@ -359,6 +362,7 @@ const DEFAULT_SOURCES: Sources = {
     owner: "constructorfabric",
     number: "48",
     consumers: "A=Acronis, C=Constructor, V=Virtuozzo",
+    roots: "",
   },
 };
 
@@ -396,6 +400,8 @@ interface RoadmapBody {
   owner: string;
   number: number;
   consumers: Record<string, string>;
+  /** `owner/repo#123`: the issues whose sub-issues are the gears. */
+  roots: string[];
 }
 
 /** The POST body for /sync derived from the selection, or an error string. */
@@ -435,6 +441,7 @@ function syncBody(
       owner: s.roadmap.owner.trim(),
       number,
       consumers: parseConsumers(s.roadmap.consumers),
+      roots: (s.roadmap.roots ?? "").split(/[\s,;]+/).filter(Boolean),
     });
   }
   if (!crates_io && repositories.length === 0 && roadmaps.length === 0)
@@ -1027,6 +1034,7 @@ export function ComponentsCatalog({
                       activity={activity.byGear.get(nameOf(g))}
                       activityDays={activityDays}
                       baseline={baselines.byName.get(nameOf(g))}
+                      sources={resolved[nameOf(g)]?.sources}
                       onOpen={() => setSelected(nameOf(g))}
                     />
                   ))}
@@ -1053,6 +1061,7 @@ export function ComponentsCatalog({
                     schema={schemaFor(schemas, g.type_id)}
                     usedBy={resolved[nameOf(g)]?.values?.consumers?.n ?? null}
                     baseline={baselines.byName.get(nameOf(g))}
+                    sources={resolved[nameOf(g)]?.sources}
                     onOpen={() => setSelected(nameOf(g))}
                   />
                 ))}
@@ -1225,10 +1234,21 @@ function RoadmapSourceEditor({
             onChange={(e) => onChange({ consumers: e.target.value })}
           />
         </label>
+        <label className="src-row">
+          <span>Root issues</span>
+          <input
+            placeholder="owner/repo#3342 owner/repo#4810"
+            value={sel.roots ?? ""}
+            disabled={!sel.enabled}
+            onChange={(e) => onChange({ roots: e.target.value })}
+          />
+        </label>
         <p className="src-note">
-          Each gear's stage, milestone and who needs it, from the board item whose title names the
-          gear, or the one pinned in its Roadmap item field. Consumers name the letters of the
-          priority column. The connection needs <code>read:project</code>.
+          Every gear the board plans is listed, written or not: with root issues, a gear is a direct
+          sub-issue of one of them (off the board too); without, every item is one. A gear whose
+          code is catalogued shows its plan on that component; the title names it, or its Roadmap
+          item field pins it. Consumers name the letters of the priority column. The connection
+          needs <code>read:project</code>.
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
         </p>
       </div>
@@ -1398,6 +1418,7 @@ function GearListRow({
   activity,
   activityDays,
   baseline,
+  sources,
   onOpen,
 }: {
   gear: CatalogNode;
@@ -1408,6 +1429,8 @@ function GearListRow({
   activityDays: number;
   /** The component as the window found it, when the catalogue kept a snapshot. */
   baseline: ComponentSnapshot | undefined;
+  /** Where its facts came from. */
+  sources?: ComponentSource[] | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
@@ -1471,6 +1494,7 @@ function GearListRow({
         {gear.value.description && (
           <div className="gcat-purpose">{String(gear.value.description)}</div>
         )}
+        <SourceChips sources={sources} />
       </td>
       <td>
         <span className="pill" title={excluded ?? kindReason}>
@@ -1729,12 +1753,39 @@ function Count({ n, unit }: { n: number; unit?: string }) {
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  crates_io: "crates.io",
+  repository: "repo",
+  roadmap: "roadmap",
+  gearbox: "Gearbox",
+  person: "edited",
+};
+
+/** Where a record's facts came from, in the order they are layered. A gear
+ *  known from a board alone says so: planned, no code yet. */
+function SourceChips({ sources }: { sources: ComponentSource[] | undefined }) {
+  if (!sources?.length) return null;
+  const planOnly = sources.every((s) => s.kind === "roadmap");
+  return (
+    <div className="src-chips" aria-label="Sources">
+      {planOnly && <span className="src-chip planned">planned · no code yet</span>}
+      {sources.map((s) => (
+        <span key={`${s.kind}:${s.label}`} className={`src-chip ${s.kind}`} title={s.label}>
+          {SOURCE_LABELS[s.kind] ?? s.kind}
+          {s.kind === "repository" || s.kind === "roadmap" ? `: ${s.label}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function GearListCard({
   gear,
   values,
   schema,
   usedBy,
   baseline,
+  sources,
   onOpen,
 }: {
   gear: CatalogNode;
@@ -1747,6 +1798,8 @@ function GearListCard({
   activity?: GearActivity | undefined;
   /** The component as the window found it, when the catalogue kept a snapshot. */
   baseline: ComponentSnapshot | undefined;
+  /** Where its facts came from. */
+  sources?: ComponentSource[] | undefined;
   onOpen: () => void;
 }) {
   const name = String(gear.value.name ?? gear.instance_id);
@@ -1805,6 +1858,7 @@ function GearListCard({
         </span>
       </div>
       <div className="ccard-title">{displayName(name)}</div>
+      <SourceChips sources={sources} />
       {gear.value.description ? <p className="ccard-desc">{String(gear.value.description)}</p> : <div className="ccard-gap" />}
 
       {(axes.length > 0 || schedule) && (
@@ -3463,6 +3517,10 @@ const GCAT_CSS = `
 .gcat .gcat-name { font-weight:600; color:var(--foreground); }
 .gcat .gcat-purpose { margin-top:2px; font-size:12px; color:var(--muted-foreground); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .gcat .gcat-version { font-family:var(--font-mono); font-size:12px; }
+.gcat .src-chips { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 2px; }
+.gcat .src-chip { font-size:10.5px; line-height:16px; padding:0 6px; border-radius:8px; border:1px solid var(--border); color:var(--muted-foreground); white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+.gcat .src-chip.roadmap { border-color:color-mix(in srgb, var(--primary) 40%, var(--border)); color:var(--primary); }
+.gcat .src-chip.planned { background:color-mix(in srgb, var(--primary) 10%, transparent); border-color:transparent; color:var(--primary); font-weight:600; }
 .gcat .gcat-sub { font-size:11px; color:var(--muted-foreground); margin-top:2px; }
 .gcat .gcat-num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* A missing value says WHICH missing it is, so it reads as a finding rather

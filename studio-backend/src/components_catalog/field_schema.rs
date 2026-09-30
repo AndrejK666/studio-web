@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::gts::{FRONTX_TYPE, GEAR_TYPE, KIT_TYPE};
+use super::gts::{FRONTX_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE};
 /// A document type is a component, but studio-documents owns it and keeps its
 /// identity: the catalogue lists it, it does not annex it (see ADR-0014).
 use crate::documents::gts::DOCUMENT_TYPE;
@@ -319,7 +319,42 @@ pub fn builtin_schemas() -> Vec<TypeFieldSchema> {
         })],
     );
 
-    vec![gear, frontx, kit, document]
+    // A gear the roadmap plans and nobody has written yet: the plan is all
+    // there is to show. Once code for it is catalogued, the component page
+    // shows the plan beside everything the repository says.
+    let planned = schema_from(
+        ROADMAP_ITEM_TYPE,
+        &gear,
+        vec![
+            group(
+                "summary",
+                "Summary",
+                "S",
+                pick(&index, &["description", "category"]),
+            ),
+            group(
+                "roadmap",
+                "Roadmap",
+                "R",
+                pick(
+                    &index,
+                    &[
+                        "stage",
+                        "milestone",
+                        "commitment",
+                        "roadmap_progress",
+                        "demand",
+                        "convergence",
+                        "roadmap_owner",
+                        "effort",
+                        "roadmap_item",
+                    ],
+                ),
+            ),
+        ],
+    );
+
+    vec![gear, frontx, kit, document, planned]
 }
 
 /// The built-ins with this tenant's own records laid over them.

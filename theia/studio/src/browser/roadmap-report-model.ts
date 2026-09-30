@@ -19,12 +19,35 @@ import type { Cell, Sheet } from './xlsx';
 export const ROADMAP_REPORT_PATH = '/studio-components-catalog/v1/roadmap-report';
 
 export interface RoadmapRow {
+    /** The implementing component, or the board's title for a gear with no code. */
     readonly name: string;
+    /** The board's title for the gear. */
+    readonly title: string;
+    readonly number: number | null;
+    /** The title's `DOMAIN - ` prefix, or `Ungrouped`. */
+    readonly group: string;
+    /** The catalogued components it is the plan of; empty: no code yet. */
+    readonly components: readonly string[];
+    readonly closed: boolean;
+    readonly off_board: boolean;
     readonly category: string | null;
     readonly readiness: ReferenceReadiness;
     readonly assignees: string | null;
-    readonly effort: string | null;
+    /** Person-days. */
+    readonly effort_md: number | null;
+    readonly remaining_md: number | null;
     readonly roadmap_title: string | null;
+}
+
+export interface RoadmapGroup {
+    readonly group: string;
+    readonly total: number;
+    readonly done: number;
+    readonly in_code: number;
+    readonly axes: readonly { readonly label: string; readonly average: number | null }[];
+    readonly estimated: number;
+    readonly effort_md: number;
+    readonly remaining_md: number;
 }
 
 export interface RoadmapCount {
@@ -51,8 +74,11 @@ export interface RoadmapConsumer {
 export interface RoadmapReport {
     readonly items: readonly RoadmapRow[];
     readonly total: number;
+    /** Gears no catalogued component implements yet. */
+    readonly not_in_code: number;
     readonly not_on_board: number;
     readonly summary: {
+        readonly by_group: readonly RoadmapGroup[];
         readonly by_stage: readonly RoadmapCount[];
         readonly by_milestone: readonly RoadmapMilestone[];
         readonly by_consumer: readonly RoadmapConsumer[];
@@ -115,6 +141,19 @@ export function axesOf(items: readonly RoadmapRow[]): string[] {
     return out;
 }
 
+/** The progress axes across the groups, in board order. */
+export function groupAxes(groups: readonly RoadmapGroup[]): string[] {
+    const out: string[] = [];
+    for (const g of groups) {
+        for (const a of g.axes) {
+            if (!out.includes(a.label)) {
+                out.push(a.label);
+            }
+        }
+    }
+    return out;
+}
+
 /** `roadmap-2026-09-29.xlsx`. */
 export function workbookName(asOf: string): string {
     return `roadmap-${asOf}.xlsx`;
@@ -125,16 +164,17 @@ const yesNo = (b: boolean | null) => (b === null ? null : b ? 'yes' : 'no');
 export function roadmapSheet(report: RoadmapReport): Sheet {
     const axes = axesOf(report.items);
     const header = [
-        'Component', 'Category', 'Stage', 'Milestone', 'Due', 'Committed', 'Plan', 'Why', 'Demand',
+        'ID', 'Group', 'Gear', 'Components', 'Stage', 'Milestone', 'Due', 'Committed', 'Plan', 'Why', 'Demand',
         ...axes,
-        'Assignees', 'Effort', 'Lifecycle', 'Last release', 'Released on', 'Grade', 'Board item', 'Link',
+        'Assignees', 'Effort m*d', 'Remaining m*d', 'Lifecycle', 'Last release', 'Released on', 'Grade', 'Board item', 'Link',
     ];
     const rows: Cell[][] = report.items.map(row => {
         const r = row.readiness;
-        const effort = row.effort !== null && /^\d+(\.\d+)?$/.test(row.effort) ? Number(row.effort) : row.effort;
         return [
-            row.name,
-            row.category,
+            row.number,
+            row.group,
+            row.title,
+            row.components.join(', ') || 'not in code yet',
             r.stage,
             r.milestone,
             r.due,
@@ -152,7 +192,8 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
                 return /^\d+%$/.test(a.value) && a.pct !== null ? a.pct : a.value;
             }),
             row.assignees,
-            effort,
+            row.effort_md,
+            row.remaining_md === null ? null : Math.round(row.remaining_md * 10) / 10,
             r.lifecycle,
             r.last_release,
             r.released_on,
@@ -162,27 +203,36 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
         ];
     });
     const widths = header.map(h =>
-        h === 'Component' ? 34 : h === 'Why' ? 48 : h === 'Board item' ? 40 : h === 'Link' ? 44 : Math.max(10, h.length + 2));
+        h === 'Gear' || h === 'Components' ? 34 : h === 'Why' ? 48 : h === 'Board item' ? 40 : h === 'Link' ? 44 : Math.max(8, h.length + 2));
     return { name: 'Roadmap', rows: [header, ...rows], widths };
 }
 
 export function summarySheet(report: RoadmapReport, asOf: string): Sheet {
     const s = report.summary;
+    const labels = groupAxes(s.by_group);
     const rows: Cell[][] = [
         ['Roadmap report', asOf],
-        ['Components on the board', report.total],
+        ['Gears on the board', report.total],
+        ['Not in code yet', report.not_in_code],
         ['Catalogued, not on the board', report.not_on_board],
         [],
-        ['Stage', 'Components'],
+        ['Group', 'Gears', 'Done', 'In code', ...labels.map(l => `${l} %`), 'Estimated', 'Effort m*d', 'Remaining m*d'],
+        ...s.by_group.map(g => [
+            g.group, g.total, g.done, g.in_code,
+            ...labels.map(l => g.axes.find(a => a.label === l)?.average ?? null),
+            g.estimated, g.effort_md, Math.round(g.remaining_md * 10) / 10,
+        ]),
+        [],
+        ['Stage', 'Gears'],
         ...s.by_stage.map(c => [c.label, c.count]),
         [],
-        ['Milestone', 'Due', 'Components', 'Committed', 'At risk'],
+        ['Milestone', 'Due', 'Gears', 'Committed', 'At risk'],
         ...s.by_milestone.map(m => [m.milestone, m.due, m.total, m.committed, m.at_risk]),
         [],
         ['Consumer', 'P1', 'P2', 'P3', 'P1 not on track'],
         ...s.by_consumer.map(c => [c.consumer, c.p1, c.p2, c.p3, c.p1_not_on_track]),
         [],
-        ['Plan', 'Components'],
+        ['Plan', 'Gears'],
         ...s.by_plan.map(c => [c.label, c.count]),
     ];
     if (s.overdue.length) {

@@ -455,6 +455,16 @@ export interface ComponentValues {
   values: Record<string, FieldVal | null>;
   /** Empty when nothing files it anywhere — a fact, not a missing label. */
   category: string;
+  /** Every source that answered something about it, layered in order. */
+  sources?: ComponentSource[];
+  /** Known from a roadmap board alone: planned, no code catalogued yet. */
+  planned?: boolean;
+}
+
+/** One place a component's facts came from. */
+export interface ComponentSource {
+  kind: "crates_io" | "repository" | "roadmap" | "gearbox" | "person" | string;
+  label: string;
 }
 
 export interface Capability {

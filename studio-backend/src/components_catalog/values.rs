@@ -266,10 +266,93 @@ pub fn to_field_val(raw: &Value) -> Option<Value> {
     }
 }
 
+/// One place a component's facts came from.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Source {
+    /// `crates_io`, `repository`, `roadmap`, `gearbox` or `person`.
+    pub kind: String,
+    /// What to call it: the repository, the board's title, `crates.io`.
+    pub label: String,
+}
+
+/// Every source that answered something about a component, in the order they
+/// are layered: crates.io, the repository scan, the Gearbox engine, the
+/// roadmap board, then a person. A record that shows its sources says why a
+/// value is what it is, and a planned gear with only a board says it plainly.
+#[must_use]
+pub fn sources_of(type_id: &str, node: &Value, profile: Option<&Value>) -> Vec<Source> {
+    let mut out: Vec<Source> = Vec::new();
+    let mut add = |kind: &str, label: &str| {
+        if !label.is_empty() && !out.iter().any(|s| s.kind == kind && s.label == label) {
+            out.push(Source {
+                kind: kind.to_string(),
+                label: label.to_string(),
+            });
+        }
+    };
+    let planned = type_id == super::gts::ROADMAP_ITEM_TYPE;
+    if !planned && node.get("max_version").is_some_and(|v| !v.is_null()) {
+        add("crates_io", "crates.io");
+    }
+    let auto = profile
+        .and_then(|p| p.get("auto"))
+        .and_then(Value::as_object);
+    if !planned {
+        for repo in [
+            node.get("synced_from").and_then(Value::as_str),
+            profile
+                .and_then(|p| p.get("synced_from"))
+                .and_then(Value::as_str),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            add("repository", repo);
+        }
+    }
+    if auto.is_some_and(|a| a.contains_key("gdl")) {
+        add("gearbox", "Gearbox");
+    }
+    let board = auto
+        .and_then(|a| a.get("roadmap_board"))
+        .and_then(|b| b.get("b"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            planned
+                .then(|| node.get("board_title").and_then(Value::as_str))
+                .flatten()
+        });
+    if let Some(board) = board {
+        add("roadmap", board);
+    }
+    if profile
+        .and_then(|p| p.get("values"))
+        .and_then(Value::as_object)
+        .is_some_and(|v| !v.is_empty())
+    {
+        add("person", "edited by hand");
+    }
+    out
+}
+
 /// Merge the three sources in precedence order: crates.io < scan < profile.
 #[must_use]
 pub fn resolve(node: &Value, profile: Option<&Value>) -> Values {
     let mut out = from_crate(node);
+
+    // A planned gear -- one a roadmap board plans and no repository has yet --
+    // carries its plan on the node itself, where a gear's profile would: the
+    // board is its only source, and it is layered like a scan.
+    if node.get("kind").and_then(Value::as_str) == Some("planned")
+        && let Some(auto) = node.get("auto").and_then(Value::as_object)
+    {
+        for (key, raw) in auto {
+            if let Some(value) = to_field_val(raw) {
+                out.insert(key.clone(), value);
+            }
+        }
+    }
+
     let Some(profile) = profile else {
         return out;
     };
@@ -374,6 +457,46 @@ pub fn newer_first(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_record_names_every_source_that_answered_it() {
+        let kinds = |v: Vec<Source>| -> Vec<(String, String)> {
+            v.into_iter().map(|s| (s.kind, s.label)).collect()
+        };
+        let node = json!({ "name": "cf-gears-credstore", "max_version": "0.3.0",
+                           "synced_from": "constructorfabric/gears-rust" });
+        let profile = json!({
+            "auto": { "gdl": { "b": "yes" }, "roadmap_board": { "b": "BACKEND ROADMAP" } },
+            "values": { "owner": { "b": "@me" } },
+        });
+        assert_eq!(
+            kinds(sources_of(
+                super::super::gts::GEAR_TYPE,
+                &node,
+                Some(&profile)
+            )),
+            [
+                ("crates_io".into(), "crates.io".into()),
+                ("repository".into(), "constructorfabric/gears-rust".into()),
+                ("gearbox".into(), "Gearbox".into()),
+                ("roadmap".into(), "BACKEND ROADMAP".into()),
+                ("person".into(), "edited by hand".into()),
+            ]
+        );
+        // A planned gear: the board, and nothing else.
+        let planned = json!({ "name": "BSS - Billing", "board_title": "BACKEND ROADMAP",
+                              "board": "o/projects/48" });
+        assert_eq!(
+            kinds(sources_of(
+                super::super::gts::ROADMAP_ITEM_TYPE,
+                &planned,
+                None
+            )),
+            [("roadmap".into(), "BACKEND ROADMAP".into())]
+        );
+        // Nothing answered: nothing claimed.
+        assert!(sources_of(super::super::gts::GEAR_TYPE, &json!({}), None).is_empty());
+    }
 
     fn crate_node(extra: Value) -> Value {
         let mut node = json!({ "name": "cf-gears-api-gateway" });

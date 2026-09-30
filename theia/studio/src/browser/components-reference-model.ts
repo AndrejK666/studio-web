@@ -196,7 +196,7 @@ export function failureMessage(status: number): string {
 }
 
 /** The component kinds, in the order the filter offers them; anything else follows. */
-const KIND_ORDER = ['gear', 'plugin', 'sdk', 'library', 'micro-frontend', 'frontend-library', 'tool', 'kit'];
+const KIND_ORDER = ['gear', 'planned', 'plugin', 'sdk', 'library', 'micro-frontend', 'frontend-library', 'tool', 'kit'];
 
 /** How a kind reads on a chip. */
 export const KIND_LABELS: Record<string, string> = {
@@ -208,6 +208,8 @@ export const KIND_LABELS: Record<string, string> = {
     'frontend-library': 'frontend library',
     'tool': 'tool / CLI',
     'kit': 'kit',
+    // A gear a roadmap board plans that no repository has yet.
+    'planned': 'planned',
     'config': 'config',
     'test-support': 'test support',
     'docs': 'docs',

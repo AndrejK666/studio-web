@@ -9,7 +9,7 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { demandText, gradeTone } from './components-reference-model';
 import { ComponentsReferenceContribution } from './components-reference-contribution';
-import { RoadmapReport, loadRoadmapReport, reportSheets, workbookName } from './roadmap-report-model';
+import { RoadmapReport, groupAxes, loadRoadmapReport, reportSheets, workbookName } from './roadmap-report-model';
 import { makeXlsx } from './xlsx';
 
 /*
@@ -120,7 +120,8 @@ export class RoadmapReportWidget extends ReactWidget {
             <div className='srr-root'>
                 <div className='srr-head'>
                     <span className='srr-lead'>
-                        {report.total} on the roadmap board
+                        {report.total} gears on the roadmap board
+                        {report.not_in_code > 0 && <span className='scr-muted'> · {report.not_in_code} not in code yet</span>}
                         {report.not_on_board > 0 &&
                             <span className='scr-muted'> · {report.not_on_board} catalogued components are not on it — unplanned, or pin one through its Roadmap item field</span>}
                     </span>
@@ -140,6 +141,39 @@ export class RoadmapReportWidget extends ReactWidget {
                     ? <div className='scr-state'>Nothing on the board matched a catalogued component. Turn on the Roadmap source on the portal&apos;s Components page and sync.</div>
                     : (
                         <>
+                            {s.by_group.length > 0 && (
+                                <section className='srr-groups'>
+                                    <h3>By group</h3>
+                                    <table className='srr-table'>
+                                        <thead>
+                                            <tr>
+                                                <th /><th className='num'>Gears</th><th className='num'>Done</th><th className='num'>In code</th>
+                                                {groupAxes(s.by_group).map(l => <th key={l} className='num'>{l}</th>)}
+                                                <th className='num'>Estimated</th>
+                                                <th className='num' title='person-days'>Effort</th>
+                                                <th className='num' title='person-days'>Remaining</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {s.by_group.map(g => (
+                                                <tr key={g.group}>
+                                                    <td>{g.group}</td>
+                                                    <td className='num'>{g.total}</td>
+                                                    <td className='num'>{g.done || ''}</td>
+                                                    <td className='num'>{g.in_code}</td>
+                                                    {groupAxes(s.by_group).map(l => {
+                                                        const avg = g.axes.find(a => a.label === l)?.average;
+                                                        return <td key={l} className='num'>{avg === null || avg === undefined ? '' : `${avg}%`}</td>;
+                                                    })}
+                                                    <td className='num'>{g.estimated} of {g.total}</td>
+                                                    <td className='num'>{g.effort_md ? `${g.effort_md} d` : ''}</td>
+                                                    <td className='num'>{g.remaining_md ? `${Math.round(g.remaining_md)} d` : ''}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </section>
+                            )}
                             <div className='srr-summary'>
                                 <section>
                                     <h3>Stage</h3>
@@ -198,17 +232,18 @@ export class RoadmapReportWidget extends ReactWidget {
                             {s.overdue.length > 0 && <div className='scr-warning bad srr-overdue'>⚠ Overdue: {s.overdue.join(', ')}</div>}
                             <table className='srr-table srr-rows'>
                                 <thead>
-                                    <tr><th>Component</th><th>Stage</th><th>Milestone</th><th>Plan</th><th>Needed by</th><th>Assignees</th><th>Grade</th></tr>
+                                    <tr><th>Gear</th><th>Stage</th><th>Milestone</th><th>Plan</th><th>Needed by</th><th>Assignees</th><th className='num'>Effort</th><th>Grade</th></tr>
                                 </thead>
                                 <tbody>
                                     {report.items.map(row => {
                                         const r = row.readiness;
                                         return (
-                                            <tr key={row.name}>
+                                            <tr key={`${row.number ?? ''}:${row.title}`}>
                                                 <td>
                                                     <a href='#' title={`Open ${row.name} in Components`} onClick={ev => { ev.preventDefault(); void this.openComponent(row.name); }}>
-                                                        {row.name}
+                                                        {row.title}
                                                     </a>
+                                                    <div className='scr-muted'>{row.components.length ? row.components.join(', ') : 'not in code yet'}</div>
                                                     {r.roadmap_item && (
                                                         <a className='srr-issue' href={r.roadmap_item} target='_blank' rel='noreferrer' title={row.roadmap_title ?? r.roadmap_item}>
                                                             <span className='codicon codicon-link-external' />
@@ -227,6 +262,11 @@ export class RoadmapReportWidget extends ReactWidget {
                                                 </td>
                                                 <td>{demandText(r) ?? ''}</td>
                                                 <td>{row.assignees ?? ''}</td>
+                                                <td className='num nowrap'>
+                                                    {row.effort_md === null ? '' : `${row.effort_md} d`}
+                                                    {row.remaining_md !== null && row.remaining_md !== row.effort_md &&
+                                                        <div className='scr-muted'>{Math.round(row.remaining_md)} d left</div>}
+                                                </td>
                                                 <td>{r.grade && <span className={`scr-grade ${gradeTone(r.grade) ?? ''}`}>{r.grade}</span>}</td>
                                             </tr>
                                         );

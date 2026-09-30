@@ -8,7 +8,7 @@ import type { CSSProperties } from "react";
 import { api } from "./api";
 import { errText } from "./format";
 import { Modal } from "./modal";
-import { demandText, reportSheets, type RoadmapReport } from "./roadmap-report";
+import { demandText, reportSheets, type RoadmapGroup, type RoadmapReport } from "./roadmap-report";
 import { makeXlsx } from "./xlsx";
 
 const LAMP: Record<string, string> = {
@@ -29,6 +29,13 @@ const TH: CSSProperties = {
 const TD: CSSProperties = { padding: "4px 6px", borderBottom: "1px solid var(--border)", verticalAlign: "top" };
 const DATE: CSSProperties = { ...TD, whiteSpace: "nowrap" };
 const NUM: CSSProperties = { ...TD, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+/** The progress axes across the groups, in board order. */
+function axisLabels(groups: RoadmapGroup[]): string[] {
+  const out: string[] = [];
+  for (const g of groups) for (const a of g.axes) if (!out.includes(a.label)) out.push(a.label);
+  return out;
+}
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -75,16 +82,63 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
       {report && s && (
         <>
           <p className="gcat-hint" style={{ margin: 0 }}>
-            {report.total} on the roadmap board
+            {report.total} gears on the roadmap board
+            {report.not_in_code > 0 && ` · ${report.not_in_code} not in code yet`}
             {report.not_on_board > 0 &&
               ` · ${report.not_on_board} catalogued components are not on it — unplanned, or pin one through its Roadmap item field`}
           </p>
           {report.total === 0 ? (
             <p className="gcat-hint">
-              Nothing matched. Turn on the Roadmap source under Sources and sync.
+              No gears yet. Turn on the Roadmap source under Sources — with its root issues — and sync.
             </p>
           ) : (
             <>
+              {s.by_group.length > 0 && (
+                <section style={{ overflowX: "auto" }}>
+                  <h3 style={{ fontSize: 13, margin: "4px 0" }}>By group</h3>
+                  <table style={TABLE}>
+                    <thead>
+                      <tr>
+                        <th style={TH} />
+                        <th style={TH}>Gears</th>
+                        <th style={TH}>Done</th>
+                        <th style={TH}>In code</th>
+                        {axisLabels(s.by_group).map((l) => (
+                          <th key={l} style={TH}>
+                            {l}
+                          </th>
+                        ))}
+                        <th style={TH}>Estimated</th>
+                        <th style={TH} title="person-days">Effort</th>
+                        <th style={TH} title="person-days">Remaining</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.by_group.map((g) => (
+                        <tr key={g.group}>
+                          <td style={TD}>{g.group}</td>
+                          <td style={NUM}>{g.total}</td>
+                          <td style={NUM}>{g.done || ""}</td>
+                          <td style={NUM}>{g.in_code}</td>
+                          {axisLabels(s.by_group).map((l) => {
+                            const avg = g.axes.find((a) => a.label === l)?.average;
+                            return (
+                              <td key={l} style={NUM}>
+                                {avg === null || avg === undefined ? "" : `${avg}%`}
+                              </td>
+                            );
+                          })}
+                          <td style={NUM}>
+                            {g.estimated} of {g.total}
+                          </td>
+                          <td style={NUM}>{g.effort_md ? `${g.effort_md} d` : ""}</td>
+                          <td style={NUM}>{g.remaining_md ? `${Math.round(g.remaining_md)} d` : ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                 <section>
                   <h3 style={{ fontSize: 13, margin: "4px 0" }}>Stage</h3>
@@ -176,7 +230,7 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
                 <table style={TABLE}>
                   <thead>
                     <tr>
-                      {["Component", "Stage", "Milestone", "Plan", "Demand", "Assignees", "Grade"].map((h) => (
+                      {["Gear", "Stage", "Milestone", "Plan", "Demand", "Assignees", "Effort", "Grade"].map((h) => (
                         <th key={h} style={TH}>
                           {h}
                         </th>
@@ -187,15 +241,18 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
                     {report.items.map((row) => {
                       const r = row.readiness;
                       return (
-                        <tr key={row.name}>
+                        <tr key={`${row.number ?? ""}:${row.title}`}>
                           <td style={TD}>
                             {r.roadmap_item ? (
                               <a href={r.roadmap_item} target="_blank" rel="noreferrer" title={row.roadmap_title ?? ""}>
-                                {row.name}
+                                {row.title}
                               </a>
                             ) : (
-                              row.name
+                              row.title
                             )}
+                            <div style={{ color: "var(--muted-foreground)", fontSize: 11 }}>
+                              {row.components.length ? row.components.join(", ") : "not in code yet"}
+                            </div>
                           </td>
                           <td style={TD}>{r.stage ?? ""}</td>
                           <td style={DATE}>
@@ -213,6 +270,14 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
                           </td>
                           <td style={TD}>{demandText(r.demand)}</td>
                           <td style={TD}>{row.assignees ?? ""}</td>
+                          <td style={NUM}>
+                            {row.effort_md === null ? "" : `${row.effort_md} d`}
+                            {row.remaining_md !== null && row.remaining_md !== row.effort_md && (
+                              <div style={{ color: "var(--muted-foreground)", fontSize: 11 }}>
+                                {Math.round(row.remaining_md)} d left
+                              </div>
+                            )}
+                          </td>
                           <td style={TD}>{r.grade ?? ""}</td>
                         </tr>
                       );

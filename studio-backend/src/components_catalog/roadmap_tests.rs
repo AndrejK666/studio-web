@@ -85,10 +85,145 @@ fn a_tie_is_left_for_a_person() {
         item(2, "CORE - Inbound API Gateway (p1)"),
     ];
     assert!(matched(&g, &items).is_empty());
-    // One item fits two gears equally.
+}
+
+#[test]
+fn an_item_that_names_two_gears_equally_is_the_plan_of_both() {
     let g = gears(&["authn-resolver", "authz-resolver"]);
     let items = vec![item(3, "CORE - Auth Resolver (p1)")];
-    assert!(matched(&g, &items).is_empty());
+    let m = matched(&g, &items);
+    assert_eq!(m.get("cf-gears-authn-resolver"), Some(&3));
+    assert_eq!(m.get("cf-gears-authz-resolver"), Some(&3));
+    // But not when another gear fits it better.
+    let g = gears(&["usage-collector", "timescaledb-usage-collector-plugin"]);
+    let items = vec![item(7, "CORE - Usage Collector")];
+    let m = matched(&g, &items);
+    assert_eq!(m.get("cf-gears-usage-collector"), Some(&7));
+    assert_eq!(m.get("cf-gears-timescaledb-usage-collector-plugin"), None);
+}
+
+#[test]
+fn a_typo_and_a_compound_name_still_find_their_gear() {
+    let g = gears(&["credstore", "chat-engine"]);
+    let items = vec![
+        item(2542, "CORE - Credentials Store (p1)"),
+        item(2887, "GENAI - Chat Egine (p1)"),
+    ];
+    let m = matched(&g, &items);
+    assert_eq!(m.get("cf-gears-credstore"), Some(&2542));
+    assert_eq!(m.get("cf-gears-chat-engine"), Some(&2887));
+    assert!(one_edit_apart("egine", "engine"));
+    assert!(!one_edit_apart("parser", "storage"));
+    assert_eq!(
+        compound_of("credstore", &["credential".into(), "store".into()]),
+        Some((0, 1))
+    );
+    assert_eq!(compound_of("credstore", &["store".into()]), None);
+}
+
+#[test]
+fn the_gears_are_the_roots_sub_issues_and_a_group_is_the_title_prefix() {
+    let mut b = Roadmap::default();
+    let mut root = item(3342, "CORE - root");
+    root.parent = None;
+    let mut child = item(2542, "CORE - Credentials Store (p1)");
+    child.parent = Some(3342);
+    let mut stray = item(9, "Unrelated task");
+    stray.parent = Some(1);
+    b.items = vec![root, child, stray];
+    assert_eq!(gear_items(&b, &[3342]), vec![1]);
+    // Without roots every item is one.
+    assert_eq!(gear_items(&b, &[]), vec![0, 1, 2]);
+    assert_eq!(group_of("CORE - Tenant Resolver"), "CORE");
+    assert_eq!(group_of("Unrelated task"), "Ungrouped");
+    assert_eq!(group_of("setup - intro"), "Ungrouped");
+
+    // A root names its repository, or borrows the board item's.
+    assert_eq!(
+        parse_root("constructorfabric/gears-rust#4810", &b),
+        Some(("constructorfabric".into(), "gears-rust".into(), 4810))
+    );
+    assert_eq!(parse_root("3342", &b), Some(("o".into(), "r".into(), 3342)));
+    assert_eq!(parse_root("777", &b), None);
+    let mut s = source();
+    s.roots = vec![
+        "constructorfabric/gears-rust#4810".into(),
+        "3342".into(),
+        "junk".into(),
+    ];
+    assert_eq!(root_numbers(&s), vec![4810, 3342]);
+}
+
+#[test]
+fn an_issue_field_fills_what_the_board_leaves_empty_and_yields_to_what_it_says() {
+    let page = json!({
+        "title": "B", "url": "u", "fields": { "nodes": [] },
+        "items": { "pageInfo": { "hasNextPage": false }, "nodes": [{
+            "isArchived": false,
+            "content": {
+                "__typename": "Issue", "number": 2542, "title": "CORE - Credentials Store (p1)",
+                "url": "https://github.com/o/r/issues/2542", "state": "CLOSED",
+                "assignees": { "nodes": [] }, "milestone": null,
+                "parent": { "number": 4813 },
+                "issueFieldValues": { "nodes": [
+                    { "__typename": "IssueFieldNumberValue", "value": 30, "field": { "name": "Estimated Efforts m*d" } },
+                    { "__typename": "IssueFieldTextValue", "value": "issue says", "field": { "name": "Owner" } }
+                ]}
+            },
+            "fieldValues": { "nodes": [
+                { "__typename": "ProjectV2ItemFieldTextValue", "text": "board says", "field": { "name": "Owner" } }
+            ]}
+        }]}
+    });
+    let mut b = Roadmap::default();
+    assert_eq!(read_page(&page, &mut b), None);
+    let i = &b.items[0];
+    assert_eq!(i.parent, Some(4813));
+    assert!(i.closed && !i.off_board);
+    assert_eq!(i.fields["Estimated Efforts m*d"], FieldValue::Number(30.0));
+    assert_eq!(i.fields["Owner"], FieldValue::Text("board says".into()));
+    // ...and the effort field finds it.
+    let f = item_fields(&b, i, MatchedBy::Unmatched, &source(), "2026-09-30");
+    assert_eq!(f["effort"]["b"], "30");
+    assert!(
+        f["roadmap_item"]["v"]
+            .as_str()
+            .unwrap()
+            .contains("no component matches it")
+    );
+}
+
+#[test]
+fn a_host_without_issue_fields_is_told_apart_from_a_failure() {
+    assert!(refused_issue_fields(&json!({ "errors": [
+        { "message": "Field 'issueFieldValues' doesn't exist on type 'Issue'" }
+    ]})));
+    assert!(!refused_issue_fields(
+        &json!({ "errors": [{ "message": "NOT_FOUND" }] })
+    ));
+    assert!(!refused_issue_fields(&json!({ "data": {} })));
+}
+
+#[test]
+fn a_stored_gear_carries_its_plan_where_a_profile_would() {
+    let mut i = item(2871, "BSS - Billing (p1)");
+    i.parent = Some(4810);
+    i.off_board = true;
+    let mut fields = Map::new();
+    fields.insert("stage".into(), json!({ "b": "Todo" }));
+    let v = item_node_value(&board(), &source(), &i, fields, &[]);
+    assert_eq!(v["name"], "BSS - Billing (p1)");
+    assert_eq!(v["group"], "BSS");
+    assert_eq!(v["board"], "o/projects/48");
+    assert_eq!(v["kind"], "planned");
+    assert!(
+        v.get("synced_from").is_none(),
+        "a board is not a repository"
+    );
+    assert_eq!(v["components"], json!([]));
+    assert_eq!(v["off_board"], true);
+    assert_eq!(v["auto"]["stage"]["b"], "Todo");
+    assert_eq!(item_key(&i), "#2871");
 }
 
 #[test]
@@ -202,6 +337,7 @@ fn source() -> RoadmapSource {
             .into_iter()
             .collect(),
         fields: RoadmapFields::default(),
+        roots: Vec::new(),
     }
 }
 
