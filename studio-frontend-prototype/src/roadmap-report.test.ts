@@ -6,7 +6,14 @@ const row = (name: string, over: Partial<RoadmapRow["readiness"]> = {}): Roadmap
   name,
   category: "core",
   assignees: "@a, @b",
-  effort: "40",
+  title: `CORE - ${name}`,
+  number: 1,
+  group: "CORE",
+  components: name.startsWith("cf-") ? [name] : [],
+  closed: false,
+  off_board: false,
+  effort_md: 40,
+  remaining_md: 20,
   roadmap_title: `#1 ${name}`,
   readiness: {
     stage: "In Dev",
@@ -51,8 +58,24 @@ const report: RoadmapReport = {
     }),
   ],
   total: 2,
+  not_in_code: 0,
   not_on_board: 5,
   summary: {
+    by_group: [
+      {
+        group: "CORE",
+        total: 2,
+        done: 0,
+        in_code: 2,
+        axes: [
+          { label: "Design", average: 80 },
+          { label: "SDK", average: null },
+        ],
+        estimated: 2,
+        effort_md: 80,
+        remaining_md: 40,
+      },
+    ],
     by_stage: [{ label: "In Dev", count: 2 }],
     by_milestone: [{ milestone: "26.10", due: "2026-10-31", total: 2, committed: 2, at_risk: 1 }],
     by_consumer: [{ consumer: "Acronis", p1: 1, p2: 0, p3: 0, p1_not_on_track: 0 }],
@@ -75,11 +98,14 @@ describe("roadmap report sheets", () => {
     expect(roadmap.name).toBe("Roadmap");
     const [header, broker, files] = roadmap.rows;
     const col = (h: string) => header.indexOf(h);
-    expect(broker[col("Component")]).toBe("cf-gears-event-broker");
+    expect(broker[col("Gear")]).toBe("CORE - cf-gears-event-broker");
+    expect(broker[col("Group")]).toBe("CORE");
+    expect(broker[col("Components")]).toBe("cf-gears-event-broker");
+    expect(broker[col("Remaining m*d")]).toBe(20);
     expect(broker[col("Design")]).toBe(80);
     expect(broker[col("SDK")]).toBe("Done");
     expect(broker[col("Tests")]).toBeNull();
-    expect(broker[col("Effort")]).toBe(40);
+    expect(broker[col("Effort m*d")]).toBe(40);
     expect(broker[col("Committed")]).toBe("yes");
     expect(broker[col("Why")]).toBeNull();
     expect(files[col("Why")]).toBe("overdue: due 2026-07-31; P1 for Acronis");
@@ -87,10 +113,12 @@ describe("roadmap report sheets", () => {
 
     expect(summary.name).toBe("Summary");
     expect(summary.rows).toContainEqual(["Catalogued, not on the board", 5]);
+    expect(summary.rows).toContainEqual(["Group", "Gears", "Done", "In code", "Design %", "SDK %", "Estimated", "Effort m*d", "Remaining m*d"]);
+    expect(summary.rows).toContainEqual(["CORE", 2, 0, 2, 80, null, 2, 80, 40]);
     expect(summary.rows).toContainEqual(["26.10", "2026-10-31", 2, 2, 1]);
     expect(summary.rows.at(-1)).toEqual(["cf-gears-file-storage"]);
     const boldText = (summary.bold ?? []).map((i) => summary.rows[i][0]);
-    expect(boldText).toEqual(["Roadmap report", "Stage", "Milestone", "Consumer", "Plan", "Overdue"]);
+    expect(boldText).toEqual(["Roadmap report", "Group", "Stage", "Milestone", "Consumer", "Plan", "Overdue"]);
     expect(summary.freeze).toBe(false);
   });
 });

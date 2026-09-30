@@ -603,8 +603,12 @@ pub struct RoadmapSourceDto {
     pub commitment_field: Option<String>,
     /// The per-consumer priority (default: the field named like `Prio (A.C.V)`).
     pub priority_field: Option<String>,
-    /// The effort estimate (default: a field with `effort` in its name).
+    /// The effort estimate (default: a field with `effort` in its name, on
+    /// the board or on the issue).
     pub effort_field: Option<String>,
+    /// The issues whose direct sub-issues are the gears: `owner/repo#123`, or
+    /// `123` for an issue on the board. Omitted: every board item is a gear.
+    pub roots: Option<Vec<String>>,
 }
 
 impl RoadmapSourceDto {
@@ -622,6 +626,13 @@ impl RoadmapSourceDto {
                 priority: named(self.priority_field),
                 effort: named(self.effort_field),
             },
+            roots: self
+                .roots
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.trim().to_string())
+                .filter(|r| !r.is_empty())
+                .collect(),
         }
     }
 }
@@ -1475,6 +1486,21 @@ pub struct ComponentValuesDto {
     /// hides. Empty when nothing answers, which is a fact about the component
     /// and reads better than an "Uncategorised" invented for it.
     pub category: String,
+    /// Every source that answered something about it, layered in order:
+    /// crates.io, the repository, Gearbox, a roadmap board, a person.
+    pub sources: Vec<ComponentSourceDto>,
+    /// Known from a roadmap board alone: planned, no code catalogued yet.
+    pub planned: bool,
+}
+
+/// One place a component's facts came from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ComponentSourceDto {
+    /// `crates_io`, `repository`, `roadmap`, `gearbox` or `person`.
+    pub kind: String,
+    /// The repository, the board's title, `crates.io`.
+    pub label: String,
 }
 
 #[derive(Debug)]
@@ -1503,6 +1529,15 @@ async fn component_values(
             name: c.name,
             values: Value::Object(c.values),
             category: c.category,
+            sources: c
+                .sources
+                .into_iter()
+                .map(|s| ComponentSourceDto {
+                    kind: s.kind,
+                    label: s.label,
+                })
+                .collect(),
+            planned: c.planned,
         })
         .collect();
 
@@ -1616,15 +1651,23 @@ async fn roadmap_report(
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<RoadmapReportDto>> {
     let (resolved, _) = resolved_components(&ctx, &catalog).await?;
+    let planned = catalog
+        .service
+        .list_planned(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // The catalogued components, not the planned gears listed beside them:
+    // those are the report's rows already.
     let views: Vec<super::roadmap_report::ComponentValues<'_>> = resolved
         .iter()
+        .filter(|c| !c.planned)
         .map(|c| super::roadmap_report::ComponentValues {
             name: &c.name,
             category: &c.category,
             values: &c.values,
         })
         .collect();
-    Ok(Json(super::roadmap_report::build(&views)))
+    Ok(Json(super::roadmap_report::build(&views, &planned)))
 }
 
 // ── the components reference ─────────────────────────────────────────────────

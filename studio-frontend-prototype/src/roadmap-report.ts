@@ -38,12 +38,35 @@ export interface RoadmapReadiness {
 }
 
 export interface RoadmapRow {
+  /** The implementing component, or the board's title for a gear with no code. */
   name: string;
+  /** The board's title for the gear. */
+  title: string;
+  number: number | null;
+  /** The title's `DOMAIN - ` prefix, or `Ungrouped`. */
+  group: string;
+  /** The catalogued components it is the plan of; empty: no code yet. */
+  components: string[];
+  closed: boolean;
+  off_board: boolean;
   category: string | null;
   readiness: RoadmapReadiness;
   assignees: string | null;
-  effort: string | null;
+  /** Person-days. */
+  effort_md: number | null;
+  remaining_md: number | null;
   roadmap_title: string | null;
+}
+
+export interface RoadmapGroup {
+  group: string;
+  total: number;
+  done: number;
+  in_code: number;
+  axes: { label: string; average: number | null }[];
+  estimated: number;
+  effort_md: number;
+  remaining_md: number;
 }
 
 export interface RoadmapCount {
@@ -70,8 +93,11 @@ export interface RoadmapConsumer {
 export interface RoadmapReport {
   items: RoadmapRow[];
   total: number;
+  /** Gears no catalogued component implements yet. */
+  not_in_code: number;
   not_on_board: number;
   summary: {
+    by_group: RoadmapGroup[];
     by_stage: RoadmapCount[];
     by_milestone: RoadmapMilestone[];
     by_consumer: RoadmapConsumer[];
@@ -101,8 +127,10 @@ const yesNo = (b: boolean | null) => (b === null ? null : b ? "yes" : "no");
 export function roadmapSheet(report: RoadmapReport): Sheet {
   const axes = axesOf(report.items);
   const header = [
-    "Component",
-    "Category",
+    "ID",
+    "Group",
+    "Gear",
+    "Components",
     "Stage",
     "Milestone",
     "Due",
@@ -112,7 +140,8 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
     "Demand",
     ...axes,
     "Assignees",
-    "Effort",
+    "Effort m*d",
+    "Remaining m*d",
     "Lifecycle",
     "Last release",
     "Released on",
@@ -122,10 +151,11 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
   ];
   const rows: Cell[][] = report.items.map((row) => {
     const r = row.readiness;
-    const effort = row.effort !== null && /^\d+(\.\d+)?$/.test(row.effort) ? Number(row.effort) : row.effort;
     return [
-      row.name,
-      row.category,
+      row.number,
+      row.group,
+      row.title,
+      row.components.join(", ") || "not in code yet",
       r.stage,
       r.milestone,
       r.due,
@@ -141,7 +171,8 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
         return /^\d+%$/.test(a.value) && a.pct !== null ? a.pct : a.value;
       }),
       row.assignees,
-      effort,
+      row.effort_md,
+      row.remaining_md === null ? null : Math.round(row.remaining_md * 10) / 10,
       r.lifecycle,
       r.last_release,
       r.released_on,
@@ -151,28 +182,43 @@ export function roadmapSheet(report: RoadmapReport): Sheet {
     ];
   });
   const widths = header.map((h) =>
-    h === "Component" ? 34 : h === "Why" ? 48 : h === "Board item" ? 40 : h === "Link" ? 44 : Math.max(10, h.length + 2),
+    h === "Gear" || h === "Components" ? 34 : h === "Why" ? 48 : h === "Board item" ? 40 : h === "Link" ? 44 : Math.max(8, h.length + 2),
   );
   return { name: "Roadmap", rows: [header, ...rows], widths };
 }
 
 export function summarySheet(report: RoadmapReport, asOf: string): Sheet {
   const s = report.summary;
+  const axisLabels: string[] = [];
+  for (const g of s.by_group) for (const a of g.axes) if (!axisLabels.includes(a.label)) axisLabels.push(a.label);
   const rows: Cell[][] = [
     ["Roadmap report", asOf],
-    ["Components on the board", report.total],
+    ["Gears on the board", report.total],
+    ["Not in code yet", report.not_in_code],
     ["Catalogued, not on the board", report.not_on_board],
     [],
-    ["Stage", "Components"],
+    ["Group", "Gears", "Done", "In code", ...axisLabels.map((l) => `${l} %`), "Estimated", "Effort m*d", "Remaining m*d"],
+    ...s.by_group.map((g) => [
+      g.group,
+      g.total,
+      g.done,
+      g.in_code,
+      ...axisLabels.map((l) => g.axes.find((a) => a.label === l)?.average ?? null),
+      g.estimated,
+      g.effort_md,
+      Math.round(g.remaining_md * 10) / 10,
+    ]),
+    [],
+    ["Stage", "Gears"],
     ...s.by_stage.map((c) => [c.label, c.count]),
     [],
-    ["Milestone", "Due", "Components", "Committed", "At risk"],
+    ["Milestone", "Due", "Gears", "Committed", "At risk"],
     ...s.by_milestone.map((m) => [m.milestone, m.due, m.total, m.committed, m.at_risk]),
     [],
     ["Consumer", "P1", "P2", "P3", "P1 not on track"],
     ...s.by_consumer.map((c) => [c.consumer, c.p1, c.p2, c.p3, c.p1_not_on_track]),
     [],
-    ["Plan", "Components"],
+    ["Plan", "Gears"],
     ...s.by_plan.map((c) => [c.label, c.count]),
   ];
   if (s.overdue.length) rows.push([], ["Overdue"], ...s.overdue.map((n) => [n]));

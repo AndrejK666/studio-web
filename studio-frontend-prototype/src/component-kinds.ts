@@ -28,6 +28,8 @@ export const COMPONENT_KIND_LABELS: Record<string, string> = {
   "frontend-library": "frontend library",
   tool: "tool / CLI",
   kit: "kit",
+  // A gear a roadmap board plans that no repository has yet.
+  planned: "planned",
   config: "config",
   "test-support": "test support",
   docs: "docs",
@@ -36,7 +38,7 @@ export const COMPONENT_KIND_LABELS: Record<string, string> = {
 };
 
 /** The order the chips offer the component kinds in; others follow by name. */
-const KIND_ORDER = ["gear", "plugin", "sdk", "library", "micro-frontend", "frontend-library", "tool", "kit"];
+const KIND_ORDER = ["gear", "planned", "plugin", "sdk", "library", "micro-frontend", "frontend-library", "tool", "kit"];
 
 /** The filter value that shows what is not a component instead. */
 export const NOT_COMPONENTS = "not-components";

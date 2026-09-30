@@ -940,6 +940,40 @@ pub struct ResolvedComponent {
     pub name: String,
     pub category: String,
     pub values: serde_json::Map<String, Value>,
+    /// Where this record's facts came from (see `values::sources_of`).
+    pub sources: Vec<super::values::Source>,
+    /// A gear known from a roadmap board alone, with no code catalogued yet.
+    pub planned: bool,
+}
+
+/// Whether a listed node is a planned gear whose code is catalogued: its plan
+/// is then shown on that component, not as a component of its own.
+fn is_implemented_plan(node: &CatalogNodeView) -> bool {
+    node.type_id == gts::ROADMAP_ITEM_TYPE
+        && node
+            .value
+            .get("components")
+            .and_then(Value::as_array)
+            .is_some_and(|c| !c.is_empty())
+}
+
+/// The stored gears of the boards this run read that it did not produce.
+fn stale_planned<'a>(
+    existing: &'a [GtsNode],
+    produced: &BTreeSet<&str>,
+    boards_read: &[String],
+) -> Vec<&'a GtsNode> {
+    existing
+        .iter()
+        .filter(|n| n.type_id == gts::ROADMAP_ITEM_TYPE)
+        .filter(|n| !produced.contains(n.instance_id.as_str()))
+        .filter(|n| {
+            n.value
+                .get("board")
+                .and_then(Value::as_str)
+                .is_some_and(|b| boards_read.iter().any(|r| r == b))
+        })
+        .collect()
 }
 
 /// What a catalog sync has counted.
@@ -1183,7 +1217,9 @@ impl CatalogService {
         }
     }
 
-    /// Write what each roadmap board says about a gear into its profile.
+    /// Write what each roadmap board says about a gear into its profile, and
+    /// answer every gear each board plans as a `roadmap_item` node -- matched
+    /// to a component or not -- with the ids of the boards actually read.
     ///
     /// Best-effort, like the Gearbox facts: a board this connection cannot see
     /// costs the profiles their plan fields, never the sync. Every plan field is
@@ -1195,10 +1231,12 @@ impl CatalogService {
         roadmaps: &[RoadmapSource],
         profiles: &mut [GtsNode],
         progress: &SyncReporter,
-    ) {
+    ) -> (Vec<GtsNode>, Vec<String>) {
+        let mut planned: Vec<GtsNode> = Vec::new();
+        let mut boards_read: Vec<String> = Vec::new();
         let Some(connectors) = self.connectors.clone() else {
             tracing::warn!("components-catalog: no connector service; roadmap boards skipped");
-            return;
+            return (planned, boards_read);
         };
         let today = time::OffsetDateTime::now_utc().date().to_string();
         for node in profiles.iter_mut() {
@@ -1244,7 +1282,58 @@ impl CatalogService {
                 })
                 .collect();
             let matches = roadmap::match_items(&gears, &board.items);
-            tracing::info!(board = %board.title, items = board.items.len(), gears = gears.len(), matched = matches.len(), "components-catalog: roadmap board read");
+            let roots = roadmap::root_numbers(source);
+            let board_gears = roadmap::gear_items(&board, &roots);
+            tracing::info!(board = %board.title, items = board.items.len(), board_gears = board_gears.len(), gears = gears.len(), matched = matches.len(), "components-catalog: roadmap board read");
+
+            // Every gear the board plans, as a node: an item → the components
+            // it is the plan of. A hand-pinned item outside the roots is one
+            // too -- a person said it is a gear's plan.
+            let mut components_of: BTreeMap<usize, Vec<(String, roadmap::MatchedBy)>> =
+                BTreeMap::new();
+            for (name, (ix, how)) in &matches {
+                components_of
+                    .entry(*ix)
+                    .or_default()
+                    .push((name.clone(), *how));
+            }
+            let mut stored: BTreeSet<usize> = board_gears.iter().copied().collect();
+            stored.extend(components_of.keys().copied());
+            let lifecycle_of = |name: &str| {
+                profiles
+                    .iter()
+                    .find(|n| n.value.get("gear_name").and_then(Value::as_str) == Some(name))
+                    .and_then(|n| n.value.pointer("/auto/lifecycle/b"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            let id = roadmap::board_id(source);
+            for ix in stored {
+                let item = &board.items[ix];
+                let owners = components_of.get(&ix).cloned().unwrap_or_default();
+                let how = if owners.iter().any(|(_, h)| *h == roadmap::MatchedBy::Hand) {
+                    roadmap::MatchedBy::Hand
+                } else if owners.is_empty() {
+                    roadmap::MatchedBy::Unmatched
+                } else {
+                    roadmap::MatchedBy::Title
+                };
+                let mut fields = roadmap::item_fields(&board, item, how, source, &today);
+                fields.insert(
+                    "roadmap_board".to_string(),
+                    roadmap::board_field(&board, source),
+                );
+                let names: Vec<String> = owners.iter().map(|(n, _)| n.clone()).collect();
+                if let Some(first) = names.first() {
+                    roadmap::check_release(&mut fields, lifecycle_of(first).as_deref());
+                }
+                planned.push(gts::roadmap_item_node(
+                    &id,
+                    &roadmap::item_key(item),
+                    roadmap::item_node_value(&board, source, item, fields, &names),
+                ));
+            }
+            boards_read.push(id);
             for node in profiles.iter_mut() {
                 let Some(name) = node
                     .value
@@ -1277,6 +1366,7 @@ impl CatalogService {
                 }
             }
         }
+        (planned, boards_read)
     }
 
     /// Discover gears from a repository source (best-effort at the call site).
@@ -1543,6 +1633,8 @@ impl CatalogService {
         // A run that rebuilt no profile from a repository updates the profiles
         // the graph already holds: the plan moves weekly, the tree less often,
         // and refreshing one should not cost a full scan of the other.
+        let mut planned_nodes: Vec<GtsNode> = Vec::new();
+        let mut boards_read: Vec<String> = Vec::new();
         if !sources.roadmaps.is_empty() {
             if profile_nodes.is_empty() {
                 profile_nodes = self
@@ -1554,7 +1646,8 @@ impl CatalogService {
                     .filter(|n| n.value.get("gear_name").is_some())
                     .collect();
             }
-            self.apply_roadmaps(ctx, &sources.roadmaps, &mut profile_nodes, progress)
+            (planned_nodes, boards_read) = self
+                .apply_roadmaps(ctx, &sources.roadmaps, &mut profile_nodes, progress)
                 .await;
         }
 
@@ -1578,8 +1671,29 @@ impl CatalogService {
         );
         all_nodes.extend(version_nodes);
         all_nodes.extend(profile_nodes);
+        all_nodes.extend(planned_nodes);
         let stored = all_nodes.len();
         self.sink.upsert(ctx, &all_nodes, &version_edges).await?;
+
+        // A gear gone from a board this run read is gone from the catalogue.
+        // Only boards actually read: one that could not be read keeps what it
+        // said last rather than losing its whole plan to a token problem.
+        if !boards_read.is_empty() {
+            let produced: BTreeSet<&str> =
+                all_nodes.iter().map(|n| n.instance_id.as_str()).collect();
+            match self.sink.list(ctx, Some("roadmap_item")).await {
+                Ok(existing) => {
+                    for node in stale_planned(&existing, &produced, &boards_read) {
+                        if let Err(error) = self.sink.delete(ctx, &node.instance_id).await {
+                            tracing::warn!(%error, instance_id = %node.instance_id, "components-catalog: a gone roadmap gear could not be pruned");
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "components-catalog: roadmap gears not pruned");
+                }
+            }
+        }
 
         // A component removed from its source is removed from the catalogue.
         //
@@ -1694,6 +1808,19 @@ impl CatalogService {
         Ok(counts)
     }
 
+    /// The gears every roadmap board plans, as stored by the last sync that
+    /// read each board: their payloads.
+    pub async fn list_planned(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<Value>> {
+        Ok(self
+            .sink
+            .list(ctx, Some("roadmap_item"))
+            .await?
+            .into_iter()
+            .filter(|n| n.type_id == gts::ROADMAP_ITEM_TYPE)
+            .map(|n| n.value)
+            .collect())
+    }
+
     /// Read back catalog nodes, optionally filtered by type substring
     /// (`gear`, `crate_version`).
     pub async fn list_nodes(
@@ -1736,6 +1863,8 @@ impl CatalogService {
                 );
                 Some(ResolvedComponent {
                     category: super::values::category_of(&node.value, profile),
+                    sources: super::values::sources_of(&node.type_id, &node.value, profile),
+                    planned: node.type_id == gts::ROADMAP_ITEM_TYPE,
                     values,
                     name,
                 })
@@ -1975,9 +2104,15 @@ impl CatalogService {
         if marked.is_empty() {
             return Ok((Vec::new(), false));
         }
-        self.sink
+        let (mut nodes, truncated) = self
+            .sink
             .list_of_types(ctx, &marked, COMPONENT_LIST_CAP)
-            .await
+            .await?;
+        // A planned gear is a component until code for it is catalogued; then
+        // that component carries the plan, and listing both would show one
+        // gear twice.
+        nodes.retain(|n| !is_implemented_plan(n));
+        Ok((nodes, truncated))
     }
 
     /// Every node type the graph holds, with what the studio says about each.
@@ -3077,7 +3212,8 @@ mod field_schema_tests {
 
     // ── which types are components ────────────────────────────────────────
 
-    /// The four the deployment ships a page for, and nothing else. A graph
+    /// The five the deployment ships a page for, and nothing else -- a gear,
+    /// a micro-frontend, a kit, a document type and a planned gear. A graph
     /// full of files and commits does not become a catalogue of components
     /// because it is a graph.
     #[tokio::test]
@@ -3090,9 +3226,65 @@ mod field_schema_tests {
             .filter(|t| t.component)
             .map(|t| t.leaf_id)
             .collect();
-        assert_eq!(marked.len(), 4, "{marked:?}");
+        assert_eq!(marked.len(), 5, "{marked:?}");
         assert!(marked.iter().any(|m| m == GEAR_TYPE));
         assert!(marked.iter().any(|m| m == FRONTX_TYPE));
+        assert!(marked.iter().any(|m| m == gts::ROADMAP_ITEM_TYPE));
+    }
+
+    /// A planned gear is listed as a component until code for it is
+    /// catalogued, and a gear gone from a board that was read is pruned --
+    /// only from that board.
+    #[test]
+    fn a_planned_gear_steps_aside_for_its_code_and_leaves_with_its_board() {
+        let planned = |components: Value| CatalogNodeView {
+            type_id: gts::ROADMAP_ITEM_TYPE.to_string(),
+            instance_id: "i".into(),
+            value: json!({ "components": components }),
+        };
+        assert!(!is_implemented_plan(&planned(json!([]))));
+        assert!(is_implemented_plan(&planned(json!(["cf-gears-audit"]))));
+        let gear = CatalogNodeView {
+            type_id: GEAR_TYPE.to_string(),
+            instance_id: "g".into(),
+            value: json!({ "components": ["x"] }),
+        };
+        assert!(!is_implemented_plan(&gear));
+
+        let node =
+            |key: &str, board: &str| gts::roadmap_item_node(board, key, json!({ "board": board }));
+        let kept = node("#1", "o/projects/48");
+        let gone = node("#2", "o/projects/48");
+        let elsewhere = node("#3", "o/projects/7");
+        let existing = vec![kept.clone(), gone.clone(), elsewhere.clone()];
+        let produced: BTreeSet<&str> = [kept.instance_id.as_str()].into_iter().collect();
+        let stale: Vec<&str> = stale_planned(&existing, &produced, &["o/projects/48".to_string()])
+            .into_iter()
+            .map(|n| n.instance_id.as_str())
+            .collect();
+        assert_eq!(stale, [gone.instance_id.as_str()]);
+    }
+
+    /// A planned gear reads its plan from the node, under a person's edits
+    /// -- and only a planned one: an `auto` on any other node is not a plan.
+    #[test]
+    fn a_planned_gear_reads_its_plan_from_its_node() {
+        let node = json!({ "name": "BSS - Billing", "kind": "planned",
+                           "auto": { "stage": { "b": "Todo" }, "effort": { "b": "30" } } });
+        let person = json!({ "values": { "stage": { "b": "In Design" } } });
+        let v = super::super::values::resolve(&node, Some(&person));
+        assert_eq!(v["stage"]["b"], "In Design");
+        assert_eq!(v["effort"]["b"], "30");
+        assert_eq!(
+            super::super::values::resolve(&node, None)["stage"]["b"],
+            "Todo"
+        );
+        let gear = json!({ "name": "cf-gears-x", "auto": { "stage": { "b": "Todo" } } });
+        assert!(
+            super::super::values::resolve(&gear, None)
+                .get("stage")
+                .is_none()
+        );
     }
 
     #[tokio::test]

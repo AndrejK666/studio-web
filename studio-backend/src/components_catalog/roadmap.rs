@@ -24,7 +24,19 @@
 //! * the **priority** is a field whose name ends in dotted letters, like
 //!   `Prio (A.C.V.Ag)`, holding values like `2 (1.3.3)` — overall 2, then one
 //!   number per letter in order;
-//! * the **ETA** is the item's milestone due date.
+//! * the **ETA** is the item's milestone due date;
+//! * the **effort** is a field with `effort` in its name, on the board or on
+//!   the issue itself: GitHub's issue fields (`Estimated Efforts m*d`) are
+//!   where the platform team keeps it, not the board.
+//!
+//! ── Which items are gears ────────────────────────────────────────────────────
+//!
+//! A board holds more than gears. When the source names root issues
+//! ([`RoadmapSource::roots`]), a gear is a direct sub-issue of one of them --
+//! the platform team's own rule -- including a sub-issue nobody has put on the
+//! board yet, which is read from the root. Without roots, every item is one.
+//! Each gear is stored as a `roadmap_item` node whether or not a component
+//! matches it: a gear nobody has written yet is exactly what a plan is for.
 //!
 //! A board that lays its columns out differently names them in
 //! [`RoadmapFields`] instead.
@@ -118,6 +130,11 @@ pub struct RoadmapSource {
     /// Column names, for a board that does not use the defaults.
     #[serde(default)]
     pub fields: RoadmapFields,
+    /// The issues whose direct sub-issues are the gears: `owner/repo#123`, or
+    /// `123` for an issue that is itself on the board. Empty: every item is a
+    /// gear.
+    #[serde(default)]
+    pub roots: Vec<String>,
 }
 
 /// Which of a board's columns answer which question. Every one optional: the
@@ -171,8 +188,13 @@ pub struct RoadmapItem {
     pub closed: bool,
     pub assignees: Vec<String>,
     pub milestone: Option<Milestone>,
-    /// Field name → value, for every field the item has a value in.
+    /// Field name → value, for every field the item has a value in: the
+    /// board's, then the issue's own fields where the board has none.
     pub fields: BTreeMap<String, FieldValue>,
+    /// The parent issue's number, for a sub-issue.
+    pub parent: Option<u64>,
+    /// Read from a root's sub-issues rather than from the board.
+    pub off_board: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -190,7 +212,7 @@ pub enum FieldValue {
 }
 
 impl FieldValue {
-    fn text(&self) -> String {
+    pub fn text(&self) -> String {
         match self {
             FieldValue::Text(s) | FieldValue::Date(s) => s.clone(),
             FieldValue::Number(n) if n.fract() == 0.0 => format!("{n:.0}"),
@@ -201,31 +223,70 @@ impl FieldValue {
 
 // ── reading a board ─────────────────────────────────────────────────────────
 
-const ITEMS_FRAGMENT: &str = r"
-projectV2(number:$number){
-  title url
-  fields(first:50){nodes{... on ProjectV2SingleSelectField{name options{name}}}}
-  items(first:$page,after:$after){
-    pageInfo{hasNextPage endCursor}
-    nodes{
-      isArchived
-      content{
-        __typename
-        ... on Issue{number title url state assignees(first:10){nodes{login}} milestone{title dueOn}}
-        ... on PullRequest{number title url state assignees(first:10){nodes{login}} milestone{title dueOn}}
-        ... on DraftIssue{title assignees(first:10){nodes{login}}}
-      }
-      fieldValues(first:50){nodes{
-        __typename
-        ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{name}}}
-        ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
-        ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2FieldCommon{name}}}
-        ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{name}}}
-        ... on ProjectV2ItemFieldIterationValue{title field{... on ProjectV2FieldCommon{name}}}
-      }}
+/// What is read of an issue, on the board and under a root alike.
+const ISSUE_CONTENT: &str = "number title url state assignees(first:10){nodes{login}} milestone{title dueOn} parent{number}";
+
+/// The issue's own fields -- GitHub's issue fields, where the platform team
+/// keeps the effort estimate. Asked separately so a host without them (an
+/// older GitHub Enterprise) still answers the rest.
+const ISSUE_FIELDS: &str = "issueFieldValues(first:50){nodes{__typename \
+... on IssueFieldNumberValue{value field{... on IssueFieldNumber{name}}} \
+... on IssueFieldTextValue{value field{... on IssueFieldText{name}}} \
+... on IssueFieldSingleSelectValue{value field{... on IssueFieldSingleSelect{name}}} \
+... on IssueFieldDateValue{value field{... on IssueFieldDate{name}}}}}";
+
+fn issue_selection(issue_fields: bool) -> String {
+    if issue_fields {
+        format!("{ISSUE_CONTENT} {ISSUE_FIELDS}")
+    } else {
+        ISSUE_CONTENT.to_string()
     }
-  }
-}";
+}
+
+fn items_fragment(issue_fields: bool) -> String {
+    let issue = issue_selection(issue_fields);
+    format!(
+        r"
+projectV2(number:$number){{
+  title url
+  fields(first:50){{nodes{{... on ProjectV2SingleSelectField{{name options{{name}}}}}}}}
+  items(first:$page,after:$after){{
+    pageInfo{{hasNextPage endCursor}}
+    nodes{{
+      isArchived
+      content{{
+        __typename
+        ... on Issue{{{issue}}}
+        ... on PullRequest{{number title url state assignees(first:10){{nodes{{login}}}} milestone{{title dueOn}}}}
+        ... on DraftIssue{{title assignees(first:10){{nodes{{login}}}}}}
+      }}
+      fieldValues(first:50){{nodes{{
+        __typename
+        ... on ProjectV2ItemFieldSingleSelectValue{{name field{{... on ProjectV2FieldCommon{{name}}}}}}
+        ... on ProjectV2ItemFieldTextValue{{text field{{... on ProjectV2FieldCommon{{name}}}}}}
+        ... on ProjectV2ItemFieldNumberValue{{number field{{... on ProjectV2FieldCommon{{name}}}}}}
+        ... on ProjectV2ItemFieldDateValue{{date field{{... on ProjectV2FieldCommon{{name}}}}}}
+        ... on ProjectV2ItemFieldIterationValue{{title field{{... on ProjectV2FieldCommon{{name}}}}}}
+      }}}}
+    }}
+  }}
+}}"
+    )
+}
+
+/// Whether a GraphQL reply refused the issue fields -- a host that has none.
+fn refused_issue_fields(reply: &Value) -> bool {
+    reply
+        .get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| {
+            errors.iter().any(|e| {
+                e.get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|m| m.contains("issueFieldValues") || m.contains("IssueField"))
+            })
+        })
+}
 
 /// Resolve the GitHub connection a source names, or the tenant's first one
 /// this sync can read.
@@ -253,9 +314,16 @@ pub async fn fetch(
     let auth = resolve_auth(&connectors, ctx, source.tenant, source.connection_id).await?;
     let http = Client::builder().user_agent(UA).build()?;
     let url = graphql_url(auth.root());
-    for owner_kind in ["organization", "user"] {
-        if let Some(board) = fetch_as(&http, &url, &auth, owner_kind, source).await? {
-            return Ok(board);
+    for issue_fields in [true, false] {
+        for owner_kind in ["organization", "user"] {
+            match fetch_as(&http, &url, &auth, owner_kind, source, issue_fields).await? {
+                Fetched::Board(mut board) => {
+                    add_root_sub_issues(&http, &url, &auth, source, &mut board, issue_fields).await;
+                    return Ok(board);
+                }
+                Fetched::NotThisOwner => continue,
+                Fetched::NoIssueFields => break,
+            }
         }
     }
     Err(anyhow!(
@@ -265,15 +333,47 @@ pub async fn fetch(
     ))
 }
 
+enum Fetched {
+    Board(Roadmap),
+    NotThisOwner,
+    NoIssueFields,
+}
+
+async fn post_graphql(
+    http: &Client,
+    url: &str,
+    auth: &ConnectionAuth,
+    body: &Value,
+) -> Result<Value> {
+    let res = http
+        .post(url)
+        .bearer_auth(&auth.token)
+        .header("Accept", "application/vnd.github+json")
+        .json(body)
+        .send()
+        .await?;
+    let status = res.status();
+    if !status.is_success() {
+        let text = res.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "GitHub GraphQL {status}: {}",
+            text.chars().take(200).collect::<String>()
+        );
+    }
+    Ok(res.json().await?)
+}
+
 async fn fetch_as(
     http: &Client,
     url: &str,
     auth: &ConnectionAuth,
     owner_kind: &str,
     source: &RoadmapSource,
-) -> Result<Option<Roadmap>> {
+    issue_fields: bool,
+) -> Result<Fetched> {
+    let fragment = items_fragment(issue_fields);
     let query = format!(
-        "query($owner:String!,$number:Int!,$page:Int!,$after:String){{ owner:{owner_kind}(login:$owner){{ {ITEMS_FRAGMENT} }} }}"
+        "query($owner:String!,$number:Int!,$page:Int!,$after:String){{ owner:{owner_kind}(login:$owner){{ {fragment} }} }}"
     );
     let mut board = Roadmap::default();
     let mut after: Option<String> = None;
@@ -284,38 +384,174 @@ async fn fetch_as(
                 "owner": source.owner, "number": source.number, "page": PAGE, "after": after,
             },
         });
-        let res = http
-            .post(url)
-            .bearer_auth(&auth.token)
-            .header("Accept", "application/vnd.github+json")
-            .json(&body)
-            .send()
-            .await?;
-        let status = res.status();
-        if !status.is_success() {
-            let text = res.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "GitHub GraphQL {status}: {}",
-                text.chars().take(200).collect::<String>()
-            );
+        let reply = post_graphql(http, url, auth, &body).await?;
+        if issue_fields && after.is_none() && refused_issue_fields(&reply) {
+            return Ok(Fetched::NoIssueFields);
         }
-        let reply: Value = res.json().await?;
         // An owner of the other kind answers `owner: null` with a NOT_FOUND
         // error; that is "ask the other way", not a failure.
         let project = reply.pointer("/data/owner/projectV2");
         let Some(project) = project.filter(|p| !p.is_null()) else {
             if after.is_none() {
-                return Ok(None);
+                return Ok(Fetched::NotThisOwner);
             }
             break;
         };
         let next = read_page(project, &mut board);
         match next {
             Some(cursor) => after = Some(cursor),
-            None => return Ok(Some(board)),
+            None => return Ok(Fetched::Board(board)),
         }
     }
-    Ok(Some(board))
+    Ok(Fetched::Board(board))
+}
+
+/// A root issue: `owner/repo#123`, or `123` resolved to the repository of the
+/// board item with that number.
+pub fn parse_root(root: &str, board: &Roadmap) -> Option<(String, String, u64)> {
+    let root = root.trim();
+    if let Some((repo, number)) = root.split_once('#') {
+        let (owner, name) = repo.trim().split_once('/')?;
+        return Some((
+            owner.to_string(),
+            name.to_string(),
+            number.trim().parse().ok()?,
+        ));
+    }
+    let number: u64 = root.trim_start_matches('#').parse().ok()?;
+    let url = board
+        .items
+        .iter()
+        .find(|i| i.number == Some(number))?
+        .url
+        .as_deref()?;
+    let path = url.split("github.com/").nth(1)?;
+    let mut parts = path.split('/');
+    Some((parts.next()?.to_string(), parts.next()?.to_string(), number))
+}
+
+/// The root numbers a source names, however it names them.
+pub fn root_numbers(source: &RoadmapSource) -> Vec<u64> {
+    source
+        .roots
+        .iter()
+        .filter_map(|r| r.rsplit(['#', ' ']).next()?.trim().parse().ok())
+        .collect()
+}
+
+/// Add each root's sub-issues that are not on the board, so a gear nobody has
+/// put on the board yet is still one. Best-effort: a root that cannot be read
+/// costs its off-board sub-issues, never the board.
+async fn add_root_sub_issues(
+    http: &Client,
+    url: &str,
+    auth: &ConnectionAuth,
+    source: &RoadmapSource,
+    board: &mut Roadmap,
+    issue_fields: bool,
+) {
+    let issue = issue_selection(issue_fields);
+    let query = format!(
+        "query($owner:String!,$name:String!,$number:Int!,$after:String){{ repository(owner:$owner,name:$name){{ issue(number:$number){{ subIssues(first:100,after:$after){{ pageInfo{{hasNextPage endCursor}} nodes{{ {issue} }} }} }} }} }}"
+    );
+    for root in &source.roots {
+        let Some((owner, name, number)) = parse_root(root, board) else {
+            tracing::warn!(root = %root, "components-catalog: a roadmap root names no issue this board can place");
+            continue;
+        };
+        let mut after: Option<String> = None;
+        for _ in 0..MAX_PAGES {
+            let body = json!({
+                "query": query,
+                "variables": { "owner": owner, "name": name, "number": number, "after": after },
+            });
+            let reply = match post_graphql(http, url, auth, &body).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), root = %root, "components-catalog: a roadmap root is unreadable");
+                    break;
+                }
+            };
+            let Some(subs) = reply
+                .pointer("/data/repository/issue/subIssues")
+                .filter(|v| !v.is_null())
+            else {
+                tracing::warn!(root = %root, "components-catalog: a roadmap root answered no sub-issues");
+                break;
+            };
+            for node in array(subs, "/nodes") {
+                let sub = issue_item(node, Some(number), true);
+                if !board
+                    .items
+                    .iter()
+                    .any(|i| i.url.is_some() && i.url == sub.url)
+                {
+                    board.items.push(sub);
+                }
+            }
+            let more = subs
+                .pointer("/pageInfo/hasNextPage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !more {
+                break;
+            }
+            after = subs
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+    }
+}
+
+/// An issue as an item, from the content GraphQL answered: its own fields
+/// included, and `parent` when the caller already knows it.
+fn issue_item(content: &Value, parent: Option<u64>, off_board: bool) -> RoadmapItem {
+    let s = |v: &Value, p: &str| v.pointer(p).and_then(Value::as_str).map(str::to_string);
+    let mut item = RoadmapItem {
+        title: s(content, "/title").unwrap_or_default(),
+        url: s(content, "/url"),
+        number: content.get("number").and_then(Value::as_u64),
+        closed: matches!(
+            content.get("state").and_then(Value::as_str),
+            Some("CLOSED" | "MERGED")
+        ),
+        assignees: array(content, "/assignees/nodes")
+            .iter()
+            .filter_map(|a| s(a, "/login"))
+            .collect(),
+        milestone: content
+            .get("milestone")
+            .filter(|m| !m.is_null())
+            .map(|m| Milestone {
+                title: s(m, "/title").unwrap_or_default(),
+                due: s(m, "/dueOn")
+                    .filter(|d| !d.is_empty())
+                    .map(|d| d.chars().take(10).collect()),
+            }),
+        fields: BTreeMap::new(),
+        parent: parent.or_else(|| content.pointer("/parent/number").and_then(Value::as_u64)),
+        off_board,
+    };
+    for fv in array(content, "/issueFieldValues/nodes") {
+        let Some(field) = s(fv, "/field/name") else {
+            continue;
+        };
+        let value = match fv.get("value") {
+            Some(Value::Number(n)) => n.as_f64().map(FieldValue::Number),
+            Some(Value::String(v))
+                if fv.get("__typename").and_then(Value::as_str) == Some("IssueFieldDateValue") =>
+            {
+                Some(FieldValue::Date(v.clone()))
+            }
+            Some(Value::String(v)) => Some(FieldValue::Text(v.clone())),
+            _ => None,
+        };
+        if let Some(value) = value {
+            item.fields.insert(field, value);
+        }
+    }
+    item
 }
 
 /// Fold one GraphQL page of `projectV2` into `board`; the next cursor, if any.
@@ -343,29 +579,9 @@ fn read_page(project: &Value, board: &mut Roadmap) -> Option<String> {
             continue;
         }
         let content = node.get("content").unwrap_or(&Value::Null);
-        let mut item = RoadmapItem {
-            title: s(content, "/title").unwrap_or_default(),
-            url: s(content, "/url"),
-            number: content.get("number").and_then(Value::as_u64),
-            closed: matches!(
-                content.get("state").and_then(Value::as_str),
-                Some("CLOSED" | "MERGED")
-            ),
-            assignees: array(content, "/assignees/nodes")
-                .iter()
-                .filter_map(|a| s(a, "/login"))
-                .collect(),
-            milestone: content
-                .get("milestone")
-                .filter(|m| !m.is_null())
-                .map(|m| Milestone {
-                    title: s(m, "/title").unwrap_or_default(),
-                    due: s(m, "/dueOn")
-                        .filter(|d| !d.is_empty())
-                        .map(|d| d.chars().take(10).collect()),
-                }),
-            fields: BTreeMap::new(),
-        };
+        // The issue's own fields first; the board's, read next, replace any
+        // of the same name -- the board is the plan of record.
+        let mut item = issue_item(content, None, false);
         for fv in array(node, "/fieldValues/nodes") {
             let Some(field) = s(fv, "/field/name") else {
                 continue;
@@ -403,6 +619,37 @@ fn array<'a>(v: &'a Value, pointer: &str) -> &'a [Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or(&[])
+}
+
+// ── which items are gears ───────────────────────────────────────────────────
+
+/// The indexes of the items that are gears: with roots, the direct sub-issues
+/// of one; without, every item.
+pub fn gear_items(board: &Roadmap, roots: &[u64]) -> Vec<usize> {
+    board
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| roots.is_empty() || i.parent.is_some_and(|p| roots.contains(&p)))
+        .map(|(ix, _)| ix)
+        .collect()
+}
+
+/// The group a title files a gear under: its `DOMAIN - ` prefix
+/// (`CORE - Tenant Resolver` → `CORE`), or `Ungrouped`.
+pub fn group_of(title: &str) -> String {
+    match title.split_once(" - ") {
+        Some((prefix, _))
+            if !prefix.trim().is_empty()
+                && prefix
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) =>
+        {
+            prefix.trim().to_string()
+        }
+        _ => "Ungrouped".to_string(),
+    }
 }
 
 // ── matching items to gears ─────────────────────────────────────────────────
@@ -464,7 +711,58 @@ fn same_word(a: &str, b: &str) -> bool {
         return true;
     }
     let common = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
-    common >= 6
+    common >= 6 || (short.len() >= 5 && one_edit_apart(a, b))
+}
+
+/// Whether one insertion, deletion or substitution turns `a` into `b` -- a
+/// typo on the board (`Egine` for `Engine`) is still the gear it names.
+fn one_edit_apart(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    let mut i = 0;
+    let mut j = 0;
+    let mut edits = 0;
+    while i < short.len() && j < long.len() {
+        if short[i] == long[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        edits += 1;
+        if edits > 1 {
+            return false;
+        }
+        if short.len() == long.len() {
+            i += 1;
+        }
+        j += 1;
+    }
+    edits + (long.len() - j) + (short.len() - i) <= 1
+}
+
+/// The title words a gear word covers when it is a compound of two of them:
+/// `credstore` is `Credentials Store` -- a prefix of the first (three letters
+/// or more) and the second, or a prefix of it.
+fn compound_of(word: &str, title_words: &[String]) -> Option<(usize, usize)> {
+    for cut in 3..word.len().saturating_sub(2) {
+        let (head, tail) = word.split_at(cut);
+        for (j, pair) in title_words.windows(2).enumerate() {
+            if pair[0].starts_with(head)
+                && pair[0].len() > head.len()
+                && (same_word(tail, &pair[1]) || pair[1].starts_with(tail))
+            {
+                return Some((j, j + 1));
+            }
+        }
+    }
+    None
 }
 
 /// Below this a title merely mentions a gear: `CORE - Data Fabric Connectors
@@ -492,16 +790,26 @@ fn score(gear_words: &[String], title_words: &[String]) -> f64 {
     if plugin(gear_words) != plugin(title_words) {
         return 0.0;
     }
-    if !gear_words
-        .iter()
-        .all(|g| title_words.iter().any(|t| same_word(g, t)))
-    {
-        return 0.0;
+    let mut covered_ix = vec![false; title_words.len()];
+    for g in gear_words {
+        let mut found = false;
+        for (ix, t) in title_words.iter().enumerate() {
+            if same_word(g, t) {
+                covered_ix[ix] = true;
+                found = true;
+            }
+        }
+        if !found {
+            match compound_of(g, title_words) {
+                Some((a, b)) => {
+                    covered_ix[a] = true;
+                    covered_ix[b] = true;
+                }
+                None => return 0.0,
+            }
+        }
     }
-    let covered = title_words
-        .iter()
-        .filter(|t| gear_words.iter().any(|g| same_word(g, t)))
-        .count();
+    let covered = covered_ix.iter().filter(|c| **c).count();
     let share = covered as f64 / title_words.len().max(gear_words.len()) as f64;
     if share < MIN_SCORE { 0.0 } else { share }
 }
@@ -511,6 +819,8 @@ fn score(gear_words: &[String], title_words: &[String]) -> f64 {
 pub enum MatchedBy {
     Title,
     Hand,
+    /// A gear on the board that no catalogued component matches.
+    Unmatched,
 }
 
 /// The issue number a hand-set `roadmap_item` names: a URL ending in the
@@ -528,8 +838,10 @@ pub fn pinned_number(v: &str) -> Option<u64> {
 /// issue number)`; the answer maps a gear name to an item index.
 ///
 /// A pinned number always wins. Otherwise an item goes to a gear only when the
-/// gear is that item's best candidate and the item is the gear's single best —
-/// a tie on either side is left for a person.
+/// item is the gear's single best -- two items fitting one gear equally are
+/// left for a person -- and no other gear fits the item better. Gears that
+/// fit one item equally all get it: `Auth Resolver` is the plan for both
+/// `authn-resolver` and `authz-resolver`.
 pub fn match_items(
     gears: &[(String, Vec<String>, Option<u64>)],
     items: &[RoadmapItem],
@@ -568,10 +880,9 @@ pub fn match_items(
         let [ix] = top.as_slice() else {
             continue;
         };
-        // The item must not name another gear as well or better:
-        // `Auth Resolver` fits `authn-resolver` and `authz-resolver` equally.
+        // The item must not name another gear better.
         let rival = gears.iter().any(|(other, ow, pin)| {
-            other != name && pin.is_none() && score(ow, &item_words[*ix]) >= best - 1e-9
+            other != name && pin.is_none() && score(ow, &item_words[*ix]) > best + 1e-9
         });
         if !rival {
             out.insert(name.clone(), (*ix, MatchedBy::Title));
@@ -872,6 +1183,7 @@ pub fn item_fields(
     let how = match matched {
         MatchedBy::Title => "matched by title",
         MatchedBy::Hand => "set by hand",
+        MatchedBy::Unmatched => "no component matches it",
     };
     v.insert(
         "v".into(),
@@ -880,6 +1192,57 @@ pub fn item_fields(
     f.insert("roadmap_item".into(), Value::Object(v));
 
     f
+}
+
+/// The board's id as the plan fields and the stored gears name it:
+/// `owner/projects/<number>`.
+pub fn board_id(source: &RoadmapSource) -> String {
+    format!("{}/projects/{}", source.owner, source.number)
+}
+
+/// What identifies an item on its board: its issue number, or for a draft
+/// its title.
+pub fn item_key(item: &RoadmapItem) -> String {
+    match item.number {
+        Some(n) => format!("#{n}"),
+        None => item.title.clone(),
+    }
+}
+
+/// The payload of a board's gear as it is stored: who it is, where it sits,
+/// which catalogued components implement it, and the plan fields in `auto`,
+/// the shape a profile carries them in -- so the component pipeline reads a
+/// planned gear exactly as it reads a profile.
+pub fn item_node_value(
+    board: &Roadmap,
+    source: &RoadmapSource,
+    item: &RoadmapItem,
+    fields: Map<String, Value>,
+    components: &[String],
+) -> Value {
+    let id = board_id(source);
+    let title = if board.title.trim().is_empty() {
+        id.clone()
+    } else {
+        board.title.trim().to_string()
+    };
+    json!({
+        "name": item.title,
+        "title": item.title,
+        "category": group_of(&item.title),
+        "group": group_of(&item.title),
+        "number": item.number,
+        "url": item.url,
+        "closed": item.closed,
+        "parent": item.parent,
+        "off_board": item.off_board,
+        "assignees": item.assignees,
+        "kind": "planned",
+        "board": id,
+        "board_title": title,
+        "components": components,
+        "auto": Value::Object(fields),
+    })
 }
 
 /// Hold the board's last stage against what the repository shows.

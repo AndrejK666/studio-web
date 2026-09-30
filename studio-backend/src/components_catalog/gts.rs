@@ -73,8 +73,17 @@ pub const FIELD_SCHEMA_TYPE: &str = "gts.cf.studio.catalog.field_schema.v1~";
 /// `component` and `day`.
 pub const COMPONENT_SNAPSHOT_TYPE: &str = "gts.cf.studio.catalog.component_snapshot.v1~";
 
+/// A gear on a roadmap board: planned, whether or not its code exists yet.
+///
+/// One per gear the board plans, keyed on the board and the issue. Its
+/// `components` name the catalogued components whose plan it is; while that
+/// list is empty it is a component in its own right -- a gear the catalogue
+/// knows about from the plan alone -- and once code for it is catalogued the
+/// component carries the plan and this node stops being listed as one.
+pub const ROADMAP_ITEM_TYPE: &str = "gts.cf.studio.catalog.roadmap_item.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 8] = [
+pub const ALL_NODE_TYPES: [&str; 9] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
@@ -83,6 +92,7 @@ pub const ALL_NODE_TYPES: [&str; 8] = [
     KIT_TYPE,
     FRONTX_TYPE,
     FIELD_SCHEMA_TYPE,
+    ROADMAP_ITEM_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -162,7 +172,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -202,6 +212,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 8] = [
         FIELD_SCHEMA_TYPE,
         "Field schema",
         "The fields a component page shows for one component type, grouped, with the source of each.",
+    ),
+    (
+        ROADMAP_ITEM_TYPE,
+        "Planned gear",
+        "A gear a roadmap board plans: its stage, milestone, progress and demand, and the catalogued components that implement it, if any yet.",
     ),
 ];
 
@@ -453,6 +468,21 @@ pub fn project_product_node(project_id: &str, value: Value) -> GtsNode {
 /// same day replaces that day's snapshot rather than adding one.
 pub fn component_snapshot_instance_id(component: &str, date: &str) -> String {
     anon_id(&["component_snapshot", component, date])
+}
+
+/// Instance id of a board's gear, keyed on the board and the issue (or, for
+/// a draft, its title).
+pub fn roadmap_item_instance_id(board: &str, key: &str) -> String {
+    anon_id(&["roadmap_item", board, key])
+}
+
+/// A gear on a roadmap board.
+pub fn roadmap_item_node(board: &str, key: &str, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: ROADMAP_ITEM_TYPE,
+        instance_id: roadmap_item_instance_id(board, key),
+        value,
+    }
 }
 
 /// One component's snapshot for one day.

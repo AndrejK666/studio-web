@@ -54,6 +54,8 @@ pub enum Kind {
     FrontendLibrary,
     Tool,
     Kit,
+    /// A gear a roadmap board plans that no repository has yet.
+    Planned,
     Config,
     TestSupport,
     Docs,
@@ -72,6 +74,7 @@ impl Kind {
             Self::FrontendLibrary => "frontend-library",
             Self::Tool => "tool",
             Self::Kit => "kit",
+            Self::Planned => "planned",
             Self::Config => "config",
             Self::TestSupport => "test-support",
             Self::Docs => "docs",
@@ -184,6 +187,12 @@ pub fn classify(e: &Evidence<'_>) -> Classified {
 
     if e.is_kit {
         return classified(Kind::Kit, "a Studio kit (.cf-studio-kit.toml)");
+    }
+    if e.stored_kind == Some("planned") {
+        return classified(
+            Kind::Planned,
+            "a gear on the roadmap board that no catalogued repository has yet",
+        );
     }
 
     // ── not components ───────────────────────────────────────────────────
