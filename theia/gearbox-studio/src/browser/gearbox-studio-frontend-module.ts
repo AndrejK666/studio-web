@@ -68,6 +68,7 @@ import { LockWidget } from "./lock/lock-widget";
 import { ProductWidget } from "./product/product-widget";
 import { GearAuthorWidget } from "./gear/gear-author-widget";
 import { StartWidget } from "./start/start-widget";
+import { BuildingStartPage } from "./start/building-start-page";
 import { DescriptionMarkers } from "./gdl/description-markers";
 import { GdlAssistContribution } from "./gdl/gdl-assist-contribution";
 import { GdlLanguageContribution } from "./gdl/gdl-language-contribution";
@@ -227,6 +228,9 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bindViewContribution(bind, ProductViewContribution);
   bind(FrontendApplicationContribution).toService(ProductViewContribution);
   bindViewContribution(bind, StartViewContribution);
+  // Building's page in the empty main dock (product-ext paints it; see start/building-start-page.ts).
+  bind(BuildingStartPage).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(BuildingStartPage);
   bindViewContribution(bind, CreateProductViewContribution);
   bindViewContribution(bind, CreateGearViewContribution);
   bindViewContribution(bind, GearAuthorViewContribution);

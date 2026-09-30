@@ -1737,7 +1737,8 @@ class ProductChromeContribution {
             commandRegistry: this.container.get(CommandRegistry),
             workspaceService: this.container.get(WorkspaceService),
             fileService: this.container.get(FileService),
-            openerService: this.container.get(OpenerService)
+            openerService: this.container.get(OpenerService),
+            messageService: this.container.get(MessageService)
         });
 
         // The bottom line: the product's ambient surface, in the 22px Lumino was
