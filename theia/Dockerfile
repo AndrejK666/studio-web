@@ -166,7 +166,13 @@ RUN --mount=type=secret,id=github_token \
     engine="${STUDIO_CFS_ENGINE:-$(python3 -c 'import json; print(json.load(open("/opt/cfs-pin.json"))["engine"])')}" \
     && GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     /opt/cfs/bin/python -c "import sys; from studio_proxy.cache import download_and_cache; ok, message = download_and_cache(version='${engine}'); print(message); sys.exit(0 if ok else 1)" \
-    && /opt/cfs/bin/python -c "import sys; from studio_proxy.resolve import find_cached_skill; entry = find_cached_skill(); print('skill engine entry point:', entry); sys.exit(0 if entry else 1)"
+    && /opt/cfs/bin/python -c "import sys; from studio_proxy.resolve import find_cached_skill; entry = find_cached_skill(); print('skill engine entry point:', entry); sys.exit(0 if entry else 1)" \
+    && printf '{"engine": "%s"}\n' "${engine}" > /opt/cfs/cfs.json
+# That last line records the engine just cached -- the pin, or the
+# STUDIO_CFS_ENGINE that overrode it -- where the IDE reads it
+# (STUDIO_CFS_PIN below): `cfs init` without `--version` first updates the
+# cache to the newest engine on GitHub, so the image's pin held only until
+# the first kit install of a session.
 
 # ── Gearbox engine ──
 # `gearbox rpc --stdio` serves gearbox-studio: the gear catalogue, products and
@@ -352,6 +358,7 @@ ENV STUDIO_GIT_MODE=disabled \
     STUDIO_DATA_DIR=/home/node/.studio-data \
     PATH=/opt/cfs/bin:$PATH \
     CFS_CACHE_DIR=/home/node/.cf-studio/cache \
+    STUDIO_CFS_PIN=/opt/cfs \
     SHELL=/bin/bash \
     THEIA_CODEX_PATH=/usr/local/bin/codex-studio \
     THEIA_CLAUDE_CODE_PATH=/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs \

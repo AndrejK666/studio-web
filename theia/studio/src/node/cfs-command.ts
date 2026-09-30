@@ -7,7 +7,8 @@ import * as path from 'path';
  * every caller (the map runner, the kit installer), so the session image and
  * a desktop are chosen the same way everywhere.
  *
- * The session image has `cfs` on PATH (/opt/cfs/bin). A desktop gets it from
+ * The session image has `cfs` on PATH (/opt/cfs/bin), and names the folder
+ * whose `cfs.json` records the engine it cached in `STUDIO_CFS_PIN`. A desktop gets it from
  * the Constructor Studio CLI extension (theia/studio-cli), which it fetches
  * like Claude Code and Codex and whose folder electron-app/desktop-main.js
  * names in `STUDIO_CFS_RUNTIME`. That runtime wins over whatever the member
@@ -77,9 +78,20 @@ export function runtimeCfsCommand(
     };
 }
 
+/**
+ * `cfs` from PATH, pinned to the engine the image cached when it says which
+ * (`STUDIO_CFS_PIN`, the session image's /opt/cfs). Unpinned, `cfs init`
+ * would first update the cache to the newest engine on GitHub.
+ */
+export function pathCfsCommand(env: NodeJS.ProcessEnv = process.env): CfsCommand {
+    const pin = env.STUDIO_CFS_PIN?.trim();
+    const engine = pin ? pinnedEngine(pin) : undefined;
+    return engine ? { ...CFS_ON_PATH, engine } : CFS_ON_PATH;
+}
+
 /** For a caller that runs one command and reports its failure: the configured one, the extension's, else `cfs` from PATH. */
 export function cfsCommand(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): CfsCommand {
-    return configuredCfsCommand(env) ?? runtimeCfsCommand(env, platform) ?? CFS_ON_PATH;
+    return configuredCfsCommand(env) ?? runtimeCfsCommand(env, platform) ?? pathCfsCommand(env);
 }
 
 /** The environment to launch `command` with: the IDE's own, unless the command brings variables of its own. */
