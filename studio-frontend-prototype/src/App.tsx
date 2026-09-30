@@ -1538,7 +1538,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           // (the 404 would be correct, but it clutters the browser console).
           if (org.self_managed) return [];
           try {
-            const kids = await api.tenantChildren(token, org.id);
+            const kids = await api.tenantChildrenAll(token, org.id);
             return (kids.items ?? [])
               .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
               .map((t) => ({ ...t, orgName: org.name, orgId: org.id }));
@@ -1567,7 +1567,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       setNestedProjects([]);
       return;
     }
-    api.tenantChildren(token, crumb.projectId).then(
+    api.tenantChildrenAll(token, crumb.projectId).then(
       (page) => {
         if (cancelled) return;
         setNestedProjects(
@@ -3443,7 +3443,7 @@ function WorkspaceProjects({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const page = await api.tenantChildren(token, workspace.id);
+      const page = await api.tenantChildrenAll(token, workspace.id);
       setProjects(
         (page.items ?? [])
           .filter((t) => t.tenant_type === TENANT_TYPES.project)
@@ -3636,7 +3636,7 @@ function WorkspaceProjects({
       key: "tenant",
       label: "Project tenant",
       check: async (ctx) => {
-        const page = await api.tenantChildren(token, workspace.id);
+        const page = await api.tenantChildrenAll(token, workspace.id);
         const found = (page.items ?? []).find(
           (t) => t.tenant_type === TENANT_TYPES.project && t.name === name,
         );
@@ -8753,7 +8753,7 @@ function AccessView({
     }
     const ids = [org.id, ...projects.map((p) => p.id)];
     Promise.all(
-      ids.map((id) => api.tenantUsers(token, id).then((p) => p.items ?? [], () => [])),
+      ids.map((id) => api.tenantUsersAll(token, id).then((p) => p.items ?? [], () => [])),
     ).then((lists) => {
       if (!live) return;
       const m = new Map<string, { id: string; name: string }>();

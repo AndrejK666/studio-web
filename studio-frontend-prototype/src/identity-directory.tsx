@@ -14,7 +14,7 @@ export function IdentityDirectory({ token, query }: { token: string; query: stri
   const load = async () => {
     const [{ items }, tenantPage] = await Promise.all([
       api.platformIdentities(token),
-      api.tenantChildren(token, PLATFORM_ROOT_TENANT_ID),
+      api.tenantChildrenAll(token, PLATFORM_ROOT_TENANT_ID),
     ]);
     setIdentities(items);
     setOrganizations(

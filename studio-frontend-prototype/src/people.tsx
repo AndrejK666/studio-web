@@ -18,7 +18,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, type User } from "./api";
-import { errText, initials, matches } from "./format";
+import { DataTable } from "./data-table";
+import { errText, initials } from "./format";
 import {
   normalizeAccessConfig,
   type AccessConfig,
@@ -42,7 +43,6 @@ export function PeopleView({
   org,
   roots,
   mode,
-  query,
   onOpenProject,
 }: {
   token: string;
@@ -51,7 +51,10 @@ export function PeopleView({
   /** Projects in scope. In team mode this is the single current project. */
   roots: RootProject[];
   mode: "org" | "team";
-  query: string;
+  /** The shell's side-panel query. Not read: the list has its own search
+   *  (docs/list-standard.md), and one query across sections searched the
+   *  wrong list as often as the right one. */
+  query?: string;
   onOpenProject: (rootId: string) => void;
 }) {
   const online = useOnline(token);
@@ -74,7 +77,7 @@ export function PeopleView({
       const [perRoot, orgUsers, access, catalogue] = await Promise.all([
         Promise.all(
           list.map(async (id) => {
-            const users = await api.tenantUsers(token, id).then(
+            const users = await api.tenantUsersAll(token, id).then(
               (p) => p.items ?? [],
               () => [] as User[],
             );
@@ -82,7 +85,7 @@ export function PeopleView({
           }),
         ),
         orgId
-          ? api.tenantUsers(token, orgId).then(
+          ? api.tenantUsersAll(token, orgId).then(
               (p) => p.items ?? [],
               () => [] as User[],
             )
@@ -213,9 +216,11 @@ export function PeopleView({
     void saveConfig({ ...cfg, grants: [...cfg.grants, grant] });
   }
 
-  function removeGrant(id: string) {
-    if (!cfg) return;
-    void saveConfig({ ...cfg, grants: cfg.grants.filter((g) => g.id !== id) });
+  async function removeGrantNow(id: string) {
+    if (!cfg || !orgId) return;
+    const next = { ...cfg, grants: cfg.grants.filter((g) => g.id !== id) };
+    await api.putAccessConfig(token, orgId, next);
+    setCfg(next);
   }
 
   function setGrantRole(id: string, roleKey: string) {
@@ -227,11 +232,12 @@ export function PeopleView({
   }
 
   const all = people ?? [];
-  const filtered = all
-    .filter((p) => matches(query, p.user.display_name, p.user.username, p.user.email))
-    .sort((a, b) =>
-      (a.user.display_name ?? a.user.username).localeCompare(b.user.display_name ?? b.user.username),
-    );
+  const nameOf = (p: Person) => p.user.display_name ?? p.user.username;
+  const byName = [...all].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  const personName = (g: GrantDef) => {
+    const person = all.find((p) => p.user.id === g.subjectId);
+    return person ? nameOf(person) : g.subjectName;
+  };
 
   /* ── Organization People ── */
   if (mode === "org") {
@@ -250,79 +256,79 @@ export function PeopleView({
         {error && <div className="error">{error}</div>}
 
         <div className="card">
-          {people === null ? (
-            <p className="hint">Loading people…</p>
-          ) : !org ? (
+          {!org && people !== null ? (
             <p className="empty">No organization in context.</p>
-          ) : filtered.length === 0 ? (
-            <p className="empty">
-              {all.length === 0
-                ? "Nobody here yet — invite the first person below."
-                : "Nobody matches the current filters."}
-            </p>
           ) : (
             <>
             {/* A dot that never lights cannot be told apart from an empty
                 office, so the one case where the join could be wrong says so
                 rather than showing nothing. */}
-            {online.reported > 0 && !filtered.some((p) => online.ids.has(p.user.id)) && (
+            {online.reported > 0 && !all.some((p) => online.ids.has(p.user.id)) && (
               <p className="hint">
                 {online.reported} {online.reported === 1 ? "person is" : "people are"} in Studio
                 right now, but none of them matched this list — presence is keyed by the sign-in
                 subject and these rows by account id.
               </p>
             )}
-            <table className="ptable people">
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Belongs to</th>
-                  <th>On projects</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((p) => {
-                  const name = p.user.display_name ?? p.user.username;
-                  const on = projectsOf(p);
-                  return (
-                    <tr key={p.user.id} className="prow">
-                      <td>
-                        <div className="pcell">
-                          <span className="account-avatar small">{initials(name)}</span>
-                          <div>
-                            <div className="pname plain">
-                              {name}
-                              <OnlineDot online={online.ids.has(p.user.id)} />
-                            </div>
-                            <div className="sub">{p.user.email ?? p.user.username}</div>
-                          </div>
+            <DataTable<Person>
+              list="people"
+              rows={people === null ? null : byName}
+              error={people === null ? error : null}
+              onRetry={() => void load()}
+              rowKey={(p) => p.user.id}
+              rowLabel={nameOf}
+              search={{ placeholder: "Search people" }}
+              searchText={(p) => [p.user.display_name, p.user.username, p.user.email]}
+              empty={{ title: "Nobody here yet.", body: "Invite the first person below." }}
+              columns={[
+                {
+                  id: "name",
+                  header: "Person",
+                  compare: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+                  cell: (p) => (
+                    <div className="pcell">
+                      <span className="account-avatar small">{initials(nameOf(p))}</span>
+                      <div>
+                        <div className="pname plain">
+                          {nameOf(p)}
+                          <OnlineDot online={online.ids.has(p.user.id)} />
                         </div>
-                      </td>
-                      <td className="sub">
-                        {p.homeIsOrg ? org.name : rootName(p.rootIds[0] ?? "")}
-                      </td>
-                      <td>
-                        <div className="chips">
-                          {on.map((o) => (
-                            <button
-                              key={o.id}
-                              type="button"
-                              className="chip on"
-                              title={o.role ? `${o.role} · open` : "Open this project"}
-                              onClick={() => onOpenProject(o.id)}
-                            >
-                              {o.name}
-                              {o.role ? ` · ${o.role}` : ""}
-                            </button>
-                          ))}
-                          {on.length === 0 && <span className="sub">not on a project</span>}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <div className="sub">{p.user.email ?? p.user.username}</div>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: "home",
+                  header: "Belongs to",
+                  cell: (p) => <span className="sub">{p.homeIsOrg ? org?.name : rootName(p.rootIds[0] ?? "")}</span>,
+                },
+                {
+                  id: "projects",
+                  header: "On projects",
+                  cell: (p) => {
+                    const on = projectsOf(p);
+                    return (
+                      <div className="chips">
+                        {on.map((o) => (
+                          <button
+                            key={o.id}
+                            type="button"
+                            className="chip on"
+                            title={o.role ? `${o.role} · open` : "Open this project"}
+                            onClick={() => onOpenProject(o.id)}
+                          >
+                            {o.name}
+                            {o.role ? ` · ${o.role}` : ""}
+                          </button>
+                        ))}
+                        {on.length === 0 && <span className="sub">not on a project</span>}
+                      </div>
+                    );
+                  },
+                },
+              ]}
+            />
             </>
           )}
 
@@ -383,77 +389,80 @@ export function PeopleView({
         </div>
       ) : (
         <div className="card">
-          {teamGrants.length === 0 ? (
-            <p className="empty">Nobody on the team yet — add someone from the organization below.</p>
-          ) : (
-            <table className="ptable people">
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Role</th>
-                  <th>Scope</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {teamGrants.map((g) => {
+          <DataTable<GrantDef>
+            list="team"
+            rows={teamGrants}
+            rowKey={(g) => g.id}
+            rowLabel={(g) => personName(g)}
+            empty={{ title: "Nobody on the team yet.", body: "Add someone from the organization below." }}
+            columns={[
+              {
+                id: "name",
+                header: "Person",
+                compare: (a, b) => personName(a).localeCompare(personName(b)),
+                cell: (g) => {
                   const person = all.find((p) => p.user.id === g.subjectId);
-                  const name = person
-                    ? person.user.display_name ?? person.user.username
-                    : g.subjectName;
-                  const orgWide = g.scopeType === "org";
                   return (
-                    <tr key={g.id} className="prow">
-                      <td>
-                        <div className="pcell">
-                          <span className="account-avatar small">{initials(name)}</span>
-                          <div>
-                            <div className="pname plain">
-                              {name}
-                              <OnlineDot online={online.ids.has(g.subjectId)} />
-                            </div>
-                            <div className="sub">{person?.user.email ?? ""}</div>
-                          </div>
+                    <div className="pcell">
+                      <span className="account-avatar small">{initials(personName(g))}</span>
+                      <div>
+                        <div className="pname plain">
+                          {personName(g)}
+                          <OnlineDot online={online.ids.has(g.subjectId)} />
                         </div>
-                      </td>
-                      <td>
-                        <select
-                          value={g.roleKey}
-                          disabled={busy || orgWide}
-                          onChange={(e) => setGrantRole(g.id, e.target.value)}
-                        >
-                          {cfg.roles.map((r) => (
-                            <option key={r.key} value={r.key}>
-                              {r.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="sub">
-                        {orgWide ? "organization-wide" : "this project"}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {orgWide ? (
-                          <span className="sub" title="Managed on the organization's Access screen">
-                            in Access
-                          </span>
-                        ) : (
-                          <button
-                            className="ghost"
-                            disabled={busy}
-                            title="Remove from this project's team"
-                            onClick={() => removeGrant(g.id)}
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                        <div className="sub">{person?.user.email ?? ""}</div>
+                      </div>
+                    </div>
                   );
-                })}
-              </tbody>
-            </table>
-          )}
+                },
+              },
+              {
+                id: "role",
+                header: "Role",
+                cell: (g) => (
+                  <select
+                    aria-label={`Role of ${personName(g)}`}
+                    value={g.roleKey}
+                    disabled={busy || g.scopeType === "org"}
+                    onChange={(e) => setGrantRole(g.id, e.target.value)}
+                  >
+                    {cfg.roles.map((r) => (
+                      <option key={r.key} value={r.key}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                ),
+              },
+              {
+                id: "scope",
+                header: "Scope",
+                cell: (g) => <span className="sub">{g.scopeType === "org" ? "organization-wide" : "this project"}</span>,
+              },
+            ]}
+            inline={(g) =>
+              g.scopeType === "org" ? (
+                <span className="sub" title="Managed on the organization's Access screen">
+                  in Access
+                </span>
+              ) : null
+            }
+            actions={(g) =>
+              g.scopeType === "org"
+                ? []
+                : [
+                    {
+                      label: "Remove from team",
+                      danger: {
+                        title: `Remove ${personName(g)} from ${teamRoot.name}?`,
+                        body: "Their role on this project goes. They stay in the organization, and can be added back.",
+                        confirmLabel: "Remove",
+                      },
+                      onSelect: () => removeGrantNow(g.id),
+                    },
+                  ]
+            }
+          />
 
           <div className="inline" style={{ marginTop: 14, gap: 8 }}>
             <select value={addPick} onChange={(e) => setAddPick(e.target.value)}>
