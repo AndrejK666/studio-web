@@ -263,6 +263,54 @@ describe('AnalyzeFrontendController', () => {
         expect(studio.startRun.mock.calls[0][3].documents[0].text).toBe('# PRD\n\nTyped in the Markdown editor.');
     });
 
+    /* Doc editing opens a document in the product's own editor (product-ext
+       MarkdownEditorWidget): no TextEditor, no Saveable. The view said "No
+       active document" with it open, and Analyze had nothing to run on. */
+    it('reads the product\'s Markdown editor through its document members, unsaved edits included', async () => {
+        const studio = createStudio();
+        const changeEvents = new Emitter<void>();
+        const listenerDisposable = { dispose: jest.fn() };
+        let text: string | undefined = '# PRD\n\nSaved text.';
+        const product = {
+            id: 'studio-md:file:///workspace/api/docs/prd.md',
+            uri: new URI('file:///workspace/api/docs/prd.md'),
+            // A TipTap editor, which is not a text editor.
+            editor: { state: { doc: {} }, commands: {} },
+            readDocumentText: () => text,
+            onDocumentTextChanged: (listener: () => void) => {
+                const disposable = changeEvents.event(listener);
+                return { dispose: () => { listenerDisposable.dispose(); disposable.dispose(); } };
+            },
+        };
+        const { controller, shell, activeWidgetEvents } = await start(studio, product);
+
+        expect(controller.getViewModel()).toMatchObject({ status: 'ready', documentLabel: 'prd.md', canAnalyze: true });
+        text = '# PRD\n\nTyped, not saved.';
+        changeEvents.fire();
+        expect(controller.getViewModel().status).toBe('stale');
+        await controller.analyze();
+        expect(studio.startRun.mock.calls[0][3].documents[0]).toMatchObject({ path: 'docs/prd.md', text: '# PRD\n\nTyped, not saved.' });
+
+        shell.activeWidget = { id: 'terminal' };
+        shell.mainWidget = undefined;
+        activeWidgetEvents.fire();
+        expect(listenerDisposable.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('says there is no text yet while the product\'s editor is still reading its file', async () => {
+        const studio = createStudio();
+        const product = {
+            id: 'studio-md:file:///workspace/api/docs/prd.md',
+            uri: new URI('file:///workspace/api/docs/prd.md'),
+            readDocumentText: () => undefined,
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+        };
+        const { controller } = await start(studio, product);
+        await controller.analyze();
+        expect(studio.startRun).not.toHaveBeenCalled();
+        expect(controller.getViewModel().note).toBe('There is no text to analyse yet.');
+    });
+
     it('keeps the document in front while another panel has focus, and while the Analyze panel itself is active', async () => {
         const studio = createStudio();
         const editor = createEditor('file:///workspace/docs/prd.md');

@@ -204,17 +204,11 @@ class CollaborationStrip extends Widget {
      */
     lineHtml() {
         const parts = [];
-        const people = this.roster.people;
-        if (people.length === 1) {
-            parts.push('<span class="studio-collab-strip-who">' + avatarHtml(people[0].author) +
-                esc((people[0].author.name || 'Somebody') +
-                    (people[0].typing ? ' is editing' : ' is here')) + '</span>');
-        } else if (people.length > 1) {
-            const typing = people.filter(person => person.typing).length;
+        const presence = scan.presenceText(this.roster.people, identity.current());
+        if (presence) {
             parts.push('<span class="studio-collab-strip-who">' +
-                people.slice(0, 4).map(person => avatarHtml(person.author)).join('') +
-                esc(people.length + ' others here' + (typing ? ', ' + typing + ' editing' : '')) +
-                '</span>');
+                presence.people.slice(0, 4).map(person => avatarHtml(person.author)).join('') +
+                esc(presence.text) + '</span>');
         }
         if (this.result.mentions) {
             parts.push('<b class="studio-collab-strip-flag">' + this.result.mentions +

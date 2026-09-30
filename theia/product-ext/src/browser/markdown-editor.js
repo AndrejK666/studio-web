@@ -1634,6 +1634,7 @@ class MarkdownEditorWidget extends Widget {
         if (this.linkOutsideHandler) { document.removeEventListener('pointerdown', this.linkOutsideHandler, true); }
         for (const d of this.disposables) { try { d.dispose(); } catch (e) { /* already gone */ } }
         this.disposables = [];
+        if (this.textListeners) { this.textListeners.clear(); }
         // The drain above told the backend we left; this drops the roster the
         // status line was still holding for a document that is now closed.
         this.collabSession = undefined;
@@ -2227,6 +2228,36 @@ class MarkdownEditorWidget extends Widget {
         return preserveWrapping(this.reviewedBody(), docToMarkdown(this.editor.getJSON()));
     }
 
+    /*
+     * What Studio's Analyze view reads (theia/studio analyze-controller's
+     * `StudioDocumentWidget`): the file this widget edits, its text as it
+     * stands on screen, and a signal when that text changes.
+     *
+     * This widget is neither a Theia TextEditor nor a Saveable, so without
+     * this the view said "No active document" with a document open in front
+     * of it. The text is the whole file -- frontmatter held verbatim, body as
+     * a save would write it -- so unsaved edits count, which is what the
+     * Analyze run promises ("the text on screen"). Undefined until the file
+     * has been read: there is no text yet, not an empty one.
+     */
+    readDocumentText() {
+        if (this.originalBody === undefined) { return undefined; }
+        return joinFrontmatter(this.frontmatter, this.currentBody());
+    }
+
+    onDocumentTextChanged(listener) {
+        if (!this.textListeners) { this.textListeners = new Set(); }
+        this.textListeners.add(listener);
+        return { dispose: () => { this.textListeners.delete(listener); } };
+    }
+
+    notifyTextChanged() {
+        if (!this.textListeners) { return; }
+        for (const listener of [...this.textListeners]) {
+            try { listener(); } catch (e) { console.warn('[studio] a document-text listener failed', e); }
+        }
+    }
+
     /** Push a body into the rich surface without it counting as a user edit. */
     setRichContent(body) {
         if (!this.editor) { return; }
@@ -2279,6 +2310,7 @@ class MarkdownEditorWidget extends Widget {
 
     markDirty() {
         if (this.saveState === 'conflict') { return; }   // autosave is paused; see resolveConflict
+        this.notifyTextChanged();
         /*
          * Suggesting mode diverts HERE, at the one place in this widget that
          * knows the user has just typed something real.
@@ -2702,6 +2734,7 @@ class MarkdownEditorWidget extends Widget {
         this.setBody(diskBody);
         this.lastSavedBody = diskBody;
         this.setSaveState('clean');
+        this.notifyTextChanged();
 
         if (focused && caret !== undefined && this.editor) {
             try {

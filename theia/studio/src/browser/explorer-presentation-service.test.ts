@@ -409,3 +409,128 @@ describe('the document types the documents mode shows', () => {
         expect([...shownExtensionsFrom({ autosave: true })]).toEqual([...DEFAULT_SHOWN_EXTENSIONS]);
     });
 });
+
+describe('the Explorer each mode opens with', () => {
+    const { defaultExplorerMode, explorerModeStorageKey } = require('./explorer-presentation-service');
+
+    function fakePerspectives(initial: string) {
+        const emitter = new Emitter<string>();
+        let active = initial;
+        return {
+            onDidChangePerspective: emitter.event,
+            getActivePerspectiveId: () => active,
+            /** A switch the service is told about. */
+            switchTo(id: string) { active = id; emitter.fire(id); },
+            /** A restored layout names its perspective without an event. */
+            restoreSilently(id: string) { active = id; }
+        };
+    }
+
+    function serviceIn(perspectives: ReturnType<typeof fakePerspectives>, storageService: object) {
+        const service = new ExplorerPresentationService({
+            onDidFilesChange: new Emitter<FileChangesEvent>().event,
+            onDidRunOperation: new Emitter<unknown>().event,
+            read: jest.fn()
+        } as never, storageService as never, createLogger() as never);
+        (service as unknown as { perspectives: unknown }).perspectives = perspectives;
+        (service as unknown as { init(): void }).init();
+        return service;
+    }
+
+    function storage(stored: Record<string, unknown> = {}) {
+        return {
+            getData: jest.fn((key: string) => Promise.resolve(stored[key])),
+            setData: jest.fn((key: string, value: unknown) => { stored[key] = value; return Promise.resolve(); })
+        };
+    }
+
+    it('lists documents in Doc editing only; the code modes show every file', () => {
+        expect(defaultExplorerMode('studio.documents')).toBe('markdown');
+        for (const code of ['default', 'studio.full', 'studio.orca-mode', 'gearbox.product']) {
+            expect(defaultExplorerMode(code)).toBe('all');
+        }
+        // No modes at all: the Explorer it always was.
+        expect(defaultExplorerMode(undefined)).toBe('markdown');
+    });
+
+    it('keeps each mode\'s choice under its own key, and the old key where there are no modes', () => {
+        expect(explorerModeStorageKey('default')).toBe('studio.explorer.mode.default');
+        expect(explorerModeStorageKey('studio.documents')).toBe('studio.explorer.mode.studio.documents');
+        expect(explorerModeStorageKey(undefined)).toBe('studio.explorer.mode');
+    });
+
+    it('opens Development with src/ in view and Doc editing with the document list', async () => {
+        const perspectives = fakePerspectives('default');
+        const service = serviceIn(perspectives, storage());
+        await flushPromises();
+        expect(service.getMode()).toBe('all');
+
+        const onDidChange = jest.fn();
+        service.onDidChange(onDidChange);
+        perspectives.switchTo('studio.documents');
+        expect(service.isMarkdownMode()).toBe(true);
+        expect(onDidChange).toHaveBeenCalledWith(undefined);
+
+        perspectives.switchTo('studio.full');
+        expect(service.getMode()).toBe('all');
+    });
+
+    it('remembers a toggle in the mode it was made in, and nowhere else', async () => {
+        const perspectives = fakePerspectives('default');
+        const storageService = storage();
+        const service = serviceIn(perspectives, storageService);
+        await flushPromises();
+
+        await service.toggleMode();
+        expect(service.getMode()).toBe('markdown');
+        expect(storageService.setData).toHaveBeenLastCalledWith('studio.explorer.mode.default', 'markdown');
+
+        perspectives.switchTo('studio.full');
+        expect(service.getMode()).toBe('all');
+        perspectives.switchTo('studio.documents');
+        expect(service.getMode()).toBe('markdown');
+        await service.toggleMode();
+        expect(storageService.setData).toHaveBeenLastCalledWith('studio.explorer.mode.studio.documents', 'all');
+
+        perspectives.switchTo('default');
+        expect(service.getMode()).toBe('markdown');
+    });
+
+    it('restores a mode\'s stored choice when that mode comes to the front', async () => {
+        const perspectives = fakePerspectives('default');
+        const service = serviceIn(perspectives, storage({
+            'studio.explorer.mode.studio.documents': 'all',
+            // The key from before the modes is not read into any of them.
+            'studio.explorer.mode': 'markdown'
+        }));
+        await flushPromises();
+        expect(service.getMode()).toBe('all');
+
+        perspectives.switchTo('studio.documents');
+        await flushPromises();
+        expect(service.getMode()).toBe('all');
+    });
+
+    it('follows a layout that was restored into another mode without an event', async () => {
+        const perspectives = fakePerspectives('default');
+        const service = serviceIn(perspectives, storage());
+        await flushPromises();
+        perspectives.restoreSilently('studio.documents');
+        expect(service.getMode()).toBe('all');
+        service.onDidInitializeLayout();
+        expect(service.getMode()).toBe('markdown');
+    });
+
+    it('does not let a late read of storage undo a toggle made meanwhile', async () => {
+        const late = deferred<unknown>();
+        const service = serviceIn(fakePerspectives('default'), {
+            getData: jest.fn().mockReturnValue(late.promise),
+            setData: jest.fn().mockResolvedValue(undefined)
+        });
+
+        await service.toggleMode();
+        late.resolve('all');
+        await flushPromises();
+        expect(service.getMode()).toBe('markdown');
+    });
+});

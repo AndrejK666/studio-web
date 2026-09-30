@@ -413,6 +413,13 @@ function patchNavigatorFilter(container) {
     const { FileStatNode } = require('@theia/filesystem/lib/browser');
 
     const filter = container.get(FileNavigatorFilter);
+    /*
+     * The studio extension's Explorer applies Files shown itself, and only in
+     * its documents presentation (StudioExplorerFilter, explorer-contribution.ts);
+     * "every file" there means every file. Patching on top of it hid a code
+     * mode's sources — `src/` listed, empty — whatever the Explorer said.
+     */
+    if (filter.appliesFilesShown === true) { return; }
     if (filter.__studioPatched) { return; }
     filter.__studioPatched = true;
 

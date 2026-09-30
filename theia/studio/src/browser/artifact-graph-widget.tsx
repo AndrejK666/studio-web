@@ -2,7 +2,7 @@ import * as React from '@theia/core/shared/react';
 import { inject, injectable, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
-import { StudioApi } from './studio-api';
+import { StudioApi, isSignedOut } from './studio-api';
 import { OpenInEditorFrontendController } from './open-in-editor-controller';
 
 // Local mirror of the studio-artifact-ingest DTOs. Index signatures let the
@@ -1123,7 +1123,7 @@ export class ArtifactGraphWidget extends ReactWidget {
             this.nodes = nodes;
             this.edges = edges;
         } catch (e) {
-            this.error = e instanceof Error ? e.message : String(e);
+            this.error = graphLoadError(e);
             this.nodes = this.nodes ?? [];
         } finally {
             this.loading = false;
@@ -1403,7 +1403,7 @@ export class ArtifactGraphWidget extends ReactWidget {
 
                 {this.error && (
                     <p style={{ color: 'var(--theia-errorForeground, #f14c4c)', padding: '0 12px', margin: '0 0 6px' }}>
-                        Failed to load: {this.error}
+                        {this.error}
                     </p>
                 )}
 
@@ -1412,9 +1412,12 @@ export class ArtifactGraphWidget extends ReactWidget {
                         {!nodes
                             ? <p style={{ padding: 12 }}>Loading…</p>
                             : !hasData
-                                ? <p style={{ padding: 12, color: 'var(--theia-descriptionForeground)' }}>
+                                // A graph that could not load is not an empty one:
+                                // the error above says why, and "no ingested
+                                // artifacts" would send the member to Sync for nothing.
+                                ? (this.error ? null : <p style={{ padding: 12, color: 'var(--theia-descriptionForeground)' }}>
                                     No ingested artifacts — run Sync on a repository in the portal to build the graph.
-                                </p>
+                                </p>)
                                 : <ForceGraph
                                     nodes={nodes}
                                     edges={edges}
@@ -1470,4 +1473,15 @@ export class ArtifactGraphWidget extends ReactWidget {
             </div>
         );
     }
+}
+
+/**
+ * What the graph says when it could not load. Signed out is the member's to
+ * fix, so it says how -- a raw "HTTP 503" said only that something broke.
+ */
+export function graphLoadError(error: unknown): string {
+    if (isSignedOut(error)) {
+        return 'Sign in to Constructor Studio to see the traceability graph: the Studio view has Sign in.';
+    }
+    return `Failed to load: ${error instanceof Error ? error.message : String(error)}`;
 }

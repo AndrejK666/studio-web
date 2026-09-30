@@ -435,10 +435,60 @@ Manual inputs are:
 A desktop has Theia's Extensions view (`@theia/vsx-registry`, in
 `electron-app` only; a browser session does not get it). It is open to all of
 open-vsx, as VS Code's is: the member searches, installs, updates and removes
-extensions there. The code modes (Development, Full functionality) keep its tab on the rail
-(`MODE_TABS`, `studio-chrome-mode.ts`). Extensions the app ships or brings
+extensions there. The code modes (Development, Full functionality) keep its tab on the rail,
+and no other mode shows it (`MODE_VIEWS`, `studio-mode-layout.ts`; see
+[What each mode keeps on its rails](#what-each-mode-keeps-on-its-rails)). Extensions the app ships or brings
 itself show under **Built-in**, without Uninstall or Update; those the member,
 or the first start below, installed show under **Installed**.
+
+### What each mode keeps on its rails
+
+One table, `MODE_VIEWS` in `theia/studio/src/browser/studio-mode-layout.ts`,
+says which views each mode keeps on its rails, in the desktop and in a session
+alike:
+
+| Mode | Left rail, beyond the Studio view and the mode's own panels |
+|---|---|
+| Doc editing | Explorer |
+| Development, Full functionality | Explorer, Search, Source Control, Run and Debug, Extensions (desktop only), Testing |
+| Agent development | Explorer, Search (Agents on the left, Source Control on the right) |
+| Building | Explorer, Source Control (beside the Gearbox Catalogue) |
+
+On startup and after every mode switch, `StudioModeLayout` places each of the
+mode's views that is missing, without opening it, and sets aside (detaches, it
+does not close) side views that another mode names and this one does not, so
+a view opened once in one mode no longer stays in another for good. Views no
+mode names -- the assistants, AI chat, Object Details, a plugin's own view --
+stay where the member put them. The rail tabs (`MODE_TABS`) are read from the
+same table. A view opened from the View menu stays for as long as the member
+works in the mode. The Studio view is put back in any mode whose layout was
+saved before the view existed.
+
+The right panel has no tab bar in the product. Whatever opens there gets a
+readable width: a panel narrower than 300px when a new view comes to the
+front is widened to the assistants' 360px (`settleRightPanelWidth`,
+`theia/product-ext/src/browser/ai-context.js`).
+
+### The Explorer and the status bar per mode
+
+Both are shared with the portal session, which has the same modes.
+
+- **Explorer.** Doc editing lists documents (Project settings → Files shown)
+  titled by their first heading; every other mode lists every file under its
+  name (`defaultExplorerMode`, `explorer-presentation-service.ts`). The
+  Explorer's toggle is kept per mode, in the IDE's local storage under
+  `studio.explorer.mode.<perspective id>`; the old single
+  `studio.explorer.mode` is read only by a build with no modes. Files shown
+  is applied by that Explorer's filter alone (`StudioExplorerFilter`);
+  product-ext's `patchNavigatorFilter` steps aside for it, so "every file"
+  includes sources.
+- **Status bar.** The product hides every entry of Theia's it does not own.
+  In the code modes a named list comes back — source control (`scm.*`),
+  Problems, notifications, progress, connection status, the bottom-panel
+  toggle and the cursor position (`CODE_MODE_STATUS_ENTRIES`,
+  `product-ext/src/browser/status-line-modes.js`), keyed by
+  `body[data-studio-perspective]`. A new entry is shown only once it is named
+  there.
 
 ### The gearbox engine
 
@@ -666,6 +716,41 @@ The menu item and the preference exist only in the desktop app: they are a
 Electron IPC (`theia/studio/src/electron-browser`, `src/electron-main`), and a
 session's `browser-app` loads neither — a session's Settings has no Update
 Channel.
+
+## Git on the desktop: Sources, Sync and Push
+
+A desktop project is a folder of clones, one per repository the project's
+settings in Studio list (`workspace.settings` repos[], which studio-git serves
+as `/sources?project_id=`). It has no canonical workspace config
+(`.cf-studio/*.toml`) and no operations queue, which is what a session's
+Sources, Sync and pushes are built on. So on the desktop
+(`browser/desktop-git-contribution.ts`, `browser/desktop-sources-widget.tsx`,
+`node/desktop-git.ts`, bound only by the electron frontend module, and acting
+only when `studio-desktop/status` answers `enabled`):
+
+- **Sources** lists the clones in the open folders as git sees them: branch,
+  upstream, commits to push and to pull (as of the last fetch), files not
+  committed, and the remote without credentials. There is no TOML to create or
+  edit. A repository added to the project in the portal is cloned the next
+  time the project is opened from the Constructor Studio view.
+- **Sync** runs `git fetch --prune` in every clone and then only a
+  fast-forward (`git merge --ff-only @{upstream}`). A branch with commits of
+  its own that is also behind is left as it is and reported; merging or
+  rebasing it is the member's call, in Source Control. One notification says
+  what happened in each clone.
+- **Push** (the ribbon, Development, Agent development and Full) pushes the
+  current branch of the clone Source Control has selected, or the only one, or
+  the one the member picks; a branch pushed for the first time gets its
+  upstream on `origin`. When the host prints a pull-request link (GitHub,
+  GitLab, Bitbucket, Gitea do), the notification offers **Open pull request**.
+
+The routes are `GET /studio-desktop/git/repositories?root=`,
+`POST /studio-desktop/git/sync` and `POST /studio-desktop/git/push`; like the
+rest of `/studio-desktop/*` they exist only when a Studio is configured.
+Credentials are git's: a clone's config names the token broker's helper, and
+pushing to a Studio remote works only while signed in. A session keeps its
+own Sources, Sync and Operations panel (View → Operations); it has no ribbon
+Push.
 
 ## Building (Gearbox) on the desktop
 

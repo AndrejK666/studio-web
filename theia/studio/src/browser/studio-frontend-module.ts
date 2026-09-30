@@ -59,6 +59,7 @@ import { OrcaTerminalService, orcaTerminalServicePath } from '../common/orca-ter
 import { OrcaPairingCommands, OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
+import { StudioModeLayout } from './studio-mode-layout';
 import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
 import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
@@ -134,6 +135,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // none of it while writing.
     bind(StudioChromeMode).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioChromeMode);
+    // What each mode keeps on its rails, whatever order the modes were visited in.
+    bind(StudioModeLayout).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioModeLayout);
     // The three modes, chosen explicitly, each with its own toolbar.
     bind(StudioModeBar).toSelf().inSingletonScope();
     bind(StudioModeSwitch).toSelf().inSingletonScope();

@@ -53,7 +53,8 @@ import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
-import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
+import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
+import { MODE_VIEWS } from './studio-mode-layout';
 
 const STYLE_ID = 'studio-chrome-mode';
 
@@ -69,19 +70,19 @@ body[data-studio-mode="workbench"] #theia-top-panel { display: flex !important; 
    application icon — the portal's branding is the line above. A hidden flex
    child takes no width, so nothing shifts. */
 body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: none !important; }
-/* Source Control. The product hides its activity-bar tab along with Debug,
-   Test, Search and Explorer — "a product keeps only the ones it wants" — which
-   is right for someone writing a document and wrong for someone who has just
-   edited code and wants to commit it. The workbench is the mode that wants it.
-
-   Only this one is restored here. Explorer comes back per mode (MODE_TABS),
-   and Debug, Test and Search are not part of the question being answered. */
-body[data-studio-mode="workbench"] #shell-tab-scm-view-container { display: flex !important; }
-/* One search per mode. The code modes bring back Theia's search across files
-   (MODE_TABS), which is the one that searches code; the product's Search rail
-   button, which searches documents, comments and proposals, stays for the
-   others. FULL still reaches the product's Search from its ribbon. */
+/* Source Control, Run and Debug, Testing and Extensions come back per mode
+   too (MODE_TABS, from MODE_VIEWS): the product hides them wholesale, which is
+   right for someone writing a document and wrong for someone who has just
+   edited code and wants to commit it. They used to come back on
+   data-studio-mode="workbench", which is every mode but writing, and so showed
+   Source Control in Agent development and Building by accident of the rule. */
+/* One search per mode. The code modes and Agent development bring back
+   Theia's search across files (MODE_TABS), which is the one that searches
+   code; the product's Search rail button, which searches documents, comments
+   and proposals, stays for the others. FULL still reaches the product's Search
+   from its ribbon. */
 body[data-studio-perspective="default"] #studio-search-rail,
+body[data-studio-perspective="studio.orca-mode"] #studio-search-rail,
 body[data-studio-perspective="studio.full"] #studio-search-rail { display: none !important; }
 /* Writing's bottom panel is Analyze. The Problems list, Operations and a
    terminal the session started are still there, one menu away, but their tabs
@@ -93,29 +94,17 @@ body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm
 /**
  * The rail tabs each mode brings back, beyond what the product keeps.
  *
- * The product hides Theia's view containers wholesale (see the note above
- * the Source Control rule), and "Projects replaces the explorer" stopped being
- * true when the Projects panel went: without this, no mode had a file tree or
- * a search across files. A mode names what its scenario needs, and nothing
- * else changes for the modes that name nothing.
+ * The product hides Theia's view containers wholesale (product-ext's "chrome
+ * removal"), and "Projects replaces the explorer" stopped being true when the
+ * Projects panel went. A mode names what its scenario needs in MODE_VIEWS
+ * (studio-mode-layout.ts), which also guarantees the view is on the rail — a
+ * rule for a tab shows only a tab that is there. This is its left-hand half:
+ * the right-hand tab bar is hidden in every mode, so no rule there could show
+ * anything.
  */
-export const MODE_TABS: Readonly<Record<string, readonly string[]>> = {
-    // Writing: the documents are files, found by browsing. Finding them by
-    // their text is the product's own Search (`studio.search.open`, in the rail
-    // and on the ribbon), which also reads comments, proposed changes and
-    // history; Theia's file search beside it was a second, lesser search.
-    [DOCUMENTS_PERSPECTIVE_ID]: ['explorer-view-container'],
-    // Development and FULL place the file tree too (studio-perspectives.ts),
-    // and product-ext hid its tab: the modes for working on code had no way
-    // to browse the code.
-    // Their search is Theia's, across the files: code is found by its text,
-    // and the product's Search reads documents, not code.
-    // The code modes also keep the Extensions view, where a desktop has one
-    // (@theia/vsx-registry, electron-app only); a session has no such
-    // container, so the rule matches nothing there.
-    [WORKBENCH_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container', 'vsx-extensions-view-container'],
-    [FULL_PERSPECTIVE_ID]: ['explorer-view-container', 'search-view-container', 'vsx-extensions-view-container'],
-};
+export const MODE_TABS: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
+    Object.entries(MODE_VIEWS).map(([mode, views]) => [mode, views.filter(view => view.area === 'left').map(view => view.id)]),
+);
 
 /** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */
 export function modeTabsCss(tabs: Readonly<Record<string, readonly string[]>> = MODE_TABS): string {

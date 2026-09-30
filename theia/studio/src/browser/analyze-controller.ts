@@ -101,6 +101,18 @@ type DocumentLike = {
     onContentChanged(listener: () => void): { dispose(): void };
 };
 
+/**
+ * What the product's Markdown editor (product-ext `markdown-editor.js`) offers
+ * the view: the file it edits, the whole file's text as it stands on screen --
+ * unsaved edits included, `undefined` before the file has been read -- and a
+ * signal when that text changes.
+ */
+export interface StudioDocumentWidget {
+    readonly uri: { toString(): string };
+    readDocumentText(): string | undefined;
+    onDocumentTextChanged(listener: () => void): { dispose(): void };
+}
+
 export interface AnalyzeApplicationShellLike {
     readonly activeWidget: unknown;
     /** The tab in front of the editor area, focused or not. */
@@ -698,6 +710,18 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
             };
         }
 
+        const studioDocument = this.asStudioDocumentWidget(candidate);
+        if (studioDocument) {
+            const uri = studioDocument.uri.toString();
+            return {
+                widget: studioDocument,
+                uri,
+                label: this.getDocumentLabel(uri),
+                readText: () => studioDocument.readDocumentText(),
+                onContentChanged: listener => studioDocument.onDocumentTextChanged(() => listener()),
+            };
+        }
+
         if (candidate && Navigatable.is(candidate)) {
             const resourceUri = candidate.getResourceUri();
             const saveable = Saveable.get(candidate);
@@ -717,6 +741,25 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         }
 
         return undefined;
+    }
+
+    /**
+     * The product's Markdown editor (product-ext `MarkdownEditorWidget`, id
+     * `studio-md:<uri>`), which is the editor Doc editing opens a document
+     * in. It is neither a `TextEditor` nor a `Saveable`, so it tells the view
+     * about its document through three members of its own -- see
+     * `StudioDocumentWidget`. Asked by what it carries, as `asTextEditor` is.
+     */
+    protected asStudioDocumentWidget(candidate: unknown): StudioDocumentWidget | undefined {
+        if (!candidate || typeof candidate !== 'object') {
+            return undefined;
+        }
+        const widget = candidate as Partial<StudioDocumentWidget>;
+        return widget.uri && typeof widget.uri.toString === 'function'
+            && typeof widget.readDocumentText === 'function'
+            && typeof widget.onDocumentTextChanged === 'function'
+            ? (candidate as StudioDocumentWidget)
+            : undefined;
     }
 
     /**

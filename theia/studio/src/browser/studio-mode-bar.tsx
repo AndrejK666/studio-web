@@ -23,6 +23,7 @@ import { CommandRegistry } from '@theia/core/lib/common/command';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
+import { MAIN_MENU_BAR, MenuModelRegistry } from '@theia/core/lib/common/menu';
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
 
 /** The Gearbox perspective's id, owned by `gearbox-studio`. Named here rather
@@ -113,7 +114,12 @@ const AGENTS: ModeAction = { command: 'studio.orca.toggle', icon: 'sparkle', lab
 // press, and a session collected them in the bottom panel.
 const TERMINAL: ModeAction = { command: 'workbench.action.terminal.toggleTerminal', icon: 'terminal', label: 'Terminal', title: 'Show the terminal, or open one' };
 const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control', label: 'Changes', title: 'What changed, and commit it' };
-const GIT_OPS: ModeAction = { command: 'studio.git-operations:toggle', icon: 'git-pull-request', label: 'Pushes & PRs', title: 'Commits and pushes waiting to go out' };
+// The desktop's Push (desktop-git-contribution.ts), with the pull-request link
+// the host prints. It named `studio.git-operations:toggle`, which nothing has
+// registered since the Operations panel replaced Git Operations (#304), so it
+// was never drawn. A session registers no Push: its pushes go through the
+// operations queue, and the panel is View > Operations.
+const GIT_OPS: ModeAction = { command: 'studio.desktop.git:push', icon: 'repo-push', label: 'Push', title: 'Push the branch to its remote, and open its pull request' };
 
 /** The modes that are one kind of work each; Full functionality is all of them. */
 const BY_WORK: readonly Mode[] = [
@@ -130,6 +136,9 @@ const BY_WORK: readonly Mode[] = [
             // The product's Search (product-ext), the same one as the rail button
             // and Ctrl+Shift+F: it reads comments, proposed changes and history
             // as well as the files.
+            // The product's New document (product-ext): a Markdown file in the
+            // open project, its name as its first heading.
+            { label: 'Document', actions: [{ command: 'studio.document.new', icon: 'new-file', label: 'New document', title: 'A new document in the project that is open' }] },
             { label: 'Find', actions: [{ command: 'studio.search.open', icon: 'search', label: 'Search', title: 'Search the project: documents, comments, proposed changes and history' }] },
             {
                 label: 'Specs',
@@ -138,6 +147,9 @@ const BY_WORK: readonly Mode[] = [
                     { command: 'studio.artifact-graph:toggle', icon: 'type-hierarchy', label: 'Traceability', title: 'The graph of what the specs reference and what references them' },
                 ],
             },
+            // A spec is finished when it is committed: the way there stays in
+            // the mode where it is written.
+            { label: 'Git', actions: [{ ...CHANGES, title: 'What changed in the documents, and commit it' }, GIT_OPS] },
             { label: 'Assist', actions: [{ ...AGENTS, title: 'Ask an agent about the specs' }] },
         ],
     },
@@ -256,6 +268,31 @@ function modeFor(perspectiveId: string | undefined): Mode {
 export function keepsMenu(perspectiveId: string | undefined, label: string): boolean {
     const allowed = modeFor(perspectiveId).menus;
     return allowed.includes('*') || allowed.includes(label);
+}
+
+/** A top-level menu as `emptyMenus` reads it: the part of Theia's menu node it needs. */
+export interface TopMenuNode {
+    readonly id: string;
+    readonly label?: string;
+    readonly children?: readonly unknown[];
+    isEmpty?(path: string[], matcher: unknown, context: undefined): boolean;
+}
+
+/**
+ * The labels of the top-level menus with nothing to show now: every entry's
+ * `when` is false. Theia's menu bar draws such a menu anyway, and opening it
+ * shows an empty box -- the Gearbox menu with no product open, whose entries
+ * all wait for `gearbox.context == 'product'`.
+ */
+export function emptyMenus(menus: readonly TopMenuNode[], matcher: unknown): Set<string> {
+    const empty = new Set<string>();
+    for (const menu of menus) {
+        if (menu.label && Array.isArray(menu.children) && typeof menu.isEmpty === 'function'
+            && menu.isEmpty([...MAIN_MENU_BAR, menu.id], matcher, undefined)) {
+            empty.add(menu.label);
+        }
+    }
+    return empty;
 }
 
 /** What both halves of the header share: the active mode, kept current. */
@@ -614,6 +651,12 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
     @inject(PerspectiveService) @optional()
     protected readonly perspectives: PerspectiveService | undefined;
 
+    @inject(MenuModelRegistry) @optional()
+    protected readonly menus: MenuModelRegistry | undefined;
+
+    @inject(ContextKeyService) @optional()
+    protected readonly contextKeys: ContextKeyService | undefined;
+
     protected readonly toDispose = new DisposableCollection();
     protected shell: FrontendApplication['shell'] | undefined;
 
@@ -669,6 +712,11 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
         if (this.perspectives) {
             this.toDispose.push(this.perspectives.onDidChangePerspective(schedule));
         }
+        // A menu empties or fills as its entries' `when` changes: Gearbox's
+        // when a product opens or closes.
+        if (this.contextKeys) {
+            this.toDispose.push(this.contextKeys.onDidChange(schedule));
+        }
         schedule();
     }
 
@@ -692,9 +740,12 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
 
     protected pruneMenus(): void {
         const perspective = this.perspectives?.getActivePerspectiveId();
+        const empty = this.menus && this.contextKeys
+            ? emptyMenus((this.menus.getMenu(MAIN_MENU_BAR)?.children ?? []) as unknown as TopMenuNode[], this.contextKeys)
+            : new Set<string>();
         document.querySelectorAll<HTMLElement>('#theia-top-panel .lm-MenuBar-item').forEach((item) => {
             const label = item.querySelector('.lm-MenuBar-itemLabel')?.textContent?.trim() ?? '';
-            const display = keepsMenu(perspective, label) ? '' : 'none';
+            const display = keepsMenu(perspective, label) && !empty.has(label) ? '' : 'none';
             if (item.style.display !== display) {
                 item.style.display = display;
             }

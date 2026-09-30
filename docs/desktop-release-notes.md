@@ -9,6 +9,83 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## Next release
+
+### Modes
+
+- **Each mode has the same rails whichever mode you came from.** Agent
+  development now has the file tree and Search; Building has the file tree and
+  Source Control; Development and Full functionality have Source Control on the
+  left, Run and Debug and Testing, whatever order the modes were visited in.
+  The Extensions tab shows only in Development and Full functionality. A view
+  opened in one mode, such as the Gearbox Catalogue, is set aside the next time
+  you enter a mode that does not use it. The same holds in a portal session,
+  which has no Extensions view.
+- **Panels on the right open at a readable width.** Agents, Source Control in
+  Agent development, the Gearbox Inspector, Outline and AI chat opened 100px
+  wide; they now open at the assistants' width when the panel was narrower than
+  300px.
+- **The code modes see the code.** Development, Full functionality, Agent
+  development and Building open the Explorer on every file, `src/` included,
+  under file names; Doc editing keeps its list of documents titled by their
+  H1. The Explorer's toggle is remembered per mode, so choosing the document
+  list in Development leaves the other modes as they were. The portal session
+  behaves the same way: its Workbench is the same Development mode.
+- **The status bar is back in the code modes.** The branch with its dirty and
+  sync state, the Problems count, the notification bell, progress, the
+  bottom-panel toggle, the cursor position and a lost-connection warning show
+  beside Studio's own fields. Doc editing keeps the quiet line.
+
+### Doc editing
+
+- **Analyze sees the document you are writing.** A Markdown document open in
+  Doc editing (the product's editor) was "No active document" to the Analyze
+  panel and to the ribbon's **Analyze**. The panel now names it and analyses
+  the text on screen, unsaved edits included.
+- **A document reaches a commit without leaving Doc editing.** The ribbon has
+  a **Git** group: **Changes** opens Source Control, with the commit message
+  and **Commit** and **Push**.
+- **New document is on the ribbon and at the top of File.** It creates a
+  Markdown file in the open project, its name as its first heading, as the
+  start page's button does.
+- **File offers New/Open Product and New/Open Gear only in Building and Full
+  functionality.** In Doc editing and Development they headed File and had
+  nothing to do with the work there; the command palette still has them.
+- **Traceability says to sign in** when the desktop is not signed in to a
+  Studio, instead of "Failed to load: HTTP 503" above a "no ingested
+  artifacts" hint.
+
+### Git on the desktop
+
+- **Push is in the ribbon.** Development, Agent development and Full had a
+  "Pushes & PRs" button wired to a command removed in #304, so it never showed.
+  It is **Push** now: it pushes the current branch of the selected repository
+  (publishing a new branch on `origin`), and offers **Open pull request** when
+  the host prints the link.
+- **Sync does git.** It used to fail, twice, with "Workspace sync is
+  unavailable until a valid canonical config is active". It now fetches every
+  repository of the project and fast-forwards those that are only behind; a
+  branch with commits of its own is left alone and reported. One notification.
+- **Sources lists the repositories.** Instead of "Missing canonical config",
+  Create Config and Edit Raw TOML, it shows each clone's branch, what there is
+  to push and pull, and uncommitted files, with Sync and Push.
+- **No empty Gearbox menu.** With no product open, Building showed a Gearbox
+  menu that opened empty; a top-level menu with nothing to show is hidden now,
+  in a session too.
+- **The collaboration strip leaves you out.** Alone and signed out it said
+  "You is here"; it now names only other people, and counts only them in
+  "N others here" (a session too).
+
+### Known limits
+
+- The rails and the right panel were checked on a local desktop build without
+  the Extensions view (it predates #513), so the Extensions tab's placement in
+  Development and Full functionality is covered by unit tests only, and a
+  portal session was not opened to look at Documents and Workbench.
+- An analysis run needs a signed-in desktop and a project Studio knows.
+  Offline, the panel names the document and says the window is not connected
+  to a Studio project.
+
 ## 0.3.0-beta.5
 
 Everything merged since `desktop-v0.3.0-beta.4`. The installer is Windows
