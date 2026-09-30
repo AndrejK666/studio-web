@@ -25,6 +25,8 @@ import { MessageService } from '@theia/core/lib/common/message-service';
 import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import { MAIN_MENU_BAR, MenuModelRegistry } from '@theia/core/lib/common/menu';
 import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID } from '../common/studio-modes';
+import type { StudioCliCommandId } from '../common/studio-cli-protocol';
+import { STUDIO_CLI_LABELS } from '../common/studio-cli-report';
 
 /** The Gearbox perspective's id, owned by `gearbox-studio`. Named here rather
  *  than imported so this package does not depend on that one. */
@@ -121,6 +123,20 @@ const CHANGES: ModeAction = { command: 'scmView:toggle', icon: 'source-control',
 // operations queue, and the panel is View > Operations.
 const GIT_OPS: ModeAction = { command: 'studio.desktop.git:push', icon: 'repo-push', label: 'Push', title: 'Push the branch to its remote, and open its pull request' };
 
+/**
+ * The Constructor Studio CLI (`cfs`) on the open checkout
+ * (studio-cli-contribution.ts). The four a person runs on a project; Initialize
+ * and Version stay in the palette -- one is done once, the other asked rarely.
+ */
+function cliAction(command: StudioCliCommandId): ModeAction {
+    const { label, icon, title } = STUDIO_CLI_LABELS[command];
+    return { command: `studio.cli.${command}`, label, icon, title };
+}
+const CLI: ModeGroup = {
+    label: 'CLI',
+    actions: [cliAction('validate'), cliAction('doctor'), cliAction('info'), cliAction('generate-agents')],
+};
+
 /** The modes that are one kind of work each; Full functionality is all of them. */
 const BY_WORK: readonly Mode[] = [
     {
@@ -145,6 +161,7 @@ const BY_WORK: readonly Mode[] = [
                 actions: [
                     { command: 'studio:analyze:open', icon: 'graph', label: 'Analyze', title: 'How the project\'s specs are doing: coverage, findings, trends' },
                     { command: 'studio.artifact-graph:toggle', icon: 'type-hierarchy', label: 'Traceability', title: 'The graph of what the specs reference and what references them' },
+                    cliAction('validate'),
                 ],
             },
             // A spec is finished when it is committed: the way there stays in
@@ -207,6 +224,7 @@ const BY_WORK: readonly Mode[] = [
                 ],
             },
             { label: 'Git', actions: [CHANGES, GIT_OPS] },
+            CLI,
             { label: 'Tools', actions: [TERMINAL, AGENTS] },
         ],
     },

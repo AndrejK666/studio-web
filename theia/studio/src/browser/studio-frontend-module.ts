@@ -55,6 +55,8 @@ import { PortalPresenceContribution } from './portal-presence-contribution';
 import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
 import { OrcaService, orcaServicePath } from '../common/orca-protocol';
+import { StudioCliService, studioCliServicePath } from '../common/studio-cli-protocol';
+import { StudioCliContribution } from './studio-cli-contribution';
 import { OrcaTerminalService, orcaTerminalServicePath } from '../common/orca-terminal-protocol';
 import { OrcaPairingCommands, OrcaTerminalFrontendClient, OrcaTerminalOpener } from './orca-terminal-opener';
 import { StudioDocumentOpener } from './studio-document-opener';
@@ -78,6 +80,12 @@ import '../../src/browser/desktop-studio.css';
 import '../../src/browser/components-reference.css';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
+    // The Constructor Studio CLI's commands: the ribbon's CLI group and the palette.
+    bind(StudioCliService).toDynamicValue(ctx =>
+        ctx.container.get(WebSocketConnectionProvider).createProxy<StudioCliService>(studioCliServicePath)
+    ).inSingletonScope();
+    bind(StudioCliContribution).toSelf().inSingletonScope();
+    bind(CommandContribution).toService(StudioCliContribution);
     // ADR-0030: each window's agents run on that window's person.
     bindAgentCredentials(rebind);
     rebind(ScmHistoryGraphWidget).to(StudioScmHistoryGraphWidget);
