@@ -2967,6 +2967,23 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
+  /** Remove from the graph every repository synced into this scope that is
+   *  not in `keep` — with its issues, PRs, files and their document bindings.
+   *  `keep` is what the project has attached now. */
+  pruneArtifacts: (
+    token: string,
+    body: {
+      workspace_id?: string;
+      project_id?: string;
+      keep: { secret_ref: string; repo_full_path: string }[];
+    },
+  ) =>
+    request<{ repos: number; nodes: number; bindings: number }>(
+      "/studio-artifact-ingest/v1/reconcile",
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
   /** Poll a background sync task. Terminal states are `succeeded` / `failed` /
    * `cancelled`. The task id is a studio-tasks run id, so `taskRun` reads the
    * same work with attempts, timings and a cancel verb. */

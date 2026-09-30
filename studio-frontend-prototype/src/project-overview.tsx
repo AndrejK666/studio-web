@@ -35,7 +35,7 @@ import type {
   User,
   WorkspaceSettings,
 } from "./api";
-import { parseRepoSource } from "./artifact-sync";
+import { findRepoNode } from "./artifact-sync";
 import { errText, initials, relTime } from "./format";
 import { OpenInDesktop } from "./open-in-desktop";
 
@@ -342,11 +342,7 @@ export function ProjectOverview({
   /** The graph's record of an attached source: present once it has been synced
    *  at least once, and carrying when that was and what came in. */
   const graphRepo = useCallback(
-    (r: RepoEntry): ArtifactNode | undefined => {
-      const fullPath = parseRepoSource(r.url ?? undefined)?.full_path;
-      if (!fullPath) return undefined;
-      return repoNodes.find((n) => n.value.full_path === fullPath);
-    },
+    (r: RepoEntry): ArtifactNode | undefined => findRepoNode(repoNodes, r),
     [repoNodes],
   );
 
@@ -356,11 +352,13 @@ export function ProjectOverview({
 
   const started = rows.filter((r) => !r.untouched);
   const notStarted = rows.filter((r) => r.untouched);
-  /** `conforms` on the record is the verdict from the document's last save; a
-   *  validation run on this screen supersedes it with a fresh one. */
-  const conformsOf = (d: Doc) => checks[d.id]?.conforms ?? d.conforms;
-  const conforming = docs.filter(conformsOf).length;
   const approved = docs.filter((d) => d.status === "approved").length;
+  /** Every document the project has, written here or bound from a repository
+   *  — the same count the Spec pipeline rows add up to. Counting only the
+   *  authored ones made this card say "none yet" beside a pipeline listing a
+   *  hundred documents. */
+  const specTotal = rows.reduce((n, r) => n + r.total, 0);
+  const specValid = rows.reduce((n, r) => n + r.valid, 0);
 
   /** Findings by severity — the detectors write `high`/`medium`/`low`, and
    *  anything unlabelled counts as `info`. */
@@ -389,7 +387,6 @@ export function ProjectOverview({
     : stageCatalogue;
 
   const liveSession = sessions.find((s) => s.state === "running") ?? sessions[0];
-  const installedKits = kits.filter((k) => k.status === "installed").length;
 
   /* ── Actions ── */
 
@@ -496,9 +493,13 @@ export function ProjectOverview({
       <div className="dash-stats">
         <Stat
           label="Specs"
-          value={missed("documents") ? "—" : docs.length}
-          sub={docs.length ? `${conforming} valid · ${approved} approved` : "none yet"}
-          tone={docs.length > 0 && conforming < docs.length ? "warn" : undefined}
+          value={missed("spec pipeline") ? "—" : specTotal}
+          sub={
+            specTotal
+              ? `${specValid} valid${approved ? ` · ${approved} approved` : ""}`
+              : "none yet"
+          }
+          tone={specTotal > 0 && specValid < specTotal ? "warn" : undefined}
           onClick={() => onOpenTab("specs")}
         />
         <Stat
@@ -533,7 +534,14 @@ export function ProjectOverview({
         <Stat
           label="Team"
           value={missed("team") ? "—" : team.length}
-          sub={`${installedKits} kit${installedKits === 1 ? "" : "s"} installed`}
+          sub={
+            team.length === 0
+              ? "nobody assigned"
+              : team
+                  .slice(0, 2)
+                  .map((u) => u.display_name || u.username)
+                  .join(", ") + (team.length > 2 ? ` +${team.length - 2}` : "")
+          }
           onClick={() => onOpenTab("people")}
         />
       </div>

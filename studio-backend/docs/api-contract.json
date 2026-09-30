@@ -1959,6 +1959,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-artifact-ingest/v1/reconcile",
+      "operation_id": "studio_artifact_ingest.reconcile_repositories",
+      "tag": "StudioArtifactIngest",
+      "summary": "Forget repositories a project no longer has attached",
+      "authenticated": true,
+      "request": "ReconcileRequest",
+      "responses": [
+        "ReconcileResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-artifact-ingest/v1/search",
       "operation_id": "studio_artifact_ingest.search",
       "tag": "StudioArtifactIngest",
