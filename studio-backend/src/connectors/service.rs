@@ -851,6 +851,40 @@ impl ConnectorService {
         Ok((driver, auth, c))
     }
 
+    /// The connection a caller named, or -- when it named none -- the first
+    /// `provider` connection in `tenant`'s catalogue whose token `ctx` can
+    /// read, with its driver and credentials.
+    ///
+    /// "The first one in the catalogue" used to be the whole rule, and a
+    /// personal connection first in line then broke every caller that is not
+    /// its owner: a background sync runs as the service, so the owner's token
+    /// is unreadable to it, and the component catalogue synced from crates.io
+    /// alone -- no repositories, no roadmap -- on an organization whose only
+    /// other connections came later (studio-dev, 2026-09-30). So shared
+    /// connections are tried before personal ones, an unreadable one is
+    /// skipped rather than fatal, and when none can be read the error says
+    /// which were tried and why.
+    pub async fn named_or_default(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        id: Option<Uuid>,
+        provider: &str,
+    ) -> anyhow::Result<(Arc<dyn ConnectorDriver>, ConnectionAuth, Connection)> {
+        if let Some(id) = id {
+            return self.driver_and_auth(ctx, tenant, id).await;
+        }
+        let candidates = default_candidates(self.list(ctx, tenant).await?, provider);
+        let mut tried = Vec::new();
+        for c in candidates {
+            match self.driver_and_auth(ctx, tenant, c.id).await {
+                Ok(found) => return Ok(found),
+                Err(e) => tried.push((c, format!("{e:#}"))),
+            }
+        }
+        Err(anyhow!(no_default_connection(provider, &tried)))
+    }
+
     pub async fn repositories(
         &self,
         ctx: &SecurityContext,
@@ -1082,6 +1116,98 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default()
+}
+
+/// The `provider` connections a caller that named none may fall back to, in
+/// the order to try them: shared (organization, workspace) before personal,
+/// catalogue order otherwise. A personal connection stays in the list -- its
+/// owner, calling in person, may use it -- but last.
+fn default_candidates(connections: Vec<Connection>, provider: &str) -> Vec<Connection> {
+    let mut out: Vec<Connection> = connections
+        .into_iter()
+        .filter(|c| c.provider == provider)
+        .collect();
+    out.sort_by_key(|c| c.scope == "personal");
+    out
+}
+
+/// Why no connection could stand in for the one a caller did not name.
+fn no_default_connection(provider: &str, tried: &[(Connection, String)]) -> String {
+    if tried.is_empty() {
+        return format!("no {provider} connection in this tenant");
+    }
+    let each: Vec<String> = tried
+        .iter()
+        .map(|(c, e)| format!("'{}' ({}): {e}", c.label, c.scope))
+        .collect();
+    let mut out = format!(
+        "no {provider} connection in this tenant has a token this caller can read -- {}",
+        each.join("; ")
+    );
+    if tried.iter().all(|(c, _)| c.scope == "personal") {
+        out.push_str(
+            ". A personal connection is only its owner's, and a background sync runs as the \
+             service: add an organization or workspace connection, or name one",
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+mod default_connection_tests {
+    use super::*;
+
+    fn conn(label: &str, provider: &str, scope: &str) -> Connection {
+        Connection {
+            id: Uuid::new_v4(),
+            owner_tenant_id: Uuid::nil(),
+            provider: provider.into(),
+            label: label.into(),
+            account: String::new(),
+            base_url: "https://api.github.com".into(),
+            secret_ref: format!("studio-connection-{label}"),
+            scope: scope.into(),
+            created_by: String::new(),
+            created_at_epoch_secs: 0,
+        }
+    }
+
+    #[test]
+    fn shared_connections_are_tried_before_personal_ones() {
+        let order: Vec<String> = default_candidates(
+            vec![
+                conn("mine", "github", "personal"),
+                conn("gitlab-org", "gitlab", "organization"),
+                conn("org", "github", "organization"),
+                conn("ws", "github", "workspace"),
+            ],
+            "github",
+        )
+        .into_iter()
+        .map(|c| c.label)
+        .collect();
+        assert_eq!(order, ["org", "ws", "mine"]);
+    }
+
+    #[test]
+    fn the_error_names_what_was_tried_and_what_to_do() {
+        assert_eq!(
+            no_default_connection("github", &[]),
+            "no github connection in this tenant"
+        );
+        let only_personal = no_default_connection(
+            "github",
+            &[(conn("ainetx", "github", "personal"), "not readable".into())],
+        );
+        assert!(only_personal.contains("'ainetx' (personal): not readable"));
+        assert!(only_personal.contains("add an organization or workspace connection"));
+        let shared_broken = no_default_connection(
+            "github",
+            &[(conn("org", "github", "organization"), "revoked".into())],
+        );
+        assert!(shared_broken.contains("'org' (organization): revoked"));
+        assert!(!shared_broken.contains("background sync"));
+    }
 }
 
 #[cfg(test)]
