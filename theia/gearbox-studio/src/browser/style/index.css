@@ -934,8 +934,11 @@
   flex: 0 0 360px; display: flex; flex-direction: column; gap: 10px; overflow: auto;
 }
 .gbx-create-modes { display: flex; flex-wrap: wrap; gap: 6px; }
-.gbx-create-row { display: flex; gap: 6px; align-items: center; }
-.gbx-create-row input { flex: 1 1 auto; min-width: 0; }
+/* The destination row wraps rather than squeezing: at the form's 360px the
+   field shrank to ~145px and "Use suggested" broke over two lines. */
+.gbx-create-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gbx-create-row input { flex: 1 1 180px; min-width: 0; }
+.gbx-create-row .theia-button { white-space: nowrap; margin: 0; }
 .gbx-create-form label { display: flex; flex-direction: column; gap: 4px; }
 .gbx-create-form input[type="text"],
 .gbx-create-form input:not([type]) {
@@ -944,7 +947,20 @@
   background: var(--theia-input-background, var(--theia-editor-background));
   color: var(--theia-input-foreground, var(--theia-foreground));
 }
-.gbx-create-sources label { flex-direction: row; align-items: center; gap: 8px; }
+/* A source is a checkbox beside its text, the text wrapping under itself and
+   its note under the text. As a centred flex row the note became a narrow,
+   very tall column the checkbox and path were centred against: a gap between
+   two sources, and a form wider than its column. */
+.gbx-create-sources { display: flex; flex-direction: column; gap: 6px; }
+.gbx-create-sources label {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: 8px;
+}
+.gbx-create-sources label > input { margin: 2px 0 0; }
+.gbx-create-source-text { min-width: 0; overflow-wrap: anywhere; }
+.gbx-create-form { overflow-wrap: anywhere; }
+/* theia-button's own 12px left margin started the mode buttons and
+   Create/Cancel off the fields' edge; the form lines them up. */
+.gbx-create-form .theia-button { margin-left: 0; }
 /* Whose product this gear is for. A banner rather than a line of prose in the
    form, because it changes what the whole screen does: the gear is declared as a
    source of that product and added to it. */

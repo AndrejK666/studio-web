@@ -167,7 +167,11 @@ const BY_WORK: readonly Mode[] = [
                 label: 'Product',
                 actions: [
                     { command: 'gearbox.product.show', icon: 'package', label: 'Product', title: 'The product: composition, topology, validation' },
-                    { command: 'gearbox.product.addGear', icon: 'add', label: 'Add gear', title: 'Put a gear into the product' },
+                    { command: 'gearbox.product.addGear', icon: 'add', label: 'Add gear', title: 'Put a gear from the catalogue into the product' },
+                    // Writing a new gear is a different thing from putting one
+                    // into the product, and it was only in File: "Add gear" was
+                    // pressed for it.
+                    { command: 'gearbox.gear.new', icon: 'new-file', label: 'New gear', title: 'Write a new gear: its gear.gdl and code, in a source of the corpus' },
                 ],
             },
             {
