@@ -101,7 +101,11 @@ describe('the desktop link handler', () => {
         const workspaces = {
             tryGetRoots: () => roots,
             recentWorkspaces: async () => [],
-            open: jest.fn(async (uri: URI) => { roots = [{ resource: uri }]; }),
+            workspace: undefined,
+            save: jest.fn(async () => undefined),
+            // In place (desktop-open-project.ts); `open` would reload the window.
+            spliceRoots: jest.fn(async (_start: number, _del: number, uri: URI) => { roots = [{ resource: uri }]; return []; }),
+            open: jest.fn(async () => { throw new Error('open reloads the window'); }),
         };
         const container = new Container();
         container.load(new ContainerModule(bind => {

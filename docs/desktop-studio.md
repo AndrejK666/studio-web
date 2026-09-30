@@ -59,6 +59,20 @@ read the placeholder as a project
   opens the page and shows them again, in any window.
 - **Work offline**: Theia's **Open folder…** and the recently opened folders.
 
+**A project opens in place, without reloading the window**
+(`desktop-open-project.ts`). `WorkspaceService.open(folder, { preserveWindow })`
+changes the workspace by reloading the whole frontend -- panels, assistants and
+the plugin host start again -- which is what a member saw after signing in and
+picking a project. Theia changes a *workspace file's* folders in place (how
+**Add Folder to Workspace** works), so the Studio view, this page's projects
+and recent folders, and `cfstudio://` links open a project as one: `save` to
+`<project>.theia-workspace` beside its folder (in place, and named after the
+project, so the title bar and the Explorer say its name), then `spliceRoots`
+to the project's folder, which fires `onWorkspaceChanged` for everything that
+shows a folder. The next start reopens that file, the most recently used
+workspace, so the member lands in the project. A recent *workspace file* is
+still opened by Theia's `open`, which loads it.
+
 The page is a widget in the main dock, so the start page — a layer of the
 *empty* dock — yields to it by its own rule and comes back once a real project
 or folder is open. The landing is the page for *no project*; the start pages

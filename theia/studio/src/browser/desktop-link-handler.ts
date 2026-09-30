@@ -17,6 +17,7 @@ import { MessageService } from '@theia/core/lib/common/message-service';
 import { OpenHandler } from '@theia/core/lib/browser/opener-service';
 import { ConfirmDialog } from '@theia/core/lib/browser/dialogs';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
+import { openProjectInPlace } from './desktop-open-project';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { DESKTOP_LINK_OPEN, DESKTOP_LINK_SCHEME, DesktopLink, environmentFor, isCurrent, parseDesktopLink } from '../common/desktop-link';
@@ -79,7 +80,8 @@ export class DesktopLinkHandler implements OpenHandler {
             const path = await openStudioProject(link.project, link.name, update => {
                 progress.report({ message: describeOpenProgress(update) });
             });
-            await this.workspaces.open(URI.fromFilePath(path), { preserveWindow: true });
+            // In place, not `open(…, { preserveWindow })`: that reloads the whole window.
+            await openProjectInPlace(this.workspaces, URI.fromFilePath(path));
             announceDesktopChange(this, 'opened');
         } finally {
             progress.cancel();
