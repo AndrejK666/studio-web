@@ -11,12 +11,13 @@
  * catalogue — it is simply not a place you navigate to.
  */
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { api, TENANT_TYPES, type User } from "./api";
-import { errText, matches } from "./format";
+import { DataTable } from "./data-table";
+import { errText } from "./format";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
-import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
+import { Tile } from "./view-mode";
 
 /** Initials + a stable hue from a name — the mockups' colored member discs. */
 function initials(name: string): string {
@@ -81,9 +82,6 @@ export interface RootProject {
 export function ProjectsPortfolio({
   token,
   roots,
-  query,
-  selfManagedOnly,
-  sort,
   homeOrgId,
   org,
   onOpen,
@@ -96,11 +94,12 @@ export function ProjectsPortfolio({
   /** The organization these workspaces belong to — chosen in the sidebar
    *  switcher; shown here only as breadcrumb/footer context. */
   org: { id: string; name: string } | null;
-  /** Search box from the right-hand filter panel. */
-  query: string;
-  /** Filter panel: only workspaces whose tenant raised the isolation barrier. */
-  selfManagedOnly: boolean;
-  sort: "name-asc" | "name-desc";
+  /** The side panel's search, filter and sort. Not read: the list has its own
+   *  (docs/list-standard.md) — a search box in one place and a filter in
+   *  another, both for the same list, was the inconsistency. */
+  query?: string;
+  selfManagedOnly?: boolean;
+  sort?: "name-asc" | "name-desc";
   /** Where a new workspace is created — the hidden organization. */
   homeOrgId: string | null;
   onOpen: (root: RootProject) => void;
@@ -117,14 +116,10 @@ export function ProjectsPortfolio({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Expandable tree of nested projects per workspace (lazy-loaded on expand).
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Nested projects per workspace, read the first time a row is expanded.
   const [children, setChildren] = useState<Record<string, { id: string; name: string }[]>>({});
-  const [loadingKids, setLoadingKids] = useState<Set<string>>(new Set());
-
   const loadChildren = useCallback(
     async (wsId: string) => {
-      setLoadingKids((s) => new Set(s).add(wsId));
       try {
         const page = await api.tenantChildrenAll(token, wsId);
         const kids = (page.items ?? [])
@@ -133,29 +128,10 @@ export function ProjectsPortfolio({
         setChildren((c) => ({ ...c, [wsId]: kids }));
       } catch {
         setChildren((c) => ({ ...c, [wsId]: [] }));
-      } finally {
-        setLoadingKids((s) => {
-          const n = new Set(s);
-          n.delete(wsId);
-          return n;
-        });
       }
     },
     [token],
   );
-
-  const toggle = (wsId: string) => {
-    setExpanded((s) => {
-      const n = new Set(s);
-      if (n.has(wsId)) {
-        n.delete(wsId);
-      } else {
-        n.add(wsId);
-        if (children[wsId] === undefined) void loadChildren(wsId);
-      }
-      return n;
-    });
-  };
 
   const ids = roots.map((r) => r.id).join(",");
 
@@ -227,23 +203,7 @@ export function ProjectsPortfolio({
     }
   }
 
-  async function remove(root: RootProject) {
-    if (!window.confirm(`Delete workspace “${root.name}”? This cannot be undone.`)) return;
-    setError(null);
-    try {
-      await api.deleteTenant(token, root.id);
-      onChanged();
-    } catch (err) {
-      setError(errText(err));
-    }
-  }
-
-  const [view, setView] = useViewMode("workspaces.view");
-
-  const visible = roots
-    .filter((r) => matches(query, r.name))
-    .filter((r) => !selfManagedOnly || r.self_managed)
-    .sort((a, b) => (sort === "name-desc" ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name)));
+  const byName = [...roots].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <>
@@ -257,12 +217,6 @@ export function ProjectsPortfolio({
             A workspace groups related projects. Open one to see its projects — each project owns its
             connectors, artifacts and people, and its own IDE sessions.
           </p>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <ViewToggle mode={view} onChange={setView} />
-          <button className="primary" disabled={!homeOrgId} onClick={() => setCreating((v) => !v)}>
-            New workspace
-          </button>
         </div>
       </div>
 
@@ -293,155 +247,145 @@ export function ProjectsPortfolio({
       {error && <div className="error">{error}</div>}
 
       <div className="card">
-        {roots.length === 0 ? (
-          <p className="empty">No workspaces yet — “New workspace” starts the first one.</p>
-        ) : visible.length === 0 ? (
-          <p className="empty">No workspaces match the current filters.</p>
-        ) : view === "tiles" ? (
-          /* The tree does not come with: a card that can unfold into other
-             cards is a table with extra steps. Tiles answer "which workspace",
-             and opening one is how you see its projects. */
-          <TileGrid>
-            {visible.map((root) => (
-              <Tile
-                key={root.id}
-                icon={<FolderIcon />}
-                title={root.name}
-                subtitle={root.self_managed ? "self-managed" : "workspace"}
-                onClick={() => onOpen(root)}
-                /* The same two facts the table columns carry. People come
-                   from the avatar list rather than the rollup, which does not
-                   have them — and `?? null` keeps "not read yet" showing as a
-                   dash instead of as nobody. */
-                stats={[
-                  { label: "projects", value: rollupText(rollups[root.id]?.projects ?? null) },
-                  { label: "people", value: rollupText(people[root.id]?.length ?? null) },
-                ]}
-                footer={
-                  <>
-                    <Avatars users={people[root.id]} />
-                    <button
-                      className="ghost"
-                      style={{ marginLeft: "auto" }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenStudio(root);
-                      }}
-                    >
-                      Open in IDE
-                    </button>
-                  </>
-                }
-              />
-            ))}
-          </TileGrid>
-        ) : (
-          <table className="ptable">
-            <thead>
-              <tr>
-                <th>Workspace</th>
-                <th className="pnum">Projects</th>
-                <th>People</th>
-                <th aria-label="actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((root) => {
-                const isOpen = expanded.has(root.id);
-                const kids = children[root.id];
-                const kidsLoading = loadingKids.has(root.id);
-                return (
-                  <Fragment key={root.id}>
-                    <tr className="prow root">
-                      <td>
-                        <div className="pcell">
-                          <button
-                            type="button"
-                            className="tree-toggle"
-                            aria-label={isOpen ? "Collapse projects" : "Expand projects"}
-                            aria-expanded={isOpen}
-                            onClick={() => toggle(root.id)}
-                          >
-                            {isOpen ? "▾" : "▸"}
-                          </button>
-                          <span className="pico" aria-hidden>
-                            <FolderIcon />
-                          </span>
-                          <div>
-                            <button type="button" className="pname" onClick={() => onOpen(root)}>
-                              {root.name}
-                            </button>
-                            <div className="sub">{root.self_managed ? "self-managed" : "workspace"}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="pnum">{rollupText(rollups[root.id]?.projects ?? null)}</td>
-                      <td>
-                        <Avatars users={people[root.id]} />
-                      </td>
-                      <td className="pactions">
-                        <button onClick={() => onOpen(root)}>Open</button>
-                        <button className="primary" onClick={() => onOpenStudio(root)}>
-                          Open in IDE
-                        </button>
-                        <button className="ghost" title="Delete workspace" onClick={() => void remove(root)}>
-                          ✕
-                        </button>
-                      </td>
-                    </tr>
-                    {isOpen &&
-                      (kids === undefined && kidsLoading ? (
-                        <tr className="prow nested">
-                          <td colSpan={4}>
-                            <div className="pcell indent sub">Loading projects…</div>
-                          </td>
-                        </tr>
-                      ) : (kids ?? []).length === 0 ? (
-                        <tr className="prow nested">
-                          <td colSpan={4}>
-                            <div className="pcell indent sub">No projects yet</div>
-                          </td>
-                        </tr>
-                      ) : (
-                        (kids ?? []).map((p) => (
-                          <tr key={p.id} className="prow nested">
-                            <td>
-                              <div className="pcell indent">
-                                <span className="pico" aria-hidden>
-                                  ▦
-                                </span>
-                                <button type="button" className="pname" onClick={() => onOpenProject?.(root.id, p)}>
-                                  {p.name}
-                                </button>
-                              </div>
-                            </td>
-                            {/* Projects and People are workspace facts. A
-                                project's own counts belong on the projects
-                                table inside the workspace, which has room for
-                                all three of them. */}
-                            <td />
-                            <td />
-                            <td className="pactions">
-                              <button onClick={() => onOpenProject?.(root.id, p)}>Open</button>
-                            </td>
-                          </tr>
-                        ))
-                      ))}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-        {visible.length > 0 && (
-          <div className="ptable-foot">
-            <span>
-              {visible.length} workspace{visible.length === 1 ? "" : "s"}
-            </span>
-            {org && <span className="sub">in {org.name}</span>}
-          </div>
-        )}
+        <DataTable<RootProject>
+          list="workspaces"
+          title={org ? `Workspaces in ${org.name}` : "Workspaces"}
+          rows={roots === null ? null : byName}
+          rowKey={(r) => r.id}
+          rowLabel={(r) => r.name}
+          onOpen={(r) => onOpen(r)}
+          search={{ placeholder: "Search workspaces" }}
+          searchText={(r) => [r.name]}
+          filters={[
+            {
+              id: "managed",
+              allLabel: "All workspaces",
+              kind: "chips",
+              options: [
+                { value: "self", label: "Self-managed" },
+                { value: "org", label: "Managed by the organization" },
+              ],
+              match: (r, v) => (v === "self" ? !!r.self_managed : !r.self_managed),
+            },
+          ]}
+          primary={
+            <button className="primary" disabled={!homeOrgId} onClick={() => setCreating((v) => !v)}>
+              New workspace
+            </button>
+          }
+          empty={{ title: "No workspaces yet.", body: "“New workspace” starts the first one." }}
+          columns={[
+            {
+              id: "name",
+              header: "Workspace",
+              compare: (a, b) => a.name.localeCompare(b.name),
+              cell: (r) => (
+                <div className="pcell">
+                  <span className="pico" aria-hidden>
+                    <FolderIcon />
+                  </span>
+                  <div>
+                    <div className="pname">{r.name}</div>
+                    <div className="sub">{r.self_managed ? "self-managed" : "workspace"}</div>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: "projects",
+              header: "Projects",
+              num: true,
+              compare: (a, b) => (rollups[a.id]?.projects ?? -1) - (rollups[b.id]?.projects ?? -1),
+              cell: (r) => rollupText(rollups[r.id]?.projects ?? null),
+            },
+            { id: "people", header: "People", cell: (r) => <Avatars users={people[r.id]} /> },
+          ]}
+          expand={(r) => <NestedProjects kids={children[r.id]} load={() => loadChildren(r.id)} onOpen={(p) => onOpenProject?.(r.id, p)} />}
+          inline={(r) => (
+            <button className="primary" onClick={() => onOpenStudio(r)}>
+              Open in IDE
+            </button>
+          )}
+          actions={(r) => [
+            { label: "Open", onSelect: () => onOpen(r) },
+            {
+              label: "Delete",
+              danger: {
+                title: `Delete workspace “${r.name}”?`,
+                body: "The workspace goes, and the account system may refuse while it still has projects — delete those first.",
+                confirmLabel: "Delete",
+              },
+              onSelect: async () => {
+                await api.deleteTenant(token, r.id);
+                onChanged();
+              },
+            },
+          ]}
+          tile={(r, open) => (
+            /* The tree does not come with: a card that unfolds into other
+               cards is a table with extra steps. */
+            <Tile
+              icon={<FolderIcon />}
+              title={r.name}
+              subtitle={r.self_managed ? "self-managed" : "workspace"}
+              onClick={open}
+              /* People come from the avatar list, not the rollup, and `?? null`
+                 keeps "not read yet" a dash instead of nobody. */
+              stats={[
+                { label: "projects", value: rollupText(rollups[r.id]?.projects ?? null) },
+                { label: "people", value: rollupText(people[r.id]?.length ?? null) },
+              ]}
+              footer={
+                <>
+                  <Avatars users={people[r.id]} />
+                  <button
+                    className="ghost"
+                    style={{ marginLeft: "auto" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenStudio(r);
+                    }}
+                  >
+                    Open in IDE
+                  </button>
+                </>
+              }
+            />
+          )}
+        />
       </div>
     </>
+  );
+}
+
+/** A workspace's projects, under its row: read on first open. */
+function NestedProjects({
+  kids,
+  load,
+  onOpen,
+}: {
+  kids: { id: string; name: string }[] | undefined;
+  load: () => void;
+  onOpen: (p: { id: string; name: string }) => void;
+}) {
+  useEffect(() => {
+    if (kids === undefined) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (kids === undefined) return <div className="pcell indent sub">Loading projects…</div>;
+  if (kids.length === 0) return <div className="pcell indent sub">No projects yet</div>;
+  return (
+    <div className="nested-projects">
+      {kids.map((p) => (
+        <div key={p.id} className="pcell indent">
+          <span className="pico" aria-hidden>
+            ▦
+          </span>
+          <button type="button" className="pname" onClick={() => onOpen(p)}>
+            {p.name}
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

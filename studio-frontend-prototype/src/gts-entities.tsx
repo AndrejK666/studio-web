@@ -1,6 +1,7 @@
 // A scannable table of the registered GTS entities (types-registry/v1/entities)
 // instead of a raw JSON dump: categorised by gts_id, searchable, filterable.
 import { useMemo, useState } from "react";
+import { DataTable } from "./data-table";
 import { Modal } from "./modal";
 
 interface Segment { vendor?: string; package?: string; namespace?: string; type_name?: string; ver_major?: number }
@@ -49,8 +50,6 @@ function leafId(g: string): string {
 }
 
 export function GtsEntitiesTable({ data }: { data: unknown }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState<Category | null>(null);
   const [sel, setSel] = useState<Entity | null>(null);
 
   
@@ -65,73 +64,50 @@ export function GtsEntitiesTable({ data }: { data: unknown }) {
     }));
   }, [data]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const r of rows) c[r.cat] = (c[r.cat] || 0) + 1;
-    return c;
-  }, [rows]);
-
   const err = (data as { error?: string } | undefined)?.error;
-  const needle = q.trim().toLowerCase();
-  const shown = rows.filter(
-    (r) =>
-      (cat === null || r.cat === cat) &&
-      (needle === "" ||
-        r.e.gts_id.toLowerCase().includes(needle) ||
-        r.name.toLowerCase().includes(needle) ||
-        r.desc.toLowerCase().includes(needle)),
-  );
-
-  if (err) return <p className="error">{err}</p>;
+  type Row = (typeof rows)[number];
 
   return (
     <div className="gte">
       <style>{GTE_CSS}</style>
-      <div className="gte-controls">
-        <input className="gte-search" type="search" placeholder="Search types, ids, descriptions…"
-          value={q} spellCheck={false} onChange={(e) => setQ(e.target.value)} />
-        <div className="gte-chips">
-          <button className={"gte-chip" + (cat === null ? " on" : "")} onClick={() => setCat(null)}>
-            All <span className="gte-c">{rows.length}</span>
-          </button>
-          {CATEGORIES.filter((c) => counts[c]).map((c) => (
-            <button key={c} className={"gte-chip" + (cat === c ? " on" : "")} onClick={() => setCat(cat === c ? null : c)}>
-              <span className="gte-dot" style={{ background: CAT_COLOR[c] }} />{c} <span className="gte-c">{counts[c]}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="gte-scroll">
-        <table className="ptable gte-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>GTS type</th>
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((r) => (
-              <tr key={r.e.id} className="gte-row" onClick={() => setSel(r.e)} title="View schema">
-                <td className="gte-name">{r.name}</td>
-                <td>
-                  <span className="gte-badge" style={{ borderColor: CAT_COLOR[r.cat], color: CAT_COLOR[r.cat] }}>
-                    <span className="gte-dot" style={{ background: CAT_COLOR[r.cat] }} />{r.cat}
-                  </span>
-                </td>
-                <td><code className="gte-id" title={r.e.gts_id}>{leafId(r.e.gts_id)}</code></td>
-                <td className="gte-desc">{r.desc || <span className="gte-muted">—</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {shown.length === 0 && <p className="gte-muted" style={{ padding: 12 }}>No entities match.</p>}
-      </div>
-      <div className="gte-foot">
-        Showing <b>{shown.length}</b> of {rows.length} registered entities.
-      </div>
+      <DataTable<Row>
+        list="gts-entities"
+        urlPrefix="gts."
+        title="Registered entities"
+        rows={rows}
+        error={err ?? null}
+        rowKey={(r) => r.e.id}
+        rowLabel={(r) => r.name}
+        onOpen={(r) => setSel(r.e)}
+        search={{ placeholder: "Search types, ids, descriptions…" }}
+        searchText={(r) => [r.e.gts_id, r.name, r.desc]}
+        filters={[
+          {
+            id: "category",
+            allLabel: "All",
+            kind: "chips",
+            options: CATEGORIES.filter((c) => rows.some((r) => r.cat === c)).map((c) => ({ value: c, label: c })),
+            match: (r, v) => r.cat === v,
+          },
+        ]}
+        empty={{ title: "No entities registered." }}
+        columns={[
+          { id: "name", header: "Name", className: "gte-name", compare: (x, y) => x.name.localeCompare(y.name), cell: (r) => r.name },
+          {
+            id: "category",
+            header: "Category",
+            compare: (x, y) => x.cat.localeCompare(y.cat),
+            cell: (r) => (
+              <span className="gte-badge" style={{ borderColor: CAT_COLOR[r.cat], color: CAT_COLOR[r.cat] }}>
+                <span className="gte-dot" style={{ background: CAT_COLOR[r.cat] }} />
+                {r.cat}
+              </span>
+            ),
+          },
+          { id: "type", header: "GTS type", cell: (r) => <code className="gte-id" title={r.e.gts_id}>{leafId(r.e.gts_id)}</code> },
+          { id: "desc", header: "Description", className: "gte-desc", cell: (r) => r.desc || <span className="gte-muted">—</span> },
+        ]}
+      />
 
       {sel && (
         <Modal

@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type PresenceEntry, type PresenceMessage } from "./api";
+import { DataTable, When } from "./data-table";
 import { errText, relTime } from "./format";
 
 /** How often we report in. The server judges by three of these, so missing
@@ -241,55 +242,68 @@ export function WhoIsOnline({ token, meId }: { token: string; meId?: string }) {
         recently seen first. This is held in the backend process, so a restart empties it until
         each client's next heartbeat — an empty list right after a deploy means nothing.
       </p>
-      {err && <p className="error">{err}</p>}
-      {people === null ? (
-        <p className="empty">Loading…</p>
-      ) : people.length === 0 ? (
-        <p className="empty">Nobody is in Studio right now.</p>
-      ) : (
-        <table className="ptable">
-          <thead>
-            <tr>
-              <th>Person</th>
-              <th>Where</th>
-              <th>Here since</th>
-              <th>Last seen</th>
-              <th aria-label="actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {people.map((p) => (
-              <tr key={p.user_id}>
-                <td className="acell-lead">
-                  {p.display_name ?? <code>{p.user_id.slice(0, 12)}…</code>}
-                  {p.user_id === meId && <span className="sub"> (you)</span>}
-                </td>
-                <td>
-                  {p.place}
-                  {p.detail ? <span className="sub"> · {p.detail}</span> : null}
-                </td>
-                <td className="sub">{relTime(new Date(p.since_ms).toISOString())}</td>
-                <td className="sub">{relTime(new Date(p.last_seen_ms).toISOString())}</td>
-                <td className="pactions">
-                  {/* Writing to yourself is not forbidden by the backend, and
-                      it is a useful way to check the channel works — but it is
-                      not what this button is for, so it is not offered. */}
-                  {p.user_id !== meId && (
-                    <button
-                      onClick={() => {
-                        setWritingTo(p);
-                        setSent(null);
-                      }}
-                    >
-                      Message
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {err && people !== null && people.length > 0 && <p className="error">{err}</p>}
+      <DataTable<PresenceEntry>
+        list="presence"
+        rows={people === null && err ? [] : people}
+        error={people === null || people.length === 0 ? err : null}
+        rowKey={(p) => p.user_id}
+        rowLabel={(p) => p.display_name ?? p.user_id}
+        search={{ placeholder: "Search people" }}
+        searchText={(p) => [p.display_name, p.place, p.detail]}
+        empty={{ title: "Nobody is in Studio right now." }}
+        columns={[
+          {
+            id: "name",
+            header: "Person",
+            className: "acell-lead",
+            compare: (a, b) => (a.display_name ?? a.user_id).localeCompare(b.display_name ?? b.user_id),
+            cell: (p) => (
+              <>
+                {p.display_name ?? <code>{p.user_id.slice(0, 12)}…</code>}
+                {p.user_id === meId && <span className="sub"> (you)</span>}
+              </>
+            ),
+          },
+          {
+            id: "place",
+            header: "Where",
+            cell: (p) => (
+              <>
+                {p.place}
+                {p.detail ? <span className="sub"> · {p.detail}</span> : null}
+              </>
+            ),
+          },
+          {
+            id: "since",
+            header: "Here since",
+            compare: (a, b) => a.since_ms - b.since_ms,
+            cell: (p) => <When iso={new Date(p.since_ms).toISOString()} className="sub" />,
+          },
+          {
+            id: "seen",
+            header: "Last seen",
+            compare: (a, b) => a.last_seen_ms - b.last_seen_ms,
+            cell: (p) => <When iso={new Date(p.last_seen_ms).toISOString()} className="sub" />,
+          },
+        ]}
+        inline={(p) =>
+          /* Writing to yourself is not forbidden by the backend, and it is a
+             useful way to check the channel works — but it is not what this
+             button is for, so it is not offered. */
+          p.user_id !== meId ? (
+            <button
+              onClick={() => {
+                setWritingTo(p);
+                setSent(null);
+              }}
+            >
+              Message
+            </button>
+          ) : null
+        }
+      />
 
       {writingTo && (
         <div className="card" style={{ marginTop: 12 }}>

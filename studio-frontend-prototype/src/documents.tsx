@@ -14,7 +14,8 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Pager, usePaged } from "./pager";
+import { Pager, type Paged } from "./pager";
+import { useListState } from "./list-state";
 
 import {
   api,
@@ -357,7 +358,9 @@ function IngestedDocumentsView({
   canOpenDocs: boolean;
 }) {
   const [bindings, setBindings] = useState<DocBinding[]>([]);
-  const [filter, setFilter] = useState<SpecFilter>("needs-review");
+  // Queue, type, origin, search and page live in the address
+  // (docs/list-standard.md), so a reload or a link lands on the same view.
+  const [listState, listCtl] = useListState();
   /** The "New document" form in the bar: which template, and what it is
    *  called. A document starts here and is written in the IDE. */
   const [writing, setWriting] = useState(false);
@@ -375,9 +378,11 @@ function IngestedDocumentsView({
   /** "any" = both origins. Kept apart from the queue filter because they ask
    *  different questions: one is "what state is it in", the other "where did
    *  it come from". */
-  const [originFilter, setOriginFilter] = useState<"any" | "repository" | "authored">("any");
+  const originFilter = (listState.filters.origin ?? "any") as "any" | "repository" | "authored";
+  const setOriginFilter = (o: typeof originFilter) => listCtl.setFilter("origin", o === "any" ? null : o);
   /** "" = every type, "-" = the ones with no type yet. */
-  const [typeFilter, setTypeFilter] = useState("");
+  const typeFilter = listState.filters.type ?? "";
+  const setTypeFilter = (t: string) => listCtl.setFilter("type", t || null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Open a file's row, or close it when it is the one already open. */
   const toggle = (id: string) => setSelectedId((open) => (open === id ? null : id));
@@ -1154,8 +1159,19 @@ function IngestedDocumentsView({
     return [...keys].sort((a, b) => typeName(a).localeCompare(typeName(b)));
   }, [rows, typeName]);
 
+  /** The queue in the address. Absent, the one with work in it: a freshly
+   *  synced project has nothing to review yet, and opening it on an empty
+   *  "Needs review" read as if the sync had found nothing. */
+  const filter: SpecFilter =
+    (listState.filters.queue as SpecFilter | undefined) ?? (counts["needs-review"] > 0 ? "needs-review" : "all");
+  const setFilter = (queue: SpecFilter) => listCtl.setFilter("queue", queue);
+  const needle = listState.q.trim().toLowerCase();
+
   const shown = useMemo(() => {
     const list = rows.filter((row) => {
+      if (needle && ![row.path, row.name, row.type_key].some((f) => (f ?? "").toLowerCase().includes(needle))) {
+        return false;
+      }
       if (typeFilter === "-" && row.type_key) return false;
       if (typeFilter && typeFilter !== "-" && row.type_key !== typeFilter) return false;
       if (originFilter !== "any" && row.origin !== originFilter) return false;
@@ -1166,7 +1182,7 @@ function IngestedDocumentsView({
     // leaving them out meant a row that appeared without a binding changing —
     // a candidate arriving from the graph — was not shown until something else
     // forced a recompute.
-  }, [rows, filter, typeFilter, originFilter]);
+  }, [rows, filter, typeFilter, originFilter, needle]);
 
   /** The files behind the rows the filters leave on screen — what the Spec
    *  Quality menu runs on. Picking "Architecture Decision Record" and then
@@ -1182,7 +1198,16 @@ function IngestedDocumentsView({
   /** Which page of `shown` is mounted. Back to the first whenever the view
    *  changes: a filter is a new question, and answering it from page 8 of the
    *  previous one would be a strange place to start reading. */
-  const paged = usePaged(shown, `${filter}|${typeFilter}|${originFilter}|${view}`, RENDER_PAGE);
+  const pageCount = Math.max(1, Math.ceil(shown.length / RENDER_PAGE));
+  const pageNow = Math.min(listState.page, pageCount - 1);
+  const paged: Paged<SpecRow> = {
+    visible: shown.slice(pageNow * RENDER_PAGE, (pageNow + 1) * RENDER_PAGE),
+    offset: pageNow * RENDER_PAGE,
+    page: pageNow,
+    pages: pageCount,
+    total: shown.length,
+    setPage: listCtl.setPage,
+  };
   const visible = paged.visible;
 
   /** The row the side panel is about — always a repository one. An authored
@@ -1372,6 +1397,14 @@ function IngestedDocumentsView({
       )}
 
       <div className="ing-filters">
+        <input
+          className="dt-search"
+          type="search"
+          placeholder="Search specs"
+          aria-label="Search specs"
+          value={listState.q}
+          onChange={(e) => listCtl.setQ(e.target.value)}
+        />
         {FILTERS.map((f) => (
           <button
             key={f.id}
@@ -1448,7 +1481,12 @@ function IngestedDocumentsView({
             </p>
           </div>
         ) : (
-          <p className="empty">Nothing in this view.</p>
+          <div className="dt-state dt-empty">
+            <div className="dt-empty-title">Nothing matches.</div>
+            <button className="ghost" onClick={listCtl.clearFilters}>
+              Clear filters
+            </button>
+          </div>
         )
       ) : (
         <div className="ing-split">
@@ -1683,7 +1721,7 @@ function IngestedDocumentsView({
                         </button>
                       )}
                     </>
-                  ) : (
+                  ) : row.origin === "authored" ? (
                     <button
                       onClick={() => onOpenDoc(row.id, row.name)}
                       disabled={!canOpenDocs}
@@ -1691,7 +1729,7 @@ function IngestedDocumentsView({
                     >
                       IDE ↗
                     </button>
-                  )}
+                  ) : null}
                   {/* A file is edited where it lives, so opening it in the
                       IDE is one click from the list, not only from its
                       detail. */}
@@ -1715,6 +1753,11 @@ function IngestedDocumentsView({
           {/* Tiles have no row to open under, so a picked tile's detail comes
               after the grid. */}
           {view === "tiles" && selected && detail(selected)}
+          {view === "tiles" &&
+            (() => {
+              const doc = authored.find((d) => d.id === selectedId);
+              return doc ? authoredDetail(doc) : null;
+            })()}
         </div>
       )}
     </div>

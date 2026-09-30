@@ -1,6 +1,8 @@
 // Tables for the System view: the running gears and the registered permissions,
 // instead of a JSON dump / a bare id list.
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+
+import { DataTable } from "./data-table";
 
 const TBL_CSS = `
 .systbl-search { width: 100%; max-width: 340px; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); color: var(--foreground); outline: none; margin-bottom: 10px; }
@@ -28,63 +30,63 @@ interface Gear {
 }
 
 export function GearsTable({ data }: { data: unknown }) {
-  const [q, setQ] = useState("");
   const gears = useMemo(() => {
     if (Array.isArray(data)) return data as Gear[];
     return ((data as { gears?: Gear[] } | undefined)?.gears ?? []) as Gear[];
   }, [data]);
   const err = (data as { error?: string } | undefined)?.error;
-  if (err) return <p className="error">{err}</p>;
-
-  const needle = q.trim().toLowerCase();
-  const shown = gears.filter(
-    (g) =>
-      needle === "" ||
-      g.name.toLowerCase().includes(needle) ||
-      (g.capabilities ?? []).some((c) => c.toLowerCase().includes(needle)) ||
-      (g.dependencies ?? []).some((d) => d.toLowerCase().includes(needle)),
+  const modes = [...new Set(gears.map((g) => g.deployment_mode ?? "—"))].sort();
+  const pills = (items: string[] | undefined) => (
+    <div className="systbl-pills">
+      {(items ?? []).map((c) => (
+        <span key={c} className="systbl-pill">
+          {c}
+        </span>
+      ))}
+      {(items ?? []).length === 0 && <span className="systbl-muted">—</span>}
+    </div>
   );
 
   return (
     <div>
       <style>{TBL_CSS}</style>
-      <input className="systbl-search" type="search" placeholder="Search gears, capabilities, deps…"
-        value={q} spellCheck={false} onChange={(e) => setQ(e.target.value)} />
-      <div className="systbl-scroll">
-        <table className="ptable systbl">
-          <thead>
-            <tr>
-              <th>Gear</th>
-              <th>Capabilities</th>
-              <th>Dependencies</th>
-              <th>Deployment</th>
-              <th>Instances</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((g) => (
-              <tr key={g.name}>
-                <td className="systbl-name">{g.name}</td>
-                <td>
-                  <div className="systbl-pills">
-                    {(g.capabilities ?? []).map((c) => <span key={c} className="systbl-pill">{c}</span>)}
-                    {(g.capabilities ?? []).length === 0 && <span className="systbl-muted">—</span>}
-                  </div>
-                </td>
-                <td>
-                  <div className="systbl-pills">
-                    {(g.dependencies ?? []).map((d) => <span key={d} className="systbl-pill">{d}</span>)}
-                    {(g.dependencies ?? []).length === 0 && <span className="systbl-muted">—</span>}
-                  </div>
-                </td>
-                <td><span className="systbl-badge">{(g.deployment_mode ?? "—").replace(/_/g, " ")}</span></td>
-                <td style={{ fontVariantNumeric: "tabular-nums" }}>{(g.instances ?? []).length}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="systbl-foot">Showing <b>{shown.length}</b> of {gears.length} gears.</div>
+      <DataTable<Gear>
+        list="sys-gears"
+        urlPrefix="gears."
+        title="Gears"
+        rows={gears}
+        error={err ?? null}
+        rowKey={(g) => g.name}
+        rowLabel={(g) => g.name}
+        search={{ placeholder: "Search gears, capabilities, deps…" }}
+        searchText={(g) => [g.name, ...(g.capabilities ?? []), ...(g.dependencies ?? [])]}
+        filters={[
+          {
+            id: "mode",
+            allLabel: "Every deployment",
+            options: modes.map((m) => ({ value: m, label: m.replace(/_/g, " ") })),
+            match: (g, v) => (g.deployment_mode ?? "—") === v,
+          },
+        ]}
+        empty={{ title: "No gears reported." }}
+        columns={[
+          { id: "name", header: "Gear", className: "systbl-name", compare: (a, b) => a.name.localeCompare(b.name), cell: (g) => g.name },
+          { id: "caps", header: "Capabilities", cell: (g) => pills(g.capabilities) },
+          { id: "deps", header: "Dependencies", cell: (g) => pills(g.dependencies) },
+          {
+            id: "mode",
+            header: "Deployment",
+            cell: (g) => <span className="systbl-badge">{(g.deployment_mode ?? "—").replace(/_/g, " ")}</span>,
+          },
+          {
+            id: "instances",
+            header: "Instances",
+            num: true,
+            compare: (a, b) => (a.instances ?? []).length - (b.instances ?? []).length,
+            cell: (g) => (g.instances ?? []).length,
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -98,7 +100,6 @@ interface Entity {
 const PERM_BASE = "gts.cf.toolkit.authz.permission.v1~";
 
 export function PermissionsTable({ data }: { data: unknown }) {
-  const [q, setQ] = useState("");
   const rows = useMemo(() => {
     const list = (data as { entities?: Entity[] } | undefined)?.entities ?? [];
     return list
@@ -117,46 +118,40 @@ export function PermissionsTable({ data }: { data: unknown }) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [data]);
 
-  const needle = q.trim().toLowerCase();
-  const shown = rows.filter(
-    (r) =>
-      needle === "" ||
-      r.name.toLowerCase().includes(needle) ||
-      r.short.toLowerCase().includes(needle) ||
-      r.action.toLowerCase().includes(needle) ||
-      r.resource.toLowerCase().includes(needle),
-  );
-
-  if (rows.length === 0) return <p className="empty">No permission instances found in the types-registry.</p>;
+  const actions = [...new Set(rows.map((r) => r.action).filter(Boolean))].sort();
 
   return (
     <div>
       <style>{TBL_CSS}</style>
-      <input className="systbl-search" type="search" placeholder="Search permissions, actions, resources…"
-        value={q} spellCheck={false} onChange={(e) => setQ(e.target.value)} />
-      <div className="systbl-scroll">
-        <table className="ptable systbl">
-          <thead>
-            <tr>
-              <th>Permission</th>
-              <th>Action</th>
-              <th>Resource</th>
-              <th>Id</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((r) => (
-              <tr key={r.id}>
-                <td className="systbl-name">{r.name}</td>
-                <td>{r.action ? <span className="systbl-badge">{r.action}</span> : <span className="systbl-muted">—</span>}</td>
-                <td><code className="systbl-mono" title={r.resource}>{r.resource || "—"}</code></td>
-                <td><code className="systbl-mono" title={r.id}>{r.short}</code></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="systbl-foot">Showing <b>{shown.length}</b> of {rows.length} permissions.</div>
+      <DataTable<(typeof rows)[number]>
+        list="sys-permissions"
+        urlPrefix="perm."
+        title="Permissions"
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowLabel={(r) => r.name}
+        search={{ placeholder: "Search permissions, actions, resources…" }}
+        searchText={(r) => [r.name, r.short, r.action, r.resource]}
+        filters={[
+          {
+            id: "action",
+            allLabel: "Every action",
+            options: actions.map((a) => ({ value: a, label: a })),
+            match: (r, v) => r.action === v,
+          },
+        ]}
+        empty={{ title: "No permission instances found in the types-registry." }}
+        columns={[
+          { id: "name", header: "Permission", className: "systbl-name", compare: (a, b) => a.name.localeCompare(b.name), cell: (r) => r.name },
+          {
+            id: "action",
+            header: "Action",
+            cell: (r) => (r.action ? <span className="systbl-badge">{r.action}</span> : <span className="systbl-muted">—</span>),
+          },
+          { id: "resource", header: "Resource", cell: (r) => <code className="systbl-mono" title={r.resource}>{r.resource || "—"}</code> },
+          { id: "id", header: "Id", cell: (r) => <code className="systbl-mono" title={r.id}>{r.short}</code> },
+        ]}
+      />
     </div>
   );
 }

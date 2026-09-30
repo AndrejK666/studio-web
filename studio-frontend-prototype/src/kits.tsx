@@ -13,6 +13,7 @@ import {
   type ProjectRepository,
   type StudioKit,
 } from "./api";
+import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import {
   PRODUCT_PROFILES,
@@ -206,18 +207,25 @@ export function ProjectKits({
     }
   };
 
-  const remove = async (kit: StudioKit) => {
-    setBusy(kit.slug);
-    setError(null);
-    try {
-      await api.removeKitInstallation(token, projectId, kit.slug);
-      await reload();
-    } catch (cause) {
-      setError(errText(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
+  const [ask, confirmDialog] = useConfirm();
+  /** Asks first (docs/list-standard.md); a failure keeps the dialog open. */
+  const remove = (kit: StudioKit) =>
+    ask(
+      {
+        title: `Remove ${kit.name || kit.slug} from this project?`,
+        body: "The installation record goes. Files it already wrote into the repositories stay until they are removed there.",
+        confirmLabel: "Remove",
+      },
+      async () => {
+        setBusy(kit.slug);
+        try {
+          await api.removeKitInstallation(token, projectId, kit.slug);
+          await reload();
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
 
   return (
     <section className="kits-view">
@@ -354,7 +362,7 @@ export function ProjectKits({
                 {installation && (
                   <p className="sub">
                     Requested <code>{installation.version}</code> · {installation.install_mode} ·{" "}
-                    {new Date(installation.requested_at).toLocaleString()}
+                    <When iso={installation.requested_at} />
                   </p>
                 )}
                 {installation && installation.materializations?.length ? (
@@ -362,7 +370,7 @@ export function ProjectKits({
                     {installation.materializations.map((entry) => (
                       <li key={entry.repository_id}>
                         {repositoryLabel(entry)} · <code>{entry.version}</code> ·{" "}
-                        {new Date(entry.materialized_at).toLocaleString()}
+                        <When iso={entry.materialized_at} />
                         {entry.status === "failed" && (
                           <span className="badge failed"> failed</span>
                         )}
@@ -378,7 +386,7 @@ export function ProjectKits({
                     {isBusy ? "Installing…" : installation ? "Reinstall / update" : "Install in IDE"}
                   </button>
                   {installation && (
-                    <button className="ghost" disabled={isBusy} onClick={() => void remove(kit)}>
+                    <button className="ghost" disabled={isBusy} onClick={() => remove(kit)}>
                       Remove
                     </button>
                   )}
@@ -390,6 +398,7 @@ export function ProjectKits({
       )}
         </>
       )}
+      {confirmDialog}
     </section>
   );
 }

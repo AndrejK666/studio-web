@@ -486,7 +486,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     onClick={() => list.setFilter(f.id, state.filters[f.id] === o.value ? null : o.value)}
                   >
                     {o.label}
-                    <span className="dt-chip-n">{client ? client.counts[f.id]?.[o.value] ?? 0 : "—"}</span>
+                    <span className="dt-chip-n">{client && !error ? client.counts[f.id]?.[o.value] ?? 0 : "—"}</span>
                   </button>
                 ))}
               </div>
@@ -502,7 +502,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 {f.options.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
-                    {client ? ` (${client.counts[f.id]?.[o.value] ?? 0})` : ""}
+                    {client && !error ? ` (${client.counts[f.id]?.[o.value] ?? 0})` : ""}
                   </option>
                 ))}
               </select>

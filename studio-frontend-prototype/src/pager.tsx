@@ -89,9 +89,11 @@ export function Pager<T>({ paged, className }: { paged: Paged<T>; className?: st
 }
 
 const PAGER_CSS = `
-.pager { display: flex; align-items: center; gap: 2px; padding: 8px 0 2px; font-size: 12px; }
+/* Under the list, at its right edge, everywhere (docs/list-standard.md): the
+   range first, then the pages. */
+.pager { display: flex; justify-content: flex-end; align-items: center; gap: 2px; padding: 8px 0 2px; font-size: 12px; }
 .pager button { min-width: 26px; height: 24px; padding: 0 6px; font-size: 12px; line-height: 1; }
 .pager button.on { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 .pager-gap { padding: 0 4px; color: var(--muted-foreground); }
-.pager-range { margin-left: 8px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.pager-range { order: -1; margin-right: 8px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 `;

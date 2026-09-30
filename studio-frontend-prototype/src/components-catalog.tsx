@@ -8,6 +8,7 @@ import { responsibilityOf } from "./responsibility";
 import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
 import { RoadmapReportDialog } from "./roadmap-report-view";
 import { ViewToggle, useViewMode } from "./view-mode";
+import { URL_CHANGE_EVENT, useListState, type SortState } from "./list-state";
 import {
   ACTIVITY_CSS,
   ACTIVITY_WINDOWS,
@@ -477,16 +478,14 @@ function kitAsNode(kit: StudioKit): CatalogNode {
 export function ComponentsCatalog({
   token,
   tenantId,
-  query = "",
-  kindFilter = "",
-  sortMode = "name-asc",
-  hideSdk = false,
-  categoryFilter = "",
   onCategories,
   focus = null,
 }: {
   token: string;
   tenantId?: string;
+  /** The shell's filter rail. Not read: the catalogue's search, kind,
+   *  category, SDK switch and sort are its own, above the list and in the
+   *  address (docs/list-standard.md). */
   query?: string;
   kindFilter?: string;
   sortMode?: "name-asc" | "name-desc" | "downloads-desc";
@@ -503,10 +502,23 @@ export function ComponentsCatalog({
    *  that owns the precedence. The raw profiles above are still read, because
    *  the editor writes them — this is what the table reads. */
   const [resolved, setResolved] = useState<Record<string, ComponentValues>>({});
-  const [selected, setSelected] = useState<string | null>(focus?.name ?? null);
+  const [selected, setSelected] = useSelectedComponent(focus?.name ?? null);
   useEffect(() => {
     if (focus) setSelected(focus.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
+  const [list, listCtl] = useListState();
+  const query = list.q;
+  const categoryFilter = list.filters.category ?? "";
+  const hideSdk = list.filters.sdk === "hide";
+  const sortMode: "name-asc" | "name-desc" | "downloads-desc" | "downloads-asc" =
+    list.sort?.key === "downloads"
+      ? list.sort.dir === "desc"
+        ? "downloads-desc"
+        : "downloads-asc"
+      : list.sort?.key === "name" && list.sort.dir === "desc"
+        ? "name-desc"
+        : "name-asc";
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState("");
@@ -514,9 +526,10 @@ export function ComponentsCatalog({
   const [showSources, setShowSources] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
-  // Which component kind the list shows (a `component-kinds` filter value).
-  // Empty means every component.
-  const [typeFilter, setTypeFilter] = useState("");
+  // Which component kind the list shows (a `component-kinds` filter value),
+  // in the address as `?f.kind=`. Empty means every component.
+  const typeFilter = list.filters.kind ?? "";
+  const setTypeFilter = (kind: string) => listCtl.setFilter("kind", kind || null);
   // `gts_id -> schema`, read from the catalogue: what each component type's
   // page is made of. Served rather than compiled in, so a workspace can change
   // a page without a release.
@@ -763,8 +776,9 @@ export function ComponentsCatalog({
         return name.includes(needle) || desc.includes(needle);
       });
     rows.sort((a, b) => {
-      if (sortMode === "downloads-desc") {
-        return Number(b.value.downloads ?? 0) - Number(a.value.downloads ?? 0);
+      if (sortMode === "downloads-desc" || sortMode === "downloads-asc") {
+        const d = Number(b.value.downloads ?? 0) - Number(a.value.downloads ?? 0);
+        return sortMode === "downloads-desc" ? d : -d;
       }
       const cmp = nameOf(a).localeCompare(nameOf(b));
       return sortMode === "name-desc" ? -cmp : cmp;
@@ -774,9 +788,21 @@ export function ComponentsCatalog({
 
   /* The chip above the table wins over the filter rail's kind; either way it
      is one value, applied by the same predicate the chips counted with. */
-  const kindChosen = typeFilter || kindFilter;
+  const kindChosen = typeFilter;
   const visible = useMemo(() => base.filter((g) => inKindFilter(g, kindChosen)), [base, kindChosen]);
   const chips = useMemo(() => kindChips(base), [base]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of gears ?? []) {
+      if (componentExcluded(g) !== null) continue;
+      const c = categoryOf(g).trim();
+      if (c) set.add(c);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gears, profiles]);
+  const filtered = !!(list.q.trim() || Object.keys(list.filters).length);
 
   // Report the distinct categories present, so the filter rail can offer them.
   useEffect(() => {
@@ -896,6 +922,46 @@ export function ComponentsCatalog({
             />
           )}
 
+          <div className="dt-toolbar">
+            <div className="dt-toolbar-left">
+              <input
+                className="dt-search"
+                type="search"
+                placeholder="Search components"
+                aria-label="Search components"
+                value={list.q}
+                onChange={(e) => listCtl.setQ(e.target.value)}
+              />
+              {categories.length > 0 && (
+                <select
+                  className="dt-select"
+                  aria-label="Every category"
+                  value={categoryFilter}
+                  onChange={(e) => listCtl.setFilter("category", e.target.value || null)}
+                >
+                  <option value="">Every category</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                className={`chip ${hideSdk ? "on" : ""}`}
+                aria-pressed={hideSdk}
+                onClick={() => listCtl.setFilter("sdk", hideSdk ? null : "hide")}
+              >
+                Hide SDKs
+              </button>
+              {filtered && (
+                <button className="ghost" onClick={listCtl.clearFilters}>
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </div>
+
           <KindPicker chips={chips} value={kindChosen} onChange={setTypeFilter} />
 
           <p className="gcat-sub">
@@ -918,11 +984,21 @@ export function ComponentsCatalog({
           {gears === null ? (
             <p className="gcat-empty">Loading components…</p>
           ) : visible.length === 0 ? (
-            <p className="gcat-empty">
-              {(gears?.length ?? 0) === 0
-                ? "No components yet — open Sources, pick a repository, and Sync."
-                : "No components match the current filter."}
-            </p>
+            <div className="dt-state dt-empty">
+              {(gears?.length ?? 0) === 0 ? (
+                <>
+                  <div className="dt-empty-title">No components yet.</div>
+                  <div className="dt-empty-body">Open Sources, pick a repository, and Sync.</div>
+                </>
+              ) : (
+                <>
+                  <div className="dt-empty-title">Nothing matches.</div>
+                  <button className="ghost" onClick={listCtl.clearFilters}>
+                    Clear filters
+                  </button>
+                </>
+              )}
+            </div>
           ) : viewMode === "graph" ? (
             <ComponentGraph graph={graph} nodes={visible} />
           ) : listView === "table" ? (
@@ -930,11 +1006,11 @@ export function ComponentsCatalog({
               <table className="gcat-table">
                 <thead>
                   <tr>
-                    <th>Component and purpose</th>
+                    <SortTh label="Component and purpose" id="name" sort={list.sort} onSort={listCtl.toggleSort} />
                     <th>Type</th>
                     <th>Release</th>
                     <th>Build readiness</th>
-                    <th className="gcat-num">Downloads</th>
+                    <SortTh label="Downloads" id="downloads" sort={list.sort} onSort={listCtl.toggleSort} className="gcat-num" />
                     <th>Activity · {activityDays} days</th>
                     <th>Review</th>
                     <th>Profile</th>
@@ -1374,7 +1450,22 @@ function GearListRow({
   const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
 
   return (
-    <tr className="gcat-row" onClick={onOpen} title={`Open ${name}`}>
+    <tr
+      className="gcat-row"
+      onClick={(e) => {
+        // A control inside the row does its own thing (docs/list-standard.md).
+        if (e.target instanceof Element && e.target.closest("button, a, input, select")) return;
+        onOpen();
+      }}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      title={`Open ${name}`}
+    >
       <td className="gcat-lead">
         <div className="gcat-name">{name}</div>
         {gear.value.description && (
@@ -3557,3 +3648,63 @@ const GCAT_CSS = `
 .gcat .editor textarea { width:100%; min-height:260px; font-family:var(--studio-mono); font-size:12px; }
 .gcat .editbtns { display:flex; gap:8px; margin-top:8px; }
 `;
+
+/** A header that sorts, the way DataTable's do: ascending, descending, back. */
+function SortTh({
+  label,
+  id,
+  sort,
+  onSort,
+  className,
+}: {
+  label: string;
+  id: string;
+  sort: SortState | null;
+  onSort: (id: string) => void;
+  className?: string;
+}) {
+  const dir = sort?.key === id ? sort.dir : null;
+  return (
+    <th className={className} aria-sort={dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none"}>
+      <button className="dt-sort" onClick={() => onSort(id)}>
+        {label}
+        <span className="dt-sort-mark" aria-hidden>
+          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+/** The open component, as `?component=` in the address. Opening one is a
+ *  step (pushed, so Back closes it); closing it from the page is Back when
+ *  this page opened it, so the list is where it was. */
+function useSelectedComponent(initial: string | null): [string | null, (name: string | null) => void] {
+  const read = () => new URLSearchParams(window.location.search).get("component");
+  const [selected, setState] = useState<string | null>(() => read() ?? initial);
+  useEffect(() => {
+    const sync = () => setState(read());
+    window.addEventListener("popstate", sync);
+    window.addEventListener(URL_CHANGE_EVENT, sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener(URL_CHANGE_EVENT, sync);
+    };
+  }, []);
+  const set = (name: string | null) => {
+    const params = new URLSearchParams(window.location.search);
+    if (name === read()) return;
+    if (name === null && window.history.state?.componentOpened) {
+      window.history.back();
+      return;
+    }
+    if (name) params.set("component", name);
+    else params.delete("component");
+    const query = params.toString();
+    const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+    if (name) window.history.pushState({ ...(window.history.state ?? {}), componentOpened: true }, "", url);
+    else window.history.replaceState(window.history.state, "", url);
+    setState(name);
+  };
+  return [selected, set];
+}
