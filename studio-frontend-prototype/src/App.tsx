@@ -35,7 +35,7 @@ import {
   teamText,
   type ReviewFilter,
 } from "./project-rows";
-import { DataTable, When } from "./data-table";
+import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
 import { PeopleView } from "./people";
 import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
@@ -85,7 +85,6 @@ import {
   uploadProjectArtifact,
 } from "./api";
 import {
-  TileGrid,
   Tile as VTile,
   ViewModePreferences,
   ViewToggle,
@@ -6602,7 +6601,7 @@ const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
     { key: "state", label: "State", render: (v) => String(v.state ?? "—") },
     { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
     { key: "labels", label: "Labels", render: (v) => (Array.isArray(v.labels) && v.labels.length ? v.labels.join(", ") : "—") },
-    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
   ],
   pull_request: [
     { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
@@ -6621,19 +6620,19 @@ const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
         return typeof open === "number" ? String(open) : "—";
       },
     },
-    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
   ],
   commit: [
     { key: "title", label: "Message", render: (v) => excerpt(v.title ?? (v as Record<string, unknown>).message, 90) },
     { key: "sha", label: "SHA", render: (v) => <code>{String((v as Record<string, unknown>).short_sha ?? "").slice(0, 7) || "—"}</code> },
     { key: "author", label: "Author", render: (v) => String((v as Record<string, unknown>).author_name ?? v.author ?? "—") },
-    { key: "created", label: "Committed", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+    { key: "created", label: "Committed", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
   ],
   comment: [
     { key: "body", label: "Comment", render: (v) => excerpt((v as Record<string, unknown>).body) },
     { key: "on", label: "On", render: (v) => { const n = (v as Record<string, unknown>).target_number; return n != null ? `#${n}` : "—"; } },
     { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
-    { key: "created", label: "Written", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+    { key: "created", label: "Written", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
   ],
   file: [
     { key: "path", label: "Path", render: (v) => <code>{String(v.path ?? "(no path)")}</code> },
@@ -6661,49 +6660,11 @@ function IngestedArtifacts({
   refreshKey: number;
 }) {
   const studio = useStudioBridge();
-  const PAGE = 50;
-  const [nodes, setNodes] = useState<import("./api").ArtifactNode[] | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [repoFilter, setRepoFilter] = useState("");
-  const [sort, setSort] = useState<"updated" | "">("updated");
-  const [qInput, setQInput] = useState("");
-  const [query, setQuery] = useState("");
   const [repos, setRepos] = useState<import("./api").ArtifactNode[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<ArtTab>("issue");
-  const [view, setView] = useViewMode("artifacts.view");
+  const [tick, setTick] = useState(0);
 
-  const load = useCallback(
-    (nextOffset: number) => {
-      setErr(null);
-      setBusy(true);
-      api
-        .listArtifactNodes(token, tab, scope, undefined, PAGE, {
-          repo: repoFilter || undefined,
-          sort: sort || undefined,
-          q: query || undefined,
-          offset: nextOffset,
-        })
-        .then((r) => {
-          setNodes(r.nodes ?? []);
-          setTotal(r.total ?? (r.nodes?.length ?? 0));
-          setOffset(nextOffset);
-        })
-        .catch((e) => setErr(errText(e)))
-        .finally(() => setBusy(false));
-    },
-    [token, scope, tab, repoFilter, sort, query],
-  );
-
-  // First page whenever the tab, scope, repo filter or sort changes.
-  useEffect(() => {
-    setNodes(null);
-    load(0);
-  }, [load, refreshKey]);
-
-  // The repositories in scope, for the repo-filter dropdown.
+  // The repositories in scope, for the repository filter.
   useEffect(() => {
     let alive = true;
     api
@@ -6717,31 +6678,36 @@ function IngestedArtifacts({
     };
   }, [token, scope]);
 
-  const rows = nodes ?? [];
+  // The backend pages, searches and filters; newest first is the order it
+  // offers, so it is the list's order and no header pretends to sort.
+  const load = useCallback(
+    async (req: PageRequest): Promise<PageResult<import("./api").ArtifactNode>> => {
+      const r = await api.listArtifactNodes(token, tab, scope, undefined, req.limit, {
+        repo: req.filters.repo || undefined,
+        sort: "updated",
+        q: req.q || undefined,
+        offset: req.offset,
+      });
+      return { items: r.nodes ?? [], total: r.total ?? (r.nodes?.length ?? 0) };
+    },
+    [token, tab, scope],
+  );
 
-  const emptyLabel = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
+  /** What a row is for: a file opens in the editor, anything else where it
+   *  came from. A commit or a comment has no meaning inside the IDE. */
+  const openNode = (n: import("./api").ArtifactNode) => {
+    const path = typeof n.value.path === "string" ? n.value.path : "";
+    const url = typeof n.value.url === "string" ? n.value.url : undefined;
+    if (tab === "file" && path) void studio?.openFile(target, path);
+    else if (url) window.open(url, "_blank", "noreferrer");
+  };
+  const opens = (n: import("./api").ArtifactNode) =>
+    (tab === "file" && typeof n.value.path === "string" && !!n.value.path) || typeof n.value.url === "string";
+
+  const plural = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
 
   return (
     <div className="card">
-      <div className="card-head">
-        <h2>Ingested{total != null ? ` · ${total}` : ""}</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ViewToggle mode={view} onChange={setView} />
-          {/* Launches the session if none is running — the graph is one click
-              from here whether or not the IDE is already open. */}
-          <button
-            className="ghost"
-            onClick={() => void studio?.openGraph(target)}
-            disabled={!studio || studio.opening === target.id}
-            title="Open the Workspace Graph in the Studio IDE"
-          >
-            {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
-          </button>
-          <button className="ghost" onClick={() => load(offset)} disabled={busy}>
-            Refresh
-          </button>
-        </div>
-      </div>
       <p className="hint">
         Issues, pull requests and repository files pulled from the attached sources by Sync. Stored
         in the graph as typed GTS nodes — this reads them back.
@@ -6759,161 +6725,83 @@ function IngestedArtifacts({
           </button>
         ))}
       </div>
-      <div className="row" style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ fontSize: 12, opacity: 0.7 }}>Repo</label>
-        <select value={repoFilter} onChange={(e) => setRepoFilter(e.target.value)} disabled={busy}>
-          <option value="">All repositories</option>
-          {repos.map((r) => (
-            <option key={r.instance_id} value={r.instance_id}>
-              {String(r.value.full_path ?? r.value.name ?? r.instance_id)}
-            </option>
-          ))}
-        </select>
-        <label style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>Sort</label>
-        <select value={sort} onChange={(e) => setSort(e.target.value as "updated" | "")} disabled={busy}>
-          <option value="updated">Updated (newest)</option>
-          <option value="">Default</option>
-        </select>
-        <form
-          style={{ display: "flex", gap: 6, marginLeft: "auto" }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            setQuery(qInput.trim());
-          }}
-        >
-          <input
-            placeholder="Search title / author…"
-            value={qInput}
-            onChange={(e) => setQInput(e.target.value)}
-            style={{ minWidth: 180 }}
-          />
-          <button className="ghost" type="submit" disabled={busy}>
-            Search
-          </button>
-          {query && (
+      <DataTable<import("./api").ArtifactNode>
+        key={tab}
+        list="artifacts"
+        title="Ingested"
+        load={load}
+        reloadKey={`${refreshKey}:${tick}`}
+        rowKey={(n) => n.instance_id}
+        rowLabel={(n) => String(n.value.title ?? n.value.path ?? n.instance_id)}
+        onOpen={openNode}
+        canOpen={opens}
+        search={{ placeholder: "Search title / author…" }}
+        filters={[
+          {
+            id: "repo",
+            allLabel: "All repositories",
+            kind: "select",
+            options: repos.map((r) => ({
+              value: r.instance_id,
+              label: String(r.value.full_path ?? r.value.name ?? r.instance_id),
+            })),
+          },
+        ]}
+        primary={
+          <>
+            {/* Launches the session if none is running — the graph is one
+                click from here whether or not the IDE is already open. */}
             <button
               className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setQInput("");
-                setQuery("");
-              }}
+              onClick={() => void studio?.openGraph(target)}
+              disabled={!studio || studio.opening === target.id}
+              title="Open the Workspace Graph in the Studio IDE"
             >
-              Clear
+              {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
             </button>
-          )}
-        </form>
-      </div>
-      {err && <p className="error">{err}</p>}
-      {nodes === null ? (
-        <p className="empty">Loading artifacts…</p>
-      ) : rows.length === 0 ? (
-        <p className="empty">
-          Nothing ingested yet — hit Sync on a repository above to pull its {emptyLabel}.
-        </p>
-      ) : view === "tiles" ? (
-        /* Driven by the same ART_COLUMNS as the table, for the same reason:
-           the first column is what the thing is called, the second is the one
-           fact under it, and the rest are the numbers. A tile per kind would
-           be six more places to forget a column. */
-        <TileGrid>
-          {rows.map((n) => {
-            const v = n.value;
-            const url = typeof v.url === "string" ? v.url : undefined;
-            const path = typeof v.path === "string" ? v.path : "";
-            const [lead, second, ...rest] = ART_COLUMNS[tab];
-            return (
-              <VTile
-                key={n.instance_id}
-                title={lead.render(v)}
-                subtitle={second?.render(v)}
-                stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(v) }))}
-                footer={
-                  tab === "file" && path ? (
-                    <button className="ghost" onClick={() => void studio?.openFile(target, path)}>
-                      Open in IDE
-                    </button>
-                  ) : url ? (
-                    <a className="ghost" href={url} target="_blank" rel="noreferrer">
-                      Open ↗
-                    </a>
-                  ) : null
-                }
-              />
-            );
-          })}
-        </TileGrid>
-      ) : (
-        /* One table driven by ART_COLUMNS rather than a branch per kind. Six
-           kinds x a bespoke row each is six places to forget a column; the
-           spec says what each kind shows and this renders it. */
-        <table className="ptable">
-          <thead>
-            <tr>
-              {ART_COLUMNS[tab].map((c) => (
-                <th key={c.key} className={c.num ? "pnum" : undefined}>
-                  {c.label}
-                </th>
-              ))}
-              <th aria-label="actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((n) => {
-              const v = n.value;
-              const url = typeof v.url === "string" ? v.url : undefined;
-              const path = typeof v.path === "string" ? v.path : "";
-              return (
-                <tr key={n.instance_id}>
-                  {ART_COLUMNS[tab].map((c, i) => (
-                    <td key={c.key} className={c.num ? "pnum" : i === 0 ? "acell-lead" : undefined}>
-                      {c.render(v)}
-                    </td>
-                  ))}
-                  <td className="pactions">
-                    {/* A file opens in the editor; everything else opens where
-                        it came from. A commit or a comment has no meaning
-                        inside the IDE — its home is the forge. */}
-                    {tab === "file" && path ? (
-                      <button
-                        className="ghost"
-                        onClick={() => void studio?.openFile(target, path)}
-                        disabled={!studio || studio.opening === target.id}
-                        title="Open this file in the Studio editor"
-                      >
-                        Open in editor
-                      </button>
-                    ) : url ? (
-                      <a className="ghost" href={url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {total != null && total > PAGE && (
-        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-          <button className="ghost" disabled={busy || offset === 0} onClick={() => load(Math.max(0, offset - PAGE))}>
-            ← Prev
-          </button>
-          <span style={{ fontSize: 12, opacity: 0.7 }}>
-            {rows.length > 0 ? `${offset + 1}–${offset + rows.length}` : "0"} of {total} ·
-            {" "}page {Math.floor(offset / PAGE) + 1} of {Math.max(1, Math.ceil(total / PAGE))}
-          </span>
-          <button
-            className="ghost"
-            disabled={busy || offset + PAGE >= total}
-            onClick={() => load(offset + PAGE)}
-          >
-            Next →
-          </button>
-        </div>
-      )}
+            <button className="ghost" onClick={() => setTick((t) => t + 1)}>
+              Refresh
+            </button>
+          </>
+        }
+        empty={{ title: `Nothing ingested yet.`, body: `Sync a repository in Sources to pull its ${plural}.` }}
+        columns={ART_COLUMNS[tab].map((c, i) => ({
+          id: c.key,
+          header: c.label,
+          num: c.num,
+          className: !c.num && i === 0 ? "acell-lead" : undefined,
+          cell: (n: import("./api").ArtifactNode) => c.render(n.value),
+        }))}
+        inline={(n) => {
+          const path = typeof n.value.path === "string" ? n.value.path : "";
+          const url = typeof n.value.url === "string" ? n.value.url : undefined;
+          return tab === "file" && path ? (
+            <button
+              className="ghost"
+              onClick={() => void studio?.openFile(target, path)}
+              disabled={!studio || studio.opening === target.id}
+              title="Open this file in the Studio editor"
+            >
+              Open in editor
+            </button>
+          ) : url ? (
+            <a className="ghost" href={url} target="_blank" rel="noreferrer">
+              Open ↗
+            </a>
+          ) : null;
+        }}
+        tile={(n, open) => {
+          const [lead, second, ...rest] = ART_COLUMNS[tab];
+          return (
+            <VTile
+              title={lead.render(n.value)}
+              subtitle={second?.render(n.value)}
+              stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(n.value) }))}
+              onClick={opens(n) ? open : undefined}
+            />
+          );
+        }}
+      />
     </div>
   );
 }

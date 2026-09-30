@@ -273,6 +273,8 @@ interface CommonProps<T> {
   rowLabel: (row: T) => string;
   /** Opens the row: row click, Enter or Space. Omitted, rows are not clickable. */
   onOpen?: (row: T) => void;
+  /** Which rows have something to open; the rest do not look clickable. */
+  canOpen?: (row: T) => boolean;
   actions?: (row: T) => RowAction[];
   /** An inline action beside the menu, when the row exists for one. */
   inline?: (row: T) => ReactNode;
@@ -402,16 +404,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
       .catch((e) => setActionError(errText(e)));
   };
 
+  const opens = (row: T) => !!props.onOpen && (props.canOpen?.(row) ?? true);
   const openFrom = (row: T) => (e: ReactMouseEvent) => {
-    if (!props.onOpen) return;
+    if (!opens(row)) return;
     if (e.target instanceof Element && e.target.closest(INTERACTIVE)) return;
-    props.onOpen(row);
+    props.onOpen!(row);
   };
   const keyOpen = (row: T) => (e: ReactKeyboardEvent) => {
-    if (!props.onOpen || e.target !== e.currentTarget) return;
+    if (!opens(row) || e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      props.onOpen(row);
+      props.onOpen!(row);
     }
   };
   const toggle = (key: string) =>
@@ -533,7 +536,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         <TileGrid>
           {visible.map((row) => (
             <div key={props.rowKey(row)} className="dt-tile">
-              {props.tile!(row, props.onOpen ? () => props.onOpen!(row) : undefined)}
+              {props.tile!(row, opens(row) ? () => props.onOpen!(row) : undefined)}
             </div>
           ))}
         </TileGrid>
@@ -575,8 +578,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
               return [
                 <tr
                   key={key}
-                  className={props.onOpen ? "dt-row dt-open" : "dt-row"}
-                  tabIndex={props.onOpen ? 0 : undefined}
+                  className={opens(row) ? "dt-row dt-open" : "dt-row"}
+                  tabIndex={opens(row) ? 0 : undefined}
                   onClick={openFrom(row)}
                   onKeyDown={keyOpen(row)}
                 >
