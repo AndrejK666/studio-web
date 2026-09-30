@@ -9,7 +9,33 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
-## Next release
+## 0.3.0-beta.7
+
+Everything merged since `desktop-v0.3.0-beta.6`. The installer is Windows
+only, as before.
+
+### Fixes
+
+- **Opening a project no longer restarts the IDE.** After signing in and
+  picking a project, the whole window used to reload -- panels, assistants,
+  plugins. The project now opens in place as `<project>.theia-workspace`
+  beside its folder, and the next start reopens it. The Explorer shows the
+  workspace's name above the project folder, as VS Code does. (#580)
+- **Analyze runs.** Every check said "Nothing was recorded: Response body
+  object should not be disturbed or locked": the desktop's proxy to Studio
+  forwarded a request body another part of the IDE had already read. (#569)
+- **Building's ribbon.** Product opens the list of products (New, Open, the
+  workspace's and Recent) instead of being greyed out; Add gear with no
+  product goes there too instead of making a product; New gear is on the
+  ribbon; New Product's destination says "not chosen yet" and Use suggested
+  is the main button. (#562)
+- **New Gear with no product** says what to open instead of the engine's
+`\?`  command-line advice, and its path has no `\?\` prefix; the antivirus
+  notice shows once. (#566)
+- **A Studio backend that cannot be reached** is said so in the catalogue,
+  with Retry, instead of "No gear.gdl". (#558)
+- **The Constructor Studio CLI on the ribbon and in the palette**: Validate,
+  Doctor, Info, Agent files, Initialize, Version. (#571)
 
 ### Modes
 
