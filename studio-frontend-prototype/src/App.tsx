@@ -213,7 +213,13 @@ const DEFAULT_FILTERS: Filters = {
 
 type PanelView = View | "dashboard";
 
+/** The sections whose list owns its search, filters and sort, above it and in
+ *  the address (docs/list-standard.md). The side panel has nothing for them,
+ *  and says where the controls went rather than showing ones nothing reads. */
+const LISTS_WITH_OWN_FILTERS: ReadonlySet<PanelView> = new Set<PanelView>(["projects", "people", "connectors", "tasks", "gears"]);
+
 function activeFilterCount(view: PanelView, f: Filters): number {
+  if (LISTS_WITH_OWN_FILTERS.has(view)) return 0;
   let n = 0;
   if (view !== "system" && view !== "profile" && view !== "dashboard" && f.query.trim()) n++;
   if (view === "projects") {
@@ -2618,7 +2624,8 @@ function FilterPanel({
 
   const count = activeFilterCount(view, filters);
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
-  const noFilters = view === "profile" || view === "dashboard";
+  const ownFilters = LISTS_WITH_OWN_FILTERS.has(view);
+  const noFilters = view === "profile" || view === "dashboard" || ownFilters;
   const hasSearch = !noFilters && view !== "system";
 
   return (
@@ -2651,7 +2658,9 @@ function FilterPanel({
         </div>
       </div>
 
-      {noFilters ? (
+      {ownFilters ? (
+        <p className="hint">This list has its own search and filters, above it.</p>
+      ) : noFilters ? (
         <p className="hint">No filters for this view.</p>
       ) : (
         <>
@@ -7478,12 +7487,12 @@ function SourceAttachPicker({
 function ConnectorsView({
   token,
   workspace: ws,
-  filters,
 }: {
   token: string;
   /** From the account switcher — this page no longer asks again. */
   workspace: Workspace;
-  filters: Filters;
+  /** The side panel's filters. Not read: the connection list searches itself. */
+  filters?: Filters;
 }) {
   const [providers, setProviders] = useState<ConnectorProvider[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
@@ -7562,9 +7571,7 @@ function ConnectorsView({
           token={token}
           workspace={ws}
           providers={providers ?? []}
-          connections={(connections ?? []).filter((c) =>
-            matches(filters.query, c.label, c.provider, c.base_url),
-          )}
+          connections={connections ?? []}
           loading={connections === null}
           sourcesTick={sourcesTick}
           onSourcesChanged={bumpSources}
