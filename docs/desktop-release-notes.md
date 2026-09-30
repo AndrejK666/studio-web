@@ -9,7 +9,23 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
-## Next release
+## 0.3.0-beta.6
+
+Everything merged since `desktop-v0.3.0-beta.5`: the fixes for what a fresh
+beta.5 install showed, and every finding of a mode-by-mode audit (#552). The
+installer is Windows only, as before.
+
+### Fixes from beta.5
+
+- **The Gearbox engine installs on a machine with an antivirus.** The engine
+  is the extension that unpacks an executable, and Defender holds it while it
+  scans; moving it into place failed with "EPERM: operation not permitted,
+  rename". The move now waits the scan out, up to 30 seconds. (#542)
+- **Mermaid diagrams and KaTeX equations render.** The desktop build had no
+  `mermaid.js` or `katex.js`, so every diagram failed with "could not load
+  mermaid.js". (#545)
+- **The Extensions tab is there in Development and Full functionality**, on a
+  fresh profile and on one saved before it existed. (#542, #552)
 
 ### Modes
 
