@@ -1392,17 +1392,32 @@ impl DocumentsService {
             else {
                 continue;
             };
-            for dir in quality::checkout_dirs(&entry.value) {
+            for source in quality::checkout_sources(&entry.value) {
                 // One repository that was never cloned must not cost the others.
-                match reader.read_repo_files(&tenant.to_string(), &dir).await {
-                    Ok(files) => {
-                        for (path, text) in files {
-                            by_path.entry(path).or_insert(text);
-                        }
-                    }
+                let dir = source.dir.as_str();
+                let mut files = match reader.read_repo_files(&tenant.to_string(), dir).await {
+                    Ok(files) => files,
                     Err(error) => {
                         tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
+                        Vec::new()
                     }
+                };
+                // No session checkout here — the usual case on a stand whose
+                // sessions keep theirs in their own volume. The sync's clone
+                // holds the same repository, as last synced.
+                if files.is_empty()
+                    && let Some((secret_ref, full_path)) = &source.clone
+                {
+                    files = reader
+                        .read_synced_clone(secret_ref, full_path)
+                        .await
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(%error, dir, "studio-documents: the synced clone could not be read");
+                            Vec::new()
+                        });
+                }
+                for (path, text) in files {
+                    by_path.entry(path).or_insert(text);
                 }
             }
             if !by_path.is_empty() {

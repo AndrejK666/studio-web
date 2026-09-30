@@ -37,6 +37,17 @@ pub trait RepoFileReader: Send + Sync + 'static {
         workspace_id: &str,
         repo_dir: &str,
     ) -> anyhow::Result<Vec<(String, String)>>;
+
+    /// The same, from the copy a sync cloned for itself — addressed the way the
+    /// sync was, by the connection's `secret_ref` and `owner/repo`. Empty when
+    /// this deployment keeps no clones or has not cloned this one yet.
+    async fn read_synced_clone(
+        &self,
+        _secret_ref: &str,
+        _repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
 }
 
 /// How much of the artifact graph belongs to one scope.

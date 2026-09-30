@@ -250,16 +250,32 @@ pub fn build_items(detector: Detector, docs: &[SpecDoc], set_id: &str) -> Vec<An
         .collect()
 }
 
-/// The directories a workspace's repositories were cloned into.
+/// One repository whose text a detector may read, and the two places it can
+/// be: the session checkout named `dir`, and the copy the sync cloned for
+/// itself, keyed by `clone` — the `(secret_ref, owner/repo)` the sync was
+/// given.
+///
+/// The second exists because the first often does not. On a Kubernetes stand
+/// a session's checkout lives in the session's own volume, which this backend
+/// never mounts, so reading only it answered "none of those documents has
+/// text" for every file of a repository the sync had just read in full.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutSource {
+    pub dir: String,
+    pub clone: Option<(String, String)>,
+}
+
+/// The repositories in a workspace's settings, as [`CheckoutSource`]s, in the
+/// order they were attached and each directory once.
 ///
 /// Read out of the tenant metadata the portal writes, where `target` is the
 /// directory and `name` is the fallback the settings themselves document. A
 /// `local` source is skipped: there is no checkout to read.
-pub fn checkout_dirs(settings: &Value) -> Vec<String> {
+pub fn checkout_sources(settings: &Value) -> Vec<CheckoutSource> {
     let Some(repos) = settings.get("repos").and_then(Value::as_array) else {
         return Vec::new();
     };
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<CheckoutSource> = Vec::new();
     for repo in repos {
         if repo.get("source").and_then(Value::as_str) == Some("local") {
             continue;
@@ -271,9 +287,22 @@ pub fn checkout_dirs(settings: &Value) -> Vec<String> {
             .or_else(|| repo.get("name").and_then(Value::as_str))
             .unwrap_or_default()
             .trim();
-        if !dir.is_empty() && !out.iter().any(|d| d == dir) {
-            out.push(dir.to_string());
+        if dir.is_empty() || out.iter().any(|s| s.dir == dir) {
+            continue;
         }
+        let token_ref = repo
+            .get("token_ref")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let full_path = repo
+            .get("url")
+            .and_then(Value::as_str)
+            .and_then(crate::connectors::repo_path_of);
+        out.push(CheckoutSource {
+            dir: dir.to_string(),
+            clone: token_ref.zip(full_path).map(|(t, p)| (t.to_string(), p)),
+        });
     }
     out
 }
@@ -377,6 +406,45 @@ mod tests {
         ] {
             assert!(build_items(d, &[], "p").is_empty(), "{}", d.as_str());
         }
+    }
+
+    /// The directories alone, as the session checkout names them.
+    fn checkout_dirs(settings: &Value) -> Vec<String> {
+        checkout_sources(settings)
+            .into_iter()
+            .map(|source| source.dir)
+            .collect()
+    }
+
+    /// Where the sync's own clone is: the settings' `token_ref` is the sync's
+    /// `secret_ref`, and the URL names `owner/repo` as the sync parsed it. A
+    /// repository missing either has only its session checkout.
+    #[test]
+    fn a_source_knows_the_clone_its_sync_left() {
+        let settings = json!({ "repos": [
+            {
+                "name": "studio-web",
+                "url": "https://github.com/constructorfabric/studio-web.git",
+                "token_ref": "studio-connection-ddff5557",
+            },
+            { "name": "untokened", "url": "https://github.com/acme/api.git" },
+        ]});
+        assert_eq!(
+            checkout_sources(&settings),
+            vec![
+                CheckoutSource {
+                    dir: "studio-web".into(),
+                    clone: Some((
+                        "studio-connection-ddff5557".into(),
+                        "constructorfabric/studio-web".into(),
+                    )),
+                },
+                CheckoutSource {
+                    dir: "untokened".into(),
+                    clone: None,
+                },
+            ]
+        );
     }
 
     #[test]
