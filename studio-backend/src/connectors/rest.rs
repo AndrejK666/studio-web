@@ -1309,6 +1309,7 @@ async fn graph_sync(
                 // node keys.
                 partition_key: Some(&format!("{id}:{repo_full_path}")),
                 idempotency_key: None,
+                coalesce_queued: false,
                 notify_workspace_id: None,
             },
         )

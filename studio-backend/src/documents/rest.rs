@@ -1836,6 +1836,7 @@ async fn analyze_project_documents(
                 payload,
                 partition_key: None,
                 idempotency_key: None,
+                coalesce_queued: false,
                 // Nothing to tell an IDE session about: this run's result is
                 // read on the Specs screen that asked for it.
                 notify_workspace_id: None,

@@ -276,6 +276,7 @@ impl NotifyService {
                     payload,
                     partition_key: Some(&partition_key),
                     idempotency_key: req.idempotency_key,
+                    coalesce_queued: false,
                     notify_workspace_id: None,
                 },
             )
