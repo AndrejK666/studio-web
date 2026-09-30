@@ -16,6 +16,14 @@ backend:
     enabled: true
     corpusUrl: "https://github.com/MikeFalcon77/gears-rust.git"
     corpusRef: "feature/gearbox"
+  # The Gearbox engine runs as a child of the backend, inside its container
+  # and its memory limit, and projects the whole corpus on the first catalogue
+  # request. With the chart's 1Gi the container was OOM-killed seconds after
+  # boot (2026-09-30, rev 103); at 2Gi it settled at about 220Mi between
+  # requests. The request stays the chart's.
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 2Gi }
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1
