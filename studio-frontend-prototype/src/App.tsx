@@ -3,7 +3,7 @@ import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv, idpConsoleUrl } from "./env";
-import { errText, matches, relTime } from "./format";
+import { errText, matches } from "./format";
 // Screens that arrive when somebody asks for them — see ./lazy-screens for
 // what is split and what deliberately is not.
 import {
@@ -35,7 +35,7 @@ import {
   teamText,
   type ReviewFilter,
 } from "./project-rows";
-import { DataTable, When } from "./data-table";
+import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
 import { PeopleView } from "./people";
 import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
@@ -85,11 +85,8 @@ import {
   uploadProjectArtifact,
 } from "./api";
 import {
-  TileGrid,
   Tile as VTile,
   ViewModePreferences,
-  ViewToggle,
-  useViewMode,
 } from "./view-mode";
 import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
@@ -1541,7 +1538,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           // (the 404 would be correct, but it clutters the browser console).
           if (org.self_managed) return [];
           try {
-            const kids = await api.tenantChildren(token, org.id);
+            const kids = await api.tenantChildrenAll(token, org.id);
             return (kids.items ?? [])
               .filter((t) => t.tenant_type === TENANT_TYPES.workspace)
               .map((t) => ({ ...t, orgName: org.name, orgId: org.id }));
@@ -1570,7 +1567,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       setNestedProjects([]);
       return;
     }
-    api.tenantChildren(token, crumb.projectId).then(
+    api.tenantChildrenAll(token, crumb.projectId).then(
       (page) => {
         if (cancelled) return;
         setNestedProjects(
@@ -3446,7 +3443,7 @@ function WorkspaceProjects({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const page = await api.tenantChildren(token, workspace.id);
+      const page = await api.tenantChildrenAll(token, workspace.id);
       setProjects(
         (page.items ?? [])
           .filter((t) => t.tenant_type === TENANT_TYPES.project)
@@ -3639,7 +3636,7 @@ function WorkspaceProjects({
       key: "tenant",
       label: "Project tenant",
       check: async (ctx) => {
-        const page = await api.tenantChildren(token, workspace.id);
+        const page = await api.tenantChildrenAll(token, workspace.id);
         const found = (page.items ?? []).find(
           (t) => t.tenant_type === TENANT_TYPES.project && t.name === name,
         );
@@ -6602,7 +6599,7 @@ const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
     { key: "state", label: "State", render: (v) => String(v.state ?? "—") },
     { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
     { key: "labels", label: "Labels", render: (v) => (Array.isArray(v.labels) && v.labels.length ? v.labels.join(", ") : "—") },
-    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
   ],
   pull_request: [
     { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
@@ -6621,19 +6618,19 @@ const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
         return typeof open === "number" ? String(open) : "—";
       },
     },
-    { key: "updated", label: "Updated", render: (v) => relTime(v.updated_at as string | undefined) },
+    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
   ],
   commit: [
     { key: "title", label: "Message", render: (v) => excerpt(v.title ?? (v as Record<string, unknown>).message, 90) },
     { key: "sha", label: "SHA", render: (v) => <code>{String((v as Record<string, unknown>).short_sha ?? "").slice(0, 7) || "—"}</code> },
     { key: "author", label: "Author", render: (v) => String((v as Record<string, unknown>).author_name ?? v.author ?? "—") },
-    { key: "created", label: "Committed", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+    { key: "created", label: "Committed", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
   ],
   comment: [
     { key: "body", label: "Comment", render: (v) => excerpt((v as Record<string, unknown>).body) },
     { key: "on", label: "On", render: (v) => { const n = (v as Record<string, unknown>).target_number; return n != null ? `#${n}` : "—"; } },
     { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
-    { key: "created", label: "Written", render: (v) => relTime((v as Record<string, unknown>).created_at as string | undefined) },
+    { key: "created", label: "Written", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
   ],
   file: [
     { key: "path", label: "Path", render: (v) => <code>{String(v.path ?? "(no path)")}</code> },
@@ -6661,49 +6658,11 @@ function IngestedArtifacts({
   refreshKey: number;
 }) {
   const studio = useStudioBridge();
-  const PAGE = 50;
-  const [nodes, setNodes] = useState<import("./api").ArtifactNode[] | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [repoFilter, setRepoFilter] = useState("");
-  const [sort, setSort] = useState<"updated" | "">("updated");
-  const [qInput, setQInput] = useState("");
-  const [query, setQuery] = useState("");
   const [repos, setRepos] = useState<import("./api").ArtifactNode[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<ArtTab>("issue");
-  const [view, setView] = useViewMode("artifacts.view");
+  const [tick, setTick] = useState(0);
 
-  const load = useCallback(
-    (nextOffset: number) => {
-      setErr(null);
-      setBusy(true);
-      api
-        .listArtifactNodes(token, tab, scope, undefined, PAGE, {
-          repo: repoFilter || undefined,
-          sort: sort || undefined,
-          q: query || undefined,
-          offset: nextOffset,
-        })
-        .then((r) => {
-          setNodes(r.nodes ?? []);
-          setTotal(r.total ?? (r.nodes?.length ?? 0));
-          setOffset(nextOffset);
-        })
-        .catch((e) => setErr(errText(e)))
-        .finally(() => setBusy(false));
-    },
-    [token, scope, tab, repoFilter, sort, query],
-  );
-
-  // First page whenever the tab, scope, repo filter or sort changes.
-  useEffect(() => {
-    setNodes(null);
-    load(0);
-  }, [load, refreshKey]);
-
-  // The repositories in scope, for the repo-filter dropdown.
+  // The repositories in scope, for the repository filter.
   useEffect(() => {
     let alive = true;
     api
@@ -6717,31 +6676,36 @@ function IngestedArtifacts({
     };
   }, [token, scope]);
 
-  const rows = nodes ?? [];
+  // The backend pages, searches and filters; newest first is the order it
+  // offers, so it is the list's order and no header pretends to sort.
+  const load = useCallback(
+    async (req: PageRequest): Promise<PageResult<import("./api").ArtifactNode>> => {
+      const r = await api.listArtifactNodes(token, tab, scope, undefined, req.limit, {
+        repo: req.filters.repo || undefined,
+        sort: "updated",
+        q: req.q || undefined,
+        offset: req.offset,
+      });
+      return { items: r.nodes ?? [], total: r.total ?? (r.nodes?.length ?? 0) };
+    },
+    [token, tab, scope],
+  );
 
-  const emptyLabel = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
+  /** What a row is for: a file opens in the editor, anything else where it
+   *  came from. A commit or a comment has no meaning inside the IDE. */
+  const openNode = (n: import("./api").ArtifactNode) => {
+    const path = typeof n.value.path === "string" ? n.value.path : "";
+    const url = typeof n.value.url === "string" ? n.value.url : undefined;
+    if (tab === "file" && path) void studio?.openFile(target, path);
+    else if (url) window.open(url, "_blank", "noreferrer");
+  };
+  const opens = (n: import("./api").ArtifactNode) =>
+    (tab === "file" && typeof n.value.path === "string" && !!n.value.path) || typeof n.value.url === "string";
+
+  const plural = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
 
   return (
     <div className="card">
-      <div className="card-head">
-        <h2>Ingested{total != null ? ` · ${total}` : ""}</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ViewToggle mode={view} onChange={setView} />
-          {/* Launches the session if none is running — the graph is one click
-              from here whether or not the IDE is already open. */}
-          <button
-            className="ghost"
-            onClick={() => void studio?.openGraph(target)}
-            disabled={!studio || studio.opening === target.id}
-            title="Open the Workspace Graph in the Studio IDE"
-          >
-            {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
-          </button>
-          <button className="ghost" onClick={() => load(offset)} disabled={busy}>
-            Refresh
-          </button>
-        </div>
-      </div>
       <p className="hint">
         Issues, pull requests and repository files pulled from the attached sources by Sync. Stored
         in the graph as typed GTS nodes — this reads them back.
@@ -6759,161 +6723,83 @@ function IngestedArtifacts({
           </button>
         ))}
       </div>
-      <div className="row" style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ fontSize: 12, opacity: 0.7 }}>Repo</label>
-        <select value={repoFilter} onChange={(e) => setRepoFilter(e.target.value)} disabled={busy}>
-          <option value="">All repositories</option>
-          {repos.map((r) => (
-            <option key={r.instance_id} value={r.instance_id}>
-              {String(r.value.full_path ?? r.value.name ?? r.instance_id)}
-            </option>
-          ))}
-        </select>
-        <label style={{ fontSize: 12, opacity: 0.7, marginLeft: 8 }}>Sort</label>
-        <select value={sort} onChange={(e) => setSort(e.target.value as "updated" | "")} disabled={busy}>
-          <option value="updated">Updated (newest)</option>
-          <option value="">Default</option>
-        </select>
-        <form
-          style={{ display: "flex", gap: 6, marginLeft: "auto" }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            setQuery(qInput.trim());
-          }}
-        >
-          <input
-            placeholder="Search title / author…"
-            value={qInput}
-            onChange={(e) => setQInput(e.target.value)}
-            style={{ minWidth: 180 }}
-          />
-          <button className="ghost" type="submit" disabled={busy}>
-            Search
-          </button>
-          {query && (
+      <DataTable<import("./api").ArtifactNode>
+        key={tab}
+        list="artifacts"
+        title="Ingested"
+        load={load}
+        reloadKey={`${refreshKey}:${tick}`}
+        rowKey={(n) => n.instance_id}
+        rowLabel={(n) => String(n.value.title ?? n.value.path ?? n.instance_id)}
+        onOpen={openNode}
+        canOpen={opens}
+        search={{ placeholder: "Search title / author…" }}
+        filters={[
+          {
+            id: "repo",
+            allLabel: "All repositories",
+            kind: "select",
+            options: repos.map((r) => ({
+              value: r.instance_id,
+              label: String(r.value.full_path ?? r.value.name ?? r.instance_id),
+            })),
+          },
+        ]}
+        primary={
+          <>
+            {/* Launches the session if none is running — the graph is one
+                click from here whether or not the IDE is already open. */}
             <button
               className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setQInput("");
-                setQuery("");
-              }}
+              onClick={() => void studio?.openGraph(target)}
+              disabled={!studio || studio.opening === target.id}
+              title="Open the Workspace Graph in the Studio IDE"
             >
-              Clear
+              {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
             </button>
-          )}
-        </form>
-      </div>
-      {err && <p className="error">{err}</p>}
-      {nodes === null ? (
-        <p className="empty">Loading artifacts…</p>
-      ) : rows.length === 0 ? (
-        <p className="empty">
-          Nothing ingested yet — hit Sync on a repository above to pull its {emptyLabel}.
-        </p>
-      ) : view === "tiles" ? (
-        /* Driven by the same ART_COLUMNS as the table, for the same reason:
-           the first column is what the thing is called, the second is the one
-           fact under it, and the rest are the numbers. A tile per kind would
-           be six more places to forget a column. */
-        <TileGrid>
-          {rows.map((n) => {
-            const v = n.value;
-            const url = typeof v.url === "string" ? v.url : undefined;
-            const path = typeof v.path === "string" ? v.path : "";
-            const [lead, second, ...rest] = ART_COLUMNS[tab];
-            return (
-              <VTile
-                key={n.instance_id}
-                title={lead.render(v)}
-                subtitle={second?.render(v)}
-                stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(v) }))}
-                footer={
-                  tab === "file" && path ? (
-                    <button className="ghost" onClick={() => void studio?.openFile(target, path)}>
-                      Open in IDE
-                    </button>
-                  ) : url ? (
-                    <a className="ghost" href={url} target="_blank" rel="noreferrer">
-                      Open ↗
-                    </a>
-                  ) : null
-                }
-              />
-            );
-          })}
-        </TileGrid>
-      ) : (
-        /* One table driven by ART_COLUMNS rather than a branch per kind. Six
-           kinds x a bespoke row each is six places to forget a column; the
-           spec says what each kind shows and this renders it. */
-        <table className="ptable">
-          <thead>
-            <tr>
-              {ART_COLUMNS[tab].map((c) => (
-                <th key={c.key} className={c.num ? "pnum" : undefined}>
-                  {c.label}
-                </th>
-              ))}
-              <th aria-label="actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((n) => {
-              const v = n.value;
-              const url = typeof v.url === "string" ? v.url : undefined;
-              const path = typeof v.path === "string" ? v.path : "";
-              return (
-                <tr key={n.instance_id}>
-                  {ART_COLUMNS[tab].map((c, i) => (
-                    <td key={c.key} className={c.num ? "pnum" : i === 0 ? "acell-lead" : undefined}>
-                      {c.render(v)}
-                    </td>
-                  ))}
-                  <td className="pactions">
-                    {/* A file opens in the editor; everything else opens where
-                        it came from. A commit or a comment has no meaning
-                        inside the IDE — its home is the forge. */}
-                    {tab === "file" && path ? (
-                      <button
-                        className="ghost"
-                        onClick={() => void studio?.openFile(target, path)}
-                        disabled={!studio || studio.opening === target.id}
-                        title="Open this file in the Studio editor"
-                      >
-                        Open in editor
-                      </button>
-                    ) : url ? (
-                      <a className="ghost" href={url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {total != null && total > PAGE && (
-        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-          <button className="ghost" disabled={busy || offset === 0} onClick={() => load(Math.max(0, offset - PAGE))}>
-            ← Prev
-          </button>
-          <span style={{ fontSize: 12, opacity: 0.7 }}>
-            {rows.length > 0 ? `${offset + 1}–${offset + rows.length}` : "0"} of {total} ·
-            {" "}page {Math.floor(offset / PAGE) + 1} of {Math.max(1, Math.ceil(total / PAGE))}
-          </span>
-          <button
-            className="ghost"
-            disabled={busy || offset + PAGE >= total}
-            onClick={() => load(offset + PAGE)}
-          >
-            Next →
-          </button>
-        </div>
-      )}
+            <button className="ghost" onClick={() => setTick((t) => t + 1)}>
+              Refresh
+            </button>
+          </>
+        }
+        empty={{ title: `Nothing ingested yet.`, body: `Sync a repository in Sources to pull its ${plural}.` }}
+        columns={ART_COLUMNS[tab].map((c, i) => ({
+          id: c.key,
+          header: c.label,
+          num: c.num,
+          className: !c.num && i === 0 ? "acell-lead" : undefined,
+          cell: (n: import("./api").ArtifactNode) => c.render(n.value),
+        }))}
+        inline={(n) => {
+          const path = typeof n.value.path === "string" ? n.value.path : "";
+          const url = typeof n.value.url === "string" ? n.value.url : undefined;
+          return tab === "file" && path ? (
+            <button
+              className="ghost"
+              onClick={() => void studio?.openFile(target, path)}
+              disabled={!studio || studio.opening === target.id}
+              title="Open this file in the Studio editor"
+            >
+              Open in editor
+            </button>
+          ) : url ? (
+            <a className="ghost" href={url} target="_blank" rel="noreferrer">
+              Open ↗
+            </a>
+          ) : null;
+        }}
+        tile={(n, open) => {
+          const [lead, second, ...rest] = ART_COLUMNS[tab];
+          return (
+            <VTile
+              title={lead.render(n.value)}
+              subtitle={second?.render(n.value)}
+              stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(n.value) }))}
+              onClick={opens(n) ? open : undefined}
+            />
+          );
+        }}
+      />
     </div>
   );
 }
@@ -7134,8 +7020,6 @@ function ProjectSources({
   /** Whether the specs could be counted at all. False means every count is
    *  MISSING rather than zero — the column then reads "—" for every row. */
   const [specsKnown, setSpecsKnown] = useState(true);
-  const [view, setView] = useViewMode("sources.view");
-  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Per-repo artifact-sync progress, keyed by repo name.
   const [sync, setSync] = useState<Record<string, SyncProgress>>({});
@@ -7217,218 +7101,197 @@ function ProjectSources({
     void reload();
   }, [reload]);
 
+  /** Detach a repository: out of the settings, and out of the graph with it
+   *  (the graph keeps what was synced until it is told otherwise). Throws, so
+   *  the confirm dialog stays open with the reason. */
   const detach = async (name: string) => {
-    setBusy(name);
     setErr(null);
-    try {
-      const s = (await api.workspaceSettings(token, ws.id)) ?? {};
-      const remaining = (s.repos ?? []).filter((r) => r.name !== name);
-      await api.putWorkspaceSettings(token, ws.id, { ...s, repos: remaining });
-      // The graph keeps what was synced until it is told otherwise; without
-      // this, the detached repository's files stay on the Specs screen.
-      await pruneDetached(token, remaining, {
-        workspaceId: parentWorkspaceId ?? ws.id,
-        projectId: ws.id,
-      });
-      await reload();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(null);
-    }
+    const s = (await api.workspaceSettings(token, ws.id)) ?? {};
+    const remaining = (s.repos ?? []).filter((r) => r.name !== name);
+    await api.putWorkspaceSettings(token, ws.id, { ...s, repos: remaining });
+    await pruneDetached(token, remaining, {
+      workspaceId: parentWorkspaceId ?? ws.id,
+      projectId: ws.id,
+    });
+    await reload();
   };
 
-  const count = repos?.length ?? 0;
+  const syncLabel = (r: RepoEntry) => {
+    const live = sync[r.name];
+    return live?.running ? "…" : graphRepo(r) ? "Re-sync" : "Sync";
+  };
+  const repoUrl = (r: RepoEntry) => (r.url && /^https?:\/\//.test(r.url) ? r.url.replace(/\.git$/, "") : undefined);
 
   return (
     <div className="card">
-      <div className="card-head">
-        <h2>From repositories{count > 0 ? ` · ${count}` : ""}</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <ViewToggle mode={view} onChange={setView} />
-          {count > 0 && onOpenStudio && (
+      <p className="hint">
+        Repositories cloned into the workspace when a session launches. Add one by picking it from a
+        connector — connectors are set up in Connections.
+      </p>
+      <DataTable<RepoEntry>
+        list="sources"
+        title="Repositories"
+        rows={repos}
+        error={repos === null ? err : null}
+        onRetry={() => void reload()}
+        rowKey={(r) => r.name}
+        rowLabel={(r) => r.name}
+        onOpen={(r) => window.open(repoUrl(r), "_blank", "noreferrer")}
+        canOpen={(r) => !!repoUrl(r)}
+        primary={
+          (repos?.length ?? 0) > 0 && onOpenStudio ? (
             <button className="primary" onClick={() => onOpenStudio(ws)}>
               Open in IDE
             </button>
-          )}
-        </div>
-      </div>
-      <p className="hint">
-        Repositories cloned into the workspace when a session launches. Add one by picking it from a
-        connector — set connectors up on the Connectors tab.
-      </p>
-      {err && <p className="error">{err}</p>}
-      {repos === null ? (
-        <p className="empty">Loading sources…</p>
-      ) : repos.length === 0 ? (
-        <p className="empty">No repositories attached yet — pick one from a connector below.</p>
-      ) : view === "table" ? (
-        /* The product's Sources table, column for column — with one
-           difference that matters: the deployment labels its activity numbers
-           "demo values", and these are folded out of the pull_request and
-           commit nodes a sync actually wrote. A source nobody has synced shows
-           a dash, not a plausible seven. */
-        <table className="ptable src-table">
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th>Role</th>
-              <th className="pnum">Specs</th>
-              <th>Pull requests · 7 days</th>
-              <th className="pnum">Commits · 7 days</th>
-              <th>Last sync</th>
-              <th aria-label="actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {repos.map((r) => {
+          ) : null
+        }
+        empty={{
+          title: "No repositories attached yet.",
+          body: "Pick one from a connector below.",
+        }}
+        columns={[
+          {
+            id: "name",
+            header: "Source",
+            className: "acell-lead",
+            compare: (a, b) => a.name.localeCompare(b.name),
+            cell: (r) => (
+              <>
+                <span className="src-ico" aria-hidden>
+                  <GitBranchIcon />
+                </span>
+                <span>
+                  <span className="src-name">{r.name}</span>
+                  <span className="sub">Repository{r.branch ? ` · ${r.branch}` : ""}</span>
+                </span>
+              </>
+            ),
+          },
+          {
+            // The product shows a role here. Nothing in the model assigns one
+            // to a source, so this says what the source IS.
+            id: "role",
+            header: "Role",
+            cell: (r) => (
+              <>
+                <span className="src-dot" aria-hidden />
+                {r.source}
+              </>
+            ),
+          },
+          {
+            // Counted and none is 0; not counted is "—" (`files_known`).
+            id: "specs",
+            header: "Specs",
+            num: true,
+            cell: (r) => rollupText(specsKnown ? (specsPerRepo[graphRepo(r)?.instance_id ?? ""] ?? 0) : null),
+          },
+          {
+            id: "prs",
+            header: "Pull requests · 7 days",
+            cell: (r) => {
               const node = graphRepo(r);
-              const live = sync[r.name];
               const act = node ? activity[node.instance_id] : undefined;
-              const syncedAt = node?.value.synced_at as string | undefined;
-              return (
-                <tr key={r.name}>
-                  <td className="acell-lead">
-                    <span className="src-ico" aria-hidden>
-                      <GitBranchIcon />
-                    </span>
-                    <span>
-                      <span className="src-name">{r.name}</span>
-                      <span className="sub">
-                        Repository{r.branch ? ` · ${r.branch}` : ""}
-                      </span>
-                    </span>
-                  </td>
-                  {/* The product shows a role here. We do not have one on a
-                      source — nothing in the model assigns it — so this says
-                      what the source IS, which is the fact we hold. */}
-                  <td>
-                    <span className="src-dot" aria-hidden />
-                    {r.source}
-                  </td>
-                  {/* A repository we DID count and found nothing in has zero
-                      specs; one we could not count has none. Both used to read
-                      "—", which is the only reading that is wrong for one of
-                      them — a deliberate change, and what `files_known` is for. */}
-                  <td className="pnum">
-                    {rollupText(specsKnown ? (specsPerRepo[node?.instance_id ?? ""] ?? 0) : null)}
-                  </td>
-                  <td>
-                    {act ? (
-                      <div className="src-prs">
-                        <div className="src-pr-counts">
-                          <span className="src-open">{act.open} open</span>
-                          <span className="sub">{act.merged} merged</span>
-                        </div>
-                        <Spark days={act.days} />
-                      </div>
-                    ) : (
-                      <span className="ing-dash">—</span>
-                    )}
-                  </td>
-                  <td className="pnum">{act ? act.commits : <span className="ing-dash">—</span>}</td>
-                  <td className="sub">
-                    {live?.running ? live.line : syncedAt ? relTime(syncedAt) : "never"}
-                  </td>
-                  <td className="pactions">
-                    <button
-                      className="ghost"
-                      title="Clone this source and pull its issues, pull requests and files into the graph"
-                      disabled={!!live?.running}
-                      onClick={() => void syncRepo(r)}
-                    >
-                      {live?.running ? "…" : node ? "Re-sync" : "Sync"}
-                    </button>
-                    <button
-                      className="ghost"
-                      disabled={busy === r.name}
-                      onClick={() => void detach(r.name)}
-                    >
-                      {busy === r.name ? "…" : "Detach"}
-                    </button>
-                  </td>
-                </tr>
+              return act ? (
+                <div className="src-prs">
+                  <div className="src-pr-counts">
+                    <span className="src-open">{act.open} open</span>
+                    <span className="sub">{act.merged} merged</span>
+                  </div>
+                  <Spark days={act.days} />
+                </div>
+              ) : (
+                <span className="ing-dash">—</span>
               );
-            })}
-          </tbody>
-        </table>
-      ) : (
-        <ul className="rows">
-          {repos.map((r) => {
-            const node = graphRepo(r);
-            const live = sync[r.name];
-            const syncedAt = node?.value.synced_at as string | undefined;
-            // The two thread counts are the only numbers here that are claims
-            // about the present rather than about the last sync, so 0 is worth
-            // printing for both: "nothing is waiting" is the answer somebody
-            // came to this row for. Absent is not none — review threads are
-            // only reported by GitHub, and document threads only when the sync
-            // had a checkout to read `.studio/comments` from — so an unknown
-            // count leaves its phrase off entirely rather than printing zero.
-            //
-            // Both are named, rather than one being "open threads" and the
-            // other qualified: they are two different conversations — one about
-            // the code under review, one about the documents — and a row that
-            // called one of them simply "threads" would make the reader guess
-            // which.
-            const reviewThreads = node?.value.open_review_threads as number | undefined;
-            const documentThreads = node?.value.open_document_threads as number | undefined;
-            const pulled = node
-              ? [
-                  node.value.issues ? `${node.value.issues} issues` : "",
-                  node.value.pull_requests ? `${node.value.pull_requests} PRs` : "",
-                  node.value.files ? `${node.value.files} files` : "",
-                  reviewThreads != null ? `${reviewThreads} open on reviews` : "",
-                  documentThreads != null ? `${documentThreads} open in documents` : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-              : "";
-            return (
-            <li key={r.name}>
-              <div className="grow">
-                <div className="name">{r.name}</div>
-                <div className="sub">
-                  {r.source}
-                  {r.url ? ` · ${r.url}` : ""}
-                  {r.branch ? ` · ${r.branch}` : ""}
-                </div>
-                {/* What the graph knows. A running sync's own line wins — it is
-                    the newer fact — and "never synced" is stated rather than
-                    left as an empty row, because that is the state this screen
-                    exists to make visible. */}
-                <div className="sub">
-                  {live ? (
-                    live.line
-                  ) : node ? (
-                    <>
-                      {syncedAt ? `synced ${relTime(syncedAt)}` : "synced"}
-                      {pulled ? ` — ${pulled}` : ""}
-                    </>
-                  ) : (
-                    "never synced"
-                  )}
-                </div>
-              </div>
-              <span className={`badge ${live?.running ? "syncing" : node ? "ok" : "warn"}`}>
-                {live?.running ? "syncing" : node ? "synced" : "not synced"}
-              </span>
-              <button
-                className="ghost"
-                title="Clone this source and pull its issues, pull requests and files into the graph"
-                disabled={!!live?.running}
-                onClick={() => void syncRepo(r)}
-              >
-                {live?.running ? "…" : node ? "Re-sync" : "Sync"}
-              </button>
-              <button className="ghost" disabled={busy === r.name} onClick={() => void detach(r.name)}>
-                {busy === r.name ? "…" : "Detach"}
-              </button>
-            </li>
-            );
-          })}
-        </ul>
-      )}
+            },
+          },
+          {
+            id: "commits",
+            header: "Commits · 7 days",
+            num: true,
+            cell: (r) => {
+              const node = graphRepo(r);
+              const act = node ? activity[node.instance_id] : undefined;
+              return act ? act.commits : <span className="ing-dash">—</span>;
+            },
+          },
+          {
+            id: "synced",
+            header: "Last sync",
+            cell: (r) => {
+              const live = sync[r.name];
+              const syncedAt = graphRepo(r)?.value.synced_at as string | undefined;
+              if (live?.running) return <span className="sub">{live.line}</span>;
+              return syncedAt ? <When iso={syncedAt} /> : <span className="sub">never</span>;
+            },
+          },
+        ]}
+        inline={(r) => (
+          <button
+            className="ghost"
+            title="Clone this source and pull its issues, pull requests and files into the graph"
+            disabled={!!sync[r.name]?.running}
+            onClick={() => void syncRepo(r)}
+          >
+            {syncLabel(r)}
+          </button>
+        )}
+        actions={(r) => [
+          ...(repoUrl(r) ? [{ label: "Open repository", onSelect: () => window.open(repoUrl(r), "_blank", "noreferrer") }] : []),
+          {
+            label: "Detach",
+            danger: {
+              title: `Detach “${r.name}”?`,
+              body:
+                "It leaves this project's sources, and everything synced from it — issues, pull requests, files and their document bindings — leaves the project's graph. Attaching it again later syncs it afresh.",
+              confirmLabel: "Detach",
+            },
+            onSelect: () => detach(r.name),
+          },
+        ]}
+        tile={(r, open) => {
+          const node = graphRepo(r);
+          const live = sync[r.name];
+          const syncedAt = node?.value.synced_at as string | undefined;
+          // The two thread counts are claims about the present, so 0 is worth
+          // printing; an unknown count is left off rather than written as 0.
+          const reviewThreads = node?.value.open_review_threads as number | undefined;
+          const documentThreads = node?.value.open_document_threads as number | undefined;
+          return (
+            <VTile
+              icon={<GitBranchIcon />}
+              title={r.name}
+              subtitle={`${r.source}${r.branch ? ` · ${r.branch}` : ""}`}
+              onClick={open}
+              tone={node ? undefined : "attn"}
+              stats={[
+                { label: "issues", value: node ? String(node.value.issues ?? 0) : "—" },
+                { label: "PRs", value: node ? String(node.value.pull_requests ?? 0) : "—" },
+                { label: "files", value: node ? String(node.value.files ?? 0) : "—" },
+                ...(reviewThreads != null ? [{ label: "open on reviews", value: String(reviewThreads) }] : []),
+                ...(documentThreads != null ? [{ label: "open in documents", value: String(documentThreads) }] : []),
+              ].slice(0, 4)}
+              footer={
+                <>
+                  <span className="sub">
+                    {live ? live.line : syncedAt ? <>synced <When iso={syncedAt} /></> : "never synced"}
+                  </span>
+                  <button
+                    className="ghost"
+                    disabled={!!live?.running}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void syncRepo(r);
+                    }}
+                  >
+                    {syncLabel(r)}
+                  </button>
+                </>
+              }
+            />
+          );
+        }}
+      />
 
       <SourceAttachPicker token={token} workspace={ws} onAttached={() => void reload()} />
     </div>
@@ -8890,7 +8753,7 @@ function AccessView({
     }
     const ids = [org.id, ...projects.map((p) => p.id)];
     Promise.all(
-      ids.map((id) => api.tenantUsers(token, id).then((p) => p.items ?? [], () => [])),
+      ids.map((id) => api.tenantUsersAll(token, id).then((p) => p.items ?? [], () => [])),
     ).then((lists) => {
       if (!live) return;
       const m = new Map<string, { id: string; name: string }>();

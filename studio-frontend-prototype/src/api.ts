@@ -126,6 +126,24 @@ export interface Page<T> {
   page_info?: { next_cursor: string | null; prev_cursor: string | null; limit: number };
 }
 
+/** A platform listing read to its end: account-management pages by cursor
+ *  (`?cursor=` / `?limit=`, next page in `page_info.next_cursor`). Returned as
+ *  one `Page` so callers written against the first page keep working. Bounded,
+ *  so a cursor that never ends cannot hang a screen. */
+async function allCursorPages<T>(path: string, token: string, limit = 200, maxPages = 50): Promise<Page<T>> {
+  const items: T[] = [];
+  let cursor: string | null | undefined;
+  for (let n = 0; n < maxPages; n++) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) query.set("cursor", cursor);
+    const page = await request<Page<T>>(`${path}?${query}`, token);
+    items.push(...(page.items ?? []));
+    cursor = page.page_info?.next_cursor;
+    if (!cursor) break;
+  }
+  return { items };
+}
+
 export const PLATFORM_ROOT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 // Studio tenant types seeded by studio-backend config (types-registry.config.entities).
@@ -2189,6 +2207,11 @@ export const api = {
   tenantChildren: (token: string, tenantId: string) =>
     request<Page<Tenant>>(`/account-management/v1/tenants/${tenantId}/children`, token),
 
+  /** Every child, following `next_cursor`. The first page alone is how the
+   *  portfolio used to list a workspace's projects: silently cut short. */
+  tenantChildrenAll: (token: string, tenantId: string) =>
+    allCursorPages<Tenant>(`/account-management/v1/tenants/${tenantId}/children`, token),
+
   deleteTenant: (token: string, tenantId: string) =>
     request<void>(`/account-management/v1/tenants/${tenantId}`, token, { method: "DELETE" }),
 
@@ -2217,6 +2240,10 @@ export const api = {
 
   tenantUsers: (token: string, tenantId: string) =>
     request<Page<User>>(`/account-management/v1/tenants/${tenantId}/users`, token),
+
+  /** Every user, following `next_cursor` (see `tenantChildrenAll`). */
+  tenantUsersAll: (token: string, tenantId: string) =>
+    allCursorPages<User>(`/account-management/v1/tenants/${tenantId}/users`, token),
 
   /** Platform-admin-only directory, including identities without a valid tenant. */
   platformIdentities: (token: string) =>

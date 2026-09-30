@@ -126,7 +126,7 @@ export function ProjectsPortfolio({
     async (wsId: string) => {
       setLoadingKids((s) => new Set(s).add(wsId));
       try {
-        const page = await api.tenantChildren(token, wsId);
+        const page = await api.tenantChildrenAll(token, wsId);
         const kids = (page.items ?? [])
           .filter((t) => t.tenant_type === TENANT_TYPES.project)
           .map((t) => ({ id: t.id, name: t.name }));
@@ -171,7 +171,7 @@ export function ProjectsPortfolio({
     // blank the page.
     const entries = await Promise.all(
       list.map(async (id) => {
-        const users = await api.tenantUsers(token, id).then(
+        const users = await api.tenantUsersAll(token, id).then(
           (p) => p.items ?? [],
           () => [] as User[],
         );

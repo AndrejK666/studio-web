@@ -280,7 +280,7 @@ export function ProjectOverview({
             misses,
           ),
           optional("kit registry", api.kitInstallations(token, project.id), { items: [] as KitInstallation[] }, misses),
-          optional("team", api.tenantUsers(token, project.id), { items: [] as User[] }, misses),
+          optional("team", api.tenantUsersAll(token, project.id), { items: [] as User[] }, misses),
           optional("IDE sessions", api.studioSessions(token), { items: [] as StudioSession[] }, misses),
           // The fallback is a whole Me, not a partial: `optional` types its
           // answer from it, and a screen that cannot ask who you are simply
