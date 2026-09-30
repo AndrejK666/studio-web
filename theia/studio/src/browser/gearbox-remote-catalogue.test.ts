@@ -54,8 +54,14 @@ describe('loadRemoteGearCatalogue', () => {
     });
 
     it('offers nothing when the backend has no corpus, so the catalogue stays empty rather than failing', async () => {
-        expect(await loadRemoteGearCatalogue(answer(500, {}))).toBeUndefined();
+        expect(await loadRemoteGearCatalogue(answer(404, {}))).toBeUndefined();
         expect(await loadRemoteGearCatalogue(answer(200, { corpus: 'x', catalogue: { gears: {} } }))).toBeUndefined();
+    });
+
+    it('fails, saying why, when the backend could not be asked: that is not "no corpus"', async () => {
+        await expect(loadRemoteGearCatalogue(answer(503, {}))).rejects.toThrow('the Studio backend is not answering (HTTP 503)');
+        await expect(loadRemoteGearCatalogue(answer(500, {}))).rejects.toThrow('HTTP 500');
+        await expect(loadRemoteGearCatalogue(answer(401, {}))).rejects.toThrow('not signed in to Studio (HTTP 401)');
     });
 });
 
@@ -66,7 +72,7 @@ describe('asking again once signed in', () => {
         const changed = jest.fn();
         const sub = remoteGearCatalogueChanged.event(changed);
         try {
-            await loadRemoteGearCatalogue(answer(401, {}));
+            await loadRemoteGearCatalogue(answer(401, {})).catch(() => undefined);
             expect(remoteGearCatalogueRefused()).toBe(true);
             // The Studio view seeing the member signed in on its first look,
             // and the heartbeat's backstop, both call this.
@@ -79,7 +85,7 @@ describe('asking again once signed in', () => {
     });
 
     it('treats "no Studio behind the proxy yet" as a refusal too, and a missing Gearbox as an answer', async () => {
-        await loadRemoteGearCatalogue(answer(503, {}));
+        await loadRemoteGearCatalogue(answer(503, {})).catch(() => undefined);
         expect(remoteGearCatalogueRefused()).toBe(true);
         await loadRemoteGearCatalogue(answer(404, {}));
         expect(remoteGearCatalogueRefused()).toBe(false);
