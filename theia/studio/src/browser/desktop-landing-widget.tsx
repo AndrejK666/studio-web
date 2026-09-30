@@ -19,6 +19,7 @@ import { WindowService } from '@theia/core/lib/browser/window/window-service';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { CommandRegistry } from '@theia/core/lib/common/command';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { PROJECT_WORKSPACE_EXTENSION, openProjectInPlace } from './desktop-open-project';
 import { adoptDesktopUser } from './desktop-studio-widget';
 import type { Organization } from './desktop-projects';
 import {
@@ -288,7 +289,8 @@ export class DesktopLandingWidget extends ReactWidget {
                     this.update();
                 }
             });
-            await this.workspaceService.open(URI.fromFilePath(path), { preserveWindow: true });
+            // In place, not `open(…, { preserveWindow })`: that reloads the whole window.
+            await openProjectInPlace(this.workspaceService, URI.fromFilePath(path));
             announceDesktopChange(this, 'opened');
         } catch (error) {
             this.openError = { id: row.id, message: `Could not open ${row.name}: ${error instanceof Error ? error.message : error}` };
@@ -306,7 +308,12 @@ export class DesktopLandingWidget extends ReactWidget {
     }
 
     protected openRecent(folder: RecentFolder): void {
-        void this.workspaceService.open(new URI(folder.uri), { preserveWindow: true });
+        const uri = new URI(folder.uri);
+        // A folder opens in place; a workspace file is another window's
+        // workspace, which Theia changes only by loading it.
+        void (uri.path.ext === PROJECT_WORKSPACE_EXTENSION
+            ? this.workspaceService.open(uri, { preserveWindow: true })
+            : openProjectInPlace(this.workspaceService, uri));
     }
 
     protected switchMode(card: ModeCard): void {

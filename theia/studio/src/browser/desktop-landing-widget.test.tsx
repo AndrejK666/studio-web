@@ -96,15 +96,22 @@ describe('the desktop landing page', () => {
         given();
         const module = new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue({
-                tryGetRoots: () => [{ resource: { path: { fsPath: () => START } } }],
+                tryGetRoots: () => [{ resource: { path: { fsPath: () => START }, isEqual: () => false } }],
                 recentWorkspaces: async () => [
                     'file:///home/me/ConstructorStudio/workspace',
                     'file:///home/me/code/my-app',
                     'file:///home/me/notes',
                 ],
-                open: jest.fn(async (uri: { path: { fsPath(): string } } | string) => {
-                    opened.push(typeof uri === 'string' ? uri : String(uri));
+                // A project or a recent folder opens in place (desktop-open-project.ts):
+                // `save` to its workspace file, then `spliceRoots`. `open` is what
+                // reloads the window, and must not be what opens a folder.
+                workspace: { resource: { isEqual: () => false }, isDirectory: true },
+                save: jest.fn(async () => undefined),
+                spliceRoots: jest.fn(async (_start: number, _del: number, ...uris: unknown[]) => {
+                    opened.push(...uris.map(String));
+                    return [];
                 }),
+                open: jest.fn(async () => { throw new Error('open reloads the window'); }),
             } as never);
             bind(CommandRegistry).toConstantValue({
                 executeCommand: jest.fn(async (id: string) => { executed.push(id); }),

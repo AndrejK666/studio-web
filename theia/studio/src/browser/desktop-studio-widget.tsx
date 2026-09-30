@@ -16,6 +16,7 @@ import * as React from '@theia/core/shared/react';
 import { inject, injectable } from '@theia/core/shared/inversify';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
+import { openProjectInPlace } from './desktop-open-project';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { Message } from '@theia/core/lib/browser/widgets/widget';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
@@ -263,7 +264,8 @@ export class DesktopStudioWidget extends ReactWidget {
                     this.update();
                 }
             });
-            await this.workspaceService.open(URI.fromFilePath(path), { preserveWindow: true });
+            // In place, not `open(…, { preserveWindow })`: that reloads the whole window.
+            await openProjectInPlace(this.workspaceService, URI.fromFilePath(path));
             announceDesktopChange(this, 'opened');
         } catch (error) {
             this.openErrors.set(workspace.id, `Could not open ${workspace.name}: ${error instanceof Error ? error.message : error}`);
