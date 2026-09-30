@@ -1514,6 +1514,7 @@ function IngestedDocumentsView({
             <div className="ing-row ing-row-head">
               <span>Name</span>
               <span>Type</span>
+              <span>State</span>
               <span>Origin</span>
               <span>Path</span>
               <span>Status</span>
@@ -1525,6 +1526,7 @@ function IngestedDocumentsView({
               const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
               const open = findingKey ? findings[findingKey] : undefined;
               const repoId = row.repo || undefined;
+              const state = b?.state ?? row.state ?? null;
               const opened = selectedId === row.id && selected ? selected : null;
               const openedDoc =
                 selectedId === row.id && row.origin === "authored"
@@ -1577,6 +1579,22 @@ function IngestedDocumentsView({
                 ) : (
                   <span>{typeName(row.type_key)}</span>
                 )}
+                {/* Whether the type is settled. Confirm shows only on a
+                    proposal and Not a doc on everything else, so without this
+                    a confirmed file and an undetermined one read the same. */}
+                <span>
+                  {state ? (
+                    <span
+                      className="ing-state"
+                      style={{ background: stateTone(state).bg, color: stateTone(state).fg }}
+                      title={b?.source ? (SOURCE_LABEL[b.source] ?? b.source) : undefined}
+                    >
+                      {stateLabel(state)}
+                    </span>
+                  ) : (
+                    <span className="ing-dash">—</span>
+                  )}
+                </span>
                 {/* Where it came from. For a repository file that is the
                     repository, named rather than hashed — the id stays on the
                     title, because the name is what a reader recognises and the
@@ -2394,7 +2412,7 @@ const INGESTED_CSS = `
    Name and a 37px Repository, which is a row of ellipses. The floors add up to
    970px plus 72px of gaps, and .ing-table scrolls past that rather than
    shrinking anything below it. */
-.ing-row { display: grid; grid-template-columns: minmax(180px,1.6fr) 140px minmax(110px,0.9fr) minmax(160px,1.4fr) 130px 110px 200px; gap: 12px; align-items: center; padding: 5px 12px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.ing-row { display: grid; grid-template-columns: minmax(180px,1.6fr) 140px 104px minmax(110px,0.9fr) minmax(160px,1.4fr) 130px 110px 200px; gap: 12px; align-items: center; padding: 5px 12px; font-size: 12px; border-top: 1px solid var(--border); cursor: pointer; }
 .ing-row select { padding: 2px 4px; height: 24px; }
 .ing-row .ing-actions button { padding: 1px 7px; height: 22px; }
 .ing-row:first-child { border-top: none; }
