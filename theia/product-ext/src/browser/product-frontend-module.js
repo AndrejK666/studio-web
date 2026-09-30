@@ -96,7 +96,6 @@ const { FlowStore } = require('./flow-store');
 const flowSpec = require('./flow-spec');
 const { LOADER_CSS, loadingNode } = require('./loader');
 const { ICONS } = require('./icons');
-const { isOSX } = require('@theia/core/lib/common/os');
 const { StatusBar } = require('@theia/core/lib/browser/status-bar/status-bar-types');
 const { QuickInputService } = require('@theia/core/lib/common/quick-pick-service');
 
@@ -130,9 +129,11 @@ const CONNECT_PROJECT_COMMAND = {
 
 /*
  * Search the project. A command in its own right, for the same reason Connect
- * project is one: it is reachable from the command palette, bindable to a key,
- * and callable from the activity rail's own button without any of those three
- * knowing about the widget.
+ * project is one: it is reachable from the command palette and the ribbon's
+ * Find (Doc editing, Full functionality) without either knowing about the
+ * widget. It has no rail button any more: the rail is one toolset in every mode
+ * (theia/studio's studio-mode-layout.ts, RAIL) and its one search is Theia's,
+ * which Ctrl+Shift+F opens everywhere.
  */
 const SEARCH_COMMAND = {
     id: 'studio.search.open',
@@ -166,8 +167,16 @@ const NEW_DOCUMENT_COMMAND = {
     iconClass: 'codicon codicon-new-file'
 };
 
-// The rail button's DOM id, dot-free for the same reason as the one below.
-const SEARCH_RAIL_ITEM_ID = 'studio-search-rail';
+/*
+ * Claude Code or Codex, picked by name: the rail's one assistants entry
+ * (slot-strip.js, RAIL_ASSISTANTS) as a command, so the palette reaches it too.
+ */
+const ASSISTANTS_COMMAND = {
+    id: 'studio.assistants.pick',
+    label: 'Assistants — open Claude Code or Codex…',
+    category: 'Studio',
+    iconClass: 'codicon codicon-sparkle'
+};
 
 /*
  * Quality at project scope. NO KEYBINDING, deliberately: the obvious chord is
@@ -1126,11 +1135,10 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
  * zero additional space.
  */
 /* plugin-ext contributes VS Code's own view containers into the activity bar;
-   a product keeps only the ones it wants. Each mode brings back what it names
-   (MODE_VIEWS in theia/studio's studio-mode-layout.ts) with a more specific
-   rule; Extensions (a desktop's only) is in this list so that it, too, shows
-   only where a mode names it, and not in writing, Building or Agent
-   development. */
+   a product keeps only the ones it wants. The studio extension brings back
+   its one rail, the same in every mode (RAIL in theia/studio's
+   studio-mode-layout.ts), with a more specific rule; a build without it keeps
+   none of these. */
 #shell-tab-debug,
 #shell-tab-test-view-container,
 #shell-tab-search-view-container,
@@ -1143,8 +1151,8 @@ body, body * { transition: background-color 160ms ease, border-color 160ms ease,
    dead end Studio does not use) is removed, not the whole wing. */
 #shell-tab-outline-view { display: none !important; }
 /* The product's own clusters are the only entry point for Comments, Changes,
-   History, Claude and Codex: three in the document's topbar, two at the foot of
-   the left activity rail. Assistant webviews remain native Theia panels when
+   History, Claude and Codex: three in the document's topbar, and one
+   Assistants entry on the left activity rail that offers both. Assistant webviews remain native Theia panels when
    selected; their duplicate activity icons do not remain as a second, competing
    right-side menu.
 
@@ -1735,7 +1743,9 @@ class ProductChromeContribution {
         slotStrip.init({
             shell: app.shell,
             commandRegistry: this.container.get(CommandRegistry),
-            messageService: this.container.get(MessageService)
+            messageService: this.container.get(MessageService),
+            // The rail's one assistants entry asks which one.
+            quickInput: this.container.get(QuickInputService)
         });
 
         // What the main dock says when it holds nothing. A layer inside the
@@ -1771,9 +1781,11 @@ class ProductChromeContribution {
         setTimeout(() => {
             slotStrip.mount();
             welcomeView.mount();
-            this.mountSearchRail();
-            this.mountQualityRail();
+            // Collaboration first: it is always there, and Quality, which comes
+            // and goes with a project setting, then only ever appends after it
+            // rather than shifting it.
             this.mountCollabRail();
+            this.mountQualityRail();
             this.mountCollabStrip(app.shell).catch(e =>
                 console.warn('[studio] could not mount the collaboration strip', e));
         }, 0);
@@ -1844,39 +1856,6 @@ class ProductChromeContribution {
         } catch (e) {
             console.error('[studio] could not add the flow rail', e);
         }
-    }
-
-    /*
-     * The rail's Search button.
-     *
-     * It sits directly UNDER the Projects tab rather than at the foot of the
-     * rail. The foot is where the theme toggle used to be, and it was removed on
-     * report ("we still have UI hanging here without any reason", D10) precisely
-     * because a control 899px below the rail's only tab does not read as part of
-     * the navigation. Search IS navigation, so it goes where the navigation is --
-     * and the assistants followed it there for the same reason (see the header of
-     * slot-strip.js).
-     *
-     * All this method does now is hand a button to the rail's own column, which
-     * owns the positioning, the retry and the separator between product actions
-     * and installed extensions. The measuring this used to do lives in
-     * railNav.place(), where it serves every occupant of the column instead of
-     * this one button. Nothing else here knows the rail's geometry, which is the
-     * property that makes adding the next rail control a one-liner.
-     */
-    mountSearchRail() {
-        if (this.searchRailNode) { return; }
-        const button = document.createElement('button');
-        button.id = SEARCH_RAIL_ITEM_ID;
-        button.className = 'studio-rail-btn';
-        button.title = 'Search this project (' + (isOSX ? '⇧⌘F' : 'Ctrl+Shift+F') + ')';
-        button.setAttribute('aria-label', 'Search this project');
-        button.innerHTML = ICONS.search;
-        button.addEventListener('click', () => {
-            this.container.get(CommandRegistry).executeCommand(SEARCH_COMMAND.id);
-        });
-        this.searchRailNode = button;
-        railNav.claim('actions', group => group.appendChild(button));
     }
 
     /*
@@ -2893,6 +2872,8 @@ const mod = new ContainerModule(bind => {
             commands.registerCommand(NEW_DOCUMENT_COMMAND, newDocumentHandler(ctx.container));
             commands.registerCommand(COLLAB_COMMAND, collaborationHandler(ctx.container));
             commands.registerCommand(REVEAL_ASSISTANT_COMMAND, revealAssistantHandler(ctx.container, commands));
+            // The rail's one assistants entry, from the palette too.
+            commands.registerCommand(ASSISTANTS_COMMAND, { execute: () => slotStrip.pickAssistant() });
             /* Unconditional: the portal's handshake can arrive before anything
              * else this frontend does, and a command that is not there yet is
              * a sign-in silently dropped. */
@@ -2924,15 +2905,14 @@ const mod = new ContainerModule(bind => {
      * @theia/search-in-workspace is NOT a dependency of app/package.json, but it
      * is loaded anyway — plugin-ext depends on it, so src-gen/frontend/index.js
      * pulls it in at line 136 — and it registers 'ctrlcmd+shift+f' for
-     * search-in-workspace.open. That panel is one of the ones SHELL_CSS hides,
-     * so the key currently opens a view the user cannot see. Unregistering it
-     * first is what reclaims the key, rather than leaving two bindings on it and
+     * search-in-workspace.open. Unregistering it first is what makes the key
+     * this module's to assign, rather than leaving two bindings on it and
      * trusting contribution order.
      *
      * The string must match search-in-workspace's own literal exactly —
      * KeybindingRegistry.unregisterKeybinding compares the keybinding by
-     * equality — which is why ours is registered under the same canonical
-     * spelling instead of 'shift+ctrlcmd+f'. Checked against their
+     * equality — which is why the key is spelled the same way here instead of
+     * 'shift+ctrlcmd+f'. Checked against their
      * search-in-workspace-frontend-contribution.js, which spells it
      * 'ctrlcmd+shift+f'.
      *
@@ -2954,19 +2934,23 @@ const mod = new ContainerModule(bind => {
             });
         }
     });
+    /*
+     * The search shortcut: Theia's search across the files, in every mode.
+     *
+     * It was per mode — this product's Search outside the code modes, Theia's
+     * inside them — because each mode had a different magnifier on its rail.
+     * The rail is one toolset now (theia/studio's studio-mode-layout.ts, RAIL)
+     * and its one search is Theia's, so the key opens what the rail's magnifier
+     * opens, wherever you are, as in VS Code. The product's Search, which also
+     * reads comments, proposed changes and history, is the ribbon's Find in Doc
+     * editing and Full functionality, and "Studio: Search…" in the palette.
+     * Re-registered after the unregister (see above) so that exactly one
+     * binding is on the key.
+     */
     bind(KeybindingContribution).toDynamicValue(() => ({
         registerKeybindings(keybindings) {
             keybindings.unregisterKeybinding('ctrlcmd+shift+f');
-            /*
-             * Per mode. The code modes (studio's Development, `default`, and
-             * FULL, `studio.full`) search code with Theia's search across files,
-             * and show its rail tab; every other mode searches the project's
-             * documents with this one. Keyed on Theia's own context key for the
-             * active perspective.
-             */
-            const CODE_MODES = "(activePerspectiveId == 'default' || activePerspectiveId == 'studio.full')";
-            keybindings.registerKeybinding({ command: SEARCH_COMMAND.id, keybinding: 'ctrlcmd+shift+f', when: '!' + CODE_MODES });
-            keybindings.registerKeybinding({ command: 'search-in-workspace.open', keybinding: 'ctrlcmd+shift+f', when: CODE_MODES });
+            keybindings.registerKeybinding({ command: 'search-in-workspace.open', keybinding: 'ctrlcmd+shift+f' });
         }
     })).inSingletonScope();
     bind(TabBarToolbarContribution).toDynamicValue(ctx => ({

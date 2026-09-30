@@ -1,21 +1,24 @@
-// A mode's rails are what the mode declares (studio-mode-layout.ts).
+// The rail is one toolset in every mode; a mode adds its own views beside it
+// (studio-mode-layout.ts).
 
 import 'reflect-metadata';
 import { Emitter } from '@theia/core/lib/common/event';
 import {
     BUILDING_PERSPECTIVE_ID, DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID
 } from '../common/studio-modes';
-import { ModeDescriptor, MODE_VIEWS, StudioModeLayout, claimedElsewhere, declaredViews } from './studio-mode-layout';
-import { MODE_TABS } from './studio-chrome-mode';
+import { ModeDescriptor, OFF_RAIL, RAIL, STUDIO_VIEW, StudioModeLayout, claimedElsewhere, declaredViews } from './studio-mode-layout';
+import { RAIL_TABS } from './studio-chrome-mode';
 
 /** The perspectives as the application registers them, reduced to their side placements. */
 const DESCRIPTORS: ModeDescriptor[] = [
     { id: WORKBENCH_PERSPECTIVE_ID, viewPlacements: new Map([['studio.orca', 'right'], ['studio.operations', 'bottom']]) },
     { id: DOCUMENTS_PERSPECTIVE_ID, viewPlacements: new Map([['files', 'left'], ['studio:analyze', 'bottom']]) },
-    { id: ORCA_PERSPECTIVE_ID, viewPlacements: new Map([['studio.orca', 'left'], ['scm-view-container', 'right']]) },
+    { id: ORCA_PERSPECTIVE_ID, viewPlacements: new Map([['studio.orca', 'right'], ['scm-view-container', 'left']]) },
     { id: FULL_PERSPECTIVE_ID, viewPlacements: new Map([['studio.orca', 'right'], ['files', 'left']]) },
     { id: BUILDING_PERSPECTIVE_ID, viewPlacements: new Map([['gearbox.catalogue', 'left'], ['gearbox.product', 'main'], ['gearbox.inspector', 'right']]) },
 ];
+
+const MODES = [WORKBENCH_PERSPECTIVE_ID, DOCUMENTS_PERSPECTIVE_ID, BUILDING_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID];
 
 interface FakeWidget { id: string; isAttached: boolean; parent: unknown }
 
@@ -80,29 +83,88 @@ function setup(active: string, placed: Record<string, 'left' | 'right'>, { vsx =
     return { layout, shell, widgets, switchTo, on, area, currentIn };
 }
 
-const CODE_LEFT = ['debug', 'explorer-view-container', 'scm-view-container', 'search-view-container', 'test-view-container', 'vsx-extensions-view-container'];
+/** The rail on a desktop, sorted as `on()` sorts. */
+const RAIL_LEFT = ['debug', 'explorer-view-container', 'scm-view-container', 'search-view-container', 'test-view-container', 'vsx-extensions-view-container'];
+const ASSISTANT = 'plugin-view-container:workbench.view.extension.claude-sidebar-secondary';
 
-describe('the views a mode keeps on its rails', () => {
-    it('gives Development and Full the code rails, Source Control on the left', async () => {
+describe('the rail', () => {
+    it('is the same in every mode', async () => {
+        for (const mode of MODES) {
+            const { layout, on } = setup(mode, {});
+            await layout.apply();
+            expect(on('left').filter(id => RAIL_LEFT.includes(id))).toEqual(RAIL_LEFT);
+        }
+    });
+
+    it('never gains or loses an item when the mode changes, in any order', async () => {
+        const { layout, on, switchTo } = setup(WORKBENCH_PERSPECTIVE_ID, { 'studio.desktop': 'left' });
+        layout.onDidInitializeLayout();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const seen: string[][] = [];
+        for (const mode of [DOCUMENTS_PERSPECTIVE_ID, BUILDING_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID]) {
+            await switchTo(mode);
+            seen.push(on('left').filter(id => id !== 'gearbox.catalogue'));
+        }
+        for (const rail of seen) {
+            expect(rail).toEqual(['studio.desktop', ...RAIL_LEFT].sort());
+        }
+        layout.onStop();
+    });
+
+    it('is VS Code’s set in VS Code’s order: Theia’s own ranks', () => {
+        expect(RAIL.map(view => view.id)).toEqual([
+            'explorer-view-container', 'search-view-container', 'scm-view-container', 'debug', 'vsx-extensions-view-container', 'test-view-container',
+        ]);
+        const ranks = RAIL.map(view => view.rank ?? 0);
+        expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
+        expect(RAIL.every(view => view.area === 'left')).toBe(true);
+    });
+
+    it('has one search on it', () => {
+        expect(RAIL.filter(view => /search/.test(view.id)).map(view => view.id)).toEqual(['search-view-container']);
+    });
+
+    it('is where the rail tabs come from, and a mode’s own view is not one of them', () => {
+        expect(RAIL_TABS).toEqual(RAIL.map(view => view.id));
+        for (const id of OFF_RAIL) {
+            expect(RAIL_TABS).not.toContain(id);
+        }
+        expect(RAIL_TABS).not.toContain('studio.orca');
+    });
+
+    it('puts the Studio view after every rail view: the foot, where VS Code keeps Accounts', () => {
+        expect(STUDIO_VIEW.rank).toBeGreaterThan(Math.max(...RAIL.map(view => view.rank ?? 0)));
+    });
+});
+
+describe('what a mode adds beside the rail', () => {
+    it('gives Development and Full the agents on the right', async () => {
         for (const mode of [WORKBENCH_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID]) {
             const { layout, on } = setup(mode, { 'studio.desktop': 'left' });
             await layout.apply();
-            expect(on('left')).toEqual(['studio.desktop', ...CODE_LEFT].sort());
+            expect(on('left')).toEqual(['studio.desktop', ...RAIL_LEFT].sort());
             expect(on('right')).toEqual(['studio.orca']);
         }
     });
 
-    it('gives Agent development its file tree and search, and keeps Source Control on the right', async () => {
-        const { layout, on } = setup(ORCA_PERSPECTIVE_ID, { 'studio.orca': 'left', 'scm-view-container': 'right' });
+    it('gives Agent development its agents on the right too, and Source Control on the rail with everything else', async () => {
+        const { layout, on } = setup(ORCA_PERSPECTIVE_ID, {});
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'search-view-container', 'studio.orca']);
-        expect(on('right')).toEqual(['scm-view-container']);
+        expect(on('left')).toEqual(RAIL_LEFT);
+        expect(on('right')).toEqual(['studio.orca']);
     });
 
-    it('gives Building the files and Source Control beside the catalogue', async () => {
+    it('mirrors a layout Agent development saved before the rail was common: agents right, Source Control left', async () => {
+        const { layout, on } = setup(ORCA_PERSPECTIVE_ID, { 'studio.orca': 'left', 'scm-view-container': 'right' });
+        await layout.apply();
+        expect(on('left')).toEqual(RAIL_LEFT);
+        expect(on('right')).toEqual(['studio.orca']);
+    });
+
+    it('gives Building the catalogue beside the rail and the inspector on the right', async () => {
         const { layout, on } = setup(BUILDING_PERSPECTIVE_ID, {});
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'gearbox.catalogue', 'scm-view-container']);
+        expect(on('left')).toEqual([...RAIL_LEFT, 'gearbox.catalogue'].sort());
         expect(on('right')).toEqual(['gearbox.inspector']);
     });
 
@@ -113,17 +175,9 @@ describe('the views a mode keeps on its rails', () => {
         expect(shell).not.toHaveProperty('activateWidget');
     });
 
-    it('brings Source Control back to the left in Full after Agent development moved it right', async () => {
-        const { layout, on, switchTo } = setup(ORCA_PERSPECTIVE_ID, { 'studio.orca': 'left', 'scm-view-container': 'right' });
-        layout.onDidInitializeLayout();
-        await switchTo(FULL_PERSPECTIVE_ID);
-        expect(on('left')).toContain('scm-view-container');
-        expect(on('right')).not.toContain('scm-view-container');
-        layout.onStop();
-    });
-
     it('leaves a view where it already is', async () => {
-        const { layout, shell } = setup(DOCUMENTS_PERSPECTIVE_ID, { 'explorer-view-container': 'left', 'scm-view-container': 'left' });
+        const placed = Object.fromEntries(RAIL_LEFT.map(id => [id, 'left' as const]));
+        const { layout, shell } = setup(DOCUMENTS_PERSPECTIVE_ID, placed);
         await layout.apply();
         expect(shell.addWidget).not.toHaveBeenCalled();
     });
@@ -146,13 +200,13 @@ describe('the views a mode keeps on its rails', () => {
 });
 
 describe('the Studio view', () => {
-    it('comes back to a mode whose layout was saved before it existed', async () => {
+    it('comes back, at the foot, to a mode whose layout was saved before it existed', async () => {
         const { layout, on, widgets, shell } = setup(WORKBENCH_PERSPECTIVE_ID, { 'studio.desktop': 'left' });
         const studio = widgets.tryGetWidget('studio.desktop')!;
         studio.parent = null;                       // Theia's restore detached it
         await layout.apply();
         expect(on('left')).toContain('studio.desktop');
-        expect(shell.addWidget).toHaveBeenCalledWith(studio, { area: 'left', rank: 50 });
+        expect(shell.addWidget).toHaveBeenCalledWith(studio, { area: 'left', rank: STUDIO_VIEW.rank });
     });
 
     it('is never created where there is none (a session)', async () => {
@@ -163,27 +217,33 @@ describe('the Studio view', () => {
 });
 
 describe('what a mode sets aside on entering it', () => {
-    it('takes the Gearbox Catalogue and the code rails out of Doc editing, and keeps Source Control', async () => {
+    it('takes the Gearbox Catalogue out of Doc editing, and keeps the rail and the Studio view', async () => {
+        const placed = Object.fromEntries(RAIL_LEFT.map(id => [id, 'left' as const]));
         const { layout, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
-            'explorer-view-container': 'left', 'gearbox.catalogue': 'left', 'scm-view-container': 'left',
-            'vsx-extensions-view-container': 'left', 'studio.desktop': 'left',
-            'plugin-view-container:workbench.view.extension.claude-sidebar-secondary': 'right',
+            ...placed, 'gearbox.catalogue': 'left', 'studio.desktop': 'left', [ASSISTANT]: 'right',
         });
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'scm-view-container', 'studio.desktop']);
+        expect(on('left')).toEqual(['studio.desktop', ...RAIL_LEFT].sort());
         // The assistants belong to no mode, and stay.
-        expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
+        expect(on('right')).toEqual([ASSISTANT]);
+    });
+
+    it('takes the agents out of Doc editing and Building, where no ribbon places them', async () => {
+        for (const mode of [DOCUMENTS_PERSPECTIVE_ID, BUILDING_PERSPECTIVE_ID]) {
+            const { layout, on } = setup(mode, { 'studio.orca': 'right' });
+            await layout.apply();
+            expect(on('right')).not.toContain('studio.orca');
+        }
     });
 
     it('folds a panel whose front view is set aside, rather than bringing its neighbour forward', async () => {
         const { layout, shell, currentIn, on } = setup(DOCUMENTS_PERSPECTIVE_ID, {
-            'explorer-view-container': 'left', 'scm-view-container': 'left', 'debug': 'right',
-            'plugin-view-container:workbench.view.extension.claude-sidebar-secondary': 'right',
+            'explorer-view-container': 'left', 'gearbox.inspector': 'right', [ASSISTANT]: 'right',
         });
-        currentIn.right = 'debug';
+        currentIn.right = 'gearbox.inspector';
         await layout.apply();
         expect(shell.collapsePanel).toHaveBeenCalledWith('right');
-        expect(on('right')).toEqual(['plugin-view-container:workbench.view.extension.claude-sidebar-secondary']);
+        expect(on('right')).toEqual([ASSISTANT]);
         expect(shell.collapsePanel).not.toHaveBeenCalledWith('left');
     });
 
@@ -203,7 +263,7 @@ describe('what a mode sets aside on entering it', () => {
             'studio.object-details': 'right', 'chat-view-widget': 'right', 'timeline-view': 'left',
         });
         await layout.apply();
-        expect(on('left')).toEqual(['explorer-view-container', 'scm-view-container', 'timeline-view']);
+        expect(on('left')).toEqual([...RAIL_LEFT, 'timeline-view'].sort());
         expect(on('right')).toEqual(['chat-view-widget', 'studio.object-details']);
     });
 
@@ -219,24 +279,34 @@ describe('what a mode sets aside on entering it', () => {
     });
 });
 
-describe('the table', () => {
-    it('adds a perspective’s own side placements after what MODE_VIEWS names, and ignores main and bottom', () => {
-        const views = declaredViews(ORCA_PERSPECTIVE_ID, DESCRIPTORS[2]).map(view => `${view.id}@${view.area}`);
-        expect(views).toEqual(['explorer-view-container@left', 'search-view-container@left', 'studio.orca@left', 'scm-view-container@right']);
-        expect(declaredViews(DOCUMENTS_PERSPECTIVE_ID, DESCRIPTORS[1]).map(view => view.id)).not.toContain('studio:analyze');
+describe('the declaration', () => {
+    it('is the rail first, then a perspective’s own side placements the rail does not name; main and bottom ignored', () => {
+        const views = declaredViews(DESCRIPTORS[2]).map(view => `${view.id}@${view.area}`);
+        expect(views).toEqual([...RAIL.map(view => `${view.id}@left`), 'studio.orca@right']);
+        expect(declaredViews(DESCRIPTORS[1]).map(view => view.id)).not.toContain('studio:analyze');
+    });
+
+    it('lets the rail win over a perspective that names a rail view on the other side', () => {
+        const views = declaredViews({ id: 'x', viewPlacements: new Map([['scm-view-container', 'right']]) });
+        expect(views.filter(view => view.id === 'scm-view-container')).toEqual([expect.objectContaining({ area: 'left' })]);
+    });
+
+    it('never sets a rail view aside', () => {
+        for (const mode of MODES) {
+            const foreign = claimedElsewhere(mode, DESCRIPTORS);
+            for (const view of RAIL) {
+                expect(foreign.has(view.id)).toBe(false);
+            }
+        }
     });
 
     it('never counts the Studio view or an assistant as another mode’s', () => {
-        const table = { a: [{ id: 'studio.desktop', area: 'left' as const }], b: [] };
-        expect(claimedElsewhere('b', [], table).has('studio.desktop')).toBe(false);
-    });
-
-    it('is where the rail tabs come from', () => {
-        for (const [mode, views] of Object.entries(MODE_VIEWS)) {
-            expect(MODE_TABS[mode]).toEqual(views.filter(view => view.area === 'left').map(view => view.id));
-        }
-        // Extensions only where MODE_VIEWS says: the code modes.
-        const withExtensions = Object.entries(MODE_TABS).filter(([, ids]) => ids.includes('vsx-extensions-view-container')).map(([mode]) => mode);
-        expect(withExtensions.sort()).toEqual([WORKBENCH_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID].sort());
+        const descriptors = [
+            { id: 'a', viewPlacements: new Map([['studio.desktop', 'left'], [ASSISTANT, 'right']]) },
+            { id: 'b', viewPlacements: new Map<string, string>() },
+        ];
+        const foreign = claimedElsewhere('b', descriptors);
+        expect(foreign.has('studio.desktop')).toBe(false);
+        expect(foreign.has(ASSISTANT)).toBe(false);
     });
 });

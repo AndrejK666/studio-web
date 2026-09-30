@@ -20,10 +20,15 @@
  * WHAT THIS IS. One absolutely-positioned flex column, mounted once, holding two
  * named groups in a fixed reading order with a hairline between them:
  *
- *   [ Projects tab ]      <- Lumino's, not ours
- *   [ actions ]           <- Search, and any later product-level rail action
+ *   [ the rail's tabs ]   <- Lumino's, not ours: Explorer, Search, Source Control, ...
+ *   [ actions ]           <- Collaboration, Quality, any later product-level action
  *   ---------             <- .studio-rail-sep, absent while `extensions` is empty
- *   [ extensions ]        <- Claude, Codex, and whatever is installed next
+ *   [ extensions ]        <- ONE Assistants entry offering Claude Code and Codex
+ *   ...
+ *   [ Studio tab ]        <- Lumino's too, pushed to the foot (see topRunBottom)
+ *
+ * (The picture below is the history; the rail is now one toolset in every mode,
+ * and the product's own Search button left it — see studio-mode-layout.ts.)
  *
  * The groups exist BEFORE anything claims them, so the reading order is a
  * property of this file rather than of who mounted first: an extension added in
@@ -110,6 +115,29 @@ const RAIL_NAV_CSS = `
 `;
 
 const GROUPS = ['actions', 'extensions'];
+
+/*
+ * The bottom of the run of tabs that starts at the top of the rail.
+ *
+ * Not the lowest tab: the Studio view (account and connection) sits at the
+ * rail's FOOT, where VS Code keeps Accounts (theia/studio's studio-chrome-mode.ts
+ * pushes it there), and measuring down to it put this column under the window's
+ * bottom edge — where place() then fell back to its constant and drew over the
+ * second tab. The column belongs under the tools, so the measurement stops at
+ * the first gap wider than the space Theia leaves between two tabs.
+ */
+const TAB_GAP_PX = 8;
+
+function topRunBottom(rects) {
+    const sorted = [...rects].sort((a, b) => a.top - b.top);
+    if (sorted.length === 0) { return 0; }
+    let bottom = sorted[0].bottom;
+    for (const rect of sorted.slice(1)) {
+        if (rect.top > bottom + TAB_GAP_PX) { break; }
+        bottom = Math.max(bottom, rect.bottom);
+    }
+    return bottom;
+}
 
 class RailNav {
 
@@ -236,7 +264,7 @@ class RailNav {
         const tabs = [...this.container.querySelectorAll('.lm-TabBar-content > .lm-TabBar-tab')]
             .map(tab => tab.getBoundingClientRect())
             .filter(rect => rect.height > 0);
-        const bottom = tabs.length ? Math.max(...tabs.map(rect => rect.bottom)) : 0;
+        const bottom = topRunBottom(tabs);
         const top = this.container.getBoundingClientRect().top;
         // Relative to the container, which is the column's positioning context —
         // getBoundingClientRect is in viewport coordinates and the rail does not
@@ -251,4 +279,4 @@ class RailNav {
 
 const railNav = new RailNav();
 
-module.exports = { railNav, RAIL_NAV_CSS, RAIL_NAV_GROUPS: GROUPS };
+module.exports = { railNav, RAIL_NAV_CSS, RAIL_NAV_GROUPS: GROUPS, topRunBottom };

@@ -25,8 +25,9 @@
  *   - the three DOCUMENT destinations are a cluster at the right end of the
  *     document's own topbar, rendered by the surface that owns them (a bar the
  *     document already pays for, next to the save status);
- *   - the two APP-LEVEL assistants are entries in the LEFT activity rail's
- *     navigation column, mounted here — because they outlive the open document
+ *   - the two APP-LEVEL assistants are reached from the LEFT activity rail's
+ *     navigation column — one Assistants entry now, offering both (see
+ *     RAIL_ASSISTANTS below), mounted here — because they outlive the open document
  *     and a per-document toolbar cannot reach them when no document is open;
  *   - Theia's right sidebar column is hidden at the Lumino level, so a closed
  *     panel costs the document nothing at all. See hideRightSlotColumn.
@@ -125,6 +126,69 @@ const ENTRIES = [
 
 const DOC_ENTRIES = ENTRIES.filter(entry => entry.kind === 'document');
 const APP_ENTRIES = ENTRIES.filter(entry => entry.kind === 'app');
+
+/*
+ * The rail's ONE assistants entry.
+ *
+ * The rail used to carry a button per assistant, Claude and Codex, under a
+ * hairline. Measured against VS Code's activity bar and reported from use
+ * ("лишние дублирующие агенты"): two vendor marks in a column of tools read as
+ * two more tools, and the ribbon's Agents beside them read as a third way to the
+ * same thing. The rail is now one toolset shared by every mode
+ * (studio-mode-layout.ts), and the assistants are one item in it: a click
+ * offers both, by name and with their chords, and picking the one already open
+ * closes it — choose()'s own toggle, unchanged.
+ *
+ * STILL ON THE RAIL, and not only in the ribbon, because the rail is the one
+ * surface every mode has: Building's ribbon has no Agents, and the assistants'
+ * own tab bar on the right is hidden. The chords (Ctrl+Alt+K, Ctrl+Alt+X; see
+ * SLOT_SHORTCUTS) and "Studio: Assistants" in the palette reach them too.
+ *
+ * The glyph is the product's own, not a vendor's mark: the entry is not either
+ * vendor. While one of them is open the button takes that vendor's colour, so
+ * the rail still says which one is in the slot.
+ */
+const RAIL_ASSISTANTS = { key: 'assistants', label: 'Assistants', icon: ICONS.spark };
+
+/* What the picker calls each assistant, and the letter of its chord. */
+const ASSISTANT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
+const ASSISTANT_CHORD_KEYS = { claude: 'K', codex: 'X' };
+
+function assistantChord(key, mac) {
+    const letter = ASSISTANT_CHORD_KEYS[key];
+    if (!letter) { return ''; }
+    return mac ? '⌥⌘' + letter : 'Ctrl+Alt+' + letter;
+}
+
+/** The rail's one button, open (and in the vendor's colour) while an assistant is in the slot. */
+function assistantsRailHtml({ active }) {
+    const open = APP_ENTRIES.find(entry => entry.key === active);
+    const brand = open && open.brand ? ' style="--studio-brand: ' + attr(open.brand) + '"' : '';
+    const title = open
+        ? (ASSISTANT_NAMES[open.key] || open.label) + ' is open. Pick an assistant, or pick it again to close it'
+        : 'Assistants: ' + APP_ENTRIES.map(entry => ASSISTANT_NAMES[entry.key] || entry.label).join(', ');
+    return '<button type="button" class="' + VARIANTS.ext.className + (open ? ' on' : '') + '"' +
+        ' data-studio-rail="' + RAIL_ASSISTANTS.key + '"' + brand +
+        ' aria-haspopup="listbox" aria-pressed="' + (open ? 'true' : 'false') + '"' +
+        ' title="' + attr(title) + '" aria-label="' + attr(RAIL_ASSISTANTS.label) + '">' +
+        RAIL_ASSISTANTS.icon +
+        '</button>';
+}
+
+/**
+ * What the picker offers: the assistants this surface can serve, each with its
+ * chord, the open one saying that picking it closes it.
+ */
+function assistantPickItems({ active, capabilities, mac }) {
+    return APP_ENTRIES
+        .filter(entry => !capabilities || capabilities.includes(entry.key))
+        .map(entry => ({
+            key: entry.key,
+            label: ASSISTANT_NAMES[entry.key] || entry.label,
+            description: assistantChord(entry.key, mac),
+            detail: entry.key === active ? 'Open now: pick it to close it' : undefined
+        }));
+}
 
 /*
  * A destination that belongs to an OPTIONAL feature.
@@ -451,10 +515,11 @@ function showRightSlotColumn(shell) {
 class SlotStrip {
 
     /** Wired once from ProductChromeContribution; a singleton, like fileTypeSettings. */
-    init({ shell, commandRegistry, messageService }) {
+    init({ shell, commandRegistry, messageService, quickInput }) {
         this.shell = shell;
         this.commandRegistry = commandRegistry;
         this.messageService = messageService;
+        this.quickInput = quickInput;
     }
 
     /*
@@ -525,7 +590,9 @@ class SlotStrip {
             this.node.addEventListener('click', event => {
                 const button = event.target.closest('[data-studio-rail]');
                 if (button && button.getAttribute('aria-disabled') !== 'true') {
-                    this.choose(button.getAttribute('data-studio-rail'));
+                    const key = button.getAttribute('data-studio-rail');
+                    if (key === RAIL_ASSISTANTS.key) { void this.pickAssistant(); }
+                    else { this.choose(key); }
                 }
             });
             this.listen();
@@ -630,17 +697,41 @@ class SlotStrip {
          * mount): a non-assistant resident is not an empty slot.
          */
         if (!rightPanelShowing(this.shell)) { zeroRightPanelSlot(this.shell); }
+        // One entry for every assistant (RAIL_ASSISTANTS): which one is open is
+        // all the rail shows; the picker says the rest.
+        this.node.innerHTML = assistantsRailHtml({ active: currentAssistant(this.shell) });
+    }
+
+    /** The assistants this surface can serve; with no document open, all of them. */
+    assistantCapabilities() {
         const surface = this.activeSurface();
-        const capabilities = surface && typeof surface.slotCapabilities === 'function'
+        return surface && typeof surface.slotCapabilities === 'function'
             ? surface.slotCapabilities()
-            : ['claude', 'codex'];          // no document open: the assistants still work
-        this.node.innerHTML = clusterHtml(APP_ENTRIES, {
+            : APP_ENTRIES.map(entry => entry.key);
+    }
+
+    /*
+     * The rail entry's click: Claude Code or Codex, by name. Picking one goes
+     * through choose(), so the slot rule, the toggle and the desktop's "still
+     * downloading" answer are exactly the chords' own. No quick input (a build
+     * without one) falls back to the first assistant, which is still a way in.
+     */
+    async pickAssistant() {
+        const items = assistantPickItems({
             active: currentAssistant(this.shell),
-            capabilities,
-            counts: {}
-            // No hints: both entries in this cluster are always available, and
-            // an assistant that is not installed is not in ASSISTANTS at all.
-        }, VARIANTS.ext);
+            capabilities: this.assistantCapabilities(),
+            mac: typeof navigator !== 'undefined' && /Mac/.test(navigator.platform || '')
+        });
+        if (items.length === 0) {
+            if (this.messageService) { this.messageService.info('No assistant can work with what is open here.'); }
+            return;
+        }
+        if (!this.quickInput || typeof this.quickInput.showQuickPick !== 'function') {
+            this.choose(items[0].key);
+            return;
+        }
+        const picked = await this.quickInput.showQuickPick(items, { placeholder: 'Open an assistant' });
+        if (picked && picked.key) { this.choose(picked.key); }
     }
 
     /*
@@ -690,5 +781,8 @@ module.exports = {
         return !entry || featureOn(entry, uri);
     },
     SLOT_DOC_ENTRIES: DOC_ENTRIES,
-    SLOT_APP_ENTRIES: APP_ENTRIES
+    SLOT_APP_ENTRIES: APP_ENTRIES,
+    RAIL_ASSISTANTS,
+    assistantsRailHtml,
+    assistantPickItems
 };

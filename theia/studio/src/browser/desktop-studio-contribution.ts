@@ -14,6 +14,7 @@ import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service
 import { DESKTOP_STUDIO_WIDGET_ID, DesktopStudioWidget } from './desktop-studio-widget';
 import { desktopStatus, desktopUrl } from './desktop-studio-client';
 import { remoteGearCatalogueRefused, remoteGearCatalogueSignedIn } from './gearbox-remote-catalogue';
+import { STUDIO_VIEW } from './studio-mode-layout';
 
 /** How often a window renews; the server's `heartbeat_secs`, and a third of its lease. */
 export const DESKTOP_HEARTBEAT_MS = 30_000;
@@ -32,7 +33,9 @@ export class DesktopStudioContribution extends AbstractViewContribution<DesktopS
         super({
             widgetId: DESKTOP_STUDIO_WIDGET_ID,
             widgetName: 'Constructor Studio',
-            defaultWidgetOptions: { area: 'left', rank: 50 },
+            // The rail's foot, after every tool, where VS Code keeps Accounts
+            // (STUDIO_VIEW in studio-mode-layout.ts).
+            defaultWidgetOptions: { area: STUDIO_VIEW.area, rank: STUDIO_VIEW.rank },
             toggleCommandId: 'studio.desktop.toggle',
         });
     }

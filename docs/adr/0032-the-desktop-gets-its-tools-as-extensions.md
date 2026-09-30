@@ -84,8 +84,9 @@ spike showed that keeping pins and the view together cannot work (§2).
 
 `@theia/vsx-registry` is a dependency of `electron-app` only, so a browser
 session never gets the view. There is no router allow-list: a member installs
-anything from open-vsx, as in VS Code. The code modes (Development, Full
-functionality) keep its rail tab (`MODE_TABS`).
+anything from open-vsx, as in VS Code. Its tab is on the rail in every mode
+(`RAIL`, since the rail became one toolset for all modes; it was the code modes'
+only, `MODE_TABS`, when this was decided).
 
 ### 2. Nothing a member installs is pinned
 

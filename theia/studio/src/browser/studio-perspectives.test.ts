@@ -40,13 +40,13 @@ describe('Studio workbench modes', () => {
         );
     });
 
-    it('lays Orca out the way the Orca app is: agents left, changes right', () => {
+    it('lays Agent development out as agents beside changes: the changes on the rail side, the agents where every mode keeps them', () => {
         const orca = register().get(ORCA_PERSPECTIVE_ID);
         expect([...orca.viewPlacements.entries()]).toEqual([
-            ['studio.orca', 'left'],
-            ['scm-view-container', 'right'],
+            ['studio.orca', 'right'],
+            ['scm-view-container', 'left'],
         ]);
-        expect(orca.primaryViews).toEqual({ left: 'studio.orca', right: 'scm-view-container' });
+        expect(orca.primaryViews).toEqual({ left: 'scm-view-container', right: 'studio.orca' });
         expect(orca.chromeOptions).toEqual({ collapseAreas: ['bottom'] });
     });
 

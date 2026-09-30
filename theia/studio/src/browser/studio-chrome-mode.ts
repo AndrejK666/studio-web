@@ -54,7 +54,7 @@ import { FrontendApplicationContribution } from '@theia/core/lib/browser/fronten
 import { PreferenceScope, PreferenceService } from '@theia/core/lib/common';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { DOCUMENTS_PERSPECTIVE_ID } from '../common/studio-modes';
-import { MODE_VIEWS } from './studio-mode-layout';
+import { OFF_RAIL, RAIL, STUDIO_VIEW } from './studio-mode-layout';
 
 const STYLE_ID = 'studio-chrome-mode';
 
@@ -70,20 +70,8 @@ body[data-studio-mode="workbench"] #theia-top-panel { display: flex !important; 
    application icon — the portal's branding is the line above. A hidden flex
    child takes no width, so nothing shifts. */
 body[data-studio-mode="documents"] #theia-top-panel > .theia-icon { display: none !important; }
-/* Source Control, Run and Debug, Testing and Extensions come back per mode
-   too (MODE_TABS, from MODE_VIEWS): the product hides them wholesale, which is
-   right for someone writing a document and wrong for someone who has just
-   edited code and wants to commit it. They used to come back on
-   data-studio-mode="workbench", which is every mode but writing, and so showed
-   Source Control in Agent development and Building by accident of the rule. */
-/* One search per mode. The code modes and Agent development bring back
-   Theia's search across files (MODE_TABS), which is the one that searches
-   code; the product's Search rail button, which searches documents, comments
-   and proposals, stays for the others. FULL still reaches the product's Search
-   from its ribbon. */
-body[data-studio-perspective="default"] #studio-search-rail,
-body[data-studio-perspective="studio.orca-mode"] #studio-search-rail,
-body[data-studio-perspective="studio.full"] #studio-search-rail { display: none !important; }
+/* The rail's tabs are one list for every mode (RAIL_TABS, from RAIL in
+   studio-mode-layout.ts), written by railTabsCss below — not a rule per mode. */
 /* Writing's bottom panel is Analyze. The Problems list, Operations and a
    terminal the session started are still there, one menu away, but their tabs
    show only while one of them is the tab in front, so opening findings does
@@ -92,27 +80,44 @@ body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm
 `;
 
 /**
- * The rail tabs each mode brings back, beyond what the product keeps.
+ * The rail's tabs, the same in every mode.
  *
  * The product hides Theia's view containers wholesale (product-ext's "chrome
- * removal"), and "Projects replaces the explorer" stopped being true when the
- * Projects panel went. A mode names what its scenario needs in MODE_VIEWS
- * (studio-mode-layout.ts), which also guarantees the view is on the rail — a
- * rule for a tab shows only a tab that is there. This is its left-hand half:
- * the right-hand tab bar is hidden in every mode, so no rule there could show
- * anything.
+ * removal"), so the rail shows only what is named here. RAIL
+ * (studio-mode-layout.ts) is the one list, and it also guarantees each view is
+ * on the rail — a rule for a tab shows only a tab that is there. This is its
+ * left-hand half: the right-hand tab bar is hidden in every mode, so no rule
+ * there could show anything.
  */
-export const MODE_TABS: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
-    Object.entries(MODE_VIEWS).map(([mode, views]) => [mode, views.filter(view => view.area === 'left').map(view => view.id)]),
-);
+export const RAIL_TABS: readonly string[] = RAIL.filter(view => view.area === 'left').map(view => view.id);
 
-/** One rule per mode that names tabs; the grid display is Theia's own for a rail tab. */
-export function modeTabsCss(tabs: Readonly<Record<string, readonly string[]>> = MODE_TABS): string {
-    return Object.entries(tabs)
-        .filter(([, ids]) => ids.length > 0)
-        .map(([mode, ids]) => ids.map(id => `body[data-studio-perspective="${mode}"] #shell-tab-${id}`).join(',\n') +
-            ' { display: grid !important; }')
-        .join('\n');
+/** A tab by its view id, which may hold a dot (`gearbox.catalogue`) an id selector would misread. */
+function railTab(id: string): string {
+    return `#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-${id}"]`;
+}
+
+/**
+ * The rail's stylesheet, from the one declaration:
+ *
+ *   - the RAIL's tabs shown, the grid display being Theia's own for a rail tab —
+ *     (1,2,0), over the product's `#shell-tab-… { display: none }` at (1,0,0);
+ *   - a mode's own left-hand views (OFF_RAIL) drawn without a tab: their ribbon
+ *     opens them, and a tab there would come and go with the mode;
+ *   - the Studio view at the rail's foot, where VS Code keeps Accounts. The tab
+ *     list is a flex column as tall as the rail, so `margin-top: auto` on its
+ *     last item is the foot; `order` makes it the last item whatever rank a
+ *     layout saved before this change gave it.
+ */
+export function railTabsCss(tabs: readonly string[] = RAIL_TABS, offRail: readonly string[] = OFF_RAIL, foot: string = STUDIO_VIEW.id): string {
+    const rules: string[] = [];
+    if (tabs.length > 0) {
+        rules.push(tabs.map(railTab).join(',\n') + ' { display: grid !important; }');
+    }
+    if (offRail.length > 0) {
+        rules.push(offRail.map(railTab).join(',\n') + ' { display: none !important; }');
+    }
+    rules.push(`${railTab(foot)} { order: 1; margin-top: auto !important; }`);
+    return rules.join('\n');
 }
 
 @injectable()
@@ -132,7 +137,7 @@ export class StudioChromeMode implements FrontendApplicationContribution {
         }
         const style = document.createElement('style');
         style.id = STYLE_ID;
-        style.textContent = CHROME_CSS + modeTabsCss();
+        style.textContent = CHROME_CSS + railTabsCss();
         document.head.appendChild(style);
         this.toDispose.push({ dispose: () => style.remove() });
 
@@ -147,7 +152,8 @@ export class StudioChromeMode implements FrontendApplicationContribution {
     protected async apply(): Promise<void> {
         const active = this.perspectives?.getActivePerspectiveId();
         const documents = active === DOCUMENTS_PERSPECTIVE_ID;
-        // Which mode exactly, for the rail tabs each one names (MODE_TABS).
+        // Which mode exactly, for the chrome that differs by mode (the bottom
+        // panel above, the status line in product-ext) — the rail does not.
         if (active) {
             document.body.dataset.studioPerspective = active;
         } else {

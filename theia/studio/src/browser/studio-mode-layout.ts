@@ -1,4 +1,5 @@
-// A mode's rails are what the mode declares.
+// The rail is one toolset, the same in every mode; a mode adds its own views
+// beside it, never on it.
 //
 // A perspective says where its views go (`viewPlacements`), but Theia applies
 // that only on a mode's FIRST visit in a window. Every later visit restores the
@@ -14,22 +15,26 @@
 //   - a view opened once in a mode (the Gearbox Catalogue in Doc editing) stayed
 //     in that mode's saved layout for good.
 //
-// And the rail CSS (MODE_TABS in studio-chrome-mode.ts) can only show a tab
+// And the rail CSS (RAIL_TABS in studio-chrome-mode.ts) can only show a tab
 // that is there. #542 patched one view (Extensions) in one host (the desktop);
-// this is the same repair for every view a mode names, in both hosts.
+// #552 made it the same repair for every view a mode named, in both hosts; and
+// the modes then named different rails, so the rail itself changed with every
+// switch. Now there is one rail (RAIL below) and every mode keeps it.
 //
 // WHAT IT DOES, on startup and after every switch, for the mode now active:
 //
-//   1. PLACES each view the mode declares that is not in its declared side
-//      area — without activating it, so nothing expands and nothing takes the
-//      focus a switch has just given to the mode's primary view.
+//   1. PLACES each rail view, and each side view the mode's perspective
+//      declares, that is not in its side area — without activating it, so
+//      nothing expands and nothing takes the focus a switch has just given to
+//      the mode's primary view.
 //   2. DETACHES, the way Theia does (`parent = null`, never `close`/`dispose`,
 //      so another mode can still restore it), each side view that ANOTHER mode
-//      declares and this one does not.
+//      declares and this one does not. The rail is every mode's, so it is never
+//      detached: switching modes never adds or removes a rail item.
 //
 // WHAT "ALLOWED" MEANS, which is the part to read twice. A view is claimed by a
-// mode when the mode names it: in MODE_VIEWS below, or in the side entries of
-// its perspective's `viewPlacements`. Only claimed views are ever detached, and
+// mode when the mode names it: the RAIL, which every mode names, or the side
+// entries of its perspective's `viewPlacements`. Only claimed views are ever detached, and
 // only from modes that do not claim them. A view no mode claims — the Studio
 // view, Claude and Codex, Theia's AI chat, Object Details beside the graph, a
 // plugin's own view — is never touched: where it goes is the person's choice,
@@ -45,13 +50,10 @@ import { WidgetFactory, WidgetManager } from '@theia/core/lib/browser/widget-man
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import { ContributionProvider } from '@theia/core/lib/common/contribution-provider';
 import { DisposableCollection } from '@theia/core/lib/common/disposable';
-import {
-    BUILDING_PERSPECTIVE_ID, DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WORKBENCH_PERSPECTIVE_ID
-} from '../common/studio-modes';
 
 export type SideArea = 'left' | 'right';
 
-/** One view a mode keeps on a rail. */
+/** One view kept on a side of the window: on the rail, or beside it for a mode. */
 export interface ModeView {
     readonly id: string;
     readonly area: SideArea;
@@ -72,38 +74,55 @@ export const DEBUG: ModeView = { id: 'debug', area: 'left', rank: 400 };
 export const EXTENSIONS: ModeView = { id: 'vsx-extensions-view-container', area: 'left', rank: 500 };
 export const TESTING: ModeView = { id: 'test-view-container', area: 'left', rank: 600 };
 
-/** The rails of the modes for working on code. */
-const CODE_RAILS: readonly ModeView[] = [EXPLORER, SEARCH, SOURCE_CONTROL, DEBUG, EXTENSIONS, TESTING];
-
 /**
- * THE table: what each mode keeps on its rails, beyond its perspective's own
- * `viewPlacements`. The rail CSS (MODE_TABS) is derived from it, so the tab a
- * mode shows and the view the mode is guaranteed to have cannot drift apart.
+ * THE rail: one toolset, the same in every mode, in VS Code's order.
+ *
+ * It was a table per mode (MODE_VIEWS), and it read as clutter rather than as
+ * a choice: going from Development to Doc editing took Search, Run and Debug,
+ * Testing and Extensions away and put a second, different search and a
+ * Comments button in their place, so the column a hand learns by position moved
+ * under it with every switch. VS Code's activity bar does not change with the
+ * kind of work, and neither does this one now. What a mode changes is its
+ * ribbon and its start page; the rail belongs to the workbench.
+ *
+ * The order is Theia's own ranks, which are VS Code's: Explorer, Search, Source
+ * Control, Run and Debug, Extensions (a desktop's only), Testing. The product's
+ * own rail controls follow — Collaboration, Quality when a project turns it on,
+ * the one Assistants entry (product-ext's rail-nav.js) — and the Studio view,
+ * the account and the connection, sits at the foot, where VS Code keeps
+ * Accounts.
+ *
+ * One search: Theia's, which searches code and text across the files, and
+ * which Ctrl+Shift+F opens in every mode. The product's Search, which also
+ * reads comments, proposed changes and history, is the ribbon's Find in Doc
+ * editing and Full functionality, and "Studio: Search" in the palette.
+ *
+ * A perspective may still name a rail view in its `viewPlacements`, even on
+ * the other side; the rail wins, because a rail item that moves or vanishes
+ * with the mode is exactly what this replaced.
  *
  * Outline is deliberately absent. It lives on the right, where the product
  * hides Theia's tab bar: placing it unopened would add a tab nobody can see,
  * and View > Outline opens it — at a readable width now — whenever it is wanted.
  */
-export const MODE_VIEWS: Readonly<Record<string, readonly ModeView[]>> = {
-    // Writing: the documents are files, found by browsing. Finding them by
-    // their text is the product's own Search, which also reads comments,
-    // proposed changes and history; Theia's file search beside it would be a
-    // second, lesser search. Source Control, because a written document is
-    // committed from here: the ribbon's Changes opens it, and without a tab the
-    // view took the side bar with no icon to come back to it.
-    [DOCUMENTS_PERSPECTIVE_ID]: [EXPLORER, SOURCE_CONTROL],
-    // Development and Full: the file tree, Theia's search across files (code is
-    // found by its text), Source Control, Run and Debug, Testing, and the
-    // Extensions view where the application has one.
-    [WORKBENCH_PERSPECTIVE_ID]: CODE_RAILS,
-    [FULL_PERSPECTIVE_ID]: CODE_RAILS,
-    // Agent development: the agents are on the left and what they changed on
-    // the right (studio-perspectives.ts); the files they work in were missing.
-    [ORCA_PERSPECTIVE_ID]: [EXPLORER, SEARCH],
-    // Building: a product's sources are files, and the change a Generate makes
-    // is committed from Source Control.
-    [BUILDING_PERSPECTIVE_ID]: [EXPLORER, SOURCE_CONTROL],
-};
+export const RAIL: readonly ModeView[] = [EXPLORER, SEARCH, SOURCE_CONTROL, DEBUG, EXTENSIONS, TESTING];
+
+/**
+ * Views a mode places on the LEFT for its own work, drawn with no rail tab.
+ *
+ * The rail is common, so a mode's own view cannot be an item on it: it would
+ * appear and vanish with the mode, which is what the common rail stops. Such a
+ * view is reached from its mode's ribbon instead, and still opens in the side
+ * panel, because a side panel is the only place Theia holds it:
+ *
+ *   - the Gearbox Catalogue: Building's ribbon, Corpus > Catalogue
+ *     (`gearbox.catalogue.browse`), and View > Catalogue.
+ *
+ * Orca is not here because it is never on the left: every mode that has it
+ * keeps it on the right, whose tab bar the product hides, and the ribbon's
+ * Agents opens it.
+ */
+export const OFF_RAIL: readonly string[] = ['gearbox.catalogue'];
 
 /** Never detached, even if a mode ever names them: the Studio view and the assistants. */
 export const ALWAYS_KEPT: ReadonlySet<string> = new Set([
@@ -113,15 +132,20 @@ export const ALWAYS_KEPT: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The Studio view, in every mode, once it exists. It is added when the desktop
- * backend answers (DesktopStudioContribution), which can be after the first
- * mode's layout was taken: measured on a fresh profile, leaving Development in
- * the first seconds saved a layout without it, and Theia's restore then
- * detached it from Development for good. It is only put back when it was
- * detached, never created: a session, which has no Studio view, never makes one,
- * and one the member closed is disposed, not detached.
+ * The Studio view, in every mode, once it exists, at the FOOT of the rail.
+ *
+ * The foot because it is the account and the connection, which is where VS
+ * Code keeps Accounts: a rank after every rail view makes it the last tab, and
+ * the rail's stylesheet (studio-chrome-mode.ts) pushes it down to the bottom
+ * whatever rank a saved layout gave it. It is added when the desktop backend
+ * answers (DesktopStudioContribution), which can be after the first mode's
+ * layout was taken: measured on a fresh profile, leaving Development in the
+ * first seconds saved a layout without it, and Theia's restore then detached it
+ * from Development for good. It is only put back when it was detached, never
+ * created: a session, which has no Studio view, never makes one, and one the
+ * member closed is disposed, not detached.
  */
-export const STUDIO_VIEW: ModeView = { id: 'studio.desktop', area: 'left', rank: 50 };
+export const STUDIO_VIEW: ModeView = { id: 'studio.desktop', area: 'left', rank: 10000 };
 
 /** Just enough of a perspective descriptor for this file. */
 export interface ModeDescriptor {
@@ -130,11 +154,11 @@ export interface ModeDescriptor {
 }
 
 /**
- * What a mode keeps on its rails: MODE_VIEWS first, then the side entries of
- * its own `viewPlacements` that MODE_VIEWS does not already name.
+ * What a mode keeps on its rails: the common RAIL first, then the side entries
+ * of its own `viewPlacements` that the rail does not already name.
  */
-export function declaredViews(mode: string, descriptor: ModeDescriptor | undefined, table = MODE_VIEWS): ModeView[] {
-    const views = [...(table[mode] ?? [])];
+export function declaredViews(descriptor: ModeDescriptor | undefined, rail: readonly ModeView[] = RAIL): ModeView[] {
+    const views = [...rail];
     for (const [id, area] of descriptor?.viewPlacements ?? []) {
         if ((area === 'left' || area === 'right') && !views.some(view => view.id === id)) {
             views.push({ id, area });
@@ -143,16 +167,20 @@ export function declaredViews(mode: string, descriptor: ModeDescriptor | undefin
     return views;
 }
 
-/** The side views another mode claims and `mode` does not: the ones to set aside on entering it. */
-export function claimedElsewhere(mode: string, descriptors: readonly ModeDescriptor[], table = MODE_VIEWS): Set<string> {
-    const own = new Set(declaredViews(mode, descriptors.find(d => d.id === mode), table).map(view => view.id));
-    const modes = new Set([...Object.keys(table), ...descriptors.map(d => d.id)]);
+/**
+ * The side views another mode claims and `mode` does not: the ones to set
+ * aside on entering it. Every mode claims the rail, so a rail view is never
+ * among them — only a mode's own views (Orca, the Catalogue, the Inspector)
+ * come and go.
+ */
+export function claimedElsewhere(mode: string, descriptors: readonly ModeDescriptor[], rail: readonly ModeView[] = RAIL): Set<string> {
+    const own = new Set(declaredViews(descriptors.find(d => d.id === mode), rail).map(view => view.id));
     const others = new Set<string>();
-    for (const other of modes) {
-        if (other === mode) {
+    for (const other of descriptors) {
+        if (other.id === mode) {
             continue;
         }
-        for (const view of declaredViews(other, descriptors.find(d => d.id === other), table)) {
+        for (const view of declaredViews(other, rail)) {
             if (!own.has(view.id) && !ALWAYS_KEPT.has(view.id)) {
                 others.add(view.id);
             }
@@ -210,7 +238,7 @@ export class StudioModeLayout implements FrontendApplicationContribution {
         if (studio && !studio.isAttached && !studio.isDisposed) {
             await this.shell.addWidget(studio, { area: STUDIO_VIEW.area, rank: STUDIO_VIEW.rank });
         }
-        for (const view of declaredViews(mode, descriptors.find(d => d.id === mode))) {
+        for (const view of declaredViews(descriptors.find(d => d.id === mode))) {
             await this.place(view);
         }
         const foreign = claimedElsewhere(mode, descriptors);

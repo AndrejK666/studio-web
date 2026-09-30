@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { StudioChromeMode, modeTabsCss } from './studio-chrome-mode';
+import { StudioChromeMode, railTabsCss } from './studio-chrome-mode';
 
 function chrome(activeId: string) {
     const listeners: (() => void)[] = [];
@@ -95,39 +95,6 @@ describe('the chrome a mode implies', () => {
         expect(preferences.set).toHaveBeenLastCalledWith('window.menuBarVisibility', 'classic', expect.anything());
     });
 
-    it('gives Source Control back where a mode names it, and not by the workbench/documents split', () => {
-        const { contribution } = chrome('default');
-        contribution.onDidInitializeLayout();
-        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
-        // The product hides the SCM tab along with Debug, Test, Search and
-        // Explorer. Right for a document, wrong for someone who just edited
-        // code and wants to commit it — and a rule on data-studio-mode showed
-        // it in every mode but writing, Agent development included.
-        expect(css).not.toContain('body[data-studio-mode="workbench"] #shell-tab-');
-        // Doc editing too: a written document is committed from there.
-        for (const mode of ['default', 'studio.full', 'gearbox.product', 'studio.documents']) {
-            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
-        }
-        for (const mode of ['studio.orca-mode']) {
-            expect(css).not.toContain(`body[data-studio-perspective="${mode}"] #shell-tab-scm-view-container`);
-        }
-        // Run and Debug and Testing belong to the code modes.
-        expect(css).toContain('body[data-studio-perspective="default"] #shell-tab-debug');
-        expect(css).toContain('body[data-studio-perspective="studio.full"] #shell-tab-test-view-container');
-        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-debug');
-    });
-
-    it('keeps the Extensions tab to the code modes', () => {
-        const { contribution } = chrome('default');
-        contribution.onDidInitializeLayout();
-        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
-        expect(css).toContain('body[data-studio-perspective="default"] #shell-tab-vsx-extensions-view-container');
-        expect(css).toContain('body[data-studio-perspective="studio.full"] #shell-tab-vsx-extensions-view-container');
-        for (const mode of ['studio.documents', 'studio.orca-mode', 'gearbox.product']) {
-            expect(css).not.toContain(`body[data-studio-perspective="${mode}"] #shell-tab-vsx-extensions-view-container`);
-        }
-    });
-
     it('beats the product’s paint rule on specificity, not on order', () => {
         const { contribution } = chrome('default');
         contribution.onDidInitializeLayout();
@@ -146,38 +113,56 @@ describe('the chrome a mode implies', () => {
     });
 });
 
-describe('the rail tabs a mode brings back', () => {
-    it('gives writing a file tree, and leaves search to the product', () => {
-        const { contribution } = chrome('studio.documents');
-        contribution.onDidInitializeLayout();
-        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
+describe('the rail’s tabs, one list for every mode', () => {
+    const css = (): string => document.getElementById('studio-chrome-mode')?.textContent ?? '';
+    const tab = (id: string): string => `#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-${id}"]`;
 
-        expect(document.body.dataset.studioPerspective).toBe('studio.documents');
-        expect(css).toContain('body[data-studio-perspective="studio.documents"] #shell-tab-explorer-view-container');
-        // One search: the product's, not Theia's file search beside it.
-        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
-    });
-
-    it('gives the code modes and Agent development their file tree and their search across files', () => {
-        for (const mode of ['default', 'studio.full', 'studio.orca-mode']) {
+    it('shows the same tabs whichever mode the window opens in', () => {
+        const sheets: string[] = [];
+        for (const mode of ['default', 'studio.documents', 'gearbox.product', 'studio.orca-mode', 'studio.full']) {
             const { contribution } = chrome(mode);
             contribution.onDidInitializeLayout();
-            const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
-            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-explorer-view-container`);
-            expect(css).toContain(`body[data-studio-perspective="${mode}"] #shell-tab-search-view-container`);
-            // ...and not the product's Search beside it: one magnifier per mode.
-            expect(css).toContain(`body[data-studio-perspective="${mode}"] #studio-search-rail`);
+            sheets.push(css());
             contribution.onStop();
         }
+        expect(new Set(sheets).size).toBe(1);
     });
 
-    it('keeps writing to one search and its bottom panel to Analyze', () => {
+    it('brings back VS Code’s set, with no rule per mode', () => {
         const { contribution } = chrome('studio.documents');
         contribution.onDidInitializeLayout();
-        const css = document.getElementById('studio-chrome-mode')?.textContent ?? '';
-        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #shell-tab-search-view-container');
-        expect(css).not.toContain('body[data-studio-perspective="studio.documents"] #studio-search-rail');
-        expect(css).toContain('body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current):not([id="shell-tab-studio:analyze"])');
+        for (const id of ['explorer-view-container', 'search-view-container', 'scm-view-container', 'debug', 'vsx-extensions-view-container', 'test-view-container']) {
+            expect(css()).toContain(tab(id));
+        }
+        expect(css()).not.toMatch(/body\[data-studio-perspective="[^"]+"\] #shell-tab-/);
+        expect(css()).not.toContain('body[data-studio-mode="workbench"] #shell-tab-');
+    });
+
+    it('has no second search: nothing about the product’s search button', () => {
+        const { contribution } = chrome('default');
+        contribution.onDidInitializeLayout();
+        expect(css()).not.toContain('studio-search-rail');
+    });
+
+    it('draws a mode’s own left-hand view without a tab, and the Studio view at the foot', () => {
+        const { contribution } = chrome('gearbox.product');
+        contribution.onDidInitializeLayout();
+        expect(css()).toContain(`${tab('gearbox.catalogue')} { display: none !important; }`);
+        expect(css()).toContain(`${tab('studio.desktop')} { order: 1; margin-top: auto !important; }`);
+    });
+
+    it('beats the product’s wholesale hide on specificity: (1,2,0) over #shell-tab-…’s (1,0,0)', () => {
+        expect(railTabsCss(['a'], [], 'f')).toContain('#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-a"] { display: grid !important; }');
+    });
+
+    it('writes only the foot for an empty rail', () => {
+        expect(railTabsCss([], [], 'f')).toBe('#theia-left-content-panel .lm-TabBar-tab[id="shell-tab-f"] { order: 1; margin-top: auto !important; }');
+    });
+
+    it('keeps writing’s bottom panel to Analyze', () => {
+        const { contribution } = chrome('studio.documents');
+        contribution.onDidInitializeLayout();
+        expect(css()).toContain('body[data-studio-perspective="studio.documents"] #theia-bottom-content-panel .lm-TabBar-tab:not(.lm-mod-current):not([id="shell-tab-studio:analyze"])');
     });
 
     it('names the mode it is in, and follows a switch', async () => {
@@ -190,12 +175,5 @@ describe('the rail tabs a mode brings back', () => {
         listeners.forEach(fn => fn());
         await Promise.resolve();
         expect(document.body.dataset.studioPerspective).toBe('studio.documents');
-    });
-
-    it('writes nothing for a mode that names no tabs', () => {
-        expect(modeTabsCss({ quiet: [] })).toBe('');
-        expect(modeTabsCss({ m: ['a', 'b'] })).toBe(
-            'body[data-studio-perspective="m"] #shell-tab-a,\nbody[data-studio-perspective="m"] #shell-tab-b { display: grid !important; }',
-        );
     });
 });

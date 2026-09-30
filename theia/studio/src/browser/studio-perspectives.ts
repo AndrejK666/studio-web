@@ -67,18 +67,22 @@ export class StudioPerspectiveContribution implements PerspectiveContribution {
             chromeOptions: { collapseAreas: ['right', 'bottom'] },
             primaryViews: { left: FILE_NAVIGATOR_ID },
         });
-        // Orca's own arrangement: the agents and their worktrees on the left,
-        // what they changed and the way to commit it on the right, and the
-        // middle for the files and terminals they are working in.
+        // The agents and what they changed, side by side, and the middle for
+        // the files and terminals they are working in. It was Orca's own
+        // arrangement, agents left and changes right; it is mirrored now
+        // because the left rail is one toolset in every mode
+        // (studio-mode-layout.ts, RAIL), and Source Control is on it. The
+        // agents take the right, where Development and Full keep them too, so
+        // Orca has one place in every mode and the ribbon's Agents opens it.
         service.registerPerspective({
             id: ORCA_PERSPECTIVE_ID,
             label: 'Orca',
             viewPlacements: new Map<string, ApplicationShell.Area>([
-                [OrcaWidget.ID, 'left'],
-                [SCM_VIEW_CONTAINER_ID, 'right'],
+                [OrcaWidget.ID, 'right'],
+                [SCM_VIEW_CONTAINER_ID, 'left'],
             ]),
             chromeOptions: { collapseAreas: ['bottom'] },
-            primaryViews: { left: OrcaWidget.ID, right: SCM_VIEW_CONTAINER_ID },
+            primaryViews: { left: SCM_VIEW_CONTAINER_ID, right: OrcaWidget.ID },
         });
         // Everything at once, for the person doing all of it: the workbench's
         // own arrangement plus the files on the left and the findings below,
