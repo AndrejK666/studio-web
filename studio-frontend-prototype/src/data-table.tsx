@@ -280,6 +280,9 @@ interface CommonProps<T> {
   inline?: (row: T) => ReactNode;
   /** Details a ▸ toggle expands under the row. */
   expand?: (row: T) => ReactNode;
+  /** A panel the SCREEN opens under a row — an editor, a browser — from one
+   *  of the row's actions. Shown whenever it returns something. */
+  detail?: (row: T) => ReactNode;
   search?: { placeholder: string };
   filters?: Filter<T>[];
   /** Tiles as the other view; omitted, the list is a table only. */
@@ -623,6 +626,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     <td colSpan={colCount}>{props.expand(row)}</td>
                   </tr>
                 ) : null,
+                (() => {
+                  const panel = props.detail?.(row);
+                  return panel ? (
+                    <tr key={`${key}:panel`} className="dt-detail">
+                      <td colSpan={colCount}>{panel}</td>
+                    </tr>
+                  ) : null;
+                })(),
               ];
             })}
           </tbody>
