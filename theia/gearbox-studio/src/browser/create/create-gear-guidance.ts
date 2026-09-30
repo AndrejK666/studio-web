@@ -84,3 +84,23 @@ export function createGearGuidance(input: GearGuidanceInput): GearGuidanceNote[]
 function trimSlash(path: string): string {
   return path.replace(/[\\/]+$/, "");
 }
+
+/**
+ * The preview's refusal, in words for the person at the form.
+ *
+ * With no product open and no repository in the workspace holding a
+ * `gear.gdl`, the engine has no source root, and its dry run answers
+ * `no source root is open; pass roots to initialize or --root to the CLI` --
+ * advice for a command line. What to do from here is open a product or add a
+ * repository of gears; any other refusal is passed on as the engine said it.
+ */
+export function describeScaffoldRefusal(message: string): string {
+  if (/no source root is open/i.test(message)) {
+    return (
+      "A new gear is written beside the gears it can use, and none is open yet. " +
+      "Open a product (Product on the ribbon), or add a repository that holds gear.gdl files " +
+      "to the workspace, then preview again."
+    );
+  }
+  return message;
+}

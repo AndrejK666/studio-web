@@ -112,9 +112,15 @@ export function linkedGearsCommand(target: RunTarget): string {
   return `cargo run --bin ${target.bin} -- --list-registered-gears`;
 }
 
-/** A path as a terminal and a file URI can take it: no Windows verbatim prefix. */
+/**
+ * A path as a terminal, a file URI and a person can take it: no Windows
+ * verbatim prefix, in either slash direction (the engine reports some paths
+ * as `//?/C:/...`).
+ */
 export function plainPath(path: string): string {
-  return path.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "");
+  return path.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "")
+    .replace(/^\/\/\?\/UNC\//, "//")
+    .replace(/^\/\/\?\//, "");
 }
 
 /**
