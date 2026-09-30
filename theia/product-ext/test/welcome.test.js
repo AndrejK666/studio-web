@@ -275,6 +275,16 @@ test('the foot line says where it read from and where it stopped', () => {
     assert.ok(stopped.includes('1 comment log could not be read.'), stopped);
 });
 
+// -- which modes ---------------------------------------------------------------
+
+test('the start page belongs to Doc editing, and to a build with no modes', () => {
+    assert.strictEqual(scan.startPageShownIn('studio.documents'), true);
+    assert.strictEqual(scan.startPageShownIn(undefined), true);
+    for (const mode of ['default', 'studio.full', 'studio.orca-mode', 'gearbox.product']) {
+        assert.strictEqual(scan.startPageShownIn(mode), false, mode);
+    }
+});
+
 Promise.all(pending).then(() => {
     if (failures) {
         console.error(failures + ' failing');

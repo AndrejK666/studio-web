@@ -63,6 +63,7 @@ import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioChromeMode } from './studio-chrome-mode';
 import { StudioModeLayout } from './studio-mode-layout';
 import { StudioModeBar, StudioModeBarContribution, StudioModeSwitch } from './studio-mode-bar';
+import { StudioStartPages } from './studio-start-pages';
 import { StudioModeStatus } from './studio-mode-status';
 import { StudioPerspectiveContribution } from './studio-perspectives';
 import { StudioWorkspaceName } from './studio-workspace-name';
@@ -151,6 +152,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(StudioModeSwitch).toSelf().inSingletonScope();
     bind(StudioModeBarContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(StudioModeBarContribution);
+    // Each mode's page in the empty main dock (product-ext paints it; see studio-start-pages.ts).
+    bind(StudioStartPages).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioStartPages);
     bind(MarkdownEditorOpenHandler).toSelf().inSingletonScope();
     bind(OpenHandler).toService(MarkdownEditorOpenHandler);
     // Portal documents as editable resources (`studio-doc:`). Without the

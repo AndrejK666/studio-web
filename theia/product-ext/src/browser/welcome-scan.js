@@ -343,7 +343,22 @@ function honestyLine(stats) {
     return parts.join(' ');
 }
 
+/*
+ * Which modes the page belongs to. It is a writing page -- recent documents,
+ * threads, proposals, New document -- and shown in the empty dock of every mode
+ * it told someone in Building or Development that they were in a document
+ * editor. So: Doc editing only, and a build with no modes at all (no
+ * `data-studio-perspective` on the body). Studio's other modes leave the empty
+ * dock empty; each has its own views to open.
+ */
+const START_PAGE_MODES = ['studio.documents'];
+
+function startPageShownIn(mode) {
+    return mode === undefined || mode === '' || START_PAGE_MODES.includes(mode);
+}
+
 module.exports = {
+    START_PAGE_MODES, startPageShownIn,
     DOC_EXTENSIONS, RECENT_MAX, WAITING_MAX, PENDING_MAX, WALK_MAX_FILES, WALK_MAX_DEPTH, OPENED_MAX,
     isDocument, decodePath, relativeTo, baseName, folderOf,
     walkDocuments, rememberOpened, recentDocuments,

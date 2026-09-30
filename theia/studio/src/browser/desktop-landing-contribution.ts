@@ -5,7 +5,9 @@
 // layer of the EMPTY main dock: it shows exactly when the dock holds no widget.
 // The landing is a widget in that dock, so while it is there the start page
 // yields by its own rule, and the moment it is gone -- a real project or folder
-// is open -- the start page is back, unchanged. product-ext is not touched.
+// is open -- the mode's start page is back. The landing is the page for no
+// project; the start pages (one per mode, studio-start-pages.ts) are for the
+// project that is open, so the two never compete for the dock.
 //
 // Bound only by the desktop app's electron module (bindDesktopLanding): a
 // session never loads it. It also keeps the "Workspace source suggestion"

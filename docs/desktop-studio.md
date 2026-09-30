@@ -60,8 +60,11 @@ read the placeholder as a project
 - **Work offline**: Theia's **Open folder…** and the recently opened folders.
 
 The page is a widget in the main dock, so the start page — a layer of the
-*empty* dock — yields to it by its own rule and comes back unchanged once a
-real project or folder is open; product-ext is not changed. It cannot be
+*empty* dock — yields to it by its own rule and comes back once a real project
+or folder is open. The landing is the page for *no project*; the start pages
+are per mode, for the project that is open (Doc editing's is product-ext's
+own, the others are registered by `theia/studio` and `theia/gearbox-studio`
+into product-ext's page registry, `product-ext/src/browser/start-pages.js`). It cannot be
 closed in the placeholder. The **Workspace source suggestion** notification is
 not raised for the placeholder folder (a `WorkspaceSuggestionGate` the desktop
 binds; a session binds none). Both are bound only by the electron frontend

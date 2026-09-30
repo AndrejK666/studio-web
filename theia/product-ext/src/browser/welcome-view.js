@@ -28,6 +28,16 @@
  *
  * The decisions — what counts as recent, what is waiting for you, what a row
  * says — are in welcome-scan.js, tested in node. This file reads and paints.
+ *
+ * ONE PAGE PER MODE. This page is Doc editing's (and a build with no modes). The
+ * other modes' pages are registered by the packages that hold their data --
+ * Development, Agent development and Full functionality by theia/studio,
+ * Building by theia/gearbox-studio -- as data this layer paints in the same
+ * look: see start-pages.js for the registry and what a page is. The layer picks
+ * the page by the mode Studio sets on the body, reads it when it is shown, and
+ * draws a button only for a command this build has (disabled, with the reason,
+ * when the command says it cannot run now). A mode nobody drew a page for
+ * leaves the dock empty, as before.
  */
 
 const { URI } = require('@theia/core/lib/common/uri');
@@ -41,6 +51,7 @@ const { ChangesStore } = require('./changes-store');
 const sidecarScan = require('./sidecar-scan');
 const collabScan = require('./collab-scan');
 const scan = require('./welcome-scan');
+const startPages = require('./start-pages');
 
 /* The commands the page runs. Ids, not imports: the handlers live in
  * product-frontend-module.js, and a button that names a command is a button the
@@ -57,6 +68,8 @@ const MAX_PROPOSAL_FILES = 20;
 
 /* A save while the page is on screen is a burst of change events. */
 const RELOAD_DEBOUNCE_MS = 600;
+/* A mode's page reads git status, Orca, the engine: slower to ask, so asked less. */
+const MODE_RELOAD_DEBOUNCE_MS = 1500;
 
 const OPENED_KEY = 'studio-welcome-opened:';
 const EXPLAINED_KEY = 'studio-welcome-explained';
@@ -98,10 +111,51 @@ class WelcomeView {
         this.workspaceService = ctx.workspaceService;
         this.fileService = ctx.fileService;
         this.openerService = ctx.openerService;
+        this.messageService = ctx.messageService;
         this.commentLog = ctx.fileService ? new CommentLog(ctx.fileService, ctx.workspaceService) : undefined;
         this.changesStore = ctx.fileService ? new ChangesStore(ctx.fileService, ctx.workspaceService) : undefined;
         this.state = Object.assign({}, EMPTY_STATE);
         this.token = undefined;
+        /* Which page is on screen: startPages.DOCUMENTS_PAGE, a mode page's
+         * object, or undefined. */
+        this.shown = undefined;
+        this.modeState = undefined;
+        this.registerDocumentSections();
+    }
+
+    /*
+     * What this package lends to other pages: the recent documents, the same rows
+     * Doc editing's page lists, for Full functionality's overview.
+     */
+    registerDocumentSections() {
+        if (this.sectionRegistration) { return; }
+        this.sectionRegistration = startPages.registerStartSection({
+            id: 'documents.recent',
+            title: 'Recent documents',
+            load: ctx => this.recentDocumentsSection(ctx)
+        });
+    }
+
+    async recentDocumentsSection(ctx) {
+        const root = ctx && ctx.root;
+        if (!root || !this.fileService) {
+            return { id: 'documents.recent', title: 'Recent documents', rows: [], empty: 'No project is open.' };
+        }
+        const rootString = root.toString();
+        const walk = await scan.walkDocuments(this.fileService, root, ctx.token || {});
+        const recent = scan.recentDocuments(walk, this.readOpened(rootString), { rootString });
+        return {
+            id: 'documents.recent',
+            title: 'Recent documents',
+            rows: recent.map(row => ({
+                name: row.name,
+                folder: row.folder,
+                meta: row.reason + ' ' + scan.agoText(new Date(row.at).toISOString()),
+                title: row.path,
+                open: row.uri
+            })),
+            empty: 'No documents in this project yet.'
+        };
     }
 
     mount(attempt = 0) {
@@ -123,7 +177,7 @@ class WelcomeView {
         this.node.addEventListener('click', event => this.onActivate(event));
         this.node.addEventListener('keydown', event => {
             if (event.key !== 'Enter' && event.key !== ' ') { return; }
-            if (!event.target.closest('[data-open],[data-run]')) { return; }
+            if (!event.target.closest('[data-open],[data-run],[data-start-act],[data-start-row]')) { return; }
             if (event.target.tagName === 'BUTTON') { return; } // a button already clicks on both
             event.preventDefault();
             this.onActivate(event);
@@ -139,17 +193,40 @@ class WelcomeView {
             panel.widgetAdded.connect((sender, widget) => { this.rememberOpened(widget); this.scheduleRefresh(); });
         }
         if (panel.widgetRemoved) { panel.widgetRemoved.connect(() => this.scheduleRefresh()); }
-        activeProject.onChanged(() => { if (this.visible()) { void this.load(); } });
+        activeProject.onChanged(() => { if (this.visible()) { void this.reload(); } });
         /* A singleton for the life of the page, so identity's listener list —
          * which cannot unsubscribe — holds one closure, not one per tab. */
-        identity.onChanged(() => { if (this.visible()) { void this.load(); } });
+        identity.onChanged(() => { if (this.visible() && this.shown === startPages.DOCUMENTS_PAGE) { void this.load(); } });
         if (this.fileService && this.fileService.onDidFilesChange) {
             this.fileService.onDidFilesChange(() => {
                 if (!this.visible()) { return; }
+                const documents = this.shown === startPages.DOCUMENTS_PAGE;
+                if (!documents && this.shown && this.shown.reloadOnFileChange === false) { return; }
                 clearTimeout(this.reloadTimer);
-                this.reloadTimer = setTimeout(() => void this.load(), RELOAD_DEBOUNCE_MS);
+                this.reloadTimer = setTimeout(() => void this.reload(),
+                    documents ? RELOAD_DEBOUNCE_MS : MODE_RELOAD_DEBOUNCE_MS);
             });
         }
+        /* The mode is an attribute Studio sets on the body (studio-chrome-mode.ts);
+         * the page follows it: Doc editing's own page, another mode's registered
+         * page, or none. */
+        if (typeof MutationObserver !== 'undefined' && document.body) {
+            new MutationObserver(() => this.scheduleRefresh())
+                .observe(document.body, { attributes: true, attributeFilter: ['data-studio-perspective'] });
+        }
+        /* A page registered after the layer mounted (its package started later). */
+        startPages.onStartPagesChanged(() => this.scheduleRefresh());
+        /*
+         * A mode page's buttons follow their commands: registered late (a plugin
+         * activating), enabled by something just run (a product opened). Only
+         * the buttons are repainted -- the rows keep their hover and focus.
+         */
+        if (this.commandRegistry) {
+            const repaint = () => this.scheduleActionRepaint();
+            if (this.commandRegistry.onCommandsChanged) { this.commandRegistry.onCommandsChanged(repaint); }
+            if (this.commandRegistry.onDidExecuteCommand) { this.commandRegistry.onDidExecuteCommand(repaint); }
+        }
+        this.node.addEventListener('mouseenter', () => this.repaintActions());
         this.render();
         this.refresh();
     }
@@ -172,21 +249,112 @@ class WelcomeView {
 
     refresh() {
         if (!this.node) { return; }
-        if (!this.dockIsEmpty()) {
+        const page = startPages.pageForMode(document.body.dataset.studioPerspective,
+            startPages.startPageHub().pages, scan.startPageShownIn);
+        if (!this.dockIsEmpty() || !page) {
             this.node.classList.remove('on', 'in');
+            this.shown = undefined;
+            this.watchPage(undefined);
+            delete this.node.dataset.startPage;
             if (this.token) { this.token.cancelled = true; }
             return;
         }
-        if (this.visible()) { return; }
+        if (this.visible() && this.shown === page) { return; }
+        this.shown = page;
+        this.node.dataset.startPage = page === startPages.DOCUMENTS_PAGE ? page : String(page.id || 'mode');
+        this.watchPage(page);
         this.node.classList.add('on');
         // Shown again: read again. What the page lists is what changed while
         // somebody was looking at a document.
-        void this.load();
+        void this.reload();
         // One frame between "displayed" and "animating", or the transition has
         // no start value to run from.
         requestAnimationFrame(() => {
             if (this.visible()) { this.node.classList.add('in'); }
         });
+    }
+
+    /** Read the page on screen again. */
+    reload() {
+        if (this.shown === startPages.DOCUMENTS_PAGE) { return this.load(); }
+        if (this.shown) { return this.loadModePage(this.shown); }
+        return Promise.resolve();
+    }
+
+    /* A page may say when it should be read again (a product opened, Orca came
+     * up); listened to only while that page is the one shown. */
+    watchPage(page) {
+        if (this.pageWatch) {
+            try { this.pageWatch.dispose(); } catch (e) { /* already gone */ }
+            this.pageWatch = undefined;
+        }
+        if (!page || page === startPages.DOCUMENTS_PAGE || typeof page.watch !== 'function') { return; }
+        try {
+            this.pageWatch = page.watch(() => {
+                if (!this.visible() || this.shown !== page) { return; }
+                clearTimeout(this.reloadTimer);
+                this.reloadTimer = setTimeout(() => void this.reload(), RELOAD_DEBOUNCE_MS);
+            });
+        } catch (e) {
+            console.warn('[studio] the start page could not watch', page.id, e);
+        }
+    }
+
+    // -- a mode's page: the reads ----------------------------------------------
+
+    /**
+     * Read a registered page. The head -- the mode, what it is for, its buttons --
+     * is drawn at once; the sections say "Reading…" until the page answers. A
+     * page that throws is a sentence on the page, not an error dialog for
+     * somebody who only closed their last tab.
+     */
+    async loadModePage(page) {
+        if (this.token) { this.token.cancelled = true; }
+        const token = { cancelled: false };
+        this.token = token;
+        const root = await this.activeRoot();
+        if (token.cancelled) { return; }
+        const previous = this.modeState && this.modeState.page === page ? this.modeState : undefined;
+        const projectName = root ? root.path.base : '';
+        this.modeState = { page, loading: true, projectName, model: previous ? previous.model : undefined, error: '' };
+        this.render();
+        const ctx = {
+            token,
+            root,
+            rootString: root ? root.toString() : '',
+            projectName,
+            section: id => this.borrowSection(id, ctx)
+        };
+        let model;
+        let error = '';
+        try {
+            model = await page.load(ctx);
+        } catch (e) {
+            console.warn('[studio] the start page could not read', page.id, e);
+            error = startPages.failureText(e);
+        }
+        if (token.cancelled || this.shown !== page) { return; }
+        this.modeState = {
+            page,
+            loading: false,
+            projectName,
+            model: model && typeof model === 'object' ? model : { sections: [] },
+            error
+        };
+        this.render();
+    }
+
+    /** A section another package registered, read for this page; undefined when none is. */
+    async borrowSection(id, ctx) {
+        const provider = startPages.startPageHub().sections.slice().reverse()
+            .find(section => section && section.id === id && typeof section.load === 'function');
+        if (!provider) { return undefined; }
+        try {
+            return await provider.load(ctx);
+        } catch (e) {
+            console.warn('[studio] the start page could not read the section', id, e);
+            return { id, title: provider.title || id, rows: [], note: 'Could not be read: ' + startPages.failureText(e) };
+        }
     }
 
     // -- the reads -----------------------------------------------------------
@@ -338,6 +506,11 @@ class WelcomeView {
     // -- actions ---------------------------------------------------------------
 
     onActivate(event) {
+        const item = event.target.closest('[data-start-act],[data-start-row]');
+        if (item && this.node.contains(item)) {
+            this.activateModeItem(item);
+            return;
+        }
         const target = event.target.closest('[data-open],[data-run]');
         if (!target || !this.node.contains(target)) { return; }
         if (target.dataset.run) {
@@ -356,11 +529,174 @@ class WelcomeView {
             console.warn('[studio] the start page could not run', commandId, e));
     }
 
+    /** A mode page's button or row, asked again first: what was drawn may be a moment old. */
+    activateModeItem(element) {
+        const state = this.modeState;
+        if (!state || !state.page) { return; }
+        let item;
+        if (element.dataset.startAct !== undefined) {
+            item = this.modeActions()[Number(element.dataset.startAct)];
+        } else {
+            const [section, row] = String(element.dataset.startRow).split(':').map(Number);
+            const view = this.modeSections()[section];
+            item = view && (row === -1 ? view.moreAction : view.rows[row]);
+        }
+        if (!item) { return; }
+        const label = item.label || item.name || item.command || 'action';
+        if (item.enabled === false) { this.repaintActions(); return; }
+        if (typeof item.activate === 'function') {
+            Promise.resolve().then(() => item.activate()).catch(e => this.failed(label, e));
+            return;
+        }
+        if (item.open) {
+            if (!this.openerService) { return; }
+            open(this.openerService, new URI(item.open)).catch(e => this.failed(label, e));
+            return;
+        }
+        if (item.command) {
+            const now = startPages.actionState(this.commandRegistry, item);
+            if (!now || !now.enabled) { this.repaintActions(); return; }
+            const args = Array.isArray(item.args) ? item.args : [];
+            this.commandRegistry.executeCommand(item.command, ...args).catch(e => this.failed(label, e));
+        }
+    }
+
+    failed(label, error) {
+        console.warn('[studio] the start page could not run', label, error);
+        if (this.messageService) { this.messageService.warn(label + ': ' + startPages.failureText(error)); }
+    }
+
+    modeActions() {
+        const state = this.modeState;
+        const page = this.shown;
+        if (!page || page === startPages.DOCUMENTS_PAGE) { return []; }
+        const own = state && state.page === page && state.model && Array.isArray(state.model.actions) ? state.model.actions : undefined;
+        return own || (Array.isArray(page.actions) ? page.actions : []);
+    }
+
+    /** The sections in the order they are drawn, so a row's index finds its row. */
+    modeSections() {
+        const state = this.modeState;
+        const sections = state && state.model && Array.isArray(state.model.sections) ? state.model.sections : [];
+        return startPages.columnsOf(sections).reduce((all, column) => all.concat(column), []);
+    }
+
     // -- paint -----------------------------------------------------------------
 
     render() {
         if (!this.node) { return; }
+        if (this.shown && this.shown !== startPages.DOCUMENTS_PAGE) {
+            this.node.innerHTML = this.modeHtml();
+            return;
+        }
         this.node.innerHTML = this.html();
+    }
+
+    scheduleActionRepaint() {
+        if (this.actionRepaint || !this.visible()) { return; }
+        this.actionRepaint = requestAnimationFrame(() => {
+            this.actionRepaint = undefined;
+            this.repaintActions();
+        });
+    }
+
+    repaintActions() {
+        if (!this.visible() || !this.shown || this.shown === startPages.DOCUMENTS_PAGE) { return; }
+        const host = this.node.querySelector('[data-start-actions]');
+        if (!host) { return; }
+        const html = this.modeActionsHtml();
+        if (host.innerHTML !== html) { host.innerHTML = html; }
+    }
+
+    // -- a mode's page: the paint ------------------------------------------------
+
+    modeHtml() {
+        const page = this.shown;
+        const state = this.modeState && this.modeState.page === page ? this.modeState : undefined;
+        if (!state) {
+            return '<div class="studio-welcome-body">' + this.modeHeadHtml(page, '') +
+                '<div class="studio-start-grid single"><div class="studio-start-col">' + this.loadingHtml() + '</div></div></div>';
+        }
+        const model = state.model || {};
+        let grid = '';
+        if (state.loading && !state.model) {
+            grid = '<div class="studio-start-grid single"><div class="studio-start-col">' + this.loadingHtml() + '</div></div>';
+        } else {
+            const columns = startPages.columnsOf(model.sections || []);
+            let index = 0;
+            const html = columns.map(column =>
+                '<div class="studio-start-col">' + column.map(view => this.modeSectionHtml(view, index++)).join('') + '</div>').join('');
+            if (index) {
+                grid = '<div class="studio-start-grid' + (columns.length === 1 ? ' single' : '') + '">' + html + '</div>';
+            }
+        }
+        return '<div class="studio-welcome-body">' +
+            this.modeHeadHtml(page, state.projectName) +
+            (state.error ? '<p class="studio-start-note" data-start-error>This page could not be read: ' + esc(state.error) + '</p>' : '') +
+            grid +
+            (!state.loading && model.foot ? '<p class="studio-start-honesty" data-start-honesty>' + esc(model.foot) + '</p>' : '') +
+            '</div>';
+    }
+
+    modeHeadHtml(page, projectName) {
+        return '<header class="studio-start-head">' +
+            '<div class="studio-start-title-wrap">' +
+            '<span class="studio-start-eyebrow">' + esc(projectName || 'No project open') + '</span>' +
+            '<h2 class="studio-start-title" data-welcome-title>' + esc(page.label || '') + '</h2>' +
+            (page.summary ? '<p class="studio-start-sub">' + esc(page.summary) + '</p>' : '') +
+            '</div>' +
+            '<div class="studio-start-actions" data-start-actions>' + this.modeActionsHtml() + '</div>' +
+            '</header>';
+    }
+
+    modeActionsHtml() {
+        const actions = this.modeActions();
+        return startPages.visibleActions(this.commandRegistry, actions).map(({ action, state }, drawn) => {
+            const index = actions.indexOf(action);
+            return '<button type="button" class="studio-btn' + (drawn === 0 ? ' primary' : '') + '"' +
+                ' data-start-act="' + index + '" data-start-action="' + esc(action.id || action.command || String(index)) + '"' +
+                ' title="' + esc(state.title) + '"' +
+                (state.enabled ? '' : ' aria-disabled="true"') + '>' +
+                esc(action.label || '') +
+                (action.kbd ? ' <kbd>' + esc(action.kbd) + '</kbd>' : '') +
+                '</button>';
+        }).join('');
+    }
+
+    modeSectionHtml(view, sectionIndex) {
+        let body = '';
+        if (view.rows.length) {
+            body = '<ul class="studio-start-list">' + view.rows.map((row, rowIndex) => {
+                const state = startPages.rowState(this.commandRegistry, row);
+                const inner = '<span class="studio-start-main">' +
+                    '<span class="studio-start-name">' + esc(row.name) + '</span>' +
+                    (row.detail ? '<span class="studio-start-preview">' + esc(row.detail) + '</span>' : '') +
+                    (row.folder ? '<span class="studio-start-folder">' + esc(row.folder) + '</span>' : '') +
+                    '</span>' +
+                    ((row.tag || row.meta) ? '<span class="studio-start-meta">' +
+                        (row.tag ? '<span class="studio-start-tag">' + esc(row.tag) + '</span>' : '') +
+                        esc(row.meta) + '</span>' : '');
+                if (state.kind === 'none') {
+                    return '<li><div class="studio-start-row static" title="' + esc(row.title || '') + '">' + inner + '</div></li>';
+                }
+                return '<li><button type="button" class="studio-start-row" data-start-row="' + sectionIndex + ':' + rowIndex + '"' +
+                    ' title="' + esc(state.title || row.title || '') + '"' + (state.enabled ? '' : ' aria-disabled="true"') + '>' +
+                    inner + '</button></li>';
+            }).join('') + '</ul>';
+        } else if (view.empty) {
+            body = this.emptyHtml(esc(view.empty));
+        }
+        if (view.more) {
+            const label = view.more + ' more';
+            body += '<p class="studio-start-more">' + (view.moreAction
+                ? '<button type="button" class="studio-start-link" data-start-row="' + sectionIndex + ':-1">' + esc(view.moreAction.label || label) + '</button>'
+                : esc(label)) + '</p>';
+        }
+        if (view.note) { body += '<p class="studio-start-note" data-start-note>' + esc(view.note) + '</p>'; }
+        return '<section class="studio-start-section" data-start-section="' + esc(view.id) + '">' +
+            '<h3 class="studio-start-section-head"><span>' + esc(view.title) + '</span>' +
+            (view.count ? '<span class="studio-start-count">' + esc(view.count) + '</span>' : '') + '</h3>' +
+            body + '</section>';
     }
 
     html() {
@@ -569,7 +905,8 @@ const WELCOME_CSS = `
   font-size: clamp(24px, 3.4cqi, 34px); overflow-wrap: anywhere;
 }
 .studio-start-sub { margin: 10px 0 0; max-width: 56ch; color: var(--studio-muted); font: 400 13px/1.6 inherit; }
-.studio-start-actions { display: flex; gap: 8px; flex: none; }
+.studio-start-actions { display: flex; gap: 8px; flex: none; flex-wrap: wrap; }
+.studio-start-actions .studio-btn[aria-disabled="true"] { opacity: .5; cursor: default; }
 .studio-start-actions .studio-btn { padding: 8px 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
 .studio-start-actions kbd {
   font: 500 10.5px/1 var(--studio-mono, inherit); color: var(--studio-muted);
@@ -597,6 +934,10 @@ const WELCOME_CSS = `
   padding: 7px 8px; border-radius: 6px; cursor: pointer;
 }
 .studio-start-row:hover { background: var(--studio-surface-sunken); }
+.studio-start-row.static { cursor: default; }
+.studio-start-row.static:hover { background: none; }
+.studio-start-row[aria-disabled="true"] { cursor: default; opacity: .6; }
+.studio-start-grid.single { grid-template-columns: minmax(0, 1fr); }
 .studio-start-row:focus-visible { outline: 2px solid var(--studio-focus, var(--studio-accent)); outline-offset: -2px; }
 .studio-start-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .studio-start-name { font: 500 13px/1.4 inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
