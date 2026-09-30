@@ -52,8 +52,8 @@ row has.
   when there are many. Each chip counts the rows its value would show under
   the other filters and the search. A count that cannot be known reads "—",
   never 0.
-- **Paging:** a list longer than a page shows the shared pager, with
-  "51–100 of 2,446". A list is never cut short without saying so. When the
+- **Paging:** a list longer than a page shows the shared pager under it, at its
+  right edge, with "51–100 of 2,446" first and then the pages. A list is never cut short without saying so. When the
   backend pages, the table asks it for the page. When the list arrived whole,
   the table pages it in the browser. Both look the same.
 - **A new search or filter goes back to page one.**
