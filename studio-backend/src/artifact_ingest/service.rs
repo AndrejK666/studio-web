@@ -1596,6 +1596,30 @@ impl IngestService {
             .collect())
     }
 
+    /// Every text file of the clone a sync of `repo_full_path` through
+    /// `secret_ref` left under `work_root`, as `(path, text)`. Read as it
+    /// stands — no fetch: the sync keeps it current, and a detector asked
+    /// about a document wants the text the Specs screen was built from.
+    pub async fn read_synced_clone(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let Some(root) = self.work_root.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let dir = root.join(clone::checkout_key(secret_ref, repo_full_path));
+        if !dir.join(".git").is_dir() {
+            return Ok(Vec::new());
+        }
+        let (_dir, walked, _commit) = self.walk_checkout(dir).await?;
+        Ok(walked
+            .files
+            .into_iter()
+            .filter_map(|f| f.text.map(|t| (f.path, t)))
+            .collect())
+    }
+
     /// The nodes of one type set that name `scope` as their workspace or
     /// project — from the index when the tenant has one.
     pub async fn list_in_scope(
@@ -1839,6 +1863,14 @@ impl super::port::RepoFileReader for IngestService {
         repo_dir: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
         IngestService::read_repo_files(self, workspace_id, repo_dir).await
+    }
+
+    async fn read_synced_clone(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        IngestService::read_synced_clone(self, secret_ref, repo_full_path).await
     }
 }
 
@@ -2236,5 +2268,47 @@ mod prune_tests {
         let left = ids(&graph).await;
         assert!(!left.contains(&workspace_level.0));
         assert!(left.contains(&in_project.0) && left.contains(&in_project.1));
+    }
+
+    /// A detector reads the clone the sync left when no session shares its
+    /// checkout — on a Kubernetes stand, always.
+    #[tokio::test]
+    async fn the_synced_clone_is_readable_by_the_connection_and_path_it_was_synced_with() {
+        let root = std::env::temp_dir().join(format!("studio-clone-{}", Uuid::new_v4()));
+        let dir = root.join(super::clone::checkout_key(
+            "studio-connection-1",
+            "org/repo",
+        ));
+        std::fs::create_dir_all(dir.join(".git")).expect("git dir");
+        std::fs::create_dir_all(dir.join("docs")).expect("docs dir");
+        std::fs::write(dir.join("docs/adr.md"), "# Decision").expect("file");
+        let svc = IngestService::new(
+            Arc::new(NoSecrets),
+            HashMap::new(),
+            Arc::new(InMemoryGraphStore::default()),
+            None,
+            None,
+            None,
+            Some(root.clone()),
+        );
+
+        let files = svc
+            .read_synced_clone("studio-connection-1", "org/repo")
+            .await
+            .expect("read");
+        let other = svc
+            .read_synced_clone("studio-connection-2", "org/repo")
+            .await
+            .expect("read");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            files,
+            vec![("docs/adr.md".to_string(), "# Decision".to_string())]
+        );
+        assert!(
+            other.is_empty(),
+            "another connection's clone is not this one"
+        );
     }
 }
