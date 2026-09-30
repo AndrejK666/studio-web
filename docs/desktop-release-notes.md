@@ -30,7 +30,7 @@ only, as before.
   ribbon; New Product's destination says "not chosen yet" and Use suggested
   is the main button. (#562)
 - **New Gear with no product** says what to open instead of the engine's
-`\?`  command-line advice, and its path has no `\?\` prefix; the antivirus
+  command-line advice, and its path has no `\\?\` prefix; the antivirus
   notice shows once. (#566)
 - **A Studio backend that cannot be reached** is said so in the catalogue,
   with Retry, instead of "No gear.gdl". (#558)
