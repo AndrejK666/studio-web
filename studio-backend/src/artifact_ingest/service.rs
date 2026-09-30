@@ -124,6 +124,46 @@ fn gone_contents(gone: &[GtsNode]) -> Vec<GtsNode> {
         .collect()
 }
 
+/// A repository attachment a prune leaves alone: the connection and path a
+/// sync of it is asked for.
+#[derive(Debug, Clone)]
+pub struct KeptRepo {
+    pub connector_id: String,
+    pub repo_full_path: String,
+}
+
+/// What a prune forgot.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct PruneSummary {
+    /// Repository nodes.
+    pub repos: usize,
+    /// Their issues, pull requests, files, comments and commits.
+    pub nodes: usize,
+    /// Document bindings recorded against those files.
+    pub bindings: usize,
+}
+
+/// True when a node was stored for exactly this attachment scope — the one a
+/// sync with these ids stamps (see `store_node_batch`).
+///
+/// Exact, unlike the listing's `node_in_scope`: that one lets a workspace see
+/// every project under it, which is right for reading and would be a disaster
+/// for forgetting. A workspace-level prune must not reach into its projects.
+fn in_attachment(
+    value: &serde_json::Value,
+    workspace_id: Option<&str>,
+    project_id: Option<&str>,
+) -> bool {
+    let field = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
+    match (project_id, workspace_id) {
+        (Some(project), _) => field("project_id") == Some(project),
+        (None, Some(workspace)) => {
+            field("workspace_id") == Some(workspace) && field("project_id").is_none()
+        }
+        (None, None) => field("workspace_id").is_none() && field("project_id").is_none(),
+    }
+}
+
 /// What a sync has counted.
 ///
 /// Reported live through the progress bridge as the sync runs, and again as the
@@ -1023,6 +1063,22 @@ impl IngestService {
             edge_chunk = EDGE_CHUNK,
             "studio-artifact-ingest: stored graph (chunked)"
         );
+
+        // Only now, with this attachment fully stored: an older attachment of
+        // the same repository is still the better answer until then. Never
+        // fails the sync — what is left is found again by the next one.
+        progress.set("forgetting older copies…");
+        if let Err(e) = self
+            .prune_superseded(ctx, workspace_id, project_id, &repo_id, repo_full_path)
+            .await
+        {
+            warn!(
+                error = %e,
+                repo = repo_full_path,
+                "studio-artifact-ingest: could not forget an older attachment of this repository"
+            );
+        }
+
         Ok(SyncSummary {
             issues,
             pull_requests,
@@ -1299,6 +1355,140 @@ impl IngestService {
                 0
             }
         }
+    }
+
+    /// Forget every repository the attachment scope holds that is not in
+    /// `keep`, with everything synced from it.
+    ///
+    /// The graph keys a repository by attachment scope, connection and path
+    /// (see [`gts::repo_node`]), and a sync only ever adds. So detaching a
+    /// repository, or attaching the same one again through another connection,
+    /// used to leave the old node set standing beside the new one — and every
+    /// file of it showing on the Specs screen once per attachment it ever had.
+    /// `keep` is what the project has attached now; anything else in its scope
+    /// was attached once and is not any more.
+    pub async fn prune_detached(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        keep: &[KeptRepo],
+    ) -> anyhow::Result<PruneSummary> {
+        let scope = project_id.or(workspace_id).unwrap_or("unscoped");
+        let kept: HashSet<String> = keep
+            .iter()
+            .map(|k| gts::repo_node(scope, &k.connector_id, "", &k.repo_full_path).instance_id)
+            .collect();
+        self.prune_repos(ctx, workspace_id, project_id, |repo| {
+            !kept.contains(&repo.instance_id)
+        })
+        .await
+    }
+
+    /// After a sync of `repo_full_path`: forget the same repository as it was
+    /// synced in this scope through any OTHER connection.
+    ///
+    /// That is always an older attachment of the one just synced — a project
+    /// holds a repository once — so it goes without waiting for anybody to
+    /// ask, and a re-attached repository stops listing its files twice.
+    async fn prune_superseded(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        current_repo_id: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<PruneSummary> {
+        self.prune_repos(ctx, workspace_id, project_id, |repo| {
+            repo.instance_id != current_repo_id
+                && repo
+                    .value
+                    .get("full_path")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(repo_full_path)
+        })
+        .await
+    }
+
+    /// Forget the repository nodes of one attachment scope that `stale`
+    /// picks, everything synced from them, and the bindings of their files.
+    ///
+    /// In `prune_gone_files`' order and for its reasons: bindings first, then
+    /// file content, then the children, and the repository node last — each
+    /// step is found again from the one after it, so a failure part-way leaves
+    /// something the next prune still finds rather than an orphan nothing does.
+    /// `delete_nodes` retires rather than deletes, so attaching the repository
+    /// again later syncs over the same keys.
+    async fn prune_repos(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        stale: impl Fn(&GtsNode) -> bool,
+    ) -> anyhow::Result<PruneSummary> {
+        let listed = self.graph.list(ctx, Some(gts::REPO_TYPE)).await?;
+        let repos: Vec<GtsNode> = listed
+            .iter()
+            .filter(|n| in_attachment(&n.value, workspace_id, project_id) && stale(n))
+            .cloned()
+            .collect();
+        if repos.is_empty() {
+            return Ok(PruneSummary::default());
+        }
+        let doomed: HashSet<&str> = repos.iter().map(|n| n.instance_id.as_str()).collect();
+
+        let mut files: Vec<GtsNode> = Vec::new();
+        let mut others: Vec<GtsNode> = Vec::new();
+        for type_id in [
+            gts::FILE_TYPE,
+            gts::ISSUE_TYPE,
+            gts::PULL_REQUEST_TYPE,
+            gts::COMMENT_TYPE,
+            gts::COMMIT_TYPE,
+        ] {
+            for node in self.graph.list(ctx, Some(type_id)).await?.iter() {
+                let repo = node.value.get("repo").and_then(serde_json::Value::as_str);
+                if repo.is_some_and(|r| doomed.contains(r))
+                    && in_attachment(&node.value, workspace_id, project_id)
+                {
+                    if type_id == gts::FILE_TYPE {
+                        files.push(node.clone());
+                    } else {
+                        others.push(node.clone());
+                    }
+                }
+            }
+        }
+
+        let mut bindings = 0;
+        if let (Some(classifier), Some(workspace)) = (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) && !files.is_empty()
+        {
+            let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
+            let node_ids = files.iter().map(|n| n.instance_id.clone()).collect();
+            bindings = classifier
+                .forget_ingested(ctx, workspace, project, node_ids)
+                .await?;
+        }
+        self.graph.delete_nodes(ctx, &gone_contents(&files)).await?;
+        let mut nodes = self.graph.delete_nodes(ctx, &files).await?;
+        nodes += self.graph.delete_nodes(ctx, &others).await?;
+        let repos = self.graph.delete_nodes(ctx, &repos).await?;
+        info!(
+            repos,
+            nodes,
+            bindings,
+            workspace_id,
+            project_id,
+            "studio-artifact-ingest: forgot repositories no longer attached"
+        );
+        Ok(PruneSummary {
+            repos,
+            nodes,
+            bindings,
+        })
     }
 
     /// Tag a batch of freshly-built nodes with their tenant scope and upsert
@@ -1775,5 +1965,276 @@ mod tests {
         issue.type_id = gts::ISSUE_TYPE;
         let listed = listing(&[]);
         assert!(gone_files(&[issue], &repo_id("project-a"), Some(&listed)).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use credstore_sdk::{
+        CredStoreError, GetSecretResponse, SecretValue, SharingMode, WriteOptions,
+        WritePrecondition,
+    };
+    use serde_json::json;
+
+    use super::*;
+    use crate::artifact_ingest::graph::InMemoryGraphStore;
+    use crate::documents::port::ClassifiedCounts;
+
+    const WS: &str = "00000000-0000-0000-0000-00000000000a";
+    const PROJECT: &str = "00000000-0000-0000-0000-00000000000b";
+    const OTHER_PROJECT: &str = "00000000-0000-0000-0000-00000000000c";
+
+    struct NoSecrets;
+
+    #[async_trait]
+    impl CredStoreClientV1 for NoSecrets {
+        async fn get(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+        ) -> Result<Option<GetSecretResponse>, CredStoreError> {
+            Ok(None)
+        }
+
+        async fn put_opts(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+            _value: SecretValue,
+            _sharing: SharingMode,
+            _precondition: WritePrecondition,
+            _opts: WriteOptions,
+        ) -> Result<(), CredStoreError> {
+            Ok(())
+        }
+
+        async fn create_opts(
+            &self,
+            _ctx: &SecurityContext,
+            _key: &SecretRef,
+            _value: SecretValue,
+            _sharing: SharingMode,
+            _opts: WriteOptions,
+        ) -> Result<(), CredStoreError> {
+            Ok(())
+        }
+    }
+
+    /// Records what it was asked to forget.
+    #[derive(Default)]
+    struct Forgetful {
+        forgot: Mutex<Vec<(Option<Uuid>, Vec<String>)>>,
+    }
+
+    #[async_trait]
+    impl DocumentClassifier for Forgetful {
+        async fn classify_ingested(
+            &self,
+            _ctx: &SecurityContext,
+            _workspace_id: Uuid,
+            _project_id: Option<Uuid>,
+            _files: Vec<IngestedDocument>,
+        ) -> anyhow::Result<ClassifiedCounts> {
+            Ok(ClassifiedCounts::default())
+        }
+
+        async fn forget_ingested(
+            &self,
+            _ctx: &SecurityContext,
+            _workspace_id: Uuid,
+            project_id: Option<Uuid>,
+            mut node_ids: Vec<String>,
+        ) -> anyhow::Result<usize> {
+            node_ids.sort();
+            let n = node_ids.len();
+            self.forgot
+                .lock()
+                .expect("forgot")
+                .push((project_id, node_ids));
+            Ok(n)
+        }
+    }
+
+    fn ctx() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(0xca7))
+            .subject_type("user")
+            .subject_tenant_id(Uuid::parse_str(WS).expect("uuid"))
+            .build()
+            .expect("security context")
+    }
+
+    fn stamped(mut node: GtsNode, project: Option<&str>) -> GtsNode {
+        let obj = node.value.as_object_mut().expect("object");
+        obj.insert("workspace_id".into(), json!(WS));
+        if let Some(p) = project {
+            obj.insert("project_id".into(), json!(p));
+        }
+        node
+    }
+
+    /// One repository as a sync of it would store it: the repo node and one
+    /// file. Returns (repo id, file id).
+    fn synced(
+        nodes: &mut Vec<GtsNode>,
+        project: Option<&str>,
+        connection: &str,
+        repo: &str,
+    ) -> (String, String) {
+        let scope = project.unwrap_or(WS);
+        let r = gts::repo_node(scope, connection, "github", repo);
+        let repo_id = r.instance_id.clone();
+        let f = gts::file_node_cloned(
+            scope,
+            &repo_id,
+            connection,
+            repo,
+            "README.md",
+            1,
+            true,
+            None,
+            None,
+        );
+        let file_id = f.instance_id.clone();
+        nodes.push(stamped(r, project));
+        nodes.push(stamped(f, project));
+        (repo_id, file_id)
+    }
+
+    fn service() -> (IngestService, Arc<InMemoryGraphStore>, Arc<Forgetful>) {
+        let graph = Arc::new(InMemoryGraphStore::default());
+        let classifier = Arc::new(Forgetful::default());
+        let svc = IngestService::new(
+            Arc::new(NoSecrets),
+            HashMap::new(),
+            graph.clone(),
+            None,
+            Some(classifier.clone()),
+            None,
+            None,
+        );
+        (svc, graph, classifier)
+    }
+
+    /// The nodes anything still lists.
+    async fn ids(graph: &InMemoryGraphStore) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for t in [gts::REPO_TYPE, gts::FILE_TYPE] {
+            for n in graph.list(&ctx(), Some(t)).await.expect("list").iter() {
+                out.insert(n.instance_id.clone());
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn a_pruned_repository_keeps_its_keys_so_attaching_it_again_can_sync_it() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let gone = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        svc.prune_detached(&ctx(), Some(WS), Some(PROJECT), &[])
+            .await
+            .expect("prune");
+
+        assert!(ids(&graph).await.is_empty());
+
+        // Attaching it again is an ordinary sync over the same keys.
+        let mut again = Vec::new();
+        let back = synced(&mut again, Some(PROJECT), "conn", "org/studio-web");
+        graph.upsert_nodes(&ctx(), &again).await.expect("upsert");
+        assert_eq!(back, gone);
+        assert_eq!(ids(&graph).await, HashSet::from([gone.0, gone.1]));
+    }
+
+    #[tokio::test]
+    async fn a_detached_repository_and_an_older_attachment_go_and_the_current_one_stays() {
+        let (svc, graph, classifier) = service();
+        let mut nodes = Vec::new();
+        let current = synced(&mut nodes, Some(PROJECT), "conn-new", "org/studio-web");
+        let older = synced(&mut nodes, Some(PROJECT), "conn-old", "org/studio-web");
+        let fork = synced(&mut nodes, Some(PROJECT), "conn-new", "me/studio-web");
+        // The same repository in a sibling project is that project's business.
+        let sibling = synced(
+            &mut nodes,
+            Some(OTHER_PROJECT),
+            "conn-old",
+            "org/studio-web",
+        );
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        let summary = svc
+            .prune_detached(
+                &ctx(),
+                Some(WS),
+                Some(PROJECT),
+                &[KeptRepo {
+                    connector_id: "conn-new".into(),
+                    repo_full_path: "org/studio-web".into(),
+                }],
+            )
+            .await
+            .expect("prune");
+
+        assert_eq!((summary.repos, summary.nodes), (2, 2));
+        let left = ids(&graph).await;
+        for id in [&current.0, &current.1, &sibling.0, &sibling.1] {
+            assert!(left.contains(id), "{id} should have stayed");
+        }
+        for id in [&older.0, &older.1, &fork.0, &fork.1] {
+            assert!(!left.contains(id), "{id} should be gone");
+        }
+        let mut forgotten = vec![older.1.clone(), fork.1.clone()];
+        forgotten.sort();
+        assert_eq!(
+            *classifier.forgot.lock().expect("forgot"),
+            vec![(Some(Uuid::parse_str(PROJECT).expect("uuid")), forgotten)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sync_removes_the_same_repository_attached_through_another_connection_only() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let current = synced(&mut nodes, Some(PROJECT), "conn-new", "org/studio-web");
+        let older = synced(&mut nodes, Some(PROJECT), "conn-old", "org/studio-web");
+        let other = synced(&mut nodes, Some(PROJECT), "conn-old", "org/other");
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        svc.prune_superseded(
+            &ctx(),
+            Some(WS),
+            Some(PROJECT),
+            &current.0,
+            "org/studio-web",
+        )
+        .await
+        .expect("prune");
+
+        let left = ids(&graph).await;
+        assert!(left.contains(&current.0) && left.contains(&current.1));
+        assert!(left.contains(&other.0) && left.contains(&other.1));
+        assert!(!left.contains(&older.0) && !left.contains(&older.1));
+    }
+
+    #[tokio::test]
+    async fn a_workspace_level_prune_never_reaches_into_its_projects() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let workspace_level = synced(&mut nodes, None, "conn", "org/ws-repo");
+        let in_project = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        svc.prune_detached(&ctx(), Some(WS), None, &[])
+            .await
+            .expect("prune");
+
+        let left = ids(&graph).await;
+        assert!(!left.contains(&workspace_level.0));
+        assert!(left.contains(&in_project.0) && left.contains(&in_project.1));
     }
 }

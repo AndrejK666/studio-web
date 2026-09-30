@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::graph::{NodePageQuery, PageStart};
 use super::ingest_task::{IngestPayload, TASK_TYPE};
-use super::service::{IngestService, ProjectArtifact, SyncSummary};
+use super::service::{IngestService, KeptRepo, ProjectArtifact, SyncSummary};
 use crate::pagination::{PageQuery, page_of};
 
 /// Errors attributable to an artifact-ingest resource (e.g. an unknown task).
@@ -147,6 +147,44 @@ pub struct SyncEnqueued {
     pub task_id: String,
     /// `queued` at enqueue time.
     pub status: String,
+}
+
+/// One repository a reconcile keeps — the same pair a sync of it is sent.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AttachedRepo {
+    /// credstore reference of the connection the repository is attached
+    /// through (the sync's `secret_ref`).
+    pub secret_ref: String,
+    /// Namespaced repository path, e.g. `org/repo`.
+    pub repo_full_path: String,
+}
+
+/// Which attachment scope to reconcile, and what it has attached now.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReconcileRequest {
+    /// Same meaning as on [`SyncRequest`]: the scope a sync stamps is the
+    /// project when one is named, else the workspace.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Every repository the scope has attached now. Any other repository
+    /// synced into the scope is forgotten, with everything synced from it.
+    pub keep: Vec<AttachedRepo>,
+}
+
+/// What a reconcile forgot.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReconcileResponse {
+    /// Repository nodes forgotten.
+    pub repos: usize,
+    /// Issues, pull requests, files, comments and commits forgotten with them.
+    pub nodes: usize,
+    /// Document bindings dropped for those files.
+    pub bindings: usize,
 }
 
 /// The state of a background sync task.
@@ -514,6 +552,45 @@ async fn sync(
     Ok(Json(SyncEnqueued {
         task_id: run_id.to_string(),
         status: "queued".to_string(),
+    }))
+}
+
+async fn reconcile(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Json(req): Json<ReconcileRequest>,
+) -> ApiResult<JsonBody<ReconcileResponse>> {
+    let svc = ingest.get()?;
+    let trimmed = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let workspace_id = trimmed(req.workspace_id.as_deref());
+    let project_id = trimmed(req.project_id.as_deref());
+    // Refused rather than read as "the unscoped graph": a caller that lost its
+    // ids would otherwise forget every repository nobody scoped.
+    if workspace_id.is_none() && project_id.is_none() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_constraint("workspace_id or project_id is required")
+            .create());
+    }
+    let keep: Vec<KeptRepo> = req
+        .keep
+        .into_iter()
+        .map(|k| KeptRepo {
+            connector_id: k.secret_ref.trim().to_string(),
+            repo_full_path: k.repo_full_path.trim().to_string(),
+        })
+        .collect();
+    let summary = svc
+        .prune_detached(&ctx, workspace_id.as_deref(), project_id.as_deref(), &keep)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(ReconcileResponse {
+        repos: summary.repos,
+        nodes: summary.nodes,
+        bindings: summary.bindings,
     }))
 }
 
@@ -1079,6 +1156,31 @@ pub fn register_routes(
         .json_request::<SyncRequest>(openapi, "Source to ingest")
         .handler(sync)
         .json_response_with_schema::<SyncEnqueued>(openapi, StatusCode::OK, "Sync enqueued")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-artifact-ingest/v1/reconcile")
+        .operation_id("studio_artifact_ingest.reconcile_repositories")
+        .summary("Forget repositories a project no longer has attached")
+        .description(
+            "Forgets, in one attachment scope, every synced repository that is \
+             not in `keep` — its issues, pull requests, files, comments and \
+             commits, and the document bindings of its files. Called when a \
+             repository is detached, so the project stops listing what it let \
+             go of. Attaching it again later syncs it as before.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ReconcileRequest>(openapi, "Scope and the repositories it keeps")
+        .handler(reconcile)
+        .json_response_with_schema::<ReconcileResponse>(
+            openapi,
+            StatusCode::OK,
+            "What was forgotten",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

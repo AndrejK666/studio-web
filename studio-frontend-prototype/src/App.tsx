@@ -41,7 +41,7 @@ import { BackgroundWork } from "./tasks";
 import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./work-inbox";
 import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
-import { runRepoSync, parseRepoSource, type SyncProgress } from "./artifact-sync";
+import { runRepoSync, pruneDetached, findRepoNode, type SyncProgress } from "./artifact-sync";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { GearsTable, PermissionsTable } from "./system-tables";
@@ -7197,7 +7197,12 @@ function ProjectSources({
     // whenever the stored count climbs (and once at the end) rather than on
     // every poll tick.
     let lastStored = -1;
-    await runRepoSync(token, r, { workspaceId: parentWorkspaceId ?? ws.id, projectId: ws.id }, (p) => {
+    const scope = { workspaceId: parentWorkspaceId ?? ws.id, projectId: ws.id };
+    // Whatever an earlier attachment left behind goes first, so this sync is
+    // not listed beside it. Best-effort: a failed prune is retried by the
+    // next sync, and must not stop this one.
+    if (repos) await pruneDetached(token, repos, scope).catch(() => undefined);
+    await runRepoSync(token, r, scope, (p) => {
       setSync((s) => ({ ...s, [r.name]: p }));
       if (!p.running || p.stored > lastStored) {
         lastStored = p.stored;
@@ -7257,11 +7262,8 @@ function ProjectSources({
 
   /** Matched on the parsed full path, not on the directory name: the name is a
    *  local choice, the full path is the repository's identity. */
-  const graphRepo = (r: RepoEntry): import("./api").ArtifactNode | undefined => {
-    const fullPath = parseRepoSource(r.url ?? undefined)?.full_path;
-    if (!fullPath) return undefined;
-    return repoNodes.find((n) => n.value.full_path === fullPath);
-  };
+  const graphRepo = (r: RepoEntry): import("./api").ArtifactNode | undefined =>
+    findRepoNode(repoNodes, r);
 
   useEffect(() => {
     void reload();
@@ -7272,9 +7274,13 @@ function ProjectSources({
     setErr(null);
     try {
       const s = (await api.workspaceSettings(token, ws.id)) ?? {};
-      await api.putWorkspaceSettings(token, ws.id, {
-        ...s,
-        repos: (s.repos ?? []).filter((r) => r.name !== name),
+      const remaining = (s.repos ?? []).filter((r) => r.name !== name);
+      await api.putWorkspaceSettings(token, ws.id, { ...s, repos: remaining });
+      // The graph keeps what was synced until it is told otherwise; without
+      // this, the detached repository's files stay on the Specs screen.
+      await pruneDetached(token, remaining, {
+        workspaceId: parentWorkspaceId ?? ws.id,
+        projectId: ws.id,
       });
       await reload();
     } catch (e) {

@@ -61,6 +61,53 @@ export function parseRepoSource(
   }
 }
 
+/**
+ * Drop from the graph whatever this project synced from repositories it no
+ * longer has attached — a detached fork, or the same repository attached once
+ * before through another connection. The graph only ever upserts, so without
+ * this each such repository keeps listing its files beside the current ones.
+ *
+ * `attached` is the project's repository list as it stands now. When any entry
+ * cannot say which graph it would sync into (an unsupported URL, no token),
+ * nothing is pruned: the keep-list would be missing it, and its files would
+ * go with the ones that are really gone.
+ */
+export async function pruneDetached(
+  token: string,
+  attached: RepoEntry[],
+  scope: SyncScope,
+): Promise<void> {
+  const keep: { secret_ref: string; repo_full_path: string }[] = [];
+  for (const repo of attached) {
+    const parsed = parseRepoSource(repo.url ?? undefined);
+    if (!parsed || !repo.token_ref) return;
+    keep.push({ secret_ref: repo.token_ref, repo_full_path: parsed.full_path });
+  }
+  await api.pruneArtifacts(token, {
+    workspace_id: scope.workspaceId,
+    project_id: scope.projectId,
+    keep,
+  });
+}
+
+/**
+ * The graph's repository node for an attached source.
+ *
+ * By connection AND path: the same repository attached through two
+ * connections is two nodes until the older one is pruned, and only one of
+ * them is the source on this row. The path-only match is the fallback for a
+ * node written before a repository carried its connection.
+ */
+export function findRepoNode<N extends { value: Record<string, unknown> }>(
+  nodes: N[],
+  repo: RepoEntry,
+): N | undefined {
+  const fullPath = parseRepoSource(repo.url ?? undefined)?.full_path;
+  if (!fullPath) return undefined;
+  const samePath = nodes.filter((n) => n.value.full_path === fullPath);
+  return samePath.find((n) => n.value.connector_id === repo.token_ref) ?? samePath[0];
+}
+
 /** Compact "what's been pulled so far", hiding zero counts. */
 function counts(t: {
   issues: number;
