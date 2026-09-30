@@ -954,7 +954,11 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
               <input
                 data-create-destination
                 value={this.destination}
-                placeholder={this.suggestedProductPath()}
+                // Not the suggestion: in the field it read as a value already
+                // chosen beside a Create that would not press (ADR-0013 keeps
+                // the choice explicit). The suggestion is on its button.
+                placeholder="not chosen yet"
+                aria-label="destination"
                 disabled={!connected}
                 onChange={(e) => {
                   this.destinationTouched = true;
@@ -966,23 +970,15 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                   this.schedulePreview();
                 }}
               />
-              <button
-                type="button"
-                className="theia-button secondary"
-                data-destination-browse
-                disabled={!connected}
-                onClick={() => void this.browseDestination()}
-              >
-                Choose…
-              </button>
               {/* The suggestion taken by a press, never by default (ADR-0013).
                   It is a folder the product list finds: `products/<id>` under
                   the opened repository. */}
               {this.productPath() === "" && this.workspaceRoot() !== "" && (
                 <button
                   type="button"
-                  className="theia-button secondary"
+                  className="theia-button main"
                   data-destination-suggested
+                  title={this.suggestedProductPath()}
                   disabled={!connected}
                   onClick={() => {
                     this.destinationTouched = true;
@@ -995,6 +991,15 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                   Use suggested
                 </button>
               )}
+              <button
+                type="button"
+                className="theia-button secondary"
+                data-destination-browse
+                disabled={!connected}
+                onClick={() => void this.browseDestination()}
+              >
+                Choose…
+              </button>
             </div>
           </label>
           {/* **The whole path, wrapped, outside the field.** A destination is
@@ -1050,8 +1055,10 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                         this.schedulePreview();
                       }}
                     />
-                    {root}
-                    {!usable && <span className="gbx-id"> — contains the destination</span>}
+                    <div className="gbx-create-source-text">
+                      {root}
+                      {!usable && <span className="gbx-id"> — contains the destination</span>}
+                    </div>
                   </label>
                 );
               })}
@@ -1090,6 +1097,7 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
                 (cloning && this.mode === "clone-local" && !this.cloneFrom) ||
                 (this.mode === "clone-git" && this.clone.status !== "reviewing")
               }
+              title={this.productPath() === "" ? "Choose a destination first: Use suggested, or Choose…" : undefined}
               onClick={() => void this.create()}
             >
               Create
@@ -1138,14 +1146,16 @@ export class CreateProductWidget extends ReactWidget implements OwnedWidget {
               this.schedulePreview();
             }}
           />
-          {offer.copy.path}
-          <span className="gbx-id"> — the gear corpus, this machine's copy</span>
-          {this.corpusChecked && (
-            <div className="gbx-create-sources-note" data-corpus-local-note>
-              Named by its path on this machine: the product resolves here. To share it, declare the
-              corpus as <code>git(url, rev)</code> instead, which opens anywhere.
-            </div>
-          )}
+          <div className="gbx-create-source-text">
+            {offer.copy.path}
+            <span className="gbx-id"> — the gear corpus, this machine's copy</span>
+            {this.corpusChecked && (
+              <div className="gbx-create-sources-note" data-corpus-local-note>
+                Named by its path on this machine: the product resolves here. To share it, declare the
+                corpus as <code>git(url, rev)</code> instead, which opens anywhere.
+              </div>
+            )}
+          </div>
         </label>
       );
     }

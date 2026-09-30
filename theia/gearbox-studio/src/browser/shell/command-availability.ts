@@ -49,19 +49,20 @@ export function resolveRefusal(state: ProductCommandState): string | undefined {
 /**
  * What Add gear does from here.
  *
- * With no product open it creates one: a gear goes *into* a product, so a
- * person asking to add one with nothing open is a person about to make the
- * product -- New Product opens, rather than a disabled button. The Product
- * panel's empty state and the Start screen offer the same thing.
+ * With no product open it brings the Product view forward: a gear goes *into*
+ * a product, and that view's empty state lists the products in the workspace,
+ * Recent, New and Open -- so the person picks the product to add to, or makes
+ * one. It used to open New Product straight away, which read as "Add gear
+ * makes a product" to someone who had a product and had not opened it yet.
  */
 export type AddGearEntrance =
   | { readonly kind: "add" }
-  | { readonly kind: "create-product" }
+  | { readonly kind: "choose-product" }
   | { readonly kind: "unavailable"; readonly reason: string };
 
 export function addGearEntrance(state: ProductCommandState): AddGearEntrance {
   if (!state.engineConnected) return { kind: "unavailable", reason: ENGINE_DOWN };
   if (state.productOpen) return { kind: "add" };
   if (state.opening) return { kind: "unavailable", reason: STILL_OPENING };
-  return { kind: "create-product" };
+  return { kind: "choose-product" };
 }

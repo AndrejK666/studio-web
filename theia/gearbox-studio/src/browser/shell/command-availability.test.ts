@@ -14,8 +14,8 @@ describe("Add gear", () => {
     expect(addGearEntrance(state(true))).toEqual({ kind: "add" });
   });
 
-  it("creates a product when none is open, instead of doing nothing", () => {
-    expect(addGearEntrance(state(false))).toEqual({ kind: "create-product" });
+  it("offers the products to choose from when none is open, instead of doing nothing", () => {
+    expect(addGearEntrance(state(false))).toEqual({ kind: "choose-product" });
   });
 
   it("waits for a product that is still opening", () => {

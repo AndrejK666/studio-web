@@ -35,7 +35,6 @@ import { ProductSessionService } from "./shell/product-session-service";
 import {
   ADD_GEAR,
   BROWSE_CATALOGUE,
-  NEW_PRODUCT,
   SHOW_CONFLICTS,
   SHOW_GENERATE,
   SHOW_LOCK,
@@ -46,11 +45,9 @@ import {
   NO_PRODUCT,
   addGearEntrance,
   explained,
-  productCommandRefusal,
   resolveRefusal,
   type ProductCommandState,
 } from "./shell/command-availability";
-import { PendingCreate } from "./create/pending-create";
 import { SelectionService } from "./shell/selection-service";
 import {
   availableIn,
@@ -528,7 +525,6 @@ export class AddGearViewContribution extends ScopedViewContribution<Widget> {
   private dialog?: AddGearDialog;
   @inject(ProductStore) protected readonly products!: ProductStore;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
-  @inject(PendingCreate) protected readonly pendingCreate!: PendingCreate;
 
   /**
    * **A contribution with no widget of its own, deliberately.**
@@ -573,14 +569,14 @@ export class AddGearViewContribution extends ScopedViewContribution<Widget> {
 
   override registerCommands(commands: CommandRegistry): void {
     super.registerCommands(commands);
-    // With no product open this creates one instead -- see `addGearEntrance`.
-    // The menu entry below stays gated on a product; the palette and Studio's
-    // ribbon reach this with none, and New Product is the useful answer there.
+    // With no product open this brings the Product view and its list of
+    // products forward instead -- see `addGearEntrance`. The menu entry below
+    // stays gated on a product; the palette and Studio's ribbon reach this
+    // with none.
     commands.registerCommand(ADD_GEAR, explained({
       execute: (state?: AddGearChoice) => {
-        if (addGearEntrance(this.productState()).kind === "create-product") {
-          this.pendingCreate.state = { note: "No product is open. Create one here, then add gears to it." };
-          return void commands.executeCommand(NEW_PRODUCT.id);
+        if (addGearEntrance(this.productState()).kind === "choose-product") {
+          return void commands.executeCommand(SHOW_PRODUCT.id);
         }
         return void this.openAdd(state);
       },
@@ -874,14 +870,16 @@ export class ProductViewContribution
     // command rather than by injection keeps the wizards free of a dependency on
     // this contribution -- and `mayTakeTheFront` deliberately refuses to steal
     // the front from a Gearbox surface, so a wizard has to *ask*.
+    // Enabled with no product too: the view's empty state is where a product
+    // is chosen or made (product-empty-state.tsx), and a greyed-out Product on
+    // Building's ribbon left no way to it but Add gear.
     commands.registerCommand(SHOW_PRODUCT, explained({
-      execute: async (section?: import("./product/product-widget").ProductSection) => { const widget = await this.openView({ activate: true, reveal: true }); if (section) widget.showSection(section); },
-      isEnabled: () => this.store.current.open !== undefined,
-      disabledReason: () => productCommandRefusal({
-        productOpen: this.store.current.open !== undefined,
-        opening: this.session.opening !== undefined,
-        engineConnected: this.engine.isConnected,
-      }),
+      execute: async (section?: import("./product/product-widget").ProductSection) => {
+        const widget = await this.openView({ activate: true, reveal: true });
+        if (section && this.store.current.open !== undefined) widget.showSection(section);
+      },
+      isEnabled: () => true,
+      disabledReason: () => undefined,
     }));
     commands.registerCommand(RESOLVE_PRODUCT, explained({
       // Re-resolves whatever is open for whatever profile is selected, which is
