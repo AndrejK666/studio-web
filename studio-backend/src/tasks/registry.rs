@@ -186,6 +186,13 @@ impl SyncReporter {
         self.send(phase.into(), Some(detail));
     }
 
+    /// A reporter nobody reads, for tests of code that reports progress.
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        Self { tx }
+    }
+
     fn send(&self, phase: String, detail: Option<Value>) {
         // A closed channel means the drain is gone, which happens on the way
         // out. Losing a progress line then is not worth noticing.

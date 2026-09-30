@@ -36,6 +36,15 @@ use super::service::IngestService;
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "artifact.ingest";
 
+/// One ingest at a time in this process.
+///
+/// The task queue runs eight handlers at once, and runs for different
+/// repositories do not share a partition, so two large repositories could
+/// ingest side by side and peak together -- the shape of the OOM kills on
+/// studio-dev (studio-web#561). A second ingest waits here instead. Other task
+/// types are not held up: the wait occupies one worker, and there are eight.
+static INGEST_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 /// What the REST route puts on the queue.
 ///
 /// `Serialize` as well as `Deserialize`: the route builds one and the poll
@@ -141,6 +150,16 @@ impl TaskHandler for IngestTask {
         };
 
         let (progress, drain) = ctx.progress_bridge();
+        // Held until the sync returns. A closed semaphore cannot happen -- it is
+        // a static nobody closes -- so an error just runs unguarded. A run that
+        // has to wait says so, rather than sitting at "queued" looking stuck.
+        let _slot = match INGEST_SLOT.try_acquire() {
+            Ok(slot) => Some(slot),
+            Err(_) => {
+                progress.set("waiting for another repository's sync to finish…");
+                INGEST_SLOT.acquire().await.ok()
+            }
+        };
         let outcome = self
             .service
             .run_sync(

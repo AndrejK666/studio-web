@@ -53,8 +53,13 @@ const MAX_THREAD_PULLS: u32 = 200;
 /// ingest at ~10k nodes / 20k edges (and a per-payload ceiling), so we upsert
 /// in bounded batches instead of one giant call — this also bounds memory and
 /// makes a mid-sync failure partial rather than all-or-nothing.
+///
+/// Edges went from 5 000 to 1 000 per call: each call is one graph-storage
+/// transaction held in this process, and at 5 000 the ingest of a large
+/// repository was part of the peak that OOM-killed studio-dev's backend
+/// (studio-web#561).
 const NODE_CHUNK: usize = 1_000;
-const EDGE_CHUNK: usize = 5_000;
+const EDGE_CHUNK: usize = 1_000;
 /// Upper bound on a binary document we hand to the file-parser gear. Extraction
 /// cost and the resulting text both scale with size; 15 MiB covers real specs
 /// and slide decks without letting a giant asset stall a sync.
@@ -420,9 +425,10 @@ impl IngestService {
         let repo_id = repo.instance_id.clone();
         nodes.push(repo);
 
-        // How many of `nodes` are already flushed to the graph. Each phase
-        // flushes the nodes it just appended (`nodes[flushed..]`) so objects
-        // land in the store as the sync runs. Flush the repo node right away.
+        // How many nodes this sync has stored so far. `nodes` holds only the
+        // ones not stored yet: every flush writes them and empties it, so a
+        // sync never keeps a repository's worth of nodes -- file text included
+        // -- in memory at once (studio-web#561). Flush the repo node right away.
         let mut flushed = 0usize;
         self.flush_and_report(
             ctx,
@@ -658,33 +664,6 @@ impl IngestService {
                         Some(t) => Some(t),
                         None => self.parse_binary_text(ctx, &dir, &wf.path, wf.size).await,
                     };
-                    if is_prose_path(&wf.path) {
-                        if let Some(content) = text.as_deref() {
-                            scanned.push(IngestedDocument {
-                                node_id: gts::file_instance_id(
-                                    source_scope,
-                                    connector_id,
-                                    repo_full_path,
-                                    &wf.path,
-                                ),
-                                path: wf.path.clone(),
-                                content: content.to_string(),
-                            });
-                        }
-                        // Prose the walk could not read is left alone rather
-                        // than called undetermined: nothing has looked at it.
-                    } else {
-                        scanned.push(IngestedDocument {
-                            node_id: gts::file_instance_id(
-                                source_scope,
-                                connector_id,
-                                repo_full_path,
-                                &wf.path,
-                            ),
-                            path: wf.path.clone(),
-                            content: String::new(),
-                        });
-                    }
                     let file = gts::file_node_cloned(
                         source_scope,
                         &repo_id,
@@ -707,6 +686,46 @@ impl IngestService {
                     if let Some(content) = content {
                         edges.push(gts::content_of_edge(&content.instance_id, &file_id));
                         nodes.push(content);
+                    }
+                    // What the classifier reads. The prose text is MOVED here,
+                    // not copied: the content node above has its own copy, and
+                    // a third one per document is what made a large
+                    // repository's walk expensive.
+                    if is_prose_path(&wf.path) {
+                        if let Some(content) = text {
+                            scanned.push(IngestedDocument {
+                                node_id: file_id.clone(),
+                                path: wf.path.clone(),
+                                content,
+                            });
+                        }
+                        // Prose the walk could not read is left alone rather
+                        // than called undetermined: nothing has looked at it.
+                    } else {
+                        scanned.push(IngestedDocument {
+                            node_id: file_id.clone(),
+                            path: wf.path.clone(),
+                            content: String::new(),
+                        });
+                    }
+                    // Store the files as the walk goes rather than after it,
+                    // so their nodes and content leave memory a chunk at a time.
+                    if nodes.len() >= NODE_CHUNK {
+                        self.flush_and_report(
+                            ctx,
+                            progress,
+                            &mut nodes,
+                            &mut flushed,
+                            workspace_id,
+                            project_id,
+                            "reading files…",
+                            issues,
+                            pull_requests,
+                            files,
+                            0,
+                            0,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -1529,17 +1548,22 @@ impl IngestService {
         Ok(())
     }
 
-    /// Flush the nodes appended since the last flush (`nodes[*flushed..]`) to
-    /// the graph, then report progress on the task: the phase line plus the
+    /// Flush the nodes not stored yet to the graph, then report progress on the task: the phase line plus the
     /// running counts, including how many nodes are now stored. This is what
     /// makes a sync's objects appear in the graph — and its counts tick up —
     /// while it is still running, instead of only when it finishes.
+    ///
+    /// It empties `nodes` and adds them to `flushed`. Emptying is the point as
+    /// much as storing: a node that is in the graph has no reason to stay in
+    /// this process, and keeping every one until the sync ended held a whole
+    /// repository -- its files' text included -- in memory at once
+    /// (studio-web#561).
     #[allow(clippy::too_many_arguments)]
     async fn flush_and_report(
         &self,
         ctx: &SecurityContext,
         progress: &SyncReporter,
-        nodes: &mut [GtsNode],
+        nodes: &mut Vec<GtsNode>,
         flushed: &mut usize,
         workspace_id: Option<&str>,
         project_id: Option<&str>,
@@ -1550,11 +1574,14 @@ impl IngestService {
         comments: usize,
         commits: usize,
     ) -> anyhow::Result<()> {
-        let end = nodes.len();
-        if end > *flushed {
-            self.store_node_batch(ctx, &mut nodes[*flushed..end], workspace_id, project_id)
+        if !nodes.is_empty() {
+            self.store_node_batch(ctx, nodes, workspace_id, project_id)
                 .await?;
-            *flushed = end;
+            *flushed += nodes.len();
+            nodes.clear();
+            // Give the memory back, not only the elements: after a file walk
+            // the capacity is a chunk's worth, and after nothing it is less.
+            nodes.shrink_to(NODE_CHUNK);
         }
         progress.set_with(
             phase,
@@ -2160,6 +2187,92 @@ mod prune_tests {
             }
         }
         out
+    }
+
+    /// A flush stores what it was given and lets it go: the sync used to keep
+    /// every node it had stored until it ended, a whole repository's files and
+    /// their text at once (studio-web#561).
+    #[tokio::test]
+    async fn a_flush_stores_the_nodes_and_keeps_none_of_them() {
+        let (svc, graph, _) = service();
+        let progress = SyncReporter::detached();
+        let mut nodes = Vec::new();
+        let (repo_id, file_id) = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        let mut flushed = 0usize;
+
+        svc.flush_and_report(
+            &ctx(),
+            &progress,
+            &mut nodes,
+            &mut flushed,
+            Some(WS),
+            Some(PROJECT),
+            "storing…",
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .await
+        .expect("flush");
+        assert!(
+            nodes.is_empty(),
+            "stored nodes stay behind: {}",
+            nodes.len()
+        );
+        assert_eq!(flushed, 2);
+        assert_eq!(ids(&graph).await, HashSet::from([repo_id.clone(), file_id]));
+
+        // The next flush adds to the count, and an empty one changes nothing.
+        let more = gts::file_node_cloned(
+            "p",
+            &repo_id,
+            "conn",
+            "org/studio-web",
+            "docs/a.md",
+            1,
+            true,
+            None,
+            None,
+        );
+        let more_id = more.instance_id.clone();
+        nodes.push(more);
+        svc.flush_and_report(
+            &ctx(),
+            &progress,
+            &mut nodes,
+            &mut flushed,
+            Some(WS),
+            Some(PROJECT),
+            "storing…",
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .await
+        .expect("flush");
+        svc.flush_and_report(
+            &ctx(),
+            &progress,
+            &mut nodes,
+            &mut flushed,
+            Some(WS),
+            Some(PROJECT),
+            "storing…",
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .await
+        .expect("empty flush");
+        assert!(nodes.is_empty());
+        assert_eq!(flushed, 3);
+        assert!(ids(&graph).await.contains(&more_id));
     }
 
     #[tokio::test]
