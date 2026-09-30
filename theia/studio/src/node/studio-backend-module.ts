@@ -65,6 +65,8 @@ import { WorkspaceBoundary } from './workspace-boundary';
 import { GitExecutor } from './git-executor';
 import { OrcaCli } from './orca-cli';
 import { OrcaServiceImpl } from './orca-service';
+import { StudioCliServiceImpl } from './studio-cli-service';
+import { studioCliServicePath, type StudioCliService } from '../common/studio-cli-protocol';
 import { orcaServicePath, type OrcaService } from '../common/orca-protocol';
 import { OrcaTerminalBridge } from './orca-terminal-bridge';
 import { orcaTerminalServicePath, type OrcaTerminalClient } from '../common/orca-terminal-protocol';
@@ -770,6 +772,12 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     // runtime needs, must not be reachable from the browser.
     bind(OrcaCli).toSelf().inSingletonScope();
     bind(OrcaServiceImpl).toSelf().inSingletonScope();
+    // The Constructor Studio CLI's commands (the ribbon's CLI group): named by
+    // id from the browser, their command lines owned by the service.
+    bind(StudioCliServiceImpl).toSelf().inSingletonScope();
+    bind(ConnectionHandler).toDynamicValue(ctx =>
+        new RpcConnectionHandler<StudioCliService>(studioCliServicePath, () => ctx.container.get(StudioCliServiceImpl))
+    ).inSingletonScope();
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<OrcaService>(orcaServicePath, () => ctx.container.get(OrcaServiceImpl))
     ).inSingletonScope();

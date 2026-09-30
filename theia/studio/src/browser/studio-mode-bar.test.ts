@@ -85,6 +85,15 @@ describe('the Gearbox menu and the Building ribbon', () => {
         expect(keepsMenu(FULL_PERSPECTIVE_ID, 'Anything a plugin adds')).toBe(true);
     });
 
+    it('gives Development a CLI group, and Doc editing the specs\' Validate', () => {
+        const groupOf = (role: string, label: string) =>
+            MODES.find(m => m.role === role)?.groups.find(g => g.label === label)?.actions.map(a => a.command);
+        expect(groupOf('development', 'CLI')).toEqual(['studio.cli.validate', 'studio.cli.doctor', 'studio.cli.info', 'studio.cli.generate-agents']);
+        expect(groupOf('docs', 'Specs')).toContain('studio.cli.validate');
+        // Full functionality has it once, in the first group that named it.
+        expect(groupOf('full', 'CLI')).toEqual(['studio.cli.doctor', 'studio.cli.info', 'studio.cli.generate-agents']);
+    });
+
     it('puts Resolve and Lock in Building\'s Check group, beside Conflicts and Generate', () => {
         const building = MODES.find(m => m.role === 'building');
         const check = building?.groups.find(g => g.label === 'Check');
