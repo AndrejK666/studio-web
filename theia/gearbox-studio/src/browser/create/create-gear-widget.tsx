@@ -19,7 +19,7 @@ import type { GearKind } from "../../common/generated/GearKind";
 import type { ProductEdit } from "../../common/generated/ProductEdit";
 import { placeNewGear, type HostStanding } from "./gear-edits";
 import { relativeTo, volumeOf } from "./paths";
-import { UPSTREAM_SCAFFOLD_ISSUE, createGearGuidance } from "./create-gear-guidance";
+import { UPSTREAM_SCAFFOLD_ISSUE, createGearGuidance, describeScaffoldRefusal } from "./create-gear-guidance";
 import { pluginLocatorFor, type HostPoint, type LocatorOutcome } from "./plugin-locator";
 import type { ScaffoldGearResult } from "../../common/generated/ScaffoldGearResult";
 import { pointsOf } from "../../common/extension-points";
@@ -31,6 +31,7 @@ import { ProductEditService } from "../product-edit-service";
 import { repaintNow } from "../widgets/repaint";
 import { ProductStore } from "../product-store";
 import { ProfileScope } from "../product/profile-scope";
+import { plainPath } from "../../common/run-product";
 import { GearLocator } from "../shell/gear-locator";
 import { GearSessionService } from "../shell/gear-session-service";
 import type { ContextIdentity, OwnedWidget } from "../shell/screens";
@@ -314,7 +315,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
     } catch (error) {
       if (token !== this.previewToken) return;
       this.plan = undefined;
-      this.planError = error instanceof Error ? error.message : String(error);
+      this.planError = describeScaffoldRefusal(error instanceof Error ? error.message : String(error));
     }
     this.previewPending = false;
     this.update();
@@ -827,7 +828,7 @@ export class CreateGearWidget extends ReactWidget implements OwnedWidget {
             ))}
           {connected && this.plan?.out_root !== undefined && (
             <div className="gbx-id" style={{ marginTop: 8 }}>
-              → {this.plan.out_root}
+              → {plainPath(this.plan.out_root)}
             </div>
           )}
           {/* **The file the kind actually decides.** The three paths above are

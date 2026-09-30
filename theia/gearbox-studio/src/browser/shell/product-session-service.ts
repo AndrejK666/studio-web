@@ -709,20 +709,37 @@ export class ProductSessionService {
     return this.failStage("resolve", resolved.reason, generation);
   }
 
+  /** This window has asked for the scanning hint already (`hintScanning`). */
+  protected scanHintClaimed = false;
+
   /**
    * Constructor Studio: once per browser profile, say that the gear sources
    * were slow to read the first time and which folder an antivirus exclusion
    * would cover. Advice only: Studio changes no system setting.
    */
   protected async hintScanning(): Promise<void> {
+    // Claimed before the first await: two opens finishing close together (a
+    // create, then the open it triggers) both read "not shown" from storage
+    // before either wrote it, and the member got the same notice twice.
+    // Held only while one check runs: an open with nothing slow to report
+    // leaves the next open free to report it.
+    if (this.scanHintClaimed) return;
+    this.scanHintClaimed = true;
+    let shown = false;
     try {
-      if ((await this.storage.getData<boolean>(SCAN_HINT_KEY)) === true) return;
+      if ((await this.storage.getData<boolean>(SCAN_HINT_KEY)) === true) {
+        shown = true;
+        return;
+      }
       const hint = await this.service.scanHint();
       if (hint === undefined) return;
       await this.storage.setData(SCAN_HINT_KEY, true);
+      shown = true;
       void this.messages.info(scanHintMessage(hint));
     } catch {
       // A hint that cannot be given is not worth a second message.
+    } finally {
+      this.scanHintClaimed = shown;
     }
   }
 

@@ -1,4 +1,4 @@
-import { createGearGuidance } from "./create-gear-guidance";
+import { createGearGuidance, describeScaffoldRefusal } from "./create-gear-guidance";
 
 describe("what New Gear says before Create", () => {
   const base = { kind: "service" as const, addingToProduct: false, gearId: "my-service", destinationDir: "/w/products/p/gears" };
@@ -39,5 +39,18 @@ describe("what New Gear says before Create", () => {
 
   it("says nothing about a host until a plugin has one", () => {
     expect(createGearGuidance({ ...base, kind: "plugin" }).map((n) => n.id)).toEqual(["uncatalogued"]);
+  });
+});
+
+describe("the preview's refusal", () => {
+  it("says what to open when the engine has no source root, not the CLI's advice", () => {
+    const text = describeScaffoldRefusal("no source root is open; pass roots to initialize or --root to the CLI");
+    expect(text).toMatch(/Open a product/);
+    expect(text).toMatch(/gear\.gdl/);
+    expect(text).not.toMatch(/--root|CLI/);
+  });
+
+  it("passes any other refusal on as the engine said it", () => {
+    expect(describeScaffoldRefusal("GBX0102 path escapes its source root")).toBe("GBX0102 path escapes its source root");
   });
 });

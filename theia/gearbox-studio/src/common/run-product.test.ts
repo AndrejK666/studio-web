@@ -122,6 +122,11 @@ describe("the address and the paths", () => {
     expect(plainPath("/w/.gearbox/shop/dev")).toBe("/w/.gearbox/shop/dev");
   });
 
+  it("drops it in the forward-slash form the engine reports too", () => {
+    expect(plainPath("//?/C:/w/gears/new-gear")).toBe("C:/w/gears/new-gear");
+    expect(plainPath("//?/UNC/host/share/gears")).toBe("//host/share/gears");
+  });
+
   it("names a gear's database after the gear", () => {
     expect(dbNameOf("account-management")).toBe("account_management");
   });
