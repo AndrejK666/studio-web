@@ -150,6 +150,12 @@ class WelcomeView {
                 this.reloadTimer = setTimeout(() => void this.load(), RELOAD_DEBOUNCE_MS);
             });
         }
+        /* The mode is an attribute Studio sets on the body (studio-chrome-mode.ts);
+         * the page follows it, shown in Doc editing and gone elsewhere. */
+        if (typeof MutationObserver !== 'undefined' && document.body) {
+            new MutationObserver(() => this.scheduleRefresh())
+                .observe(document.body, { attributes: true, attributeFilter: ['data-studio-perspective'] });
+        }
         this.render();
         this.refresh();
     }
@@ -172,7 +178,7 @@ class WelcomeView {
 
     refresh() {
         if (!this.node) { return; }
-        if (!this.dockIsEmpty()) {
+        if (!this.dockIsEmpty() || !scan.startPageShownIn(document.body.dataset.studioPerspective)) {
             this.node.classList.remove('on', 'in');
             if (this.token) { this.token.cancelled = true; }
             return;
