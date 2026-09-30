@@ -544,6 +544,12 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 }
                 const target = `${config.studioUrl}${config.gatewayPrefix}${req.url}`;
                 const hasBody = !['GET', 'HEAD'].includes(req.method);
+                // A buffer, not the request stream: fetch sends a streamed body
+                // once, and anything that needs it again -- a redirect it
+                // follows, a body parser that got there first -- failed with
+                // "Response body object should not be disturbed or locked".
+                // Every POST through here did (Analyze's four checks, Sync).
+                const body = hasBody ? await requestBody(req) : undefined;
                 const answer = await fetch(target, {
                     method: req.method,
                     headers: {
@@ -551,10 +557,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                         ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
                         ...(req.headers.accept ? { Accept: String(req.headers.accept) } : {}),
                     },
-                    body: hasBody ? (req as unknown as ReadableStream) : undefined,
-                    // Node's fetch needs this to stream a request body.
-                    ...(hasBody ? { duplex: 'half' } : {}),
-                } as RequestInit);
+                    body,
+                });
                 res.status(answer.status);
                 const type = answer.headers.get('content-type');
                 if (type) {
@@ -748,4 +752,27 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 : reject(new Error(said.trim().split('\n').slice(-3).join(' ') || `git exited with ${code}`)));
         });
     }
+}
+
+/**
+ * The whole body of a request the proxy forwards, as bytes that can be sent
+ * again. A body a parser already read is serialised back; otherwise the stream
+ * is read to its end.
+ */
+export async function requestBody(req: express.Request): Promise<Buffer | undefined> {
+    const parsed = (req as { body?: unknown }).body;
+    if (parsed !== undefined && (req.readableEnded || Buffer.isBuffer(parsed) || typeof parsed === 'string')) {
+        if (Buffer.isBuffer(parsed)) {
+            return parsed;
+        }
+        return Buffer.from(typeof parsed === 'string' ? parsed : JSON.stringify(parsed));
+    }
+    if (req.readableEnded) {
+        return undefined;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return chunks.length === 0 ? undefined : Buffer.concat(chunks);
 }
