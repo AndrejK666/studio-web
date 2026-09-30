@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api, PLATFORM_ROOT_TENANT_ID, TENANT_TYPES, type PlatformIdentity, type Tenant } from "./api";
-import { errText, initials, matches } from "./format";
+import { DataTable, When } from "./data-table";
+import { errText, initials } from "./format";
 
-export function IdentityDirectory({ token, query }: { token: string; query: string }) {
+/** `query` is the side panel's search; the list has its own and does not read it. */
+export function IdentityDirectory({ token }: { token: string; query?: string }) {
   const [identities, setIdentities] = useState<PlatformIdentity[] | null>(null);
   const [organizations, setOrganizations] = useState<Tenant[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -59,21 +61,6 @@ export function IdentityDirectory({ token, query }: { token: string; query: stri
     }
   }
 
-  const filtered = useMemo(
-    () =>
-      (identities ?? []).filter((identity) =>
-        matches(
-          query,
-          identity.display_name,
-          identity.username,
-          identity.email,
-          identity.home_tenant_name,
-          identity.status,
-        ),
-      ),
-    [identities, query],
-  );
-
   return (
     <>
       <div className="topbar">
@@ -86,103 +73,120 @@ export function IdentityDirectory({ token, query }: { token: string; query: stri
         </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {/* A failed read is the table's to show, with Retry; this is for a failed action on rows that are there. */}
+      {error && (identities?.length ?? 0) > 0 && <div className="error">{error}</div>}
 
       <div className="card">
-        {identities === null ? (
-          <p className="hint">Loading identities…</p>
-        ) : filtered.length === 0 ? (
-          <p className="empty">
-            {identities.length === 0 ? "No identities found." : "No identities match the filter."}
-          </p>
-        ) : (
-          <table className="ptable people">
-            <thead>
-              <tr>
-                <th>Identity</th>
-                <th>Provider</th>
-                <th>Access</th>
-                <th>Organization assignment</th>
-                <th>First seen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((identity) => {
+        <DataTable<PlatformIdentity>
+          list="identities"
+          rows={identities}
+          error={identities !== null && identities.length === 0 ? error : null}
+          onRetry={() => void load()}
+          rowKey={(i) => i.id}
+          rowLabel={(i) => i.display_name || i.username}
+          search={{ placeholder: "Search identities" }}
+          searchText={(i) => [i.display_name, i.username, i.email, i.home_tenant_name, i.status]}
+          filters={[
+            {
+              id: "access",
+              allLabel: "Everyone",
+              kind: "chips",
+              options: [
+                { value: "unassigned", label: "Waiting for access" },
+                { value: "assigned", label: "Assigned" },
+                { value: "platform_admin", label: "Platform admin" },
+              ],
+              match: (i, v) => i.status === v,
+            },
+          ]}
+          empty={{ title: "No identities found." }}
+          columns={[
+            {
+              id: "name",
+              header: "Identity",
+              compare: (x, y) => (x.display_name || x.username).localeCompare(y.display_name || y.username),
+              cell: (identity) => {
                 const name = identity.display_name || identity.username;
-                const firstSeen = identity.first_seen_at_epoch_ms
-                  ? new Date(identity.first_seen_at_epoch_ms).toLocaleString()
-                  : "—";
                 return (
-                  <tr key={identity.id} className="prow">
-                    <td>
-                      <div className="pcell">
-                        <span className="account-avatar small">{initials(name)}</span>
-                        <div>
-                          <div className="pname plain">{name}</div>
-                          <div className="sub">{identity.email || identity.username}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="sub">{identity.identity_provider || "local"}</td>
-                    <td>
-                      <span className={`badge ${identity.status === "unassigned" ? "warning" : "workspace"}`}>
-                        {identity.status === "platform_admin"
-                          ? "Platform admin"
-                          : identity.status === "assigned"
-                            ? identity.home_tenant_name || "Assigned"
-                            : "Waiting for access"}
-                      </span>
-                      {identity.organization_role && (
-                        <div className="sub" style={{ marginTop: 4 }}>
-                          {identity.organization_role === "owner" ? "Owner" : "Member"}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <div className="inline" style={{ flexWrap: "nowrap" }}>
-                        <select
-                          aria-label={`Organization for ${name}`}
-                          value={targets[identity.id] || identity.home_tenant_id || organizations[0]?.id || ""}
-                          onChange={(event) =>
-                            setTargets((current) => ({ ...current, [identity.id]: event.target.value }))
-                          }
-                        >
-                          {organizations.length === 0 && <option value="">No organizations</option>}
-                          {organizations.map((organization) => (
-                            <option key={organization.id} value={organization.id}>
-                              {organization.name}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          aria-label={`Role for ${name}`}
-                          value={roles[identity.id] || identity.organization_role || "member"}
-                          onChange={(event) =>
-                            setRoles((current) => ({
-                              ...current,
-                              [identity.id]: event.target.value as "owner" | "member",
-                            }))
-                          }
-                        >
-                          <option value="member">Member</option>
-                          <option value="owner">Owner</option>
-                        </select>
-                        <button
-                          className="primary"
-                          disabled={busyId !== null || organizations.length === 0}
-                          onClick={() => void assign(identity)}
-                        >
-                          {busyId === identity.id ? "Saving…" : identity.home_tenant_id ? "Update" : "Assign"}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="sub">{firstSeen}</td>
-                  </tr>
+                  <div className="pcell">
+                    <span className="account-avatar small">{initials(name)}</span>
+                    <div>
+                      <div className="pname plain">{name}</div>
+                      <div className="sub">{identity.email || identity.username}</div>
+                    </div>
+                  </div>
                 );
-              })}
-            </tbody>
-          </table>
-        )}
+              },
+            },
+            { id: "provider", header: "Provider", cell: (i) => <span className="sub">{i.identity_provider || "local"}</span> },
+            {
+              id: "access",
+              header: "Access",
+              cell: (identity) => (
+                <>
+                  <span className={`badge ${identity.status === "unassigned" ? "warn" : "workspace"}`}>
+                    {identity.status === "platform_admin"
+                      ? "Platform admin"
+                      : identity.status === "assigned"
+                        ? identity.home_tenant_name || "Assigned"
+                        : "Waiting for access"}
+                  </span>
+                  {identity.organization_role && (
+                    <div className="sub" style={{ marginTop: 4 }}>
+                      {identity.organization_role === "owner" ? "Owner" : "Member"}
+                    </div>
+                  )}
+                </>
+              ),
+            },
+            {
+              id: "assignment",
+              header: "Organization assignment",
+              cell: (identity) => {
+                const name = identity.display_name || identity.username;
+                return (
+                  <div className="inline" style={{ flexWrap: "nowrap" }}>
+                    <select
+                      aria-label={`Organization for ${name}`}
+                      value={targets[identity.id] || identity.home_tenant_id || organizations[0]?.id || ""}
+                      onChange={(event) => setTargets((current) => ({ ...current, [identity.id]: event.target.value }))}
+                    >
+                      {organizations.length === 0 && <option value="">No organizations</option>}
+                      {organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`Role for ${name}`}
+                      value={roles[identity.id] || identity.organization_role || "member"}
+                      onChange={(event) =>
+                        setRoles((current) => ({ ...current, [identity.id]: event.target.value as "owner" | "member" }))
+                      }
+                    >
+                      <option value="member">Member</option>
+                      <option value="owner">Owner</option>
+                    </select>
+                    <button
+                      className="primary"
+                      disabled={busyId !== null || organizations.length === 0}
+                      onClick={() => void assign(identity)}
+                    >
+                      {busyId === identity.id ? "Saving…" : identity.home_tenant_id ? "Update" : "Assign"}
+                    </button>
+                  </div>
+                );
+              },
+            },
+            {
+              id: "seen",
+              header: "First seen",
+              compare: (x, y) => (x.first_seen_at_epoch_ms ?? 0) - (y.first_seen_at_epoch_ms ?? 0),
+              cell: (i) => <When iso={i.first_seen_at_epoch_ms ? new Date(i.first_seen_at_epoch_ms).toISOString() : null} />,
+            },
+          ]}
+        />
         <p className="hint" style={{ marginTop: 14 }}>
           This is an identity directory, not an OAuth failure log. A rejected login that never
           created a Keycloak identity belongs in the security audit instead.

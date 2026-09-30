@@ -26,7 +26,8 @@ import {
   type OrgMember,
   type PlatformIdentity,
 } from "./api";
-import { errText, initials, matches } from "./format";
+import { DataTable, When, useConfirm } from "./data-table";
+import { errText, initials } from "./format";
 
 const ROLES: { value: MembershipRole; label: string; hint: string }[] = [
   { value: "owner", label: "Owner", hint: "Administers the organization: people, access, integrations" },
@@ -64,7 +65,6 @@ export function OrganizationsTable({
   selectedId,
   onSelect,
   onMembers,
-  query,
 }: {
   token: string;
   orgs: OrgRow[];
@@ -73,7 +73,8 @@ export function OrganizationsTable({
   selectedId: string | null;
   onSelect: (orgId: string) => void;
   onMembers: (orgId: string) => void;
-  query: string;
+  /** The side panel's query. Not read: the list searches itself. */
+  query?: string;
 }) {
   const [members, setMembers] = useState<Record<string, OrgMember[] | "denied">>({});
 
@@ -103,69 +104,83 @@ export function OrganizationsTable({
     return new Set([...seen].filter(([, n]) => n > 1).map(([name]) => name));
   }, [orgs]);
 
-  const rows = orgs.filter((o) =>
-    matches(query, o.name, o.id, ...workspaces.filter((w) => w.orgId === o.id).map((w) => w.name)),
-  );
+  const wsOf = (o: OrgRow) => workspaces.filter((w) => w.orgId === o.id);
 
   return (
     <div className="card">
-      <div className="card-head">
-        <h2>All organizations</h2>
-        <span className="sub">{orgs.length}</span>
-      </div>
-      {rows.length === 0 ? (
-        <p className="empty">{orgs.length === 0 ? "No organizations yet." : "No organizations match the filter."}</p>
-      ) : (
-        <table className="ptable people">
-          <thead>
-            <tr>
-              <th>Organization</th>
-              <th>Workspaces</th>
-              <th>Owners</th>
-              <th>Members</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((org) => {
+      <DataTable<OrgRow>
+        list="orgs"
+        title="All organizations"
+        rows={orgs}
+        rowKey={(o) => o.id}
+        rowLabel={(o) => o.name}
+        onOpen={(o) => onSelect(o.id)}
+        search={{ placeholder: "Search organizations" }}
+        searchText={(o) => [o.name, o.id, ...wsOf(o).map((w) => w.name)]}
+        empty={{ title: "No organizations yet." }}
+        columns={[
+          {
+            id: "name",
+            header: "Organization",
+            compare: (a, b) => a.name.localeCompare(b.name),
+            cell: (org) => (
+              <div style={selectedId === org.id ? { boxShadow: "inset 3px 0 0 var(--primary)", paddingLeft: 8 } : undefined}>
+                <div className="pname plain">
+                  {org.name}{" "}
+                  {duplicates.has(org.name.trim().toLowerCase()) && (
+                    <span className="badge warn" title="Another organization has the same name">
+                      same name
+                    </span>
+                  )}
+                </div>
+                <div className="sub" style={{ fontFamily: "var(--font-mono)" }} title={org.id}>
+                  {shortId(org.id)}
+                </div>
+              </div>
+            ),
+          },
+          {
+            id: "workspaces",
+            header: "Workspaces",
+            cell: (org) => <span className="sub">{wsOf(org).length ? wsOf(org).map((w) => w.name).join(", ") : "—"}</span>,
+          },
+          {
+            id: "owners",
+            header: "Owners",
+            cell: (org) => {
               const room = members[org.id];
               const list = room && room !== "denied" ? room : null;
               const owners = list?.filter((m) => m.role === "owner" && m.status === "active") ?? [];
-              const ws = workspaces.filter((w) => w.orgId === org.id);
-              const dup = duplicates.has(org.name.trim().toLowerCase());
               return (
-                <tr key={org.id} className="prow" style={selectedId === org.id ? { boxShadow: "inset 3px 0 0 var(--primary)" } : undefined}>
-                  <td>
-                    <div className="pname plain">
-                      {org.name} {dup && <span className="badge warn" title="Another organization has the same name">same name</span>}
-                    </div>
-                    <div className="sub" style={{ fontFamily: "var(--font-mono)" }} title={org.id}>{shortId(org.id)}</div>
-                  </td>
-                  <td className="sub">{ws.length ? ws.map((w) => w.name).join(", ") : "—"}</td>
-                  <td className="sub">
-                    {room === undefined
-                      ? "…"
-                      : room === "denied"
-                        ? "not yours to see"
-                        : owners.length
-                          ? owners.map(memberName).join(", ")
-                          : <span className="badge warn">no owner</span>}
-                  </td>
-                  <td className="sub">{list ? list.length : room === "denied" ? "—" : "…"}</td>
-                  <td>
-                    <div className="inline" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
-                      <button onClick={() => onMembers(org.id)}>Members</button>
-                      <button className={selectedId === org.id ? "primary" : ""} onClick={() => onSelect(org.id)}>
-                        Manage
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                <span className="sub">
+                  {room === undefined ? (
+                    "…"
+                  ) : room === "denied" ? (
+                    "not yours to see"
+                  ) : owners.length ? (
+                    owners.map(memberName).join(", ")
+                  ) : (
+                    <span className="badge warn">no owner</span>
+                  )}
+                </span>
               );
-            })}
-          </tbody>
-        </table>
-      )}
+            },
+          },
+          {
+            id: "members",
+            header: "Members",
+            num: true,
+            cell: (org) => {
+              const room = members[org.id];
+              return room && room !== "denied" ? room.length : room === "denied" ? "—" : "…";
+            },
+          },
+        ]}
+        actions={(org) => [
+          { label: "Manage", onSelect: () => onSelect(org.id) },
+          { label: "Members", onSelect: () => onMembers(org.id) },
+        ]}
+      />
     </div>
   );
 }
@@ -176,14 +191,15 @@ export function OrgMembersView({
   token,
   org,
   isPlatformAdmin,
-  query,
 }: {
   token: string;
   org: OrgRow | null;
   /** May add anyone with an identity, not only invite by e-mail. */
   isPlatformAdmin: boolean;
-  query: string;
+  /** The side panel's query. Not read: the list searches itself. */
+  query?: string;
 }) {
+  const [ask, confirmDialog] = useConfirm();
   const orgId = org?.id ?? null;
   const [members, setMembers] = useState<OrgMember[] | null>(null);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
@@ -249,10 +265,6 @@ export function OrgMembersView({
   const setStanding = (m: OrgMember, role: MembershipRole, status: "active" | "suspended") =>
     act(m.user_id, () => api.putMembership(token, m.user_id, orgId!, { role, status }));
 
-  const remove = (m: OrgMember) => {
-    if (!window.confirm(`Remove ${memberName(m)} from ${org?.name}? Their personal connections here go with them.`)) return;
-    void act(m.user_id, () => api.removeMembership(token, m.user_id, orgId!));
-  };
 
   const addIdentity = async (e: FormEvent) => {
     e.preventDefault();
@@ -279,7 +291,6 @@ export function OrgMembersView({
 
   if (!org) return <p className="empty">Pick an organization to see its members.</p>;
 
-  const rows = (members ?? []).filter((m) => matches(query, m.display_name, m.email, m.role, m.status));
   const known = new Set((members ?? []).flatMap((m) => [m.email?.toLowerCase(), m.display_name?.toLowerCase()]).filter(Boolean));
   const addable = identities.filter(
     (i) => !known.has(i.email?.toLowerCase()) && !known.has((i.display_name || i.username).toLowerCase()),
@@ -300,83 +311,115 @@ export function OrgMembersView({
         </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {/* A failed read is the table's to show, with Retry; this is for a failed action on rows that are there. */}
+      {error && (members?.length ?? 0) > 0 && <div className="error">{error}</div>}
 
       <div className="card">
-        {members === null ? (
-          <p className="hint">Loading members…</p>
-        ) : rows.length === 0 ? (
-          <p className="empty">
-            {members.length === 0 ? "Nobody belongs to this organization yet — add or invite someone below." : "No members match the filter."}
-          </p>
-        ) : (
-          <table className="ptable people">
-            <thead>
-              <tr>
-                <th>Person</th>
-                <th>Role</th>
-                <th>Standing</th>
-                <th>Joined</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((m) => {
-                const name = memberName(m);
-                const suspended = m.status === "suspended";
-                const onlyOwner = m.role === "owner" && !suspended && activeOwners <= 1;
+        <DataTable<OrgMember>
+          list="members"
+          rows={members}
+          error={members !== null && members.length === 0 ? error : null}
+          onRetry={() => void load()}
+          rowKey={(m) => m.user_id}
+          rowLabel={memberName}
+          search={{ placeholder: "Search members" }}
+          searchText={(m) => [m.display_name, m.email, m.role, m.status]}
+          filters={[
+            {
+              id: "standing",
+              allLabel: "Everyone",
+              kind: "chips",
+              options: [
+                { value: "active", label: "Active" },
+                { value: "suspended", label: "Suspended" },
+              ],
+              match: (m, v) => m.status === v,
+            },
+          ]}
+          empty={{ title: "Nobody belongs to this organization yet.", body: "Add or invite someone below." }}
+          columns={[
+            {
+              id: "name",
+              header: "Person",
+              compare: (a, b) => memberName(a).localeCompare(memberName(b)),
+              cell: (m) => (
+                <div className="pcell">
+                  <span className="account-avatar small">{initials(memberName(m))}</span>
+                  <div>
+                    <div className="pname plain">{memberName(m)}</div>
+                    <div className="sub">{m.email && m.email !== memberName(m) ? m.email : shortId(m.user_id)}</div>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: "role",
+              header: "Role",
+              cell: (m) => {
+                const onlyOwner = m.role === "owner" && m.status !== "suspended" && activeOwners <= 1;
                 return (
-                  <tr key={m.user_id} className="prow">
-                    <td>
-                      <div className="pcell">
-                        <span className="account-avatar small">{initials(name)}</span>
-                        <div>
-                          <div className="pname plain">{name}</div>
-                          <div className="sub">{m.email && m.email !== name ? m.email : shortId(m.user_id)}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <select
-                        aria-label={`Role of ${name}`}
-                        value={m.role}
-                        disabled={busy !== null || onlyOwner}
-                        title={onlyOwner ? "The only active owner: add another owner first" : undefined}
-                        onChange={(e) => void setStanding(m, e.target.value as MembershipRole, m.status)}
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r.value} value={r.value} title={r.hint}>
-                            {r.label}
-                          </option>
-                        ))}
-                        {!ROLES.some((r) => r.value === m.role) && <option value={m.role}>{m.role}</option>}
-                      </select>
-                    </td>
-                    <td>
-                      <span className={`badge ${suspended ? "warn" : "ok"}`}>{suspended ? "Suspended" : "Active"}</span>
-                    </td>
-                    <td className="sub">
-                      {SOURCE_LABEL[m.source] ?? m.source} · {new Date(m.created_at_epoch_ms).toLocaleDateString()}
-                    </td>
-                    <td>
-                      <div className="inline" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
-                        <button
-                          disabled={busy !== null || (onlyOwner && !suspended)}
-                          onClick={() => void setStanding(m, m.role as MembershipRole, suspended ? "active" : "suspended")}
-                        >
-                          {busy === m.user_id ? "…" : suspended ? "Resume" : "Suspend"}
-                        </button>
-                        <button className="danger" disabled={busy !== null || onlyOwner} onClick={() => remove(m)}>
-                          Remove
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                  <select
+                    aria-label={`Role of ${memberName(m)}`}
+                    value={m.role}
+                    disabled={busy !== null || onlyOwner}
+                    title={onlyOwner ? "The only active owner: add another owner first" : undefined}
+                    onChange={(e) => void setStanding(m, e.target.value as MembershipRole, m.status)}
+                  >
+                    {ROLES.map((r) => (
+                      <option key={r.value} value={r.value} title={r.hint}>
+                        {r.label}
+                      </option>
+                    ))}
+                    {!ROLES.some((r) => r.value === m.role) && <option value={m.role}>{m.role}</option>}
+                  </select>
                 );
-              })}
-            </tbody>
-          </table>
-        )}
+              },
+            },
+            {
+              id: "standing",
+              header: "Standing",
+              cell: (m) => (
+                <span className={`badge ${m.status === "suspended" ? "warn" : "ok"}`}>
+                  {m.status === "suspended" ? "Suspended" : "Active"}
+                </span>
+              ),
+            },
+            {
+              id: "joined",
+              header: "Joined",
+              compare: (a, b) => a.created_at_epoch_ms - b.created_at_epoch_ms,
+              cell: (m) => (
+                <span className="sub">
+                  {SOURCE_LABEL[m.source] ?? m.source} · <When iso={new Date(m.created_at_epoch_ms).toISOString()} />
+                </span>
+              ),
+            },
+          ]}
+          actions={(m) => {
+            const suspended = m.status === "suspended";
+            const onlyOwner = m.role === "owner" && !suspended && activeOwners <= 1;
+            return [
+              {
+                label: suspended ? "Resume" : "Suspend",
+                disabled: busy !== null || (onlyOwner && !suspended),
+                onSelect: () => setStanding(m, m.role as MembershipRole, suspended ? "active" : "suspended"),
+              },
+              {
+                label: "Remove",
+                disabled: busy !== null || onlyOwner,
+                danger: {
+                  title: `Remove ${memberName(m)} from ${org.name}?`,
+                  body: "They leave the organization, and their personal connections here go with them.",
+                  confirmLabel: "Remove",
+                },
+                onSelect: async () => {
+                  await api.removeMembership(token, m.user_id, org.id);
+                  await load();
+                },
+              },
+            ];
+          }}
+        />
       </div>
 
       <div className="card">
@@ -442,7 +485,22 @@ export function OrgMembersView({
                       {i.role} · expires {new Date(i.expires_at_epoch_ms).toLocaleDateString()}
                     </div>
                   </div>
-                  <button disabled={busy !== null} onClick={() => void act(i.id, () => api.revokeInvitation(token, org.id, i.id))}>
+                  <button
+                    disabled={busy !== null}
+                    onClick={() =>
+                      ask(
+                        {
+                          title: `Withdraw the invitation to ${i.email}?`,
+                          body: "The link stops working. They can be invited again.",
+                          confirmLabel: "Withdraw",
+                        },
+                        async () => {
+                          await api.revokeInvitation(token, org.id, i.id);
+                          await load();
+                        },
+                      )
+                    }
+                  >
                     Withdraw
                   </button>
                 </li>
@@ -451,6 +509,7 @@ export function OrgMembersView({
           </>
         )}
       </div>
+      {confirmDialog}
     </>
   );
 }
