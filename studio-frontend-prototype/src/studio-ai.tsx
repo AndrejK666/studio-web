@@ -17,6 +17,7 @@
  */
 import { useState } from "react";
 import { api } from "./api";
+import { ArrowUpIcon, ChevronRightIcon, SparkleIcon } from "./icons";
 
 export function StudioAI({
   token,
@@ -74,7 +75,9 @@ export function StudioAI({
           title="Studio AI"
           onClick={() => onOpenChange(true)}
         >
-          <span className="sa-mark" aria-hidden>✦</span>
+          <span className="sa-mark">
+            <SparkleIcon size={20} />
+          </span>
         </button>
       </aside>
     );
@@ -83,7 +86,9 @@ export function StudioAI({
   return (
     <aside className="studio-ai" aria-label="Studio AI">
       <div className="sa-head">
-        <span className="sa-mark" aria-hidden>✦</span>
+        <span className="sa-mark">
+          <SparkleIcon size={20} />
+        </span>
         <span className="sa-title">Studio AI</span>
         <button
           className="ghost"
@@ -92,7 +97,7 @@ export function StudioAI({
           title="Collapse"
           onClick={() => onOpenChange(false)}
         >
-          ›
+          <ChevronRightIcon />
         </button>
       </div>
 
@@ -101,7 +106,7 @@ export function StudioAI({
 
         {answer === null && !err ? (
           <button className="sa-chip" onClick={() => send("What should I look at first?")}>
-            ✦ What should I look at first?
+            <SparkleIcon size={14} /> What should I look at first?
           </button>
         ) : (
           // No maxHeight any more: the dock is full-height, so the thread takes
@@ -127,8 +132,14 @@ export function StudioAI({
           onChange={(e) => setQ(e.target.value)}
           disabled={busy}
         />
-        <button className="sa-send" type="submit" disabled={busy || !q.trim()} title="Send">
-          ↑
+        <button
+          className="sa-send"
+          type="submit"
+          disabled={busy || !q.trim()}
+          title="Send"
+          aria-label="Send"
+        >
+          <ArrowUpIcon />
         </button>
       </form>
     </aside>

@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { BellIcon } from "./icons";
 import { subscribeStudioEvents, type RunEventPayload, type StudioEvent } from "./studio-events";
 
 /** How many endings to keep. Older ones are answered by Background work. */
@@ -136,7 +137,7 @@ export function WorkInbox({
         aria-expanded={open}
         onClick={() => (open ? onClose() : onOpen())}
       >
-        <span aria-hidden>🔔</span>
+        <BellIcon />
         {unread > 0 && <span className="count">{unread}</span>}
       </button>
       {open && (

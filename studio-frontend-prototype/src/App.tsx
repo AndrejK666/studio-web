@@ -95,6 +95,18 @@ import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
 import { withCorpusSource } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
+import {
+  BookIcon,
+  CheckIcon,
+  CloseIcon,
+  GearIcon,
+  GridIcon,
+  MenuIcon,
+  RefreshIcon,
+  ShieldIcon,
+  SlidersIcon,
+  SparkleIcon,
+} from "./icons";
 import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pins";
 import {
   clampStep,
@@ -1615,7 +1627,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           title="Navigation"
           onClick={() => setMenuOpen((v) => !v)}
         >
-          ☰
+          <MenuIcon size={20} />
         </button>
         {/* The product family hangs off the wordmark again.
             It was moved to the foot of the drawer on the reasoning that the
@@ -1642,8 +1654,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           {productMenu && (
             <div className="product-menu" role="menu">
               <button role="menuitem" className="on" onClick={() => setProductMenu(false)}>
-                <span className="ico" aria-hidden>▦</span> Studio
-                <span className="check" aria-hidden>✓</span>
+                <span className="ico"><GridIcon /></span> Studio
+                <span className="check"><CheckIcon /></span>
               </button>
               <button
                 role="menuitem"
@@ -1652,7 +1664,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   setProductMenu(false);
                 }}
               >
-                <span className="ico" aria-hidden>⧉</span> Docs &amp; API
+                <span className="ico"><BookIcon /></span> Docs &amp; API
               </button>
               <button
                 role="menuitem"
@@ -1662,7 +1674,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   openAdmin();
                 }}
               >
-                <span className="ico" aria-hidden>🛡</span> Admin
+                <span className="ico"><ShieldIcon /></span> Admin
               </button>
             </div>
           )}
@@ -1720,7 +1732,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               aria-pressed={aiOpen}
               onClick={() => setAiOpen((v) => !v)}
             >
-              <span aria-hidden>✦</span>
+              <SparkleIcon />
             </button>
           )}
           <WorkInbox
@@ -1746,7 +1758,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               aria-label="Filters"
               onClick={() => setPanelOpen((v) => !v)}
             >
-              <span aria-hidden>🎛</span>
+              <SlidersIcon />
               {activeFilterCount(panelView, filters) > 0 && (
                 <span className="count">{activeFilterCount(panelView, filters)}</span>
               )}
@@ -1952,7 +1964,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                         title="Keycloak administration console"
                         onClick={() => window.open(idpConsole, "_blank", "noopener")}
                       >
-                        <span className="ico">🛡</span> IdP console ↗
+                        <span className="ico"><ShieldIcon /></span> IdP console ↗
                       </button>
                     </div>
                   )}
@@ -2063,8 +2075,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     dirty ? ` — ${dirty} unsaved file(s)` : ""
                   }`}
                 >
-                  <span className="ico" aria-hidden>
-                    ⚙
+                  <span className="ico">
+                    <GearIcon />
                   </span>
                   <span className="stab-name">{sp.wsName}</span>
                   {dirty > 0 && <span className="dirty-dot">●</span>}
@@ -2075,7 +2087,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                   aria-label={`Hide ${sp.wsName}`}
                   onClick={() => closeSpace(sp.wsId)}
                 >
-                  ✕
+                  <CloseIcon size={12} />
                 </button>
               </span>
             );
@@ -2091,7 +2103,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 aria-label="Refresh IDE"
                 onClick={() => refreshSpace(activeSpace)}
               >
-                ↻
+                <RefreshIcon size={14} />
               </button>
               <button
                 className="ghost space-stop"
@@ -4884,7 +4896,7 @@ function PinnedSection({
               title="Unpin"
               onClick={() => setPins(togglePin(pins, pin))}
             >
-              ✕
+              <CloseIcon size={12} />
             </button>
           </div>
         );
