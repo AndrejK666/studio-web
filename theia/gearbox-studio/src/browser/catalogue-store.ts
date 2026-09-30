@@ -591,6 +591,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     // Constructor Studio: an engine with no source root has no gears to find.
     // The Studio backend reads its own corpus checkout, so ask it instead of
     // having every project clone the corpus.
+    this.remoteUnavailable = undefined;
     if (this.rootsById.size === 0 && this.remote !== undefined) {
       const installed = await this.installRemote(epoch, failedRoots);
       if (installed !== undefined) {
@@ -652,6 +653,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       error: undefined,
       total: loaded.total,
       completed: 0,
+      ...(empty && this.remoteUnavailable !== undefined ? { unavailable: this.remoteUnavailable } : {}),
     };
     // The boundary is passed: projections for *this* load are now welcome.
     this.streaming = empty ? undefined : epoch;
@@ -670,8 +672,10 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     let remote;
     try {
       remote = await this.remote?.load();
+      this.remoteUnavailable = undefined;
     } catch (error) {
       this.onLog(`the Studio backend could not list the gear corpus: ${describe(error)}`);
+      this.remoteUnavailable = describe(error);
       return undefined;
     }
     if (epoch !== this.epoch) {
@@ -704,6 +708,9 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
     }
     return true;
   }
+
+  /** Why the Studio backend could not be asked on the last load, if it could not. */
+  protected remoteUnavailable: string | undefined;
 
   /** Where the listed corpus comes from, while the rows are the backend's. */
   protected remoteOrigin: CorpusOrigin | undefined;

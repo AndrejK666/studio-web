@@ -152,7 +152,17 @@ export class CatalogueWidget extends ReactWidget {
 
         {state.remote !== undefined && this.renderRemote(state.remote)}
 
-        {state.rows.length === 0 && state.status === "ready" && (
+        {state.rows.length === 0 && state.status === "ready" && state.unavailable !== undefined && (
+          <div className="gbx-error" role="alert">
+            <div>The Studio backend is unavailable: {state.unavailable}.</div>
+            <div>This workspace has no gear.gdl of its own, so its gears are the ones Studio lists.</div>
+            <button type="button" className="theia-button secondary" onClick={() => void this.store.load()}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        {state.rows.length === 0 && state.status === "ready" && state.unavailable === undefined && (
           <div className="gbx-empty">No gear.gdl in this workspace's repositories.</div>
         )}
 

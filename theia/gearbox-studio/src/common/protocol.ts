@@ -662,6 +662,13 @@ export interface CatalogueState {
    * that corpus (`owner/repo@ref`). Such rows have no file on this machine.
    */
   readonly remote?: string;
+  /**
+   * Constructor Studio: set when this workspace holds no corpus and the Studio
+   * backend that would list one could not be asked -- signed out, not
+   * answering, failing. Says why. An empty catalogue with this set is not "no
+   * `gear.gdl` here", and the panel offers to ask again.
+   */
+  readonly unavailable?: string;
 }
 
 /**
@@ -675,7 +682,10 @@ export interface CatalogueState {
  */
 export const RemoteCatalogueSource = Symbol.for("gearbox-studio.RemoteCatalogueSource");
 export interface RemoteCatalogueSource {
-  /** Undefined when the backend has no corpus to offer. */
+  /**
+   * Undefined when the backend has no corpus to offer. Rejects, saying why,
+   * when the backend could not be asked at all.
+   */
   load(): Promise<RemoteCatalogue | undefined>;
   /**
    * Fires when the answer may have changed: a desktop starts signed out, so
