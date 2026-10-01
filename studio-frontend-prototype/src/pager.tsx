@@ -8,6 +8,16 @@ import { useEffect, useMemo, useState } from "react";
 
 export const PAGE_SIZE = 50;
 
+/** The page sizes a reader can pick from, in the pager. */
+export const PAGE_SIZES = [25, 50, 100, 200] as const;
+
+/** A pager's "Rows per page" control: the size on screen and how to change it. */
+export interface PageSizeControl {
+  size: number;
+  onSize: (size: number) => void;
+  options?: readonly number[];
+}
+
 /** The page numbers a pager shows: the first, the last, and two either side of
  *  the current one, with `null` where a run is skipped. */
 export function pageWindow(current: number, pages: number): (number | null)[] {
@@ -46,41 +56,69 @@ export function usePaged<T>(items: readonly T[], resetOn: unknown = null, size =
   return { visible, offset: current * size, page: current, pages, total: items.length, setPage };
 }
 
-/** « ‹ 1 2 3 … 49 › »  51–100 of 2,446. Renders nothing for a single page. */
-export function Pager<T>({ paged, className }: { paged: Paged<T>; className?: string }) {
+/** « ‹ 1 2 3 … 49 › »  51–100 of 2,446, and "Rows per page" when the list
+ *  offers it. Renders nothing for a single page — unless a smaller size would
+ *  make more than one, so somebody who picked 200 can still pick 25 back. */
+export function Pager<T>({
+  paged,
+  className,
+  pageSize,
+}: {
+  paged: Paged<T>;
+  className?: string;
+  pageSize?: PageSizeControl;
+}) {
   const { page, pages, total, offset, visible, setPage } = paged;
-  if (pages <= 1) return null;
+  const options = pageSize?.options ?? PAGE_SIZES;
+  const sizable = !!pageSize && total > Math.min(...options);
+  if (pages <= 1 && !sizable) return null;
   return (
     <div className={className ? `pager ${className}` : "pager"}>
       <style>{PAGER_CSS}</style>
-      <button onClick={() => setPage(0)} disabled={page === 0} title="First page" aria-label="First page">
-        «
-      </button>
-      <button onClick={() => setPage(page - 1)} disabled={page === 0} title="Previous page" aria-label="Previous page">
-        ‹
-      </button>
-      {pageWindow(page, pages).map((p, i) =>
-        p == null ? (
-          <span key={`gap-${i}`} className="pager-gap">
-            …
-          </span>
-        ) : (
-          <button
-            key={p}
-            className={p === page ? "on" : undefined}
-            aria-current={p === page ? "page" : undefined}
-            onClick={() => setPage(p)}
-          >
-            {p + 1}
-          </button>
-        ),
+      {sizable && (
+        <label className="pager-size">
+          Rows per page
+          <select value={pageSize!.size} onChange={(e) => pageSize!.onSize(Number(e.target.value))}>
+            {options.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
-      <button onClick={() => setPage(page + 1)} disabled={page >= pages - 1} title="Next page" aria-label="Next page">
-        ›
-      </button>
-      <button onClick={() => setPage(pages - 1)} disabled={page >= pages - 1} title="Last page" aria-label="Last page">
-        »
-      </button>
+      {pages > 1 && (
+        <>
+          <button onClick={() => setPage(0)} disabled={page === 0} title="First page" aria-label="First page">
+            «
+          </button>
+          <button onClick={() => setPage(page - 1)} disabled={page === 0} title="Previous page" aria-label="Previous page">
+            ‹
+          </button>
+          {pageWindow(page, pages).map((p, i) =>
+            p == null ? (
+              <span key={`gap-${i}`} className="pager-gap">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                className={p === page ? "on" : undefined}
+                aria-current={p === page ? "page" : undefined}
+                onClick={() => setPage(p)}
+              >
+                {p + 1}
+              </button>
+            ),
+          )}
+          <button onClick={() => setPage(page + 1)} disabled={page >= pages - 1} title="Next page" aria-label="Next page">
+            ›
+          </button>
+          <button onClick={() => setPage(pages - 1)} disabled={page >= pages - 1} title="Last page" aria-label="Last page">
+            »
+          </button>
+        </>
+      )}
       <span className="pager-range">
         {offset + 1}–{offset + visible.length} of {total.toLocaleString()}
       </span>
@@ -96,4 +134,6 @@ const PAGER_CSS = `
 .pager button.on { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 .pager-gap { padding: 0 4px; color: var(--muted-foreground); }
 .pager-range { order: -1; margin-right: 8px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.pager-size { order: -2; display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; color: var(--muted-foreground); }
+.pager-size select { height: 24px; padding: 0 4px; font-size: 12px; }
 `;
