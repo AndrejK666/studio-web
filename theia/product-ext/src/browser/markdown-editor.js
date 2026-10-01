@@ -108,6 +108,7 @@ const { slotStrip, renderDocCluster } = require('./slot-strip');
 const qualityScan = require('./quality-scan');
 const qualityIdentity = require('./quality-identity');
 const qualityAnchor = require('./quality-anchor');
+const studioQuality = require('./studio-quality');
 const qualityView = require('./quality-view');
 const qualityMeasures = require('./quality-measures');
 const { qualityMarksExtension, refreshQualityMarks } = require('./quality-marks');
@@ -5573,6 +5574,34 @@ class MarkdownEditorWidget extends Widget {
         return this.qualityRun;
     }
 
+    /*
+     * Studio's findings about this document, from the Analyze panel.
+     *
+     * `verdicts` are the document's recorded Spec Quality verdicts, one per
+     * detector, each with the findings the run placed in the text; `paths` are
+     * the paths Studio knows the document by. They are shown when the project
+     * has no local quality report for this document — a report on disk is the
+     * one somebody chose to run here, and it stays the authority where it
+     * exists. An empty list clears them.
+     */
+    setStudioFindings({ verdicts, paths } = {}) {
+        const list = Array.isArray(verdicts) ? verdicts : [];
+        this.studioQuality = list.length > 0
+            ? {
+                findings: studioQuality.flattenVerdicts(list),
+                paths: Array.isArray(paths) ? paths : [],
+                producedAt: studioQuality.latestRecordedAt(list)
+            }
+            : undefined;
+        if (this.qualityLoading) {
+            // Picked up when the load in flight finishes.
+            this.qualityRefreshAgain = true;
+            return;
+        }
+        this.qualityLoaded = false;
+        void this.refreshQuality({ quiet: true });
+    }
+
     async refreshQuality({ quiet = false } = {}) {
         if (this.qualityLoading || !this.qualityStore) { return; }
         this.qualityLoading = true;
@@ -5580,7 +5609,7 @@ class MarkdownEditorWidget extends Widget {
         try {
             const root = await this.qualityStore.rootFor(this.uri);
             const relPath = qualityRelativePath(root, this.uri);
-            const reports = await this.qualityStore.loadReports(root);
+            let reports = await this.qualityStore.loadReports(root);
             const state = await this.qualityStore.loadState(root);
             const judgments = await this.qualityStore.loadJudgments(root);
 
@@ -5603,7 +5632,19 @@ class MarkdownEditorWidget extends Widget {
             this.qualityJudgments = judgments;
             this.qualityDocTypes = qualityScan.DOC_TYPES;
 
-            const pair = this.qualityStore.reportsForDocument(reports, relPath) || {};
+            let pair = this.qualityStore.reportsForDocument(reports, relPath) || {};
+            /*
+             * No local report for this document, but Studio has analysed it:
+             * show what the server recorded, through the same envelope. Marked
+             * as Studio's so it is not written back into the checkout's
+             * state.json below — opening a document must not change files.
+             */
+            let fromStudio = false;
+            if ((!reports.present || (!pair.bloat && !pair.purpose)) && this.studioQuality) {
+                pair = studioQuality.studioReports(this.studioQuality.findings, relPath, this.studioQuality.paths);
+                reports = { ...reports, present: true, runId: 'studio', producedAt: this.studioQuality.producedAt };
+                fromStudio = true;
+            }
             if (!reports.present || (!pair.bloat && !pair.purpose)) {
                 /*
                  * Two different absences, and the view renders them
@@ -5682,7 +5723,7 @@ class MarkdownEditorWidget extends Widget {
              * unchanged. Written after the counts above are computed, because
              * writing first would make every run look like the first one.
              */
-            await this.qualityStore.saveLastRun(root, relPath,
+            if (!fromStudio) await this.qualityStore.saveLastRun(root, relPath,
                 reconciled.findings.map(finding => ({
                     fingerprint: finding.fingerprint,
                     rule: finding.rule,
@@ -5710,6 +5751,11 @@ class MarkdownEditorWidget extends Widget {
         } finally {
             this.qualityLoading = false;
             this.qualityLoaded = true;
+            if (this.qualityRefreshAgain && !this.isDisposed) {
+                this.qualityRefreshAgain = false;
+                this.qualityLoaded = false;
+                void this.refreshQuality({ quiet: true });
+            }
             if (!this.isDisposed) {
                 this.renderRail();
                 refreshQualityMarks(this.editor);

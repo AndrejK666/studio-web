@@ -47,7 +47,7 @@ import {
   useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
-import { findingCount, findingDotTone, findingLabel } from "./spec-findings";
+import { findingBreakdown, findingCount, findingDotTone, findingLabel } from "./spec-findings";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -1542,18 +1542,25 @@ function IngestedDocumentsView({
                     style={{ background: findingDotTone(open, row.conforms) }}
                     aria-hidden
                   />
-                  {/* An authored document has no detector verdicts of its own
-                      until it is committed and scanned, so it reports its
-                      editorial status instead of a finding count it cannot
-                      have. */}
-                  {row.origin === "authored"
+                  {/* A document written in Studio reports its editorial status
+                      until a detector has looked at it; once one has, its
+                      findings, like any other document. */}
+                  {row.origin === "authored" && !open?.length
                     ? (row.status ?? "draft")
-                    : b
+                    : b || open?.length
                       ? findingLabel(open)
                       : /* Nothing has read this file yet, so it has no verdict
                            to report — and a finding count of zero would claim
                            it came back clean. */
                         "not scanned"}
+                  {findingCount(open) > 0 && (
+                    /* What the count is made of, by kind: "3 sections of
+                       another kind · 2 duplicates of other docs" says what
+                       to go and fix; "5 findings" only says how much. */
+                    <span className="ing-conf" style={{ marginLeft: 6, opacity: 0.75 }}>
+                      {findingBreakdown(open)}
+                    </span>
+                  )}
                 </span>
                 <span className="ing-updated" title={row.updated_at}>
                   {/* A candidate carries no timestamp: the graph node's is
