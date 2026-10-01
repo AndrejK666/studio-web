@@ -3,7 +3,8 @@ import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
-// The live OpenAPI contract is served by the backend at /cf/docs.
+// The live OpenAPI contract is /cf/openapi.json, shown grouped by component
+// at /api-docs/ (src/api-docs.ts).
 
 export interface Me {
   subject_id: string;
