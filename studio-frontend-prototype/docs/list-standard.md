@@ -56,7 +56,10 @@ row has.
   right edge, with "51–100 of 2,446" first and then the pages. A list is never cut short without saying so. When the
   backend pages, the table asks it for the page. When the list arrived whole,
   the table pages it in the browser. Both look the same.
-- **A new search or filter goes back to page one.**
+- **Rows per page is the reader's choice:** 25, 50, 100 or 200, picked at the
+  pager's left, 50 until somebody picks. The pager keeps that control even on a
+  single page while a smaller size would make more than one.
+- **A new search, filter or page size goes back to page one.**
 
 ## The address
 
@@ -67,8 +70,9 @@ row has.
   - A reload, a shared link or a return through Back restores the list as it
     was.
   - Opening another place starts that place's list fresh.
-- **Table or tiles is a preference, not an address**, so it stays with the
-  person (`useViewMode`).
+- **Table or tiles, and rows per page, are preferences, not an address**, so
+  they stay with the person (`useViewMode`, `usePageSize`). A shared link opens
+  at the reader's own size.
 
 ## Time, and not knowing
 

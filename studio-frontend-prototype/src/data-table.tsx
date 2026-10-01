@@ -20,9 +20,10 @@ import { errText, relTime } from "./format";
 import { applyClient, useListState } from "./list-state";
 import type { ClientFilter, ListState } from "./list-state";
 import { Modal } from "./modal";
-import { PAGE_SIZE, Pager } from "./pager";
+import { PAGE_SIZE, PAGE_SIZES, Pager } from "./pager";
 import type { Paged } from "./pager";
-import { TileGrid, ViewToggle, useViewMode } from "./view-mode";
+import { TileGrid, ViewToggle, usePageSize, useViewMode } from "./view-mode";
+import type { ViewMode } from "./view-mode";
 
 /* ── Pieces a screen may use on its own ──────────────────────────────────── */
 
@@ -292,7 +293,11 @@ interface CommonProps<T> {
   /** The list's primary action, on the toolbar's right. */
   primary?: ReactNode;
   empty: EmptySpec;
+  /** The page size until the reader picks one in the pager. */
   pageSize?: number;
+  /** The view until the reader picks one: a table, unless the list reads
+   *  better as cards. */
+  defaultView?: ViewMode;
   /** Anything else to put in the toolbar, after the filters. */
   extra?: ReactNode;
 }
@@ -322,9 +327,9 @@ export type DataTableProps<T> = RowsProps<T> | LoadProps<T>;
 const INTERACTIVE = "button, a, input, select, textarea, label, summary, [role=menu], .dt-noopen";
 
 export function DataTable<T>(props: DataTableProps<T>) {
-  const size = props.pageSize ?? PAGE_SIZE;
+  const [size, setSize] = usePageSize(`${props.list}.size`, props.pageSize ?? PAGE_SIZE, PAGE_SIZES);
   const [state, list] = useListState(props.urlPrefix ?? "");
-  const [view, setView] = useViewMode(`${props.list}.view`);
+  const [view, setView] = useViewMode(`${props.list}.view`, props.defaultView);
   const mode = props.tile ? view : "table";
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ask, confirmDialog] = useConfirm();
@@ -640,7 +645,20 @@ export function DataTable<T>(props: DataTableProps<T>) {
         </table>
       )}
 
-      {!loading && !error && total > 0 && <Pager paged={paged} />}
+      {!loading && !error && total > 0 && (
+        <Pager
+          paged={paged}
+          pageSize={{
+            size,
+            // A new size is a new set of pages: page 8 of the old one would
+            // land somewhere nobody chose.
+            onSize: (next) => {
+              setSize(next);
+              list.setPage(0);
+            },
+          }}
+        />
+      )}
       {confirmDialog}
     </div>
   );

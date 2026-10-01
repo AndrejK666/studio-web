@@ -166,6 +166,29 @@ export function useViewMode(
   return [mode, setMode];
 }
 
+/** How many rows a page of one list shows, remembered the same way as the
+ *  view: a preference about the person, so not in the address — a shared link
+ *  opens at the reader's own size. `key` is `<list>.size`. A stored value that
+ *  is not one of `allowed` (an option since removed) reads as the fallback. */
+export function usePageSize(
+  key: string,
+  fallback: number,
+  allowed: readonly number[],
+): [number, (size: number) => void] {
+  const store = useContext(Ctx);
+  const [local, setLocal] = useState<number>(fallback);
+  const stored = Number(store?.prefs[key]);
+  const size = store ? (allowed.includes(stored) ? stored : fallback) : local;
+  const setSize = useCallback(
+    (next: number) => {
+      if (store) store.set(key, String(next));
+      else setLocal(next);
+    },
+    [store, key],
+  );
+  return [size, setSize];
+}
+
 /** The two-button control. Icon-only, because it sits next to a heading and a
  *  word would compete with it; the label is on the title for anyone who needs
  *  it and for a screen reader. */

@@ -7,8 +7,10 @@ import { readinessOf } from "./readiness";
 import { responsibilityOf } from "./responsibility";
 import { reviewCounts, reviewOf, type ReviewPart } from "./review-summary";
 import { RoadmapReportDialog } from "./roadmap-report-view";
-import { ViewToggle, useViewMode } from "./view-mode";
-import { URL_CHANGE_EVENT, useListState, type SortState } from "./list-state";
+import { useViewMode } from "./view-mode";
+import { URL_CHANGE_EVENT, useListState } from "./list-state";
+import { DataTable } from "./data-table";
+import type { Column } from "./data-table";
 import {
   ACTIVITY_CSS,
   ACTIVITY_WINDOWS,
@@ -832,7 +834,9 @@ export function ComponentsCatalog({
   /* Cards or a table, inside "List". Defaulted to tiles because cards are what
    * this page has always been, and remembered with everything else — somebody
    * who reads lists as tables reads this one as a table too. */
-  const [listView, setListView] = useViewMode("components.view", "tiles");
+  // The same preference the list's own toggle sets, read here for the summary
+  // over the cards.
+  const [listView] = useViewMode("components.view", "tiles");
   const graph = useMemo(() => buildComponentGraph(visible, profiles), [visible, profiles]);
 
   // Delivery activity from Insight, for the whole catalogue at once: one request
@@ -841,6 +845,70 @@ export function ComponentsCatalog({
   const [activityDays, setActivityDays] = useState<number>(90);
   const activity = useGearActivity(token, activityDays);
   const baselines = useComponentBaselines(token, activityDays);
+
+  const facts = useMemo(() => {
+    const out = new Map<string, RowFacts>();
+    for (const g of visible) {
+      const name = nameOf(g);
+      out.set(
+        g.instance_id,
+        rowFacts(
+          g,
+          resolved[name]?.values ?? {},
+          schemaFor(schemas, g.type_id),
+          activity.byGear.get(name),
+          baselines.byName.get(name),
+          resolved[name]?.sources,
+        ),
+      );
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, resolved, schemas, activity, baselines]);
+  const columns = useMemo(() => gearColumns((g) => facts.get(g.instance_id), activityDays), [facts, activityDays]);
+
+  /* The catalogue's own filters, on the list's toolbar. They live in the same
+     address as the list's (`?q=`, `?f.category=`, `?f.sdk=`, `?f.kind=`). */
+  const filterControls = (
+    <>
+      <input
+        className="dt-search"
+        type="search"
+        placeholder="Search components"
+        aria-label="Search components"
+        value={list.q}
+        onChange={(e) => listCtl.setQ(e.target.value)}
+      />
+      {categories.length > 0 && (
+        <select
+          className="dt-select"
+          aria-label="Every category"
+          value={categoryFilter}
+          onChange={(e) => listCtl.setFilter("category", e.target.value || null)}
+        >
+          <option value="">Every category</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        className={`chip ${hideSdk ? "on" : ""}`}
+        aria-pressed={hideSdk}
+        onClick={() => listCtl.setFilter("sdk", hideSdk ? null : "hide")}
+      >
+        Hide SDKs
+      </button>
+      <KindPicker chips={chips} value={kindChosen} onChange={setTypeFilter} />
+      {filtered && (
+        <button className="ghost" onClick={listCtl.clearFilters}>
+          Clear filters
+        </button>
+      )}
+    </>
+  );
 
   const syncing = sync.endsWith("…");
   /* What filled the catalogue, read off the nodes -- the picker below is only
@@ -889,7 +957,6 @@ export function ComponentsCatalog({
                   </button>
                 ))}
               </div>
-              {viewMode === "list" && <ViewToggle mode={listView} onChange={setListView} />}
               <div className="seg" role="tablist" aria-label="Activity window">
                 {ACTIVITY_WINDOWS.map((w) => (
                   <button
@@ -929,48 +996,6 @@ export function ComponentsCatalog({
             />
           )}
 
-          <div className="dt-toolbar">
-            <div className="dt-toolbar-left">
-              <input
-                className="dt-search"
-                type="search"
-                placeholder="Search components"
-                aria-label="Search components"
-                value={list.q}
-                onChange={(e) => listCtl.setQ(e.target.value)}
-              />
-              {categories.length > 0 && (
-                <select
-                  className="dt-select"
-                  aria-label="Every category"
-                  value={categoryFilter}
-                  onChange={(e) => listCtl.setFilter("category", e.target.value || null)}
-                >
-                  <option value="">Every category</option>
-                  {categories.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button
-                className={`chip ${hideSdk ? "on" : ""}`}
-                aria-pressed={hideSdk}
-                onClick={() => listCtl.setFilter("sdk", hideSdk ? null : "hide")}
-              >
-                Hide SDKs
-              </button>
-              {filtered && (
-                <button className="ghost" onClick={listCtl.clearFilters}>
-                  Clear filters
-                </button>
-              )}
-            </div>
-          </div>
-
-          <KindPicker chips={chips} value={kindChosen} onChange={setTypeFilter} />
-
           <p className="gcat-sub">
             A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
             repository, micro-frontends from FrontX, and kits — read through a connector, with
@@ -986,86 +1011,59 @@ export function ComponentsCatalog({
           )}
           {sync && <p className="gcat-hint">Sync: {sync}</p>}
           <ActivityStatus activity={activity} />
-          {err && <p className="gcat-err">{err}</p>}
+          {/* A catalogue that never loaded says so in the list, with Retry. */}
+          {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {gears === null ? (
-            <p className="gcat-empty">Loading components…</p>
-          ) : visible.length === 0 ? (
-            <div className="dt-state dt-empty">
-              {(gears?.length ?? 0) === 0 ? (
-                <>
-                  <div className="dt-empty-title">No components yet.</div>
-                  <div className="dt-empty-body">Open Sources, pick a repository, and Sync.</div>
-                </>
-              ) : (
-                <>
+          {viewMode === "graph" ? (
+            <>
+              <div className="dt-toolbar">
+                <div className="dt-toolbar-left">{filterControls}</div>
+              </div>
+              {gears === null ? (
+                <p className="gcat-empty">Loading components…</p>
+              ) : visible.length === 0 ? (
+                <div className="dt-state dt-empty">
                   <div className="dt-empty-title">Nothing matches.</div>
                   <button className="ghost" onClick={listCtl.clearFilters}>
                     Clear filters
                   </button>
-                </>
+                </div>
+              ) : (
+                <ComponentGraph graph={graph} nodes={visible} />
               )}
-            </div>
-          ) : viewMode === "graph" ? (
-            <ComponentGraph graph={graph} nodes={visible} />
-          ) : listView === "table" ? (
-            <div className="gcat-table-wrap">
-              <table className="gcat-table">
-                <thead>
-                  <tr>
-                    <SortTh label="Component and purpose" id="name" sort={list.sort} onSort={listCtl.toggleSort} />
-                    <th>Type</th>
-                    <th>Release</th>
-                    <th>Build readiness</th>
-                    <SortTh label="Downloads" id="downloads" sort={list.sort} onSort={listCtl.toggleSort} className="gcat-num" />
-                    <th>Activity · {activityDays} days</th>
-                    <th>Review</th>
-                    <th>Profile</th>
-                    <th>Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((g) => (
-                    <GearListRow
-                      key={g.instance_id}
-                      gear={g}
-                      values={resolved[nameOf(g)]?.values ?? {}}
-                      schema={schemaFor(schemas, g.type_id)}
-                      activity={activity.byGear.get(nameOf(g))}
-                      activityDays={activityDays}
-                      baseline={baselines.byName.get(nameOf(g))}
-                      sources={resolved[nameOf(g)]?.sources}
-                      onOpen={() => setSelected(nameOf(g))}
-                    />
-                  ))}
-                </tbody>
-              </table>
-              <div className="gcat-foot">
-                {visible.length} of {gears?.length ?? 0} components
-              </div>
-            </div>
+            </>
           ) : (
             <>
-              <CardsSummary
-                shown={visible.length}
-                total={gears?.length ?? 0}
-                resolved={resolved}
-                nodes={visible}
-              />
-              <div className="gcat-cards">
-                {visible.map((g) => (
+              {listView === "tiles" && gears !== null && visible.length > 0 && (
+                <CardsSummary shown={visible.length} total={gears.length} resolved={resolved} nodes={visible} />
+              )}
+              {/* The rows arrive already searched and filtered: the kind chips
+                  count with `inKindFilter`, which the list's own filters cannot
+                  say. The list sorts, pages and opens them. */}
+              <DataTable<CatalogNode>
+                list="components"
+                defaultView="tiles"
+                rows={gears === null ? null : visible}
+                error={gears === null ? err : null}
+                onRetry={() => void reload()}
+                columns={columns}
+                rowKey={(g) => g.instance_id}
+                rowLabel={nameOf}
+                onOpen={(g) => setSelected(nameOf(g))}
+                tile={(g, open) => (
                   <GearListCard
-                    key={g.instance_id}
                     gear={g}
                     values={resolved[nameOf(g)]?.values ?? {}}
                     schema={schemaFor(schemas, g.type_id)}
                     usedBy={resolved[nameOf(g)]?.values?.consumers?.n ?? null}
                     baseline={baselines.byName.get(nameOf(g))}
                     sources={resolved[nameOf(g)]?.sources}
-                    onOpen={() => setSelected(nameOf(g))}
+                    onOpen={open ?? (() => setSelected(nameOf(g)))}
                   />
-                ))}
-              </div>
+                )}
+                extra={filterControls}
+                empty={{ title: "No components yet.", body: "Open Sources, pick a repository, and Sync." }}
+              />
             </>
           )}
         </>
@@ -1411,31 +1409,39 @@ function ActivityStatus({ activity }: { activity: ActivityIndex }) {
  *  published" is a fact about the component; "Not measured" is a fact about
  *  our window; a dash is neither and would collapse them.
  */
-function GearListRow({
-  gear,
-  values,
-  schema,
-  activity,
-  activityDays,
-  baseline,
-  sources,
-  onOpen,
-}: {
-  gear: CatalogNode;
-  /** Reconciled by the gear that owns the precedence, not merged here. */
+/** What one table row shows, worked out once per row rather than once per
+ *  cell. */
+interface RowFacts {
   values: Values;
-  schema: Schema;
+  fields: Field[];
+  trend: FieldTrend | undefined;
+  pct: number;
+  kind: string;
+  category: string | null;
+  kindReason: string | undefined;
+  excluded: string | null;
+  version: unknown;
+  declared: unknown;
+  bad: number;
+  watch: number;
+  repository: string | null;
   activity: GearActivity | undefined;
-  activityDays: number;
+  sources: ComponentSource[] | undefined;
+}
+
+function rowFacts(
+  gear: CatalogNode,
+  /** Reconciled by the gear that owns the precedence, not merged here. */
+  values: Values,
+  schema: Schema,
+  activity: GearActivity | undefined,
   /** The component as the window found it, when the catalogue kept a snapshot. */
-  baseline: ComponentSnapshot | undefined;
+  baseline: ComponentSnapshot | undefined,
   /** Where its facts came from. */
-  sources?: ComponentSource[] | undefined;
-  onOpen: () => void;
-}) {
-  const name = String(gear.value.name ?? gear.instance_id);
-  const fields = useMemo(() => schema.groups.flatMap((g) => g.fields), [schema]);
-  const trend = useMemo(() => fieldTrend(fields, values, baseline), [fields, values, baseline]);
+  sources: ComponentSource[] | undefined,
+): RowFacts {
+  const fields = schema.groups.flatMap((g) => g.fields);
+  const trend = fieldTrend(fields, values, baseline);
   const filled = fields.filter((f) => values[f.key]).length;
   const pct = fields.length ? Math.round((filled / fields.length) * 100) : 0;
   /* The Type column says what the component IS (gear, plugin, sdk, toolkit,
@@ -1470,120 +1476,168 @@ function GearListRow({
       : scannedFrom
         ? `https://github.com/${scannedFrom}${repoPath ? `/tree/HEAD/${repoPath}` : ""}`
         : null;
-  const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
+  return {
+    values,
+    fields,
+    trend,
+    pct,
+    kind,
+    category,
+    kindReason,
+    excluded,
+    version,
+    declared,
+    bad,
+    watch,
+    repository,
+    activity,
+    sources,
+  };
+}
 
-  return (
-    <tr
-      className="gcat-row"
-      onClick={(e) => {
-        // A control inside the row does its own thing (docs/list-standard.md).
-        if (e.target instanceof Element && e.target.closest("button, a, input, select")) return;
-        onOpen();
-      }}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
-      title={`Open ${name}`}
-    >
-      <td className="gcat-lead">
-        <div className="gcat-name">{name}</div>
-        {gear.value.description && (
-          <div className="gcat-purpose">{String(gear.value.description)}</div>
-        )}
-        <SourceChips sources={sources} />
-      </td>
-      <td>
-        <span className="pill" title={excluded ?? kindReason}>
-          {COMPONENT_KIND_LABELS[kind] ?? kind}
-        </span>
-        {category && category !== kind && <div className="gcat-sub">{category}</div>}
-      </td>
-      <td>
-        {/* No version at all is not "0" and not a blank: crates.io has no
-            record of this component, which is a thing to go and look at. */}
-        {version ? (
+/** The catalogue's table, as the one list's columns. `factsOf` answers for
+ *  every row on screen; a row it has no facts for renders empty cells. */
+function gearColumns(
+  factsOf: (gear: CatalogNode) => RowFacts | undefined,
+  activityDays: number,
+): Column<CatalogNode>[] {
+  const nameOf = (g: CatalogNode) => String(g.value.name ?? g.instance_id);
+  const cell = (render: (g: CatalogNode, f: RowFacts) => ReactNode) => (g: CatalogNode) => {
+    const facts = factsOf(g);
+    return facts ? render(g, facts) : null;
+  };
+  return [
+    {
+      id: "name",
+      header: "Component and purpose",
+      className: "gcat-lead",
+      compare: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+      cell: cell((gear, { sources }) => (
+        <>
+          <div className="gcat-name">{nameOf(gear)}</div>
+          {gear.value.description && <div className="gcat-purpose">{String(gear.value.description)}</div>}
+          <SourceChips sources={sources} />
+        </>
+      )),
+    },
+    {
+      id: "type",
+      header: "Type",
+      cell: cell((_, { kind, category, excluded, kindReason }) => (
+        <>
+          <span className="pill" title={excluded ?? kindReason}>
+            {COMPONENT_KIND_LABELS[kind] ?? kind}
+          </span>
+          {category && category !== kind && <div className="gcat-sub">{category}</div>}
+        </>
+      )),
+    },
+    {
+      id: "release",
+      header: "Release",
+      // No version at all is not "0" and not a blank: crates.io has no record
+      // of this component, which is a thing to go and look at.
+      cell: cell((gear, { version, declared }) =>
+        version ? (
           <>
             <code className="gcat-version">{String(version)}</code>
             <div className="gcat-sub">
               {declared ? "declared, not on crates.io" : `${numText(gear.value.num_versions)} versions`}
             </div>
           </>
-        ) : null}
-      </td>
-      <td>
-        <ReadinessCell values={values} />
-      </td>
-      <td className="gcat-num">{gear.value.downloads != null ? numText(gear.value.downloads) : null}</td>
-      <td>
-        {moved ? (
-          <div className="act-card">
-            <MiniChurn points={activity!.points} />
-            <span>
-              <b>{compact(activity!.commits)}</b> commits ·{" "}
-              <b className="ink-added">+{compact(activity!.lines_added)}</b>{" "}
-              <b className="ink-removed">−{compact(activity!.lines_removed)}</b> ·{" "}
-              <b>{compact(activity!.authors)}</b> authors
-            </span>
-          </div>
-        ) : (
-          /* Nothing moved in the window, or Insight has no directory for this
-             component — two different facts, and the one we can tell apart is
-             whether we measured at all. */
-          activity ? <span className="gcat-absent">No commits in {activityDays} days</span> : null
-        )}
-      </td>
-      <td>
+        ) : null,
+      ),
+    },
+    {
+      id: "readiness",
+      header: "Build readiness",
+      cell: cell((_, { values }) => <ReadinessCell values={values} />),
+    },
+    {
+      id: "downloads",
+      header: "Downloads",
+      num: true,
+      compare: (a, b) => Number(a.value.downloads ?? 0) - Number(b.value.downloads ?? 0),
+      cell: (gear) => (gear.value.downloads != null ? numText(gear.value.downloads) : null),
+    },
+    {
+      id: "activity",
+      header: `Activity · ${activityDays} days`,
+      cell: cell((_, { activity }) => {
+        const moved = activity && (activity.commits > 0 || activity.lines_added + activity.lines_removed > 0);
+        if (moved) {
+          return (
+            <div className="act-card">
+              <MiniChurn points={activity!.points} />
+              <span>
+                <b>{compact(activity!.commits)}</b> commits ·{" "}
+                <b className="ink-added">+{compact(activity!.lines_added)}</b>{" "}
+                <b className="ink-removed">−{compact(activity!.lines_removed)}</b> ·{" "}
+                <b>{compact(activity!.authors)}</b> authors
+              </span>
+            </div>
+          );
+        }
+        // Nothing moved in the window, or Insight has no directory for this
+        // component — two different facts, and the one we can tell apart is
+        // whether we measured at all.
+        return activity ? <span className="gcat-absent">No commits in {activityDays} days</span> : null;
+      }),
+    },
+    {
+      id: "review",
+      header: "Review",
+      cell: cell((_, { values }) => (
         <ReviewCell parts={(values.grade as { parts?: ReviewPart[] } | null | undefined)?.parts} />
-      </td>
-      <td>
-        {fields.length === 0 ? (
-          <span className="gcat-absent">No schema</span>
-        ) : (
-          <div className="gcat-profile">
-            <span className="gcat-bar">
-              <span className="gcat-bar-fill" style={{ width: `${pct}%` }} />
-            </span>
-            <span className="gcat-pct">{pct}%</span>
-            {bad > 0 && (
-              <span className="lchip">
-                <span className="tl bad" />
-                {bad}
+      )),
+    },
+    {
+      id: "profile",
+      header: "Profile",
+      cell: cell((_, { fields, pct, bad, watch, trend }) => (
+        <>
+          {fields.length === 0 ? (
+            <span className="gcat-absent">No schema</span>
+          ) : (
+            <div className="gcat-profile">
+              <span className="gcat-bar">
+                <span className="gcat-bar-fill" style={{ width: `${pct}%` }} />
               </span>
-            )}
-            {watch > 0 && (
-              <span className="lchip">
-                <span className="tl watch" />
-                {watch}
-              </span>
-            )}
-          </div>
-        )}
-        {trend && trend.better + trend.worse > 0 && (
-          <div className="gcat-sub">
-            <TrendMark trend={trend} />
-          </div>
-        )}
-      </td>
-      <td>
-        {repository ? (
-          <a
-            className="gcat-link"
-            href={repository}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            title={repository}
-          >
+              <span className="gcat-pct">{pct}%</span>
+              {bad > 0 && (
+                <span className="lchip">
+                  <span className="tl bad" />
+                  {bad}
+                </span>
+              )}
+              {watch > 0 && (
+                <span className="lchip">
+                  <span className="tl watch" />
+                  {watch}
+                </span>
+              )}
+            </div>
+          )}
+          {trend && trend.better + trend.worse > 0 && (
+            <div className="gcat-sub">
+              <TrendMark trend={trend} />
+            </div>
+          )}
+        </>
+      )),
+    },
+    {
+      id: "source",
+      header: "Source",
+      cell: cell((_, { repository }) =>
+        repository ? (
+          <a className="gcat-link" href={repository} target="_blank" rel="noreferrer" title={repository}>
             {repository.replace(/^https?:\/\/(www\.)?/, "")}
           </a>
-        ) : null}
-      </td>
-    </tr>
-  );
+        ) : null,
+      ),
+    },
+  ];
 }
 
 // ── the component card ───────────────────────────────────────────────────────
@@ -3400,7 +3454,7 @@ const GCAT_CSS = `
 .gcat .gtxt { font-size:11.5px; color:var(--studio-muted); line-height:1.35; max-width:280px; }
 .gcat .gtxt b { color:var(--studio-text); font-family:var(--studio-mono); }
 
-.gcat .gcat-types { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+.gcat .gcat-types { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0; }
 .gcat .gcat-types-label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--studio-muted); margin-right:2px; }
 .gcat .gcat-type { font-size:12px; padding:3px 10px; border:1px solid var(--border); border-radius:var(--radius-full); background:transparent; cursor:pointer; color:inherit; }
 .gcat .gcat-type:hover { border-color:var(--primary); }
@@ -3413,7 +3467,9 @@ const GCAT_CSS = `
 .gcat code { font-family:var(--studio-mono); font-size:.92em; }
 
 /* list cards */
-.gcat .gcat-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:14px; }
+.gcat .vtiles { grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:14px; }
+.gcat .dt-tile { display:flex; }
+.gcat .dt-tile > .ccard { flex:1; }
 .gcat .ccards-summary { display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12.5px; color:var(--studio-muted); margin:2px 2px 10px; }
 .gcat .ccards-summary b { color:var(--studio-text); font-weight:600; }
 .gcat .ccard {
@@ -3506,13 +3562,6 @@ const GCAT_CSS = `
    The first column is the component AND its purpose, as the product's own
    table has it: a name with no purpose beside it sends you into the page to
    find out what it was. */
-.gcat .gcat-table-wrap { border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--card); overflow-x:auto; }
-.gcat .gcat-table { width:100%; border-collapse:collapse; font-size:13px; }
-.gcat .gcat-table th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted-foreground); font-weight:500; padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; }
-.gcat .gcat-table td { padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:top; }
-.gcat .gcat-table tr:last-child td { border-bottom:none; }
-.gcat .gcat-row { cursor:pointer; }
-.gcat .gcat-row:hover td { background:var(--accent); }
 .gcat .gcat-lead { min-width:260px; max-width:420px; }
 .gcat .gcat-name { font-weight:600; color:var(--foreground); }
 .gcat .gcat-purpose { margin-top:2px; font-size:12px; color:var(--muted-foreground); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
@@ -3522,7 +3571,6 @@ const GCAT_CSS = `
 .gcat .src-chip.roadmap { border-color:color-mix(in srgb, var(--primary) 40%, var(--border)); color:var(--primary); }
 .gcat .src-chip.planned { background:color-mix(in srgb, var(--primary) 10%, transparent); border-color:transparent; color:var(--primary); font-weight:600; }
 .gcat .gcat-sub { font-size:11px; color:var(--muted-foreground); margin-top:2px; }
-.gcat .gcat-num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* A missing value says WHICH missing it is, so it reads as a finding rather
    than as a gap in the rendering. Muted and italic: present, not shouting. */
 .gcat .gcat-absent { color:var(--muted-foreground); font-style:italic; font-size:12px; white-space:nowrap; }
@@ -3548,7 +3596,6 @@ const GCAT_CSS = `
 .gcat .gcat-pct { font-size:12px; font-variant-numeric:tabular-nums; color:var(--muted-foreground); }
 .gcat .gcat-link { color:var(--primary); text-decoration:none; font-size:12px; white-space:nowrap; }
 .gcat .gcat-link:hover { text-decoration:underline; }
-.gcat .gcat-foot { padding:10px 14px; font-size:12px; color:var(--muted-foreground); border-top:1px solid var(--border); }
 .gcat .gcard {
   text-align:left; font:inherit; color:inherit; cursor:pointer;
   background:var(--studio-surface); border:1px solid var(--studio-line);
@@ -3706,33 +3753,6 @@ const GCAT_CSS = `
 .gcat .editor textarea { width:100%; min-height:260px; font-family:var(--studio-mono); font-size:12px; }
 .gcat .editbtns { display:flex; gap:8px; margin-top:8px; }
 `;
-
-/** A header that sorts, the way DataTable's do: ascending, descending, back. */
-function SortTh({
-  label,
-  id,
-  sort,
-  onSort,
-  className,
-}: {
-  label: string;
-  id: string;
-  sort: SortState | null;
-  onSort: (id: string) => void;
-  className?: string;
-}) {
-  const dir = sort?.key === id ? sort.dir : null;
-  return (
-    <th className={className} aria-sort={dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none"}>
-      <button className="dt-sort" onClick={() => onSort(id)}>
-        {label}
-        <span className="dt-sort-mark" aria-hidden>
-          {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "↕"}
-        </span>
-      </button>
-    </th>
-  );
-}
 
 /** The open component, as `?component=` in the address. Opening one is a
  *  step (pushed, so Back closes it); closing it from the page is Back when
