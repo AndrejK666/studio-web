@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
-use axum::extract::{DefaultBodyLimit, Path, RawQuery};
+use axum::extract::DefaultBodyLimit;
 use axum::{Extension, Router};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
@@ -383,7 +383,7 @@ pub struct AnalyzeBatchEnqueuedDto {
     pub poll: String,
 }
 
-/// POST /spec-quality/v1/analyze-batch — one detector over many documents.
+/// POST /studio-spec-quality/v1/analyze-batch — one detector over many documents.
 ///
 /// The sweep used to be a loop in the caller: submit, wait, submit the next.
 /// It is one run now. What a verdict MEANS is still the caller's — the run
@@ -487,7 +487,6 @@ async fn analyze_traceability(
     enqueue_analysis(&ctx, &state, "traceability", body).await
 }
 
-/// GET /spec-quality/v1/tasks/{task_id} — poll a submitted task.
 /// One analysis, read rather than relayed.
 ///
 /// Every field is optional because a verdict's shape follows its detector, and
@@ -579,7 +578,7 @@ fn pairs_of(pairs: Vec<(String, String)>) -> Vec<Vec<String>> {
     pairs.into_iter().map(|(a, b)| vec![a, b]).collect()
 }
 
-/// GET /spec-quality/v1/verdicts — one analysis, interpreted.
+/// GET /studio-spec-quality/v1/verdicts — one analysis, interpreted.
 async fn get_verdict(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
@@ -639,35 +638,7 @@ async fn get_verdict(
     Ok(Json(dto))
 }
 
-async fn get_task(
-    Extension(_ctx): Extension<SecurityContext>,
-    Extension(state): Extension<Arc<ProxyState>>,
-    Path(task_id): Path<String>,
-) -> ApiResult<impl IntoResponse> {
-    // task_id is opaque upstream; percent-encode nothing fancy — the upstream
-    // ids are url-safe. Building the path directly keeps the forward verbatim.
-    state
-        .forward(
-            reqwest::Method::GET,
-            &format!("/v1/tasks/{task_id}"),
-            None,
-            None,
-        )
-        .await
-}
-
-/// GET /spec-quality/v1/tasks — list recent tasks (optional `?limit=`).
-async fn list_tasks(
-    Extension(_ctx): Extension<SecurityContext>,
-    Extension(state): Extension<Arc<ProxyState>>,
-    RawQuery(query): RawQuery,
-) -> ApiResult<impl IntoResponse> {
-    state
-        .forward(reqwest::Method::GET, "/v1/tasks", query.as_deref(), None)
-        .await
-}
-
-/// GET /spec-quality/v1/health — upstream liveness (maps to `/healthz`).
+/// GET /studio-spec-quality/v1/health — upstream liveness (maps to `/healthz`).
 /// Handy to confirm base URL + reachability without submitting work.
 async fn health(
     Extension(_ctx): Extension<SecurityContext>,
@@ -678,7 +649,7 @@ async fn health(
         .await
 }
 
-/// GET /spec-quality/v1/status — is the wrapper wired? No secrets exposed.
+/// GET /studio-spec-quality/v1/status — is the wrapper wired? No secrets exposed.
 async fn status(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
@@ -692,7 +663,7 @@ async fn status(
     }))
 }
 
-/// GET /spec-quality/v1/capabilities — what the upstream declares about itself.
+/// GET /studio-spec-quality/v1/capabilities — what the upstream declares about itself.
 ///
 /// Deliberately not cached. The document is ~11 KB, it is fetched when a screen
 /// opens, and a cache would have to answer "for how long is a stale vocabulary
@@ -875,8 +846,8 @@ pub fn register_routes(
     // Four detector submit endpoints (POST → upstream 202 TaskCreated). Kept
     // as explicit chains (rather than a loop) because each `.handler()` yields
     // a distinct builder type — the same shape llm_proxy uses.
-    router = OperationBuilder::post("/spec-quality/v1/analyze/bloat")
-        .operation_id("spec_quality.analyze_bloat")
+    router = OperationBuilder::post("/studio-spec-quality/v1/analyze/bloat")
+        .operation_id("studio_spec_quality.analyze_bloat")
         .summary("Submit a bloat (cross-document duplication) analysis")
         .description(SUBMIT_DESC)
         .tag("SpecQuality")
@@ -888,11 +859,11 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/spec-quality/v1/analyze-batch")
-        .operation_id("spec_quality.analyze_batch")
+    router = OperationBuilder::post("/studio-spec-quality/v1/analyze-batch")
+        .operation_id("studio_spec_quality.analyze_batch")
         .summary("Run one detector over a set of documents, as a single run")
         .description(
-            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /spec-quality/v1/tasks/{task_id}.",
+            "Replaces a submit-and-wait loop in the caller. Records one              studio-tasks run that analyses each document in turn; follow it on              studio-events (subject_type task_run). The run's result names each              document's upstream task rather than carrying the verdicts              themselves — read those with GET /studio-spec-quality/v1/verdicts?task_id=….",
         )
         .tag("SpecQuality")
         .authenticated()
@@ -903,8 +874,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/spec-quality/v1/analyze/purpose")
-        .operation_id("spec_quality.analyze_purpose")
+    router = OperationBuilder::post("/studio-spec-quality/v1/analyze/purpose")
+        .operation_id("studio_spec_quality.analyze_purpose")
         .summary("Submit a purpose (section roles + purpose gate) analysis")
         .description(SUBMIT_DESC)
         .tag("SpecQuality")
@@ -916,8 +887,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/spec-quality/v1/analyze/leak")
-        .operation_id("spec_quality.analyze_leak")
+    router = OperationBuilder::post("/studio-spec-quality/v1/analyze/leak")
+        .operation_id("studio_spec_quality.analyze_leak")
         .summary("Submit a leak (foreign-content verdict) analysis")
         .description(SUBMIT_DESC)
         .tag("SpecQuality")
@@ -929,8 +900,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/spec-quality/v1/analyze/traceability")
-        .operation_id("spec_quality.analyze_traceability")
+    router = OperationBuilder::post("/studio-spec-quality/v1/analyze/traceability")
+        .operation_id("studio_spec_quality.analyze_traceability")
         .summary("Submit a traceability (ID graph / drift) analysis")
         .description(SUBMIT_DESC)
         .tag("SpecQuality")
@@ -944,14 +915,9 @@ pub fn register_routes(
 
     router = OperationBuilder::get("/studio-spec-quality/v1/verdicts")
         .operation_id("studio_spec_quality.get_verdict")
-        // `studio-spec-quality`, not `spec-quality` like its ten siblings.
-        // The prefix is what rule A1 asks for and what those ten are in the
-        // baseline FOR; a new operation is bound by the rules (ADR-0020), and
-        // this one costs nothing to get right because nothing calls it yet.
-        // The siblings move when something is willing to pay for their move.
         .summary("One analysis, read rather than relayed")
         .description(
-            "The same upstream task as `/tasks/{task_id}`, turned into a verdict. Every other              route here hands the upstream's bytes through untouched, which is right: the              wrapper's job is the key, not the schema. This one is different because reading a              detector's answer is a JUDGEMENT, and it was being made in the browser.
+            "The upstream task a submit named, turned into a verdict. Every other              route here hands the upstream's bytes through untouched, which is right: the              wrapper's job is the key, not the schema. This one is different because reading a              detector's answer is a JUDGEMENT, and it was being made in the browser.
 
              The service does not document these shapes — its OpenAPI declares the four              request bodies and nothing else — so every key is read defensively and the              judgements are the product: a doc type is reported with the share of the document              that was recognised as specification at all, an absent boolean stays null rather              than becoming false, only duplication ACROSS documents counts as bloat, and              `recognised` separates a shape this reader did not understand from a document set              that genuinely references nothing.
 
@@ -967,44 +933,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/spec-quality/v1/tasks/{task_id}")
-        .operation_id("spec_quality.get_task")
-        .summary("Poll a submitted spec-quality task")
-        .description(
-            "Verbatim passthrough of the upstream task view: status, timestamps, \
-             the detector-specific result object, warnings and errors.",
-        )
-        .tag("SpecQuality")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("task_id", "Upstream task id (from the submit response)")
-        .handler(get_task)
-        .json_response(StatusCode::OK, "Upstream TaskView, passed through verbatim")
-        .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/spec-quality/v1/tasks")
-        .operation_id("spec_quality.list_tasks")
-        .summary("List recent spec-quality tasks")
-        .description(
-            "Forwards to the upstream detector service and returns its recent \
-             tasks. Pass `limit` to shorten the list.",
-        )
-        .tag("SpecQuality")
-        .authenticated()
-        .require_license_features::<License>([])
-        .handler(list_tasks)
-        .json_response(
-            StatusCode::OK,
-            "Upstream task list, passed through verbatim",
-        )
-        .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/spec-quality/v1/health")
-        .operation_id("spec_quality.health")
+    router = OperationBuilder::get("/studio-spec-quality/v1/health")
+        .operation_id("studio_spec_quality.health")
         .summary("Upstream liveness (maps to the service's /healthz)")
         .description(
             "Reports whether the upstream detector service is answering; maps to \
@@ -1020,8 +950,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/spec-quality/v1/status")
-        .operation_id("spec_quality.status")
+    router = OperationBuilder::get("/studio-spec-quality/v1/status")
+        .operation_id("studio_spec_quality.status")
         .summary("Whether the spec-quality wrapper is configured (no secrets)")
         .description(
             "Lets the portal decide whether to offer analysis without ever \
@@ -1036,8 +966,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/spec-quality/v1/capabilities")
-        .operation_id("spec_quality.get_capabilities")
+    router = OperationBuilder::get("/studio-spec-quality/v1/capabilities")
+        .operation_id("studio_spec_quality.get_capabilities")
         .summary("Detectors and document types the upstream service declares")
         .description(
             "Read from the service's own OpenAPI document, so the portal does \
