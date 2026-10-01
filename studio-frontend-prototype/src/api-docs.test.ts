@@ -28,7 +28,8 @@ describe("groupByComponent", () => {
       "/account-management/v1/users": { get: { tags: ["Identity"] } },
       "/authz-resolver/v1/evaluate": { post: {} },
       "/studio-git/v1/sources": { get: { tags: ["StudioGit"] }, parameters: [] },
-      "/spec-quality/v1/tasks": { get: { tags: ["SpecQuality"] }, post: { tags: ["SpecQuality"] } },
+      "/studio-spec-quality/v1/capabilities": { get: { tags: ["SpecQuality"] } },
+      "/studio-spec-quality/v1/status": { get: { tags: ["SpecQuality"] } },
       "/studio-spec-quality/v1/verdicts": { get: { tags: ["SpecQuality"] } },
     },
   };

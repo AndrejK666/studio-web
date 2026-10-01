@@ -7,8 +7,8 @@
 //! gate), `leak` (foreign-content verdicts) and `traceability` (an ID graph
 //! or LLM drift judging) — and authenticates with its OWN shared secret. This
 //! gear exposes those endpoints under the Studio gateway
-//! (`/cf/spec-quality/v1/*`) and forwards to the upstream verbatim, attaching
-//! the server-held key. Callers authenticate with their normal Studio token —
+//! (`/cf/studio-spec-quality/v1/*`) and forwards a submission to the upstream
+//! verbatim, attaching the server-held key. Callers authenticate with their normal Studio token —
 //! the spec-quality key never leaves the backend (it lives in this gear's
 //! config, same pattern as `studio-llm-proxy`).
 //!
@@ -20,9 +20,11 @@
 //! assembly and the portal is told about it on `studio-events` rather than
 //! polling for it.
 //!
-//! The verbatim passthrough remains for the upstream's own task reads
-//! (`GET /spec-quality/v1/tasks/{id}`), which is what the run's handler and
-//! anyone debugging the upstream use.
+//! A finished analysis is read as a verdict (`GET /verdicts`): the upstream
+//! task interpreted once, here, rather than relayed and judged in every
+//! client. The raw task passthrough that used to sit beside it (and a second
+//! status vocabulary beside studio-tasks) is gone; the run's handler reads the
+//! upstream directly.
 
 pub mod analysis;
 pub mod analyze_task;

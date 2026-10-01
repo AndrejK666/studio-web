@@ -14,28 +14,14 @@
 # --- description (6) ---------------------------------------------------
 # Rule F2. No description, or one too short to say when to call the
 # operation. The cheapest entries in this file to clear.
-description	POST /spec-quality/v1/analyze/bloat
-description	POST /spec-quality/v1/analyze/leak
-description	POST /spec-quality/v1/analyze/purpose
-description	POST /spec-quality/v1/analyze/traceability
+description	POST /studio-spec-quality/v1/analyze/bloat
+description	POST /studio-spec-quality/v1/analyze/leak
+description	POST /studio-spec-quality/v1/analyze/purpose
+description	POST /studio-spec-quality/v1/analyze/traceability
 description	POST /studio-documents/v1/workspaces/{workspace_id}/document-bindings/classify
 description	POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify
 
-# --- domain-prefix (10) ---------------------------------------------------
-# Rule A1. `spec-quality` predates the `studio-` prefix. The rename is a
-# path change with a deprecation window (rule G1).
-domain-prefix	GET /spec-quality/v1/capabilities
-domain-prefix	GET /spec-quality/v1/health
-domain-prefix	GET /spec-quality/v1/status
-domain-prefix	GET /spec-quality/v1/tasks
-domain-prefix	GET /spec-quality/v1/tasks/{task_id}
-domain-prefix	POST /spec-quality/v1/analyze-batch
-domain-prefix	POST /spec-quality/v1/analyze/bloat
-domain-prefix	POST /spec-quality/v1/analyze/leak
-domain-prefix	POST /spec-quality/v1/analyze/purpose
-domain-prefix	POST /spec-quality/v1/analyze/traceability
-
-# --- error-404 (61) ---------------------------------------------------
+# --- error-404 (60) ---------------------------------------------------
 # Rule B8. The path is addressed by an id, so the thing can be absent — or
 # present and not this caller's to see, which answers the same way. The
 # operation does not declare 404, so it is missing from the generated client
@@ -51,7 +37,6 @@ error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/stages/{key}
 error-404	DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}
 error-404	DELETE /studio-domain-model/v1/types/{id}/fields/{name}
 error-404	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
-error-404	GET /spec-quality/v1/tasks/{task_id}
 error-404	GET /studio-components-catalog/v1/projects/{project_id}/gear-repo
 error-404	GET /studio-documents/v1/organizations/{organization_id}/capabilities
 error-404	GET /studio-documents/v1/organizations/{organization_id}/stages
@@ -154,11 +139,6 @@ list-envelope	GET /studio-user/v1/organizations/{org_id}/invitations
 list-envelope	GET /studio-user/v1/users/{user_id}/memberships
 list-envelope	POST /studio-artifact-ingest/v1/search
 
-# --- local-task-endpoint (1) ---------------------------------------------------
-# Rule D2. A private background-status endpoint beside studio-tasks.
-# Each is a second vocabulary for the frontend to learn for the same thing.
-local-task-endpoint	GET /spec-quality/v1/tasks/{task_id}
-
 # --- op-id-verb (33) ---------------------------------------------------
 # Rule A2. The operation_id does not start with a verb from the closed
 # list. Two kinds: a synonym of a lifecycle verb (`save`/`set`/`put`/`edit` for
@@ -167,8 +147,8 @@ local-task-endpoint	GET /spec-quality/v1/tasks/{task_id}
 # generated client with a method name that does not say what it does.
 op-id-verb	DELETE /studio-domain-model/v1/types/{id}/fields/{name}
 op-id-verb	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
-op-id-verb	GET /spec-quality/v1/health
-op-id-verb	GET /spec-quality/v1/status
+op-id-verb	GET /studio-spec-quality/v1/health
+op-id-verb	GET /studio-spec-quality/v1/status
 op-id-verb	GET /studio-artifact-ingest/v1/repo-files
 op-id-verb	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
 op-id-verb	GET /studio-domain-model/v1/model/graph
@@ -296,9 +276,7 @@ scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 # JSON or an SSE stream, passed through for the agent CLIs; there is no shape of ours.
 # The roadmap workbook (studio-components-catalog) is an .xlsx file, a zip of
 # OOXML parts; a schema describes JSON, and the report it is drawn from has one.
-typed-response	GET /spec-quality/v1/health
-typed-response	GET /spec-quality/v1/tasks
-typed-response	GET /spec-quality/v1/tasks/{task_id}
+typed-response	GET /studio-spec-quality/v1/health
 typed-response	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 typed-response	GET /studio-components-catalog/v1/roadmap-report/workbook
 typed-response	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
@@ -308,11 +286,11 @@ typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/operations
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/repositories
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/session
 typed-response	GET /studio-theia/v1/workspaces/{workspace_id}/status
-typed-response	POST /spec-quality/v1/analyze-batch
-typed-response	POST /spec-quality/v1/analyze/bloat
-typed-response	POST /spec-quality/v1/analyze/leak
-typed-response	POST /spec-quality/v1/analyze/purpose
-typed-response	POST /spec-quality/v1/analyze/traceability
+typed-response	POST /studio-spec-quality/v1/analyze-batch
+typed-response	POST /studio-spec-quality/v1/analyze/bloat
+typed-response	POST /studio-spec-quality/v1/analyze/leak
+typed-response	POST /studio-spec-quality/v1/analyze/purpose
+typed-response	POST /studio-spec-quality/v1/analyze/traceability
 typed-response	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack

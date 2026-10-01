@@ -41,7 +41,6 @@ use std::path::{Path, PathBuf};
 /// A domain lands here in the same PR that registers its first operation, which
 /// makes "new domain or typo?" a review question instead of a runtime surprise.
 const DOMAINS: &[&str] = &[
-    "spec-quality",
     "studio-artifact-ingest",
     "studio-components-catalog",
     "studio-connector",

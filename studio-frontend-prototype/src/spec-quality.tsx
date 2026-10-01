@@ -1,7 +1,7 @@
 // Spec-Quality playground.
 //
 // A prototype surface to exercise the external spec-quality detector service
-// through OUR backend wrapper (studio-spec-quality gear → /cf/spec-quality/*).
+// through OUR backend wrapper (studio-spec-quality gear → /cf/studio-spec-quality/*).
 // The service key lives in the backend config; the browser only ever talks to
 // the Studio gateway with the user's normal token.
 //
@@ -118,7 +118,7 @@ export function useSpecQualityCapabilities(token: string): SpecQualityCapabiliti
   const [caps, setCaps] = useState<SpecQualityCapabilities | null>(null);
   useEffect(() => {
     let alive = true;
-    sqFetch<{ detectors?: string[]; doc_types?: string[] }>("/v1/capabilities", token)
+    sqFetch<{ detectors?: string[]; doc_types?: string[] }>("/studio-spec-quality/v1/capabilities", token)
       .then((r) => {
         if (!alive) return;
         setCaps({ detectors: r.detectors ?? [], docTypes: r.doc_types ?? [] });
@@ -139,7 +139,7 @@ export function useSpecQualityCapabilities(token: string): SpecQualityCapabiliti
 /* ── Small fetch layer (Studio token → gateway → wrapper gear) ── */
 
 async function sqFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(`/spec-quality${path}`), {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -194,7 +194,7 @@ async function runDetector(
   // The mark is read BEFORE the submit: a cached verdict can come back before
   // the stream is open, and this is what replays it.
   const fromSeq = await currentCursor(token);
-  const created = await sqFetch<AnalyzeEnqueued>(`/v1/analyze/${detector}`, token, {
+  const created = await sqFetch<AnalyzeEnqueued>(`/studio-spec-quality/v1/analyze/${detector}`, token, {
     method: "POST",
     body: JSON.stringify(payload),
     signal,
@@ -1282,7 +1282,7 @@ function SqStatusChip({ token }: { token: string }) {
   const [msg, setMsg] = useState("");
   useEffect(() => {
     let live = true;
-    sqFetch<{ configured: boolean; base_url_set: boolean; key_set: boolean }>("/v1/status", token)
+    sqFetch<{ configured: boolean; base_url_set: boolean; key_set: boolean }>("/studio-spec-quality/v1/status", token)
       .then((s) => {
         if (!live) return;
         setState(s.configured ? "on" : "off");

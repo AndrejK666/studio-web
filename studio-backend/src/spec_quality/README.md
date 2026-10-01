@@ -56,11 +56,13 @@ loses nothing, and the runs survive it because they are rows.
 |---|---|
 | `POST /analyze/{bloat\|purpose\|leak\|traceability}` | submit one analysis; answers with the run watching it |
 | `POST /analyze-batch` | run one detector over a set of documents, as one run |
-| `GET /tasks/{task_id}` | read one upstream submission (the verdict itself) |
-| `GET /tasks` | recent submissions |
-| `GET /health`, `GET /status` | is the upstream up, and what it reports about itself |
+| `GET /verdicts?task_id=&detector=` | one finished analysis, read as a verdict |
+| `GET /health`, `GET /status`, `GET /capabilities` | is the upstream up, is the wrapper configured, what the upstream declares |
 
-Note the route prefix is `/cf/spec-quality/v1/…`, not `/cf/studio-spec-quality/…`.
+The prefix is `/cf/studio-spec-quality/v1/…`, the gear's own name (rule A1).
+The raw upstream task reads (`/tasks`, `/tasks/{task_id}`) and the old
+`/spec-quality/v1` prefix were removed: a run is followed on studio-tasks, and
+its result is read through `/verdicts`.
 
 ## In the assembly
 

@@ -27,7 +27,7 @@
 //! one payload would push megabytes down a channel everyone in the
 //! organization is reading. So the result names each document's upstream task
 //! and how it ended; a caller reads the verdicts it actually wants through
-//! `GET /spec-quality/v1/tasks/{task_id}`, which is a cheap finished read
+//! `GET /studio-spec-quality/v1/verdicts?task_id=…`, which is a cheap finished read
 //! rather than a wait.
 
 use std::sync::Arc;

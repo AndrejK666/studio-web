@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 246,
+  "open_violations": 232,
   "operations": [
     {
       "method": "DELETE",
@@ -280,72 +280,6 @@
         "401",
         "403",
         "404",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/spec-quality/v1/capabilities",
-      "operation_id": "spec_quality.get_capabilities",
-      "tag": "SpecQuality",
-      "summary": "Detectors and document types the upstream service declares",
-      "authenticated": true,
-      "responses": [
-        "SpecQualityCapabilitiesDto"
-      ],
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/spec-quality/v1/health",
-      "operation_id": "spec_quality.health",
-      "tag": "SpecQuality",
-      "summary": "Upstream liveness (maps to the service's /healthz)",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/spec-quality/v1/status",
-      "operation_id": "spec_quality.status",
-      "tag": "SpecQuality",
-      "summary": "Whether the spec-quality wrapper is configured (no secrets)",
-      "authenticated": true,
-      "responses": [
-        "SpecQualityStatusDto"
-      ],
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/spec-quality/v1/tasks",
-      "operation_id": "spec_quality.list_tasks",
-      "tag": "SpecQuality",
-      "summary": "List recent spec-quality tasks",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/spec-quality/v1/tasks/{task_id}",
-      "operation_id": "spec_quality.get_task",
-      "tag": "SpecQuality",
-      "summary": "Poll a submitted spec-quality task",
-      "authenticated": true,
-      "errors": [
-        "401",
         "500"
       ]
     },
@@ -1496,6 +1430,48 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-quality/v1/capabilities",
+      "operation_id": "studio_spec_quality.get_capabilities",
+      "tag": "SpecQuality",
+      "summary": "Detectors and document types the upstream service declares",
+      "authenticated": true,
+      "responses": [
+        "SpecQualityCapabilitiesDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-quality/v1/health",
+      "operation_id": "studio_spec_quality.health",
+      "tag": "SpecQuality",
+      "summary": "Upstream liveness (maps to the service's /healthz)",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-quality/v1/status",
+      "operation_id": "studio_spec_quality.status",
+      "tag": "SpecQuality",
+      "summary": "Whether the spec-quality wrapper is configured (no secrets)",
+      "authenticated": true,
+      "responses": [
+        "SpecQualityStatusDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-quality/v1/verdicts",
       "operation_id": "studio_spec_quality.get_verdict",
       "tag": "SpecQuality",
@@ -1825,66 +1801,6 @@
         "400",
         "401",
         "404",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/spec-quality/v1/analyze-batch",
-      "operation_id": "spec_quality.analyze_batch",
-      "tag": "SpecQuality",
-      "summary": "Run one detector over a set of documents, as a single run",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/spec-quality/v1/analyze/bloat",
-      "operation_id": "spec_quality.analyze_bloat",
-      "tag": "SpecQuality",
-      "summary": "Submit a bloat (cross-document duplication) analysis",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/spec-quality/v1/analyze/leak",
-      "operation_id": "spec_quality.analyze_leak",
-      "tag": "SpecQuality",
-      "summary": "Submit a leak (foreign-content verdict) analysis",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/spec-quality/v1/analyze/purpose",
-      "operation_id": "spec_quality.analyze_purpose",
-      "tag": "SpecQuality",
-      "summary": "Submit a purpose (section roles + purpose gate) analysis",
-      "authenticated": true,
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/spec-quality/v1/analyze/traceability",
-      "operation_id": "spec_quality.analyze_traceability",
-      "tag": "SpecQuality",
-      "summary": "Submit a traceability (ID graph / drift) analysis",
-      "authenticated": true,
-      "errors": [
-        "401",
         "500"
       ]
     },
@@ -2929,6 +2845,66 @@
       ],
       "errors": [
         "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-quality/v1/analyze-batch",
+      "operation_id": "studio_spec_quality.analyze_batch",
+      "tag": "SpecQuality",
+      "summary": "Run one detector over a set of documents, as a single run",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-quality/v1/analyze/bloat",
+      "operation_id": "studio_spec_quality.analyze_bloat",
+      "tag": "SpecQuality",
+      "summary": "Submit a bloat (cross-document duplication) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-quality/v1/analyze/leak",
+      "operation_id": "studio_spec_quality.analyze_leak",
+      "tag": "SpecQuality",
+      "summary": "Submit a leak (foreign-content verdict) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-quality/v1/analyze/purpose",
+      "operation_id": "studio_spec_quality.analyze_purpose",
+      "tag": "SpecQuality",
+      "summary": "Submit a purpose (section roles + purpose gate) analysis",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-quality/v1/analyze/traceability",
+      "operation_id": "studio_spec_quality.analyze_traceability",
+      "tag": "SpecQuality",
+      "summary": "Submit a traceability (ID graph / drift) analysis",
+      "authenticated": true,
+      "errors": [
         "401",
         "500"
       ]
