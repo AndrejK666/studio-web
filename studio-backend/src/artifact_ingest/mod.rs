@@ -290,6 +290,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The ingested files, for the gear that decides what each one is.
             ctx.client_hub()
                 .register::<dyn port::ArtifactFiles>(service.clone());
+            // Where a Spec Quality run writes the findings it records itself.
+            ctx.client_hub()
+                .register::<dyn port::SpecFindingWriter>(service.clone());
         }
 
         // Retain for the process lifetime; the router also owns a clone.

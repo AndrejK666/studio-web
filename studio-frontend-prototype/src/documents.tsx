@@ -35,8 +35,10 @@ import {
   RemoteRepo,
   ScaffoldFile,
   SpecFinding,
+  type SpecFindingItem,
   StageStatus,
   WrittenFile,
+  findingItems,
 } from "./api";
 import {
   collectBatch,
@@ -45,6 +47,7 @@ import {
   useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
+import { findingCount, findingDotTone, findingLabel } from "./spec-findings";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -316,25 +319,60 @@ function withFile(only: DocBinding | undefined, bound: DocBinding[]): DocBinding
   return only && !bound.some((b) => b.id === only.id) ? [only, ...bound] : bound;
 }
 
-function findingLabel(found: SpecFinding[] | undefined): string {
-  const n = found?.length ?? 0;
-  if (n === 0) return "No findings";
-  return `${n} finding${n === 1 ? "" : "s"}`;
-}
 
-/** The dot beside that count. Findings outrank conformance: a document can
- *  satisfy its template exactly and still be the one with an unresolved
- *  placeholder in it, and that is the more useful thing to colour for. */
-function findingDotTone(found: SpecFinding[] | undefined, conforms?: boolean | null): string {
-  if (found?.length) {
-    const worst = found.some((f) => f.severity === "high" || f.severity === "gate-failed");
-    return worst ? "var(--destructive)" : "var(--warning)";
-  }
-  if (conforms === false) return "var(--warning)";
-  if (conforms === true) return "var(--success)";
-  return "var(--muted-foreground)";
-}
 
+/** One thing a detector found, where it is, and why it says so. */
+function FindingLine({ item }: { item: SpecFindingItem }) {
+  const a = item.anchor;
+  const where = a
+    ? [
+        a.section ? a.section.split(" > ").pop() : null,
+        a.line_start != null
+          ? a.line_end != null && a.line_end !== a.line_start
+            ? `lines ${a.line_start}–${a.line_end}`
+            : `line ${a.line_start}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "whole document";
+  const tone =
+    item.severity === "high"
+      ? "var(--destructive)"
+      : item.severity === "medium"
+        ? "var(--warning)"
+        : "var(--muted-foreground)";
+  return (
+    <li style={{ borderLeft: `3px solid ${tone}`, padding: "4px 8px", margin: "4px 0" }}>
+      <div>
+        <b style={{ color: tone, fontSize: 10, textTransform: "uppercase", marginRight: 6 }}>
+          {item.severity}
+        </b>
+        {item.message}
+      </div>
+      <div style={{ opacity: 0.7 }}>
+        {where}
+        {item.confidence != null && ` · confidence ${item.confidence.toFixed(2)}`}
+      </div>
+      {item.evidence[0] && (
+        <div style={{ opacity: 0.7, fontStyle: "italic" }}>{item.evidence[0]}</div>
+      )}
+      {a?.quote && (
+        <div style={{ opacity: 0.7 }}>
+          “{a.quote.length > 160 ? `${a.quote.slice(0, 160)}…` : a.quote}”
+        </div>
+      )}
+      {item.related.length > 0 && (
+        <div style={{ opacity: 0.7 }}>
+          also at{" "}
+          {item.related
+            .map((r) => `${basename(r.path)}${r.anchor.line_start != null ? ` line ${r.anchor.line_start}` : ""}`)
+            .join(", ")}
+        </div>
+      )}
+    </li>
+  );
+}
 
 /** The files Studio pulled out of the repository, and what we think each is. */
 function IngestedDocumentsView({
@@ -640,69 +678,17 @@ function IngestedDocumentsView({
         const verdict = await api.specQualityVerdict(token, got.taskId, "purpose");
         const docType = verdict.doc_type ?? null;
         const specShare = verdict.spec_share ?? 0;
-        const gatePassed = verdict.gate_passed ?? null;
-        const taskId = got.taskId;
-        // Two things have to hold before a verdict is worth recording: the
+        // Two things have to hold before a verdict is worth acting on: the
         // detector recognised enough of the document for the type it named to
         // mean anything, and that name is one this workspace has a template
         // for. It always names a type, so without the first check a run over
         // unrelated files comes back with all of them called the same thing.
         const recognised = specShare >= MIN_SPEC_SHARE;
 
-        const summary = docType
-          ? `purpose: ${docType} (${Math.round(specShare * 100)}% specification)`
-          : "purpose: no type named";
-
-        // Two writes, for two different things, and neither is a copy of the
-        // other. The graph keeps the finding itself — the detector, the score,
-        // the raw result — joined to the file, which is what survives and what
-        // the list shows. The binding keeps the pass/fail, which is the one
-        // question a stage gate asks and the only one it can afford to walk a
-        // graph for.
-        void api
-          .saveQualityFindings(token, {
-            findings: [
-              {
-                detector: "purpose",
-                subject: b.node_id,
-                path: b.path,
-                severity:
-                  gatePassed === true
-                    ? "gate-passed"
-                    : gatePassed === false
-                      ? "gate-failed"
-                      : recognised
-                        ? "analyzed"
-                        : "unrecognised",
-                summary,
-                score: specShare,
-              },
-            ],
-            workspace_id: workspaceId,
-            project_id: projectTenantId,
-          })
-          .catch(() => {
-            // The binding below is the decision; losing its trace is not worth
-            // failing the run the person is watching.
-          });
-
-        // `gate` is `leak_share` against a threshold — no foreign content where
-        // the type says there should be none. Useless as evidence for the type
-        // it named, exactly right as the verdict a stage gating on `purpose`
-        // waits for. Unknown stays `pending`: a gate never opens on a value we
-        // could not interpret.
-        // A document written in Studio has no binding to keep a gate on; its
-        // finding above is all there is to record.
-        if (!isStudioDoc(b)) void api
-          .recordBindingAnalysis(token, workspaceId, b.id, "purpose", {
-            state: gatePassed === true ? "passed" : gatePassed === false ? "failed" : "pending",
-            task_id: taskId,
-            summary,
-          })
-          .catch(() => {
-            // Same reasoning: the person is watching the queue, not the gate.
-          });
-
+        // The finding and the gate verdict are not written here any more: the
+        // run records both itself as each document finishes, so they are kept
+        // even if this tab is closed mid-run. What stays here is the one
+        // decision the verdict feeds — binding the type it named.
         if (isStudioDoc(b)) {
           // Its type was chosen when it was started; the verdict is advice.
           named += 1;
@@ -799,53 +785,12 @@ function IngestedDocumentsView({
       for (const b of targets) {
         const got = collected.get(b.path);
         if (!got || "error" in got) continue;
+        // The run recorded the finding and the gate verdict itself; this only
+        // counts them for the note below.
         const verdict = await api.specQualityVerdict(token, got.taskId, "leak");
         const passed = verdict.passed ?? null;
-        const leakShare = verdict.leak_share ?? null;
-        const foreignRoles = verdict.foreign_roles ?? [];
-        const taskId = got.taskId;
         if (passed === true) clean += 1;
         else if (passed === false) leaky += 1;
-
-        const share = leakShare == null ? "" : ` (${Math.round(leakShare * 100)}% foreign)`;
-        const summary =
-          passed === true
-            ? `leak: clean${share}`
-            : passed === false
-              ? `leak: reads partly as ${foreignRoles.join(", ") || "another kind"}${share}`
-              : "leak: no verdict";
-
-        void api
-          .saveQualityFindings(token, {
-            findings: [
-              {
-                detector: "leak",
-                subject: b.node_id,
-                path: b.path,
-                severity:
-                  passed === true ? "clean" : passed === false ? "high" : "analyzed",
-                summary,
-                score: leakShare ?? undefined,
-              },
-            ],
-            workspace_id: workspaceId,
-            project_id: projectTenantId,
-          })
-          .catch(() => {
-            // The run the person is watching matters more than its trace.
-          });
-
-        // A document written in Studio has no binding to keep a gate on; its
-        // finding above is all there is to record.
-        if (!isStudioDoc(b)) void api
-          .recordBindingAnalysis(token, workspaceId, b.id, "leak", {
-            state: passed === true ? "passed" : passed === false ? "failed" : "pending",
-            task_id: taskId,
-            summary,
-          })
-          .catch(() => {
-            // Same.
-          });
       }
       await reload();
       setNote(
@@ -923,7 +868,6 @@ function IngestedDocumentsView({
       );
       const byPath = verdict.by_path ?? {};
       const recognised = verdict.recognised ?? false;
-      const taskId = whole.taskId;
 
       // The service does not document this response, so an unreadable shape
       // must not be reported as "nothing references anything" — that reads as
@@ -938,41 +882,8 @@ function IngestedDocumentsView({
 
       let connected = 0;
       for (const b of targets) {
-        const refs = byPath[b.path] ?? [];
-        if (refs.length > 0) connected += 1;
-        const summary =
-          refs.length === 0
-            ? "traceability: references no other document in this set"
-            : `traceability: references ${refs.map(basename).join(", ")}`;
-
-        void api
-          .saveQualityFindings(token, {
-            findings: [
-              {
-                detector: "traceability",
-                subject: b.node_id,
-                path: b.path,
-                // An unreferenced document is worth noticing, not failing:
-                // a glossary that cites nothing is doing its job.
-                severity: refs.length === 0 ? "some" : "clean",
-                summary,
-                score: refs.length,
-              },
-            ],
-            workspace_id: workspaceId,
-            project_id: projectTenantId,
-          })
-          .catch(() => {});
-
-        // A document written in Studio has no binding to keep a gate on; its
-        // finding above is all there is to record.
-        if (!isStudioDoc(b)) void api
-          .recordBindingAnalysis(token, workspaceId, b.id, "traceability", {
-            state: "passed",
-            task_id: taskId,
-            summary,
-          })
-          .catch(() => {});
+        // Recorded by the run; counted here for the note.
+        if ((byPath[b.path] ?? []).length > 0) connected += 1;
       }
 
       await reload();
@@ -1046,61 +957,12 @@ function IngestedDocumentsView({
         targets.map((b) => b.path),
       );
       const byPath = verdict.by_path ?? {};
-      const pairs: [string, string][] = (verdict.pairs ?? []).map(
-        (p) => [p[0], p[1]] as [string, string],
-      );
-      const taskId = whole.taskId;
 
+      // The run recorded each document's finding, its gate verdict and the
+      // `duplicates` edges between them; this only counts for the note.
       let repeating = 0;
       for (const b of targets) {
-        const others = byPath[b.path] ?? [];
-        const clean = others.length === 0;
-        if (!clean) repeating += 1;
-        const summary = clean
-          ? "bloat: nothing repeated elsewhere"
-          : `bloat: repeats ${others.map(basename).join(", ")}`;
-
-        void api
-          .saveQualityFindings(token, {
-            findings: [
-              {
-                detector: "bloat",
-                subject: b.node_id,
-                path: b.path,
-                severity: clean ? "clean" : "high",
-                summary,
-                score: others.length,
-              },
-            ],
-            workspace_id: workspaceId,
-            project_id: projectTenantId,
-          })
-          .catch(() => {});
-
-        // A document written in Studio has no binding to keep a gate on; its
-        // finding above is all there is to record.
-        if (!isStudioDoc(b)) void api
-          .recordBindingAnalysis(token, workspaceId, b.id, "bloat", {
-            state: clean ? "passed" : "failed",
-            task_id: taskId,
-            summary,
-          })
-          .catch(() => {});
-      }
-
-      // The relation itself, for the graph: which document repeats which.
-      const nodeOf = new Map(targets.map((b) => [b.path, b.node_id]));
-      const duplicates = pairs
-        .map(([a, b]) => ({ from: nodeOf.get(a) ?? "", to: nodeOf.get(b) ?? "" }))
-        .filter((d) => d.from && d.to);
-      if (duplicates.length > 0) {
-        void api
-          .saveQualityFindings(token, {
-            duplicates,
-            workspace_id: workspaceId,
-            project_id: projectTenantId,
-          })
-          .catch(() => {});
+        if ((byPath[b.path] ?? []).length > 0) repeating += 1;
       }
 
       await reload();
@@ -1499,7 +1361,7 @@ function IngestedDocumentsView({
             <TileGrid>
               {visible.map((row) => {
                 const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
-                const open = findingKey ? (findings[findingKey] ?? []).length : 0;
+                const open = findingKey ? findingCount(findings[findingKey]) : 0;
                 const repoId = row.repo || undefined;
                 return (
                   <Tile
@@ -1868,6 +1730,13 @@ function IngestedDocumentsView({
                           )}
                           {f.summary && (
                             <div style={{ opacity: 0.7, marginTop: 2 }}>{f.summary}</div>
+                          )}
+                          {findingItems(f).length > 0 && (
+                            <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0" }}>
+                              {findingItems(f).map((item) => (
+                                <FindingLine key={item.id} item={item} />
+                              ))}
+                            </ul>
                           )}
                         </div>
                       ))}

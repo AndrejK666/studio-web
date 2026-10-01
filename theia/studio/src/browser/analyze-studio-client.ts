@@ -273,26 +273,6 @@ export class AnalyzeStudioClient {
         return readJson(await StudioApi.fetch(`/studio-spec-quality/v1/verdicts?${query.toString()}`));
     }
 
-    async saveFindings(findings: readonly FindingToSave[], workspaceId: string, projectId: string): Promise<void> {
-        await readJson(await StudioApi.fetch('/studio-artifact-ingest/v1/quality', {
-            method: 'POST',
-            body: JSON.stringify({ findings, workspace_id: workspaceId, project_id: projectId }),
-        }));
-    }
-
-    /** The pass/fail a stage gate reads, kept on a repository file's binding. */
-    async recordBindingAnalysis(
-        workspaceId: string,
-        bindingId: string,
-        detector: SpecDetector,
-        body: { readonly state: 'pending' | 'passed' | 'failed'; readonly task_id?: string; readonly summary?: string },
-    ): Promise<void> {
-        await readJson(await StudioApi.fetch(
-            `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/document-bindings/${encodeURIComponent(bindingId)}` +
-            `/analyses/${detector}`,
-            { method: 'PUT', body: JSON.stringify(body) },
-        ));
-    }
 }
 
 /** The body of a good answer, or what Studio said was wrong with the request. */

@@ -146,3 +146,26 @@ pub trait ProjectSignalSource: Send + Sync + 'static {
         days: usize,
     ) -> anyhow::Result<ProjectSignals>;
 }
+
+pub use super::service::{QualityFinding, QualityLink};
+
+/// Writes spec-quality findings into the artifact graph.
+///
+/// The REST `POST /quality` writes the same nodes for a caller that parsed a
+/// verdict itself. This is the seam for the one that does not need to: a
+/// Spec Quality run that records its own results as each document finishes,
+/// including a run started by a source sync with nobody watching it.
+#[async_trait]
+pub trait SpecFindingWriter: Send + Sync + 'static {
+    /// One `spec_finding` node per (detector, document), its `finding_on`
+    /// edge, and the derived document relations. Idempotent, as the REST
+    /// route is. Returns (nodes, edges).
+    async fn write_spec_findings(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        findings: &[QualityFinding],
+        duplicates: &[QualityLink],
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> anyhow::Result<(usize, usize)>;
+}

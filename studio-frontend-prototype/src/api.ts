@@ -651,8 +651,43 @@ export interface SpecFinding {
   /** Whatever number the detector reports, when it reports one. */
   score?: number | null;
   /** The raw result, kept so a later reader is not limited to what this build
-   *  thought worth summarising. */
+   *  thought worth summarising. A run recorded by the server carries
+   *  `details.findings` — read them with {@link findingItems}. */
   details?: unknown;
+}
+
+/** Where in the analysed text a finding is. Lines, not characters: the
+ *  service's character offsets do not match its text, its lines do. For a
+ *  `purpose` or `leak` section `line_start` is the first line of its body. */
+export interface SpecFindingAnchor {
+  section?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  /** The passage (bloat), reflowed onto one line. */
+  quote?: string | null;
+}
+
+/** One thing a detector found in one document — what
+ *  `GET /studio-spec-quality/v1/verdicts` answers in `findings[]`, and what a
+ *  recorded `spec_finding` keeps under `details.findings`. */
+export interface SpecFindingItem {
+  /** Stable across re-runs and edits elsewhere in the document. */
+  id: string;
+  rule: string;
+  path?: string | null;
+  severity: "high" | "medium" | "low";
+  message: string;
+  anchor?: SpecFindingAnchor | null;
+  related: { path: string; anchor: SpecFindingAnchor }[];
+  evidence: string[];
+  confidence?: number | null;
+}
+
+/** The findings a recorded detector verdict carries. Empty for a verdict
+ *  recorded before the server kept them, which still counts as one row. */
+export function findingItems(f: SpecFinding): SpecFindingItem[] {
+  const items = (f.details as { findings?: unknown } | null | undefined)?.findings;
+  return Array.isArray(items) ? (items as SpecFindingItem[]) : [];
 }
 
 /** One document type a stage cannot do without, and how the project stands on it. */
@@ -1891,6 +1926,8 @@ export interface SpecQualityVerdict {
   by_path?: Record<string, string[]> | null;
   pairs?: string[][] | null;
   recognised?: boolean | null;
+  /** What the detector found, each placed in the text. */
+  findings?: SpecFindingItem[];
 }
 
 export const api = {

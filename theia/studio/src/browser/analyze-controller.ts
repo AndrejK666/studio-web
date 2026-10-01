@@ -308,7 +308,6 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
 
         const finished = await this.watch(runs, report);
         const findings: FindingToSave[] = [];
-        const gates: { detector: SpecDetector; state: 'pending' | 'passed' | 'failed'; taskId: string; summary: string }[] = [];
         const setPaths = [target.runPath, ...others.map(binding => binding.path)];
         for (const [detector, run] of finished) {
             if (!run) {
@@ -335,22 +334,13 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
                 continue;
             }
             findings.push(finding.finding);
-            gates.push({ detector, state: finding.gate, taskId: item.task_id, summary: finding.finding.summary });
         }
 
-        if (findings.length > 0) {
-            report('Recording the results…');
-            await this.studio.saveFindings(findings, target.workspaceId, target.projectId);
-            // The pass/fail a stage gate reads. A document written in Studio
-            // has no binding to keep one on, and losing the index is not worth
-            // failing a run whose findings are already recorded.
-            if (target.bindingId) {
-                await Promise.all(gates.map(gate => this.studio.recordBindingAnalysis(
-                    target.workspaceId, target.bindingId!, gate.detector,
-                    { state: gate.state, task_id: gate.taskId, summary: gate.summary },
-                ).catch(() => undefined)));
-            }
-        }
+        // Nothing is written from here any more. The run records each
+        // document's finding, with the findings placed in the text, and the
+        // gate verdict a stage reads, itself, as each one finishes — so they
+        // are kept even when this panel stops waiting. Writing them here as
+        // well would overwrite that record with one that has no findings in it.
         const done = findings.map(finding => DETECTOR_LABEL[finding.detector]);
         const parts: string[] = [];
         parts.push(done.length > 0

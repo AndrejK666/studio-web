@@ -40,6 +40,10 @@ pub struct ClassifiedCounts {
     /// Files left exactly as they were, because a person had already ruled on
     /// them or Spec Quality had paid for the answer.
     pub kept: usize,
+    /// Typed documents whose text is new or different since the last sync.
+    pub changed_documents: usize,
+    /// Spec Quality runs queued for them, which record their own results.
+    pub analyses_queued: usize,
 }
 
 #[async_trait]
@@ -153,4 +157,31 @@ pub trait BindingNames: Send + Sync + 'static {
         ctx: &SecurityContext,
         project_id: Uuid,
     ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+}
+
+/// Records a detector's gate verdict on a document, for a stage to read.
+///
+/// The REST `PUT …/analyses/{detector}` routes do the same for a caller that
+/// read the verdict itself. This is the seam for a Spec Quality run that
+/// records its own results as each document finishes, so a stage gate is
+/// answered even for an analysis nobody was watching.
+#[async_trait]
+pub trait AnalysisRecorder: Send + Sync + 'static {
+    async fn record_detector_verdict(&self, verdict: DetectorVerdict) -> anyhow::Result<()>;
+}
+
+/// One detector's gate verdict on one document.
+#[derive(Debug, Clone)]
+pub struct DetectorVerdict {
+    pub workspace_id: Uuid,
+    /// Exactly one of `binding_id` (a repository document) and `document_id`
+    /// (one written in Studio) names the document.
+    pub binding_id: Option<Uuid>,
+    pub document_id: Option<Uuid>,
+    pub detector: String,
+    /// `pending`, `passed` or `failed`.
+    pub state: String,
+    /// The upstream task the verdict was read from.
+    pub task_id: Option<String>,
+    pub summary: String,
 }

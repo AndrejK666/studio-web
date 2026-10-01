@@ -429,6 +429,8 @@ async fn analyze_batch(
                 payload: i.payload,
             })
             .collect(),
+        // A caller of this route names its own items and reads its own verdicts.
+        record: None,
     })
     .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
@@ -608,7 +610,7 @@ fn anchor_dto(a: super::findings::Anchor) -> FindingAnchorDto {
     }
 }
 
-fn finding_dto(f: super::findings::Finding) -> FindingDto {
+pub(super) fn finding_dto(f: super::findings::Finding) -> FindingDto {
     FindingDto {
         id: f.id,
         rule: f.rule.to_owned(),

@@ -44,7 +44,28 @@ use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use repo::DocumentsRepo;
-use service::DocumentsService;
+use service::{DocumentsService, SyncAnalysis};
+
+/// `gears.studio-documents.config`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+pub struct DocumentsConfig {
+    /// Have Spec Quality analyse the documents a source sync found new or
+    /// changed, recording the findings without anybody pressing a button.
+    /// Does nothing while Spec Quality has no key.
+    pub analyze_on_sync: bool,
+    /// The most documents one sync has analysed.
+    pub analyze_on_sync_max_documents: usize,
+}
+
+impl Default for DocumentsConfig {
+    fn default() -> Self {
+        Self {
+            analyze_on_sync: true,
+            analyze_on_sync_max_documents: 50,
+        }
+    }
+}
 
 /// Document management gear.
 #[toolkit::gear(
@@ -99,7 +120,15 @@ impl toolkit::Gear for StudioDocumentsGear {
             }
         }
 
-        let service = Arc::new(DocumentsService::new(repo, account_management));
+        let config: DocumentsConfig = ctx.config_or_default()?;
+        let service = Arc::new(
+            DocumentsService::new(repo, account_management).with_sync_analysis(
+                config.analyze_on_sync.then(|| SyncAnalysis {
+                    hub: ctx.client_hub(),
+                    max_documents: config.analyze_on_sync_max_documents.max(1),
+                }),
+            ),
+        );
 
         // Offer classification to whoever walks a repository. Registered here,
         // in `init`, so it is on the hub before any gear's REST phase resolves
@@ -114,6 +143,9 @@ impl toolkit::Gear for StudioDocumentsGear {
         // to it. Registered beside the count and absent the same way.
         ctx.client_hub()
             .register::<dyn port::BindingNames>(service.clone());
+        // Where a Spec Quality run records the gate verdicts it reads itself.
+        ctx.client_hub()
+            .register::<dyn port::AnalysisRecorder>(service.clone());
 
         self.service
             .set(service)

@@ -39,6 +39,7 @@ use serde_json::json;
 use tracing::warn;
 
 use super::analyze_task::{Watched, watch_upstream};
+use super::record::{RecordSpec, readings};
 use super::rest::{ProxyState, accepted_doc_types};
 use crate::tasks::registry::{TaskContext, TaskHandler, TaskOutcome};
 
@@ -75,6 +76,11 @@ pub struct BatchPayload {
     /// `bloat` | `purpose` | `leak` | `traceability`.
     pub detector: String,
     pub items: Vec<BatchItem>,
+    /// When present, the run records each document's result itself as it
+    /// finishes — see [`super::record`]. Absent, it reports pointers only and
+    /// recording stays with whoever reads them.
+    #[serde(default)]
+    pub record: Option<RecordSpec>,
 }
 
 /// How one document's analysis ended.
@@ -100,6 +106,122 @@ impl AnalyzeBatchTask {
     pub fn new(state: Arc<ProxyState>) -> Self {
         Self { state }
     }
+
+    /// Record one finished item's readings against the subjects `spec`
+    /// names, and say how many documents were recorded.
+    ///
+    /// Never fails the run. The analysis happened and its pointer is in the
+    /// result either way; a recording that could not be written is logged
+    /// and costs a re-run, not the sweep. Both writers are resolved here
+    /// rather than at init, for the reason the queue is: this gear keeps no
+    /// opinion about which gear initialised first, and a deployment without
+    /// the graph or the documents database simply records less.
+    async fn record(
+        &self,
+        ctx: &TaskContext,
+        spec: &RecordSpec,
+        detector: &str,
+        item: &BatchItem,
+        task_id: &str,
+        result: Option<&serde_json::Value>,
+    ) -> usize {
+        // A set detector answers about every document its payload carried.
+        let set: Vec<String> = item
+            .payload
+            .get("docs")
+            .and_then(serde_json::Value::as_object)
+            .map(|docs| docs.keys().cloned().collect())
+            .unwrap_or_default();
+        let readings: Vec<_> = readings(detector, &item.id, result, &set)
+            .into_iter()
+            .filter_map(|r| spec.subjects.get(&r.path).map(|s| (s.clone(), r)))
+            .collect();
+        if readings.is_empty() {
+            return 0;
+        }
+
+        let workspace = spec.workspace_id.to_string();
+        let project = spec.project_id.map(|p| p.to_string());
+        if let Ok(writer) = self
+            .state
+            .hub
+            .get::<dyn crate::artifact_ingest::port::SpecFindingWriter>()
+        {
+            let findings: Vec<_> = readings
+                .iter()
+                .map(
+                    |(subject, r)| crate::artifact_ingest::port::QualityFinding {
+                        detector: detector.to_owned(),
+                        subject: subject.node.clone(),
+                        path: Some(r.path.clone()),
+                        severity: Some(r.severity.to_owned()),
+                        summary: Some(r.summary.clone()),
+                        score: r.score,
+                        details: r.details.clone(),
+                    },
+                )
+                .collect();
+            // Two documents sharing text are related in the graph too, as the
+            // Specs tab recorded them: a `duplicates` edge per pair, between
+            // the subjects' nodes. Only pairs whose ends are both graph nodes:
+            // a Studio document has none.
+            let duplicates: Vec<_> = if detector == "bloat" {
+                super::verdict::bloat(result, &set)
+                    .pairs
+                    .into_iter()
+                    .filter_map(|(a, b)| {
+                        let (a, b) = (spec.subjects.get(&a)?, spec.subjects.get(&b)?);
+                        (a.binding_id.is_some() && b.binding_id.is_some()).then(|| {
+                            crate::artifact_ingest::port::QualityLink {
+                                from: a.node.clone(),
+                                to: b.node.clone(),
+                            }
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if let Err(e) = writer
+                .write_spec_findings(
+                    &ctx.security,
+                    &findings,
+                    &duplicates,
+                    Some(&workspace),
+                    project.as_deref(),
+                )
+                .await
+            {
+                warn!(detector, item = %item.id, error = %e, "studio-spec-quality: could not record findings");
+            }
+        }
+        if let Ok(recorder) = self
+            .state
+            .hub
+            .get::<dyn crate::documents::port::AnalysisRecorder>()
+        {
+            for (subject, r) in &readings {
+                if subject.binding_id.is_none() && subject.document_id.is_none() {
+                    continue;
+                }
+                if let Err(e) = recorder
+                    .record_detector_verdict(crate::documents::port::DetectorVerdict {
+                        workspace_id: spec.workspace_id,
+                        binding_id: subject.binding_id,
+                        document_id: subject.document_id,
+                        detector: detector.to_owned(),
+                        state: r.gate.as_str().to_owned(),
+                        task_id: Some(task_id.to_owned()),
+                        summary: r.summary.clone(),
+                    })
+                    .await
+                {
+                    warn!(detector, path = %r.path, error = %e, "studio-spec-quality: could not record the gate verdict");
+                }
+            }
+        }
+        readings.len()
+    }
 }
 
 #[async_trait]
@@ -121,6 +243,7 @@ impl TaskHandler for AnalyzeBatchTask {
         }
 
         let total = payload.items.len();
+        let mut recorded = 0usize;
         // What each item that answered is made of, for the set's own reading.
         let mut shares: Vec<serde_json::Value> = Vec::new();
         let mut outcomes = Vec::with_capacity(total);
@@ -209,6 +332,11 @@ impl TaskHandler for AnalyzeBatchTask {
             outcomes.push(match watched {
                 Watched::Succeeded(result) => {
                     succeeded += 1;
+                    if let Some(spec) = payload.record.as_ref() {
+                        recorded += self
+                            .record(ctx, spec, &payload.detector, item, &task_id, result.as_ref())
+                            .await;
+                    }
                     // Kept for the set-wide reading below, and only the two
                     // fields it weighs: a batch result carrying every item's
                     // full analysis would be the whole run stored twice. The
@@ -269,6 +397,9 @@ impl TaskHandler for AnalyzeBatchTask {
             json!({
                 "detector": payload.detector,
                 "items": outcomes,
+                // How many documents' results this run recorded itself. Zero
+                // for a run that was not asked to.
+                "recorded": recorded,
                 // What the SET is made of, weighted by how long each document
                 // is. Read here rather than by whoever draws the bar: an
                 // unweighted average lets a forty-word stub count as much as a

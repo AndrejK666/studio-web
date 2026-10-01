@@ -37,6 +37,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 /// A document as the analysis needs it.
+#[derive(Debug, Clone)]
 pub struct SpecDoc {
     /// Repo-relative path — the id the detectors echo back.
     pub path: String,
@@ -271,6 +272,29 @@ pub fn docs_for(
         .collect()
 }
 
+/// The `spec_quality.analyze_batch` payload for one detector over `docs`.
+///
+/// `record` names what each document's result is recorded against; with it
+/// the run records as it goes, so nobody has to watch it to the end. Every
+/// caller here passes one: the Specs tab and the IDE used to record from the
+/// browser, and a sync has no browser at all.
+pub fn batch_payload(
+    detector: Detector,
+    docs: &[SpecDoc],
+    set_id: &str,
+    record: Option<&crate::spec_quality::record::RecordSpec>,
+) -> Value {
+    let items = build_items(detector, docs, set_id);
+    json!({
+        "detector": detector.as_str(),
+        "items": items
+            .into_iter()
+            .map(|i| json!({ "id": i.id, "payload": i.payload }))
+            .collect::<Vec<_>>(),
+        "record": record,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,7 +398,7 @@ mod tests {
         let many: Vec<_> = (0..=MAX_INLINE_DOCUMENTS)
             .map(|i| inline(&format!("d{i}.md"), "x", None))
             .collect();
-        let why = inline_docs(many).err().expect("one over the cap");
+        let why = inline_docs(many).expect_err("one over the cap");
         assert!(why.contains("at most 20"), "{why}");
         let exactly: Vec<_> = (0..MAX_INLINE_DOCUMENTS)
             .map(|i| inline(&format!("d{i}.md"), "x", None))
@@ -388,9 +412,8 @@ mod tests {
     #[test]
     fn an_inline_text_over_its_size_cap_is_refused() {
         let big = "a".repeat(MAX_INLINE_TEXT_BYTES + 1);
-        let why = inline_docs(vec![inline("big.md", &big, None)])
-            .err()
-            .expect("over the per-text cap");
+        let why =
+            inline_docs(vec![inline("big.md", &big, None)]).expect_err("over the per-text cap");
         assert!(why.contains("big.md"), "{why}");
         let fits = "a".repeat(MAX_INLINE_TEXT_BYTES);
         assert!(inline_docs(vec![inline("fits.md", &fits, None)]).is_ok());
@@ -403,7 +426,7 @@ mod tests {
         let docs: Vec<_> = (0..count)
             .map(|i| inline(&format!("d{i}.md"), &each, None))
             .collect();
-        let why = inline_docs(docs).err().expect("over the total cap");
+        let why = inline_docs(docs).expect_err("over the total cap");
         assert!(why.contains("together"), "{why}");
     }
 
@@ -416,8 +439,7 @@ mod tests {
             inline("a.md", "one", None),
             inline("a.md", "two", None),
         ])
-        .err()
-        .expect("the same path twice");
+        .expect_err("the same path twice");
         assert!(why.contains("twice"), "{why}");
     }
 
