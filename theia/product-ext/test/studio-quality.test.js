@@ -142,4 +142,25 @@ assert.strictEqual(hasFindings({ toString: () => 'file:///workspace/other.md' })
 markFindings(uri, false);
 assert.strictEqual(hasFindings(uri), false);
 
+// The Quality button is always drawn on a document: disabled with a reason
+// when it has no findings, live when it has.
+const { renderDocCluster } = require('../src/browser/slot-strip');
+function cluster(caps, hints) {
+    const node = { innerHTML: '' };
+    renderDocCluster(node, {
+        uri,
+        slotCapabilities: () => caps,
+        slotState: () => ({}),
+        slotHints: () => hints
+    });
+    return node.innerHTML;
+}
+const qualityButton = html => (html.match(/<button[^>]*data-studio-rail="quality"[^>]*>/) || [])[0];
+const off = qualityButton(cluster(['comments', 'changes', 'history'], { quality: 'No findings for this document yet' }));
+assert.ok(off, 'drawn without findings');
+assert.ok(/aria-disabled="true"/.test(off), 'and disabled');
+assert.ok(/title="No findings for this document yet"/.test(off), 'saying why');
+const on = qualityButton(cluster(['comments', 'changes', 'history', 'quality']));
+assert.ok(on && !/aria-disabled/.test(on), 'live with findings');
+
 console.log('studio-quality: all cases pass');

@@ -106,7 +106,14 @@ const ENTRIES = [
      * reason: a 16-file occurrence list plus source context does not fit a 360px
      * column.
      */
-    { key: 'quality', label: 'Quality', icon: ICONS.gauge, kind: 'document', gated: 'qualitySignals' },
+    /*
+     * Always drawn on a Markdown document, never hidden behind a setting: live
+     * when the document has findings (Studio's, or local signals a project
+     * turned on), and disabled — saying why — when it has none. A button that
+     * comes and goes reads as a bug; one that is there and greyed out says
+     * "nothing to look at here", which is the answer.
+     */
+    { key: 'quality', label: 'Quality', icon: ICONS.gauge, kind: 'document' },
     /*
      * `brand` is the vendor's own colour, and it is a field on the entry rather
      * than a rule in a stylesheet so that adding the next extension is one line
