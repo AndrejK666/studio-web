@@ -1556,8 +1556,10 @@ function IngestedDocumentsView({
                   {findingCount(open) > 0 && (
                     /* What the count is made of, by kind: "3 sections of
                        another kind · 2 duplicates of other docs" says what
-                       to go and fix; "5 findings" only says how much. */
-                    <span className="ing-conf" style={{ marginLeft: 6, opacity: 0.75 }}>
+                       to go and fix; "5 findings" only says how much. On a
+                       line of its own under the count, cut to the column:
+                       inline it ran over the next column. */
+                    <span className="ing-kinds" title={findingBreakdown(open)}>
                       {findingBreakdown(open)}
                     </span>
                   )}
@@ -2344,7 +2346,8 @@ const INGESTED_CSS = `
 .ing-doc-ic { flex: none; color: var(--primary); font-size: 13px; }
 .ing-repo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); }
 .ing-updated { color: var(--muted-foreground); white-space: nowrap; }
-.ing-status { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.ing-status { display: flex; flex-wrap: wrap; align-items: center; column-gap: 7px; white-space: nowrap; min-width: 0; overflow: hidden; }
+.ing-kinds { flex-basis: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 14px; font-size: 11px; color: var(--muted-foreground); }
 .ing-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .ing-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: var(--muted-foreground); }
 .ing-why { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

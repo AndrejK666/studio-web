@@ -139,4 +139,26 @@ function latestRecordedAt(verdicts) {
     return latest;
 }
 
-module.exports = { studioReports, flattenVerdicts, latestRecordedAt };
+/*
+ * Which open documents Studio has findings for, by uri.
+ *
+ * The quality destination is an optional feature a project turns on
+ * ("Specification signals"), because the local detectors are heuristics a
+ * team opts into. Studio's findings are not that: the team's own Spec Quality
+ * runs produced them, on a sync or a button. So a document Studio has
+ * findings for offers the destination whether or not the project opted into
+ * local signals — which is what the slot strip asks here.
+ */
+const withFindings = new Set();
+
+function markFindings(uri, has) {
+    const key = uri ? uri.toString() : '';
+    if (!key) { return; }
+    if (has) { withFindings.add(key); } else { withFindings.delete(key); }
+}
+
+function hasFindings(uri) {
+    return !!uri && withFindings.has(uri.toString());
+}
+
+module.exports = { studioReports, flattenVerdicts, latestRecordedAt, markFindings, hasFindings };

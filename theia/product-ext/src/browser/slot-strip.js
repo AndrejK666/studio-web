@@ -76,6 +76,7 @@ const {
     rightPanelShowing, settleRightPanelWidth
 } = require('./ai-context');
 const { fileTypeSettings } = require('./file-type-settings');
+const studioQuality = require('./studio-quality');
 
 /*
  * Fixed membership, in reading order: what is in the document, then who you can
@@ -205,8 +206,10 @@ function assistantPickItems({ active, capabilities, mac }) {
  * (the shortcut is app-level), so it falls back to the active project.
  */
 const FEATURE_GATES = {
+    // On for a project that opted into local signals, and for any document
+    // Studio's own Spec Quality has findings for (see studio-quality.js).
     qualitySignals: uri => (uri
-        ? fileTypeSettings.qualitySignalsForFile(uri)
+        ? fileTypeSettings.qualitySignalsForFile(uri) || studioQuality.hasFindings(uri)
         : fileTypeSettings.qualitySignalsActive())
 };
 

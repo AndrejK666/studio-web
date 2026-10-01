@@ -14,7 +14,7 @@
  */
 
 const assert = require('node:assert');
-const { studioReports, flattenVerdicts, latestRecordedAt } = require('../src/browser/studio-quality');
+const { studioReports, flattenVerdicts, latestRecordedAt, markFindings, hasFindings } = require('../src/browser/studio-quality');
 const qualityScan = require('../src/browser/quality-scan');
 
 // A purpose verdict exactly as the server recorded it for ADR-0019 on
@@ -131,5 +131,15 @@ assert.ok(new Set(envelope.findings.map(f => f.fingerprint)).size === 3, 'distin
 const empty = studioReports([], relPath);
 assert.deepStrictEqual(empty.bloat.clusters, []);
 assert.deepStrictEqual(empty.purpose.gate.violations, []);
+
+// A document Studio has findings for offers the quality destination even in a
+// project that never turned local signals on; clearing them takes it away.
+const uri = { toString: () => 'file:///workspace/studio-web/docs/adr/0011.md' };
+assert.strictEqual(hasFindings(uri), false);
+markFindings(uri, true);
+assert.strictEqual(hasFindings(uri), true);
+assert.strictEqual(hasFindings({ toString: () => 'file:///workspace/other.md' }), false);
+markFindings(uri, false);
+assert.strictEqual(hasFindings(uri), false);
 
 console.log('studio-quality: all cases pass');

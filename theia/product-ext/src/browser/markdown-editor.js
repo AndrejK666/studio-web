@@ -1481,7 +1481,8 @@ class MarkdownEditorWidget extends Widget {
              * reach any more is a trap. Close it, and give the width back to the
              * document exactly as the selector's own toggle would.
              */
-            if (!fileTypeSettings.qualitySignalsForFile(this.uri) && this.rail === 'quality' && this.railOpen) {
+            if (!fileTypeSettings.qualitySignalsForFile(this.uri) && !studioQuality.hasFindings(this.uri)
+                && this.rail === 'quality' && this.railOpen) {
                 this.closeSlot();
             }
             this.renderSlotCluster();
@@ -5593,6 +5594,10 @@ class MarkdownEditorWidget extends Widget {
                 producedAt: studioQuality.latestRecordedAt(list)
             }
             : undefined;
+        studioQuality.markFindings(this.uri, !!(this.studioQuality && this.studioQuality.findings.length));
+        // The destination may have just appeared (or gone) for this document.
+        slotStrip.refresh();
+        if (typeof this.renderSlotCluster === 'function') { this.renderSlotCluster(); }
         if (this.qualityLoading) {
             // Picked up when the load in flight finishes.
             this.qualityRefreshAgain = true;
