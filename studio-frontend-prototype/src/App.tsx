@@ -1674,7 +1674,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               <button
                 role="menuitem"
                 onClick={() => {
-                  window.open("/cf/docs", "_blank", "noopener");
+                  window.open("/api-docs/", "_blank", "noopener");
                   setProductMenu(false);
                 }}
               >
@@ -6194,7 +6194,7 @@ function HomeView({
           <a href="https://github.com/constructorfabric/studio-web" target="_blank" rel="noopener noreferrer">
             🐙 GitHub
           </a>
-          <a href="/cf/docs" target="_blank" rel="noopener noreferrer">
+          <a href="/api-docs/" target="_blank" rel="noopener noreferrer">
             ⧉ Docs &amp; API
           </a>
         </div>
@@ -9410,7 +9410,7 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
           </li>
         </ul>
         <p className="hint" style={{ marginTop: 12 }}>
-          API: <a href="/cf/docs">/cf/docs</a>
+          API: <a href="/api-docs/">/api-docs/</a>
         </p>
       </div>
 
