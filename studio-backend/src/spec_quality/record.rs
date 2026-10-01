@@ -361,6 +361,50 @@ mod tests {
         assert!(c.details["findings"].as_array().unwrap().is_empty());
     }
 
+    /// No gate and too little reads as specification: the reading says the
+    /// type was not recognised rather than "analyzed", and the gate is still
+    /// pending -- nothing was judged against it.
+    #[test]
+    fn a_purpose_answer_that_is_mostly_not_specification_reads_as_unrecognised() {
+        let result =
+            json!({ "doc_type": "prd", "mixture": { "other": 0.95, "requirements": 0.05 } });
+        let r = &readings("purpose", "a.md", Some(&result), &[])[0];
+        assert_eq!(r.severity, "unrecognised");
+        assert_eq!(r.gate, Gate::Pending);
+        assert!(
+            r.details["findings"].is_array(),
+            "always an array: {}",
+            r.details
+        );
+    }
+
+    /// A leak answer with no verdict in it is pending, never clean: a missing
+    /// `passed` must not read as a document that passed.
+    #[test]
+    fn a_leak_answer_without_a_verdict_is_pending() {
+        let r = &readings("leak", "a.md", Some(&json!({})), &[])[0];
+        assert_eq!(r.severity, "analyzed");
+        assert_eq!(r.summary, "leak: no verdict");
+        assert_eq!(r.gate, Gate::Pending);
+        assert_eq!(r.score, None);
+    }
+
+    #[test]
+    fn a_clean_leak_passes_and_says_how_little_was_foreign() {
+        let result = json!({ "passed": true, "leak_share": 0.02, "foreign_roles": [] });
+        let r = &readings("leak", "a.md", Some(&result), &[])[0];
+        assert_eq!(r.severity, "clean");
+        assert_eq!(r.summary, "leak: clean (2% foreign)");
+        assert_eq!(r.gate, Gate::Passed);
+    }
+
+    /// A detector this module does not know records nothing, rather than a
+    /// reading it would have to invent words for.
+    #[test]
+    fn an_unknown_detector_has_no_readings() {
+        assert!(readings("vibes", "a.md", Some(&json!({})), &set(&["a.md"])).is_empty());
+    }
+
     #[test]
     fn an_unreadable_traceability_answer_records_nothing() {
         assert!(readings("traceability", "set", Some(&json!({})), &set(&["a.md"])).is_empty());

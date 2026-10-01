@@ -552,4 +552,489 @@ mod tests {
         assert!(unanalysable(Some(&accepted), &serde_json::json!({ "text": "..." })).is_none());
         assert!(unanalysable(Some(&accepted), &serde_json::json!({ "doc_type": null })).is_none());
     }
+
+    // ── what a run records ───────────────────────────────────────────────
+    //
+    // `record` is the only place a finished analysis turns into rows somebody
+    // else reads: the `spec_finding` node the editor and the Specs tab draw
+    // findings from, and the gate verdict a stage reads. Both writers are hub
+    // ports, so the tests below put fakes on a hub and read back exactly what
+    // the run handed them -- no upstream, no graph, no database.
+
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    use toolkit::client_hub::ClientHub;
+    use toolkit_security::SecurityContext;
+    use uuid::Uuid;
+
+    use crate::artifact_ingest::port::{QualityFinding, QualityLink, SpecFindingWriter};
+    use crate::documents::port::{AnalysisRecorder, DetectorVerdict};
+    use crate::spec_quality::record::RecordSubject;
+
+    /// One `write_spec_findings` call, as plain values: the port's own types
+    /// carry no `Clone`, and a test wants to hold on to what it was given.
+    #[derive(Debug, Clone)]
+    struct Written {
+        findings: Vec<serde_json::Value>,
+        duplicates: Vec<(String, String)>,
+        workspace: Option<String>,
+        project: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct FakeWriter(Mutex<Vec<Written>>);
+
+    #[async_trait]
+    impl SpecFindingWriter for FakeWriter {
+        async fn write_spec_findings(
+            &self,
+            _ctx: &SecurityContext,
+            findings: &[QualityFinding],
+            duplicates: &[QualityLink],
+            workspace_id: Option<&str>,
+            project_id: Option<&str>,
+        ) -> anyhow::Result<(usize, usize)> {
+            self.0.lock().unwrap().push(Written {
+                findings: findings
+                    .iter()
+                    .map(|f| {
+                        json!({
+                            "detector": f.detector,
+                            "subject": f.subject,
+                            "path": f.path,
+                            "severity": f.severity,
+                            "summary": f.summary,
+                            "score": f.score,
+                            "details": f.details,
+                        })
+                    })
+                    .collect(),
+                duplicates: duplicates
+                    .iter()
+                    .map(|l| (l.from.clone(), l.to.clone()))
+                    .collect(),
+                workspace: workspace_id.map(str::to_owned),
+                project: project_id.map(str::to_owned),
+            });
+            Ok((findings.len(), duplicates.len()))
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeRecorder(Mutex<Vec<DetectorVerdict>>);
+
+    #[async_trait]
+    impl AnalysisRecorder for FakeRecorder {
+        async fn record_detector_verdict(&self, verdict: DetectorVerdict) -> anyhow::Result<()> {
+            self.0.lock().unwrap().push(verdict);
+            Ok(())
+        }
+    }
+
+    const WS: Uuid = Uuid::from_u128(0x5157_0000_0000_4000_8000_0000_0000_0001);
+    const PROJECT: Uuid = Uuid::from_u128(0x5157_0000_0000_4000_8000_0000_0000_0002);
+    const BINDING_A: Uuid = Uuid::from_u128(0x5157_0000_0000_4000_8000_0000_0000_00a1);
+    const BINDING_B: Uuid = Uuid::from_u128(0x5157_0000_0000_4000_8000_0000_0000_00b1);
+    const STUDIO_DOC: Uuid = Uuid::from_u128(0x5157_0000_0000_4000_8000_0000_0000_00c1);
+
+    fn security() -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::new_v4())
+            .subject_type("user")
+            .subject_tenant_id(WS)
+            .build()
+            .expect("security context")
+    }
+
+    struct Rig {
+        task: AnalyzeBatchTask,
+        ctx: TaskContext,
+        writer: Arc<FakeWriter>,
+        recorder: Arc<FakeRecorder>,
+    }
+
+    impl Rig {
+        fn written(&self) -> Vec<Written> {
+            self.writer.0.lock().unwrap().clone()
+        }
+        fn verdicts(&self) -> Vec<DetectorVerdict> {
+            self.recorder.0.lock().unwrap().clone()
+        }
+    }
+
+    /// A run with both writers present, as in the assembled backend.
+    fn rig() -> Rig {
+        let hub = Arc::new(ClientHub::new());
+        let writer = Arc::new(FakeWriter::default());
+        let recorder = Arc::new(FakeRecorder::default());
+        hub.register::<dyn SpecFindingWriter>(writer.clone());
+        hub.register::<dyn AnalysisRecorder>(recorder.clone());
+        Rig {
+            task: bare_task(hub),
+            ctx: TaskContext::for_tests(json!({}), security()),
+            writer,
+            recorder,
+        }
+    }
+
+    fn bare_task(hub: Arc<ClientHub>) -> AnalyzeBatchTask {
+        AnalyzeBatchTask::new(Arc::new(ProxyState {
+            client: reqwest::Client::new(),
+            base_url: String::new(),
+            api_key: None,
+            hub,
+        }))
+    }
+
+    fn binding(node: &str, id: Uuid) -> RecordSubject {
+        RecordSubject {
+            node: node.to_owned(),
+            binding_id: Some(id),
+            document_id: None,
+        }
+    }
+
+    fn studio_doc(id: Uuid) -> RecordSubject {
+        RecordSubject {
+            node: format!("studio-doc:{id}"),
+            binding_id: None,
+            document_id: Some(id),
+        }
+    }
+
+    fn spec(subjects: &[(&str, RecordSubject)]) -> RecordSpec {
+        RecordSpec {
+            workspace_id: WS,
+            project_id: Some(PROJECT),
+            subjects: subjects
+                .iter()
+                .map(|(path, s)| ((*path).to_owned(), s.clone()))
+                .collect::<BTreeMap<_, _>>(),
+        }
+    }
+
+    fn item(id: &str, payload: serde_json::Value) -> BatchItem {
+        BatchItem {
+            id: id.to_owned(),
+            payload,
+        }
+    }
+
+    /// The case the editor exists for: a purpose gate that failed, on a
+    /// repository document. The graph gets one finding carrying the reading
+    /// in the clients' words and the placed findings under `details`; the
+    /// stage gate gets `failed` with the upstream task it came from.
+    #[tokio::test]
+    async fn a_purpose_verdict_is_recorded_as_a_finding_and_a_failed_gate() {
+        let rig = rig();
+        let spec = spec(&[("docs/PRD.md", binding("node-prd", BINDING_A))]);
+        let result = json!({
+            "path": "docs/PRD.md",
+            "doc_type": "prd",
+            "mixture": { "other": 0.1, "design": 0.9 },
+            "gate": { "passed": false, "leak_share": 0.18, "threshold": 0.05, "violations": [
+                { "section": "Scope", "role": "design", "line_start": 4, "line_end": 9,
+                  "confidence": 0.97, "reason": "PRD section reads as DESIGN" }
+            ]}
+        });
+        let n = rig
+            .task
+            .record(
+                &rig.ctx,
+                &spec,
+                "purpose",
+                &item("docs/PRD.md", json!({ "text": "..." })),
+                "t-1",
+                Some(&result),
+            )
+            .await;
+        assert_eq!(n, 1);
+
+        let written = rig.written();
+        assert_eq!(written.len(), 1, "one write per finished item");
+        let w = &written[0];
+        assert_eq!(w.workspace.as_deref(), Some(WS.to_string().as_str()));
+        assert_eq!(w.project.as_deref(), Some(PROJECT.to_string().as_str()));
+        assert!(w.duplicates.is_empty(), "only bloat relates documents");
+        assert_eq!(w.findings.len(), 1);
+        let f = &w.findings[0];
+        assert_eq!(f["detector"], "purpose");
+        assert_eq!(f["subject"], "node-prd", "keyed on the graph file node");
+        assert_eq!(f["path"], "docs/PRD.md");
+        assert_eq!(f["severity"], "gate-failed");
+        assert_eq!(f["summary"], "purpose: prd (90% specification)");
+        assert_eq!(f["details"]["gate_leak_share"], 0.18);
+        assert_eq!(f["details"]["gate_threshold"], 0.05);
+        let placed = f["details"]["findings"].as_array().unwrap();
+        assert_eq!(placed.len(), 1, "{f}");
+        assert_eq!(placed[0]["anchor"]["line_start"], 4);
+
+        let verdicts = rig.verdicts();
+        assert_eq!(verdicts.len(), 1);
+        let v = &verdicts[0];
+        assert_eq!(v.workspace_id, WS);
+        assert_eq!(v.binding_id, Some(BINDING_A));
+        assert_eq!(v.document_id, None);
+        assert_eq!(v.detector, "purpose");
+        assert_eq!(v.state, "failed");
+        assert_eq!(v.task_id.as_deref(), Some("t-1"));
+        assert_eq!(v.summary, "purpose: prd (90% specification)");
+    }
+
+    /// A Studio document has no graph node and no binding: its finding is
+    /// keyed `studio-doc:<id>` and its gate is the document's own.
+    #[tokio::test]
+    async fn a_clean_leak_on_a_studio_document_passes_that_documents_gate() {
+        let rig = rig();
+        let path = format!("studio-doc/{STUDIO_DOC}.md");
+        let spec = spec(&[(path.as_str(), studio_doc(STUDIO_DOC))]);
+        let result =
+            json!({ "passed": true, "leak_share": 0.01, "foreign_roles": [], "leaks": [] });
+        let n = rig
+            .task
+            .record(
+                &rig.ctx,
+                &spec,
+                "leak",
+                &item(&path, json!({ "text": "...", "doc_type": "prd" })),
+                "t-2",
+                Some(&result),
+            )
+            .await;
+        assert_eq!(n, 1);
+
+        let f = &rig.written()[0].findings[0];
+        assert_eq!(f["subject"], format!("studio-doc:{STUDIO_DOC}"));
+        assert_eq!(f["severity"], "clean");
+        assert_eq!(f["summary"], "leak: clean (1% foreign)");
+        assert!(f["details"]["findings"].as_array().unwrap().is_empty());
+
+        let v = &rig.verdicts()[0];
+        assert_eq!(v.binding_id, None);
+        assert_eq!(v.document_id, Some(STUDIO_DOC));
+        assert_eq!(v.state, "passed");
+    }
+
+    /// Bloat answers about the whole set. Every document in it gets a
+    /// reading, and two documents sharing text get a `duplicates` edge --
+    /// but only when both ends are graph nodes. A Studio document's
+    /// `studio-doc:` key is not a node, and an edge to it would point at
+    /// nothing.
+    #[tokio::test]
+    async fn bloat_records_every_document_and_relates_only_graph_documents() {
+        let rig = rig();
+        let studio_path = format!("studio-doc/{STUDIO_DOC}.md");
+        let spec = spec(&[
+            ("a.md", binding("node-a", BINDING_A)),
+            ("b.md", binding("node-b", BINDING_B)),
+            (studio_path.as_str(), studio_doc(STUDIO_DOC)),
+        ]);
+        let result = json!({ "clusters": [
+            { "occurrences": [
+                { "file": "a.md", "section": "S", "line": 3, "line_end": 3, "text": "same words" },
+                { "file": "b.md", "section": "T", "line": 9, "line_end": 9, "text": "same words" },
+            ]},
+            { "occurrences": [
+                { "file": "a.md", "section": "S", "line": 7, "line_end": 7, "text": "other words" },
+                { "file": studio_path, "section": "U", "line": 2, "line_end": 2, "text": "other words" },
+            ]},
+        ]});
+        let docs = json!({ "a.md": "...", "b.md": "...", studio_path.clone(): "..." });
+        let n = rig
+            .task
+            .record(
+                &rig.ctx,
+                &spec,
+                "bloat",
+                &item("set", json!({ "docs": docs })),
+                "t-3",
+                Some(&result),
+            )
+            .await;
+        assert_eq!(n, 3, "one reading per document in the set");
+
+        let w = &rig.written()[0];
+        let mut subjects: Vec<&str> = w
+            .findings
+            .iter()
+            .map(|f| f["subject"].as_str().unwrap())
+            .collect();
+        subjects.sort_unstable();
+        let studio_key = format!("studio-doc:{STUDIO_DOC}");
+        assert_eq!(subjects, ["node-a", "node-b", studio_key.as_str()]);
+        let a = w
+            .findings
+            .iter()
+            .find(|f| f["subject"] == "node-a")
+            .unwrap();
+        assert_eq!(a["severity"], "high");
+        assert_eq!(
+            a["details"]["findings"].as_array().unwrap().len(),
+            2,
+            "a.md repeats twice, and only its own findings are on it: {a}"
+        );
+
+        // One edge: a ↔ b. a ↔ the Studio document is real duplication, but
+        // it has no node on the Studio side to hang an edge from.
+        assert_eq!(w.duplicates.len(), 1, "{:?}", w.duplicates);
+        let (from, to) = &w.duplicates[0];
+        let mut ends = [from.as_str(), to.as_str()];
+        ends.sort_unstable();
+        assert_eq!(ends, ["node-a", "node-b"]);
+
+        let verdicts = rig.verdicts();
+        assert_eq!(verdicts.len(), 3, "every subject with an id gets a gate");
+        assert!(
+            verdicts
+                .iter()
+                .all(|v| v.state == "failed" && v.detector == "bloat"),
+            "all three repeat something: {verdicts:?}"
+        );
+        assert!(
+            verdicts
+                .iter()
+                .any(|v| v.document_id == Some(STUDIO_DOC) && v.binding_id.is_none())
+        );
+    }
+
+    /// The run records what its caller named and nothing else: a document in
+    /// the set that the `record` block does not mention is not recorded, and
+    /// a subject with neither a binding nor a document gets its graph finding
+    /// but no gate row -- there is no gate to write it against.
+    #[tokio::test]
+    async fn only_named_subjects_are_recorded_and_only_ones_with_an_id_get_a_gate() {
+        let rig = rig();
+        let spec = spec(&[
+            ("a.md", binding("node-a", BINDING_A)),
+            (
+                "b.md",
+                RecordSubject {
+                    node: "node-b".to_owned(),
+                    binding_id: None,
+                    document_id: None,
+                },
+            ),
+        ]);
+        let docs = json!({ "a.md": "...", "b.md": "...", "unnamed.md": "..." });
+        let n = rig
+            .task
+            .record(
+                &rig.ctx,
+                &spec,
+                "bloat",
+                &item("set", json!({ "docs": docs })),
+                "t-4",
+                Some(&json!({ "clusters": [] })),
+            )
+            .await;
+        assert_eq!(n, 2, "unnamed.md is not this run's to record");
+
+        let w = &rig.written()[0];
+        assert_eq!(w.findings.len(), 2);
+        assert!(w.findings.iter().all(|f| f["severity"] == "clean"));
+        assert!(w.findings.iter().all(|f| f["path"] != "unnamed.md"));
+
+        let verdicts = rig.verdicts();
+        assert_eq!(verdicts.len(), 1, "{verdicts:?}");
+        assert_eq!(verdicts[0].binding_id, Some(BINDING_A));
+        assert_eq!(verdicts[0].state, "passed");
+    }
+
+    /// A reading for a path nobody named writes nothing at all -- not an
+    /// empty findings call, which would still be a graph round trip.
+    #[tokio::test]
+    async fn an_item_nobody_named_writes_nothing() {
+        let rig = rig();
+        let spec = spec(&[("docs/a.md", binding("node-a", BINDING_A))]);
+        let n = rig
+            .task
+            .record(
+                &rig.ctx,
+                &spec,
+                "purpose",
+                &item("docs/other.md", json!({})),
+                "t-5",
+                Some(&json!({ "doc_type": "prd" })),
+            )
+            .await;
+        assert_eq!(n, 0);
+        assert!(rig.written().is_empty());
+        assert!(rig.verdicts().is_empty());
+    }
+
+    /// A deployment without the graph or the documents database records less,
+    /// and the run does not fail for it: the reading is still counted.
+    #[tokio::test]
+    async fn a_hub_without_either_writer_records_nothing_and_does_not_fail() {
+        let task = bare_task(Arc::new(ClientHub::new()));
+        let ctx = TaskContext::for_tests(json!({}), security());
+        let spec = spec(&[("docs/a.md", binding("node-a", BINDING_A))]);
+        let n = task
+            .record(
+                &ctx,
+                &spec,
+                "purpose",
+                &item("docs/a.md", json!({})),
+                "t-6",
+                Some(&json!({ "doc_type": "prd" })),
+            )
+            .await;
+        assert_eq!(n, 1);
+    }
+
+    /// A document the service will not judge is recorded as `pending` with
+    /// the reason, so a stage says why it is not satisfied and the next sync
+    /// does not count it as never analysed. No upstream task stands behind
+    /// it, so none is named.
+    #[tokio::test]
+    async fn a_refused_document_is_recorded_as_pending_with_the_reason() {
+        let rig = rig();
+        let spec = spec(&[("docs/app.md", binding("node-app", BINDING_A))]);
+        rig.task
+            .record_refusal(
+                &spec,
+                "leak",
+                "docs/app.md",
+                "Spec Quality does not analyse `app_spec` documents",
+            )
+            .await;
+        let verdicts = rig.verdicts();
+        assert_eq!(verdicts.len(), 1);
+        let v = &verdicts[0];
+        assert_eq!(v.state, "pending");
+        assert_eq!(v.binding_id, Some(BINDING_A));
+        assert_eq!(v.detector, "leak");
+        assert_eq!(v.task_id, None);
+        assert!(
+            v.summary.starts_with("leak: not analysed — "),
+            "{}",
+            v.summary
+        );
+        assert!(v.summary.contains("app_spec"), "{}", v.summary);
+        assert!(
+            rig.written().is_empty(),
+            "a refusal is a gate state, not a finding"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_for_an_unnamed_or_id_less_subject_records_nothing() {
+        let rig = rig();
+        let spec = spec(&[(
+            "b.md",
+            RecordSubject {
+                node: "node-b".to_owned(),
+                binding_id: None,
+                document_id: None,
+            },
+        )]);
+        rig.task
+            .record_refusal(&spec, "purpose", "nobody.md", "why")
+            .await;
+        rig.task
+            .record_refusal(&spec, "purpose", "b.md", "why")
+            .await;
+        assert!(rig.verdicts().is_empty());
+    }
 }

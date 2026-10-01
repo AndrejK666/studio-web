@@ -309,6 +309,89 @@ describe('AnalyzeFrontendController', () => {
         expect(setStudioFindings).toHaveBeenCalledWith({ verdicts: [recorded], paths: ['docs/prd.md'] });
     });
 
+    /* The hand-over is an optional member: a product editor built before it,
+       or any other document widget, has no `setStudioFindings`. Reaching for
+       it unguarded would turn every document load into the error view. */
+    it('loads a document whose editor cannot show findings exactly as it would otherwise', async () => {
+        const studio = createStudio();
+        studio.findings.mockResolvedValue([{ detector: 'purpose', subject: 'node-b-prd', severity: 'gate-failed' }]);
+        const product = {
+            id: 'studio-md:file:///workspace/api/docs/prd.md',
+            uri: new URI('file:///workspace/api/docs/prd.md'),
+            readDocumentText: () => '# PRD',
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+        };
+        const { controller } = await start(studio, product);
+
+        expect(controller.getViewModel()).toMatchObject({ status: 'ready', documentLabel: 'prd.md', canAnalyze: true });
+    });
+
+    /* The editor drawing the findings is the editor's business; the panel's
+       numbers come from the same read and must not be lost because the
+       highlight could not be painted. */
+    it('still shows the panel when the editor throws while taking the findings', async () => {
+        const studio = createStudio();
+        studio.findings.mockResolvedValue([{ detector: 'purpose', subject: 'node-b-prd', severity: 'gate-failed' }]);
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const setStudioFindings = jest.fn(() => {
+            throw new Error('editor is not ready');
+        });
+        const product = {
+            id: 'studio-md:file:///workspace/api/docs/prd.md',
+            uri: new URI('file:///workspace/api/docs/prd.md'),
+            readDocumentText: () => '# PRD',
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+            setStudioFindings,
+        };
+        try {
+            const { controller } = await start(studio, product);
+
+            expect(setStudioFindings).toHaveBeenCalledTimes(1);
+            expect(controller.getViewModel()).toMatchObject({ status: 'ready', documentLabel: 'prd.md', knownAs: 'docs/prd.md' });
+            expect(controller.getViewModel().metrics.length).toBeGreaterThan(0);
+            expect(warn).toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    /* Findings are read per subject, and each editor is handed the set read
+       for ITS document under ITS run path. Handing the previous document's
+       set to the next one would highlight lines of one file in another. */
+    it('hands each document only its own findings when switching between them', async () => {
+        const studio = createStudio();
+        const bySubject: Record<string, unknown[]> = {
+            'node-b-prd': [{ detector: 'purpose', subject: 'node-b-prd', severity: 'gate-failed' }],
+            'node-b-adr': [{ detector: 'leak', subject: 'node-b-adr', severity: 'high' }],
+        };
+        studio.findings.mockImplementation(async (_project: string, subject: string) => bySubject[subject] ?? []);
+        const productFor = (path: string) => ({
+            id: `studio-md:file:///workspace/api/${path}`,
+            uri: new URI(`file:///workspace/api/${path}`),
+            readDocumentText: () => '# Doc',
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+            setStudioFindings: jest.fn(),
+        });
+        const prd = productFor('docs/prd.md');
+        const adr = productFor('docs/adr.md');
+        const { shell, activeWidgetEvents } = await start(studio, prd);
+
+        shell.activeWidget = adr;
+        activeWidgetEvents.fire();
+        await settle();
+        shell.activeWidget = prd;
+        activeWidgetEvents.fire();
+        await settle();
+
+        expect(adr.setStudioFindings.mock.calls).toEqual([
+            [{ verdicts: bySubject['node-b-adr'], paths: ['docs/adr.md'] }],
+        ]);
+        expect(prd.setStudioFindings.mock.calls).toEqual([
+            [{ verdicts: bySubject['node-b-prd'], paths: ['docs/prd.md'] }],
+            [{ verdicts: bySubject['node-b-prd'], paths: ['docs/prd.md'] }],
+        ]);
+    });
+
     it('says there is no text yet while the product\'s editor is still reading its file', async () => {
         const studio = createStudio();
         const product = {
