@@ -211,6 +211,8 @@ export interface ProjectConfig {
   /** Seed source: a git url, a brief, or an uploaded file id. */
   source_git_url?: string;
   brief?: string;
+  /** The project's repositories: the one record of them (`project-sources.ts`). */
+  sources?: import("./project-sources").ProjectSource[];
 }
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).

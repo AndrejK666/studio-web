@@ -15,6 +15,8 @@ export interface ProjectSource {
   connection_id: string;
   full_path: string;
   clone_url: string;
+  /** The branch a session checks out; the repository's default when absent. */
+  branch?: string;
 }
 
 /**
