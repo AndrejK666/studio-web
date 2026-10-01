@@ -27,6 +27,9 @@ export const ComponentsCatalog = lazy(() =>
   import("./components-catalog").then((m) => ({ default: m.ComponentsCatalog })),
 );
 
+/** The reports, their sources and the roadmap report's tables. */
+export const ReportsScreen = lazy(() => import("./reports").then((m) => ({ default: m.ReportsScreen })));
+
 /** ~4,000 lines: the Specs list, the editor, the publish flow. */
 export const DocumentsTab = lazy(() =>
   import("./documents").then((m) => ({ default: m.DocumentsTab })),

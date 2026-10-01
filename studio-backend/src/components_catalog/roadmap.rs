@@ -135,14 +135,6 @@ pub struct RoadmapSource {
     /// gear.
     #[serde(default)]
     pub roots: Vec<String>,
-    /// Who works on the board's gears and who needs them: teams, people and
-    /// their power, swimlanes, consumer projects -- the planning team's
-    /// `gears.yaml`, kept as its text because its order is part of it (the
-    /// column, lane and People order), and JSON keeps none. What the
-    /// workbook's Gantt, People and project columns are drawn from; absent
-    /// keeps what the last sync stored.
-    #[serde(default)]
-    pub plan: Option<String>,
 }
 
 /// Which of a board's columns answer which question. Every one optional: the
@@ -438,10 +430,13 @@ pub fn parse_root(root: &str, board: &Roadmap) -> Option<(String, String, u64)> 
         ));
     }
     let number: u64 = root.trim_start_matches('#').parse().ok()?;
+    // The root itself on the board; else one of its sub-issues, which lives in
+    // the same repository -- a root is often not on the board it organizes.
     let url = board
         .items
         .iter()
-        .find(|i| i.number == Some(number))?
+        .find(|i| i.number == Some(number))
+        .or_else(|| board.items.iter().find(|i| i.parent == Some(number)))?
         .url
         .as_deref()?;
     let path = url.split("github.com/").nth(1)?;

@@ -1,0 +1,275 @@
+/** Reports: every report this Studio draws, configured once per organization.
+ *
+ *  A report's source is a GitHub connection and the plan file in a
+ *  repository; the plan can name the board, its roots and its consumers
+ *  itself, so the rest of the form is only for a plan that does not yet.
+ *  Refresh reads the plan again and syncs the board (`reports.refresh`); a
+ *  schedule does the same every hour when switched on. */
+
+import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { api, type Connection, type TaskSchedule } from "./api";
+import { errText } from "./format";
+import { RoadmapReportBody, downloadReport } from "./roadmap-report-view";
+import {
+  draftOf,
+  inputOf,
+  newSchedule,
+  scheduleOf,
+  stateOf,
+  stateText,
+  type Report,
+  type SourceDraft,
+} from "./reports-model";
+
+const CARD: CSSProperties = {
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  padding: 12,
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+};
+const ROW: CSSProperties = { display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" };
+const HINT: CSSProperties = { color: "var(--muted-foreground)", fontSize: 12, margin: 0 };
+
+/** Poll a run until it ends. */
+async function finished(token: string, runId: string): Promise<{ ok: boolean; message: string | null }> {
+  for (let i = 0; i < 120; i++) {
+    const run = await api.taskRun(token, runId);
+    if (run.state === "succeeded") return { ok: true, message: run.summary ?? null };
+    if (run.state === "failed" || run.state === "cancelled") return { ok: false, message: run.last_error ?? run.state };
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return { ok: false, message: "still running — look under Background work" };
+}
+
+export function ReportsScreen({ token, tenantId }: { token: string; tenantId: string | undefined }) {
+  const [reports, setReports] = useState<Report[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [schedules, setSchedules] = useState<TaskSchedule[]>([]);
+
+  const load = useCallback(() => {
+    api
+      .reports(token)
+      .then((r) => setReports(r.items))
+      .catch((e) => setErr(errText(e)));
+    api
+      .schedules(token)
+      .then((r) => setSchedules(r.items))
+      .catch(() => setSchedules([]));
+  }, [token]);
+
+  useEffect(load, [load]);
+  useEffect(() => {
+    if (!tenantId) return;
+    api
+      .connections(token, tenantId)
+      .then((r) => setConnections(r.items.filter((c) => c.provider === "github")))
+      .catch(() => setConnections([]));
+  }, [token, tenantId]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
+      <div>
+        <h1 style={{ margin: 0, fontSize: 20 }}>Reports</h1>
+        <p style={HINT}>
+          Each report is configured once for the organization: where its board and its plan come from. Everyone who
+          opens it reads the same.
+        </p>
+      </div>
+      {err && <p className="gcat-err">{err}</p>}
+      {!reports && !err && <p style={HINT}>Reading the reports…</p>}
+      {reports?.map((r) => (
+        <ReportCard
+          key={r.id}
+          token={token}
+          report={r}
+          connections={connections}
+          schedule={scheduleOf(schedules, r.id)}
+          onChanged={load}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ReportCard({
+  token,
+  report,
+  connections,
+  schedule,
+  onChanged,
+}: {
+  token: string;
+  report: Report;
+  connections: Connection[];
+  schedule: TaskSchedule | undefined;
+  onChanged: () => void;
+}) {
+  const [draft, setDraft] = useState<SourceDraft>(() => draftOf(report.source));
+  const [upload, setUpload] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+  const [advanced, setAdvanced] = useState(
+    () => !!(report.source.board || report.source.roots.length || Object.keys(report.source.consumers).length),
+  );
+
+  useEffect(() => setDraft(draftOf(report.source)), [report.source]);
+
+  const set = (p: Partial<SourceDraft>) => setDraft((d) => ({ ...d, ...p }));
+  const act = async (label: string, f: () => Promise<string | null | void>) => {
+    setBusy(label);
+    setNote(null);
+    try {
+      const msg = await f();
+      if (msg) setNote(msg);
+    } catch (e) {
+      setNote(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const save = () =>
+    act("save", async () => {
+      await api.updateReportSource(token, report.id, inputOf(draft));
+      setUpload(null);
+      onChanged();
+      return "Saved.";
+    });
+
+  const refresh = () =>
+    act("refresh", async () => {
+      await api.updateReportSource(token, report.id, inputOf(draft));
+      const run = await api.syncReport(token, report.id);
+      const done = await finished(token, run.task_id);
+      onChanged();
+      setVersion((v) => v + 1);
+      return done.ok ? `Refreshed: ${done.message ?? "plan read, board sync queued"}.` : `Refresh failed: ${done.message}`;
+    });
+
+  const hourly = (on: boolean) =>
+    act("schedule", async () => {
+      if (schedule) await api.patchSchedule(token, schedule.id, { enabled: on });
+      else if (on) await api.createSchedule(token, newSchedule(report.id));
+      onChanged();
+    });
+
+  const state = stateOf(report.source);
+  return (
+    <section style={CARD}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+        <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>{report.title}</h2>
+        <button className="iconbtn" disabled={!!busy} onClick={refresh}>
+          {busy === "refresh" ? "Refreshing…" : "Refresh"}
+        </button>
+        <button
+          className="iconbtn primary"
+          disabled={!!busy}
+          onClick={() => act("download", () => downloadReport(token, report.id))}
+        >
+          {busy === "download" ? "Writing…" : "Download .xlsx"}
+        </button>
+      </div>
+      <p style={HINT}>{report.description}</p>
+      <p style={HINT}>
+        Drawn with <code>{report.definition}</code>
+        {report.sheets.length > 0 && ` — ${report.sheets.join(", ")}`}.
+        {report.definition_error && <span className="gcat-err"> The plan&apos;s own definition does not read: {report.definition_error}</span>}
+      </p>
+      <p style={{ ...HINT, color: state.kind === "failed" ? "var(--destructive, #dc2626)" : undefined }}>{stateText(state)}</p>
+
+      <div style={ROW}>
+        <span>Connection</span>
+        <select value={draft.connectionId} onChange={(e) => set({ connectionId: e.target.value })}>
+          <option value="">{connections.length ? "First GitHub connection" : "No GitHub connection"}</option>
+          {connections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label || c.account || c.id.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+        <span>Plan file</span>
+        <input
+          placeholder="owner/repo:path/gears.yaml@main"
+          value={draft.planFile}
+          onChange={(e) => set({ planFile: e.target.value })}
+        />
+        <span>or upload</span>
+        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label className="iconbtn" style={{ cursor: "pointer" }}>
+            {report.source.plan_uploaded || upload ? "Replace…" : "Load gears.yaml…"}
+            <input
+              type="file"
+              accept=".yaml,.yml,text/yaml"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                void file.text().then((text) => {
+                  setUpload(file.name);
+                  set({ planYaml: text });
+                });
+              }}
+            />
+          </label>
+          {upload && <code>{upload}</code>}
+          {!upload && report.source.plan_uploaded && <span style={HINT}>an uploaded plan is in use</span>}
+          {(upload || report.source.plan_uploaded) && (
+            <button
+              className="iconbtn"
+              onClick={() => {
+                setUpload(null);
+                set({ planYaml: "" });
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </span>
+      </div>
+      <button className="iconbtn" style={{ alignSelf: "flex-start" }} onClick={() => setAdvanced((a) => !a)}>
+        {advanced ? "Hide" : "Board, roots and consumers…"}
+      </button>
+      {advanced && (
+        <div style={ROW}>
+          <span>Board</span>
+          <input placeholder="owner/number — or `board:` in the plan" value={draft.board} onChange={(e) => set({ board: e.target.value })} />
+          <span>Root issues</span>
+          <input placeholder="3342 owner/repo#4507 — or `roots:` in the plan" value={draft.roots} onChange={(e) => set({ roots: e.target.value })} />
+          <span>Consumers</span>
+          <input
+            placeholder="A=Acronis, C=Constructor — or `consumers:` in the plan"
+            value={draft.consumers}
+            onChange={(e) => set({ consumers: e.target.value })}
+          />
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <button className="iconbtn primary" disabled={!!busy} onClick={save}>
+          {busy === "save" ? "Saving…" : "Save"}
+        </button>
+        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            disabled={!!busy}
+            checked={!!schedule?.enabled}
+            onChange={(e) => hourly(e.target.checked)}
+          />
+          Refresh every hour
+        </label>
+        {note && <span style={HINT}>{note}</span>}
+      </div>
+      <p style={HINT}>
+        The plan can carry everything but the connection: <code>board: owner/48</code>, <code>roots: [3342, 4507]</code>,{" "}
+        <code>consumers: {"{ A: Acronis }"}</code>, and <code>report: back_roadmap</code> or a definition of its own.
+      </p>
+
+      {report.id === "roadmap" && <RoadmapReportBody token={token} version={version} />}
+    </section>
+  );
+}

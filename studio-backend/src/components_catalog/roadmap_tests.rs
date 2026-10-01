@@ -145,6 +145,17 @@ fn the_gears_are_the_roots_sub_issues_and_a_group_is_the_title_prefix() {
     );
     assert_eq!(parse_root("3342", &b), Some(("o".into(), "r".into(), 3342)));
     assert_eq!(parse_root("777", &b), None);
+    // A root that is not on the board itself is found through a sub-issue,
+    // in the sub-issue's repository.
+    let mut off = item(50, "CORE - Elsewhere");
+    off.url = Some("https://github.com/acme/gears/issues/50".into());
+    off.parent = Some(4507);
+    b.items.push(off);
+    assert_eq!(
+        parse_root("4507", &b),
+        Some(("acme".into(), "gears".into(), 4507))
+    );
+    b.items.pop();
     let mut s = source();
     s.roots = vec![
         "constructorfabric/gears-rust#4810".into(),
@@ -338,7 +349,6 @@ fn source() -> RoadmapSource {
             .collect(),
         fields: RoadmapFields::default(),
         roots: Vec::new(),
-        plan: None,
     }
 }
 

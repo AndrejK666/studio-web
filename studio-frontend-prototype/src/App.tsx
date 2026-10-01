@@ -8,6 +8,7 @@ import { errText, matches } from "./format";
 // what is split and what deliberately is not.
 import {
   ComponentsCatalog,
+  ReportsScreen,
   DocumentTypesTab,
   DocumentsTab,
   DomainModelGraph,
@@ -480,6 +481,7 @@ type View =
   | "files"
   | "connectors"
   | "gears"
+  | "reports"
   | "objects"
   | "tasks"
   | "system"
@@ -636,6 +638,9 @@ const NAV_SECTIONS: {
       // Our published gears (crates.io → graph), and the system observability
       // surface.
       { id: "gears", icon: "package", label: "Components" },
+      // Every report the Studio draws, configured once for the organization
+      // (studio-reports): the roadmap workbook is the first.
+      { id: "reports", icon: "activity", label: "Reports" },
       // The type catalogue the line above is a view of. Which types are
       // components is a judgement this organization makes here, not a constant
       // in a gear — so the two surfaces sit next to each other.
@@ -2480,6 +2485,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {/* The tenant hierarchy renders only inside the Admin area, under the flag. */}
         {view === "chats" && <ChatsView token={token} filters={filters} />}
         {view === "files" && <FilesView token={token} filters={filters} />}
+        {view === "reports" && <ReportsScreen token={token} tenantId={orgAsSpace?.id} />}
         {view === "gears" && (
           <ComponentsCatalog
             token={token}

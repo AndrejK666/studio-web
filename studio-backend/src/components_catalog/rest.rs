@@ -24,7 +24,6 @@ use toolkit_security::SecurityContext;
 use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
 use super::reference::ComponentReferenceListDto;
 use super::roadmap::{RoadmapFields, RoadmapSource};
-use super::roadmap_report::RoadmapReportDto;
 use super::service::{CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
@@ -593,27 +592,12 @@ pub struct RoadmapSourceDto {
     /// The issues whose direct sub-issues are the gears: `owner/repo#123`, or
     /// `123` for an issue on the board. Omitted: every board item is a gear.
     pub roots: Option<Vec<String>>,
-    /// The board's plan -- teams, people and their power, swimlanes, consumer
-    /// projects -- as the planning team's `gears.yaml` text. Omitted keeps
-    /// the plan the last sync stored.
-    pub plan_yaml: Option<String>,
 }
 
 impl RoadmapSourceDto {
-    fn into_source(self) -> Result<RoadmapSource, String> {
+    fn into_source(self) -> RoadmapSource {
         let named = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        let plan = match self.plan_yaml.as_deref().map(str::trim) {
-            None | Some("") => None,
-            Some(text) => {
-                let plan = super::roadmap_plan::parse(text)
-                    .map_err(|e| format!("the roadmap plan is not YAML: {e}"))?;
-                if !plan.is_mapping() {
-                    return Err("the roadmap plan is not a mapping".to_string());
-                }
-                Some(text.to_string())
-            }
-        };
-        Ok(RoadmapSource {
+        RoadmapSource {
             tenant: self.tenant,
             connection_id: self.connection_id,
             owner: self.owner.trim().to_string(),
@@ -632,8 +616,7 @@ impl RoadmapSourceDto {
                 .map(|r| r.trim().to_string())
                 .filter(|r| !r.is_empty())
                 .collect(),
-            plan,
-        })
+        }
     }
 }
 
@@ -651,7 +634,7 @@ pub struct SyncRequestDto {
 }
 
 impl SyncRequestDto {
-    fn into_sources(self, default_keyword: &str) -> Result<SyncSources, String> {
+    fn into_sources(self, default_keyword: &str) -> SyncSources {
         let repos: Vec<RepoSource> = self
             .repositories
             .unwrap_or_default()
@@ -671,7 +654,7 @@ impl SyncRequestDto {
             .into_iter()
             .filter(|r| !r.owner.trim().is_empty())
             .map(RoadmapSourceDto::into_source)
-            .collect::<Result<_, _>>()?;
+            .collect();
         let crates_io = match self.crates_io {
             Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
             Some(_) => None,
@@ -683,11 +666,11 @@ impl SyncRequestDto {
                 }
             }
         };
-        Ok(SyncSources {
+        SyncSources {
             crates_io,
             repos,
             roadmaps,
-        })
+        }
     }
 }
 
@@ -705,13 +688,7 @@ async fn sync(
 ) -> ApiResult<JsonBody<CatalogSyncEnqueued>> {
     let queue = catalog.queue()?;
     let sources = match body {
-        Some(Json(req)) => req
-            .into_sources(catalog.service.default_keyword())
-            .map_err(|e| {
-                StudioComponentsCatalogError::invalid_argument()
-                    .with_constraint(e)
-                    .create()
-            })?,
+        Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
         None => SyncSources {
             crates_io: Some(catalog.service.default_keyword().to_string()),
             ..SyncSources::default()
@@ -1607,84 +1584,6 @@ async fn resolved_components(
         .service
         .resolved_components(ctx)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())
-}
-
-/// GET /studio-components-catalog/v1/roadmap-report — the roadmap report.
-async fn roadmap_report(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(catalog): Extension<Catalog>,
-) -> ApiResult<JsonBody<RoadmapReportDto>> {
-    let (resolved, _) = resolved_components(&ctx, &catalog).await?;
-    let planned = catalog
-        .service
-        .list_planned(&ctx)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    // The catalogued components, not the planned gears listed beside them:
-    // those are the report's rows already.
-    let views: Vec<super::roadmap_report::ComponentValues<'_>> = resolved
-        .iter()
-        .filter(|c| !c.planned)
-        .map(|c| super::roadmap_report::ComponentValues {
-            name: &c.name,
-            category: &c.category,
-            values: &c.values,
-        })
-        .collect();
-    Ok(Json(super::roadmap_report::build(&views, &planned)))
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct WorkbookQuery {
-    /// The day the workbook is drawn as of (`YYYY-MM-DD`); today when absent.
-    #[serde(default)]
-    pub date: Option<String>,
-}
-
-/// GET /studio-components-catalog/v1/roadmap-report/workbook — the planning
-/// team's roadmap workbook, as an `.xlsx`.
-async fn roadmap_workbook(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(catalog): Extension<Catalog>,
-    Query(query): Query<WorkbookQuery>,
-) -> ApiResult<Response> {
-    let today = match query
-        .date
-        .as_deref()
-        .map(str::trim)
-        .filter(|d| !d.is_empty())
-    {
-        None => time::OffsetDateTime::now_utc().date(),
-        Some(d) => time::Date::parse(d, &time::format_description::well_known::Iso8601::DATE)
-            .map_err(|e| {
-                StudioComponentsCatalogError::invalid_argument()
-                    .with_field_violation("date", format!("not a YYYY-MM-DD date: {e}"), "INVALID")
-                    .create()
-            })?,
-    };
-    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
-    let planned = catalog.service.list_planned(&ctx).await.map_err(internal)?;
-    let plan = catalog
-        .service
-        .roadmap_plan(&ctx)
-        .await
-        .map_err(internal)?
-        .map(|text| super::roadmap_plan::Plan::from_yaml(&text))
-        .unwrap_or_default();
-    let bytes = super::roadmap_workbook::build(&planned, &plan, today);
-    let name = format!("back_roadmap_{today}.xlsx");
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(
-            axum::http::header::CONTENT_TYPE,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header(
-            axum::http::header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{name}\""),
-        )
-        .body(axum::body::Body::from(bytes))
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())
 }
 
@@ -3165,49 +3064,6 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Per-gear delivery activity",
-        )
-        .error_400(openapi)
-        .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    let router = OperationBuilder::get("/studio-components-catalog/v1/roadmap-report")
-        .operation_id("studio_components_catalog.get_roadmap_report")
-        .summary("The roadmap report: what the board plans, and whether the plan holds")
-        .description(
-            "One row per catalogued component the roadmap board plans -- stage, milestone and              due date, commitment, progress per axis, who needs it and how badly, whether the              plan meets that demand and why not, assignees, effort, lifecycle, last release,              grade -- soonest due first. `summary` is what a planning meeting reads first:              components per stage in pipeline order, per milestone (committed, at risk), per              consumer (P1/P2/P3, and P1 demand not on track), per plan state, and the overdue              ones.
-
-             `not_on_board` counts catalogued components with no board item: unplanned, or not              matched -- a person pins those through the component's `roadmap_item` field.
-
-             Typed JSON rather than a workbook: a client renders it, or writes the Roadmap and              Summary sheets itself.",
-        )
-        .tag("StudioComponentsCatalog")
-        .authenticated()
-        .require_license_features::<License>([])
-        .handler(roadmap_report)
-        .json_response_with_schema::<RoadmapReportDto>(
-            openapi,
-            StatusCode::OK,
-            "The roadmap report",
-        )
-        .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    let router = OperationBuilder::get("/studio-components-catalog/v1/roadmap-report/workbook")
-        .operation_id("studio_components_catalog.get_roadmap_workbook")
-        .summary("The roadmap workbook: the planning team's back_roadmap spreadsheet")
-        .description(
-            "The roadmap board's gears as the planning team's `back_roadmap.xlsx` lays them              out: Summary (per group, as formulas over the group sheets), Roadmap (the groups              as swimlanes over the next nine months, a box per gear at its milestone), Gantt              (each team's remaining work scheduled against its people and power, blockers              first), People, a sheet per group and ALL -- with the forecast each gear's              schedule gives it and every cell the planning sheet colours. Drawn from the gears              the last sync stored and the plan (`plan_yaml`) it was handed; `date` sets the              day it is drawn as of.",
-        )
-        .tag("StudioComponentsCatalog")
-        .authenticated()
-        .require_license_features::<License>([])
-        .handler(roadmap_workbook)
-        .text_response(
-            StatusCode::OK,
-            "The workbook",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         .error_400(openapi)
         .error_401(openapi)

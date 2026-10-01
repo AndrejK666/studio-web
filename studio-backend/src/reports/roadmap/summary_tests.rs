@@ -175,7 +175,7 @@ fn gear(title: &str, components: &[&str], auto: Value) -> Value {
     json!({
         "title": title,
         "name": title,
-        "group": super::super::roadmap::group_of(title),
+        "group": crate::components_catalog::roadmap::group_of(title),
         "number": 1,
         "closed": false,
         "off_board": false,

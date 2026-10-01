@@ -1,8 +1,9 @@
-/** The roadmap report dialog on the Components screen: what the board plans,
- *  whether the plan holds, and a download of the planning team's workbook —
- *  the `back_roadmap.xlsx` they built from the board by script (Summary,
- *  Roadmap, Gantt, People, a sheet per group, ALL), written by the server from
- *  what the last sync stored and the plan it was handed. */
+/** The roadmap report as a screen draws it: what the board plans, whether the
+ *  plan holds, and a download of the planning team's workbook — the
+ *  `back_roadmap.xlsx` (Summary, Roadmap, Gantt, People, a sheet per group,
+ *  ALL) that `studio-reports` draws from what the last board sync stored and
+ *  the plan the last refresh read. The body is the Reports screen's; the
+ *  dialog is the same body, opened from the Components screen. */
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
@@ -41,43 +42,31 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function download(token: string, asOf = today()) {
-  const blob = await api.roadmapWorkbook(token, asOf);
+/** Save the report's workbook as the server draws it. */
+export async function downloadReport(token: string, report = "roadmap", asOf = today()) {
+  const blob = await api.exportReport(token, report, asOf);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `back_roadmap_${asOf}.xlsx`;
+  a.download = `back_${report}_${asOf}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 export function RoadmapReportDialog({ token, onClose }: { token: string; onClose: () => void }) {
-  const [report, setReport] = useState<RoadmapReport | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    api
-      .roadmapReport(token)
-      .then((r) => live && setReport(r))
-      .catch((e) => live && setErr(errText(e)));
-    return () => {
-      live = false;
-    };
-  }, [token]);
-
-  const s = report?.summary;
+  const [err, setErr] = useState<string | null>(null);
   return (
     <Modal label="Roadmap report" onClose={onClose} cardStyle={{ width: "min(1100px, 100%)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>Roadmap report</h2>
         <button
           className="iconbtn primary"
-          disabled={!report?.total || saving}
+          disabled={!total || saving}
           onClick={() => {
             setSaving(true);
-            download(token)
+            downloadReport(token)
               .catch((e) => setErr(errText(e)))
               .finally(() => setSaving(false));
           }}
@@ -88,6 +77,48 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
           Close
         </button>
       </div>
+      {err && <p className="gcat-err">{err}</p>}
+      <p className="gcat-hint" style={{ margin: 0 }}>
+        Where the board and the plan come from is set once for the organization, under Reports.
+      </p>
+      <RoadmapReportBody token={token} onLoaded={(r) => setTotal(r.total)} />
+    </Modal>
+  );
+}
+
+/** The report's tables, read from `studio-reports`. `version` reloads it. */
+export function RoadmapReportBody({
+  token,
+  version = 0,
+  onLoaded,
+}: {
+  token: string;
+  version?: number;
+  onLoaded?: (r: RoadmapReport) => void;
+}) {
+  const [report, setReport] = useState<RoadmapReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .reportSummary(token, "roadmap")
+      .then((r) => {
+        if (!live) return;
+        setReport(r);
+        onLoaded?.(r);
+      })
+      .catch((e) => live && setErr(errText(e)));
+    return () => {
+      live = false;
+    };
+    // `onLoaded` is a callback, not an input: a new one must not reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, version]);
+
+  const s = report?.summary;
+  return (
+    <>
       {err && <p className="gcat-err">{err}</p>}
       {!report && !err && <p className="gcat-hint">Reading the board…</p>}
       {report && s && (
@@ -100,7 +131,7 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
           </p>
           {report.total === 0 ? (
             <p className="gcat-hint">
-              No gears yet. Turn on the Roadmap source under Sources — with its root issues — and sync.
+              No gears yet. Set the report&apos;s source under Reports and refresh it.
             </p>
           ) : (
             <>
@@ -300,6 +331,6 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
           )}
         </>
       )}
-    </Modal>
+    </>
   );
 }

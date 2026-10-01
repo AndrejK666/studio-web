@@ -1,0 +1,58 @@
+# The planning team's roadmap workbook (`back_roadmap.xlsx`) as a report
+# definition, and the report `roadmap` draws by default. A plan names it with
+# `report: back_roadmap`, or carries a definition of its own in this shape
+# under `report:`.
+#
+# Sheets come in five kinds -- summary, timeline, gantt, people, table -- and
+# appear in this order. A table's columns name a value by key; a formula names
+# other columns as `{id}` and the row as `{row}`, so a column can move without
+# breaking what refers to it. The summary sheet and a table's metrics find
+# their columns by what they hold (the title, the progress axes, the effort,
+# the column with id `remaining`), never by letter.
+id: back_roadmap
+title: Backend roadmap
+group_by: title_prefix
+sheets:
+  - kind: summary
+    name: Summary
+  - kind: timeline
+    name: Roadmap
+    title: Cyber Fabric Roadmap
+  - kind: gantt
+    name: Gantt
+    title: Gear Delivery Gantt
+  - kind: people
+    name: People
+  - kind: table
+    per_group: true
+    all: ALL
+    sort: prio
+    freeze: D2
+    metrics: true
+    columns:
+      - { id: index, header: "#", value: index, width: 4 }
+      - { id: number, header: ID, value: number, link: true, width: 7 }
+      - { id: title, header: Title, value: title, link: true, width: 40 }
+      - { id: type, header: Type, value: type, width: 14 }
+      - { id: assignees, header: Assignees, value: assignees, width: 18 }
+      - { id: name, header: Name, value: aliases, width: 24 }
+      - { id: team, header: Team, value: teams, width: 16 }
+      - { id: prio, header: Prio, value: prio, width: 14 }
+      - { id: spec, header: Spec, value: spec, format: "0%", bar: 63C384, width: 14 }
+      - { id: sdk, header: SDK, value: sdk, format: "0%", bar: 5B9BD5, width: 12 }
+      - { id: impl, header: Impl., value: impl, format: "0%", bar: ED7D31, width: 12 }
+      - { id: status, header: Status, value: status, width: 14 }
+      - { id: effort, header: Effort m*d, value: effort, format: "0", width: 14 }
+      - { id: remaining, header: Remaining (m*d), formula: "{effort}{row}*(1-{impl}{row})", when: effort, format: "0.00", width: 18 }
+      - { id: commitment, header: Commitment, value: commitment, width: 14 }
+      - { id: milestone, header: Milestone, value: milestone, format: yy.mm, late: milestone_past, width: 14 }
+      - { id: forecast, header: Forecast, value: forecast, format: yy.mm, late: forecast_late, width: 14 }
+      - { id: spec_n, value: spec, format: "0%", helper: true }
+      - { id: sdk_n, value: sdk, format: "0%", helper: true }
+      - { id: impl_n, value: impl, format: "0%", helper: true }
+      - { id: overall_n, value: overall, format: "0%", helper: true }
+      - { id: plugin, header: Is Plugin, value: card.Is Plugin, width: 14 }
+      - { id: plugins, header: Has Plugins, value: card.Has Plugins, width: 14 }
+      - { id: extension, header: Has Extension Point, value: card.Has Extension Point, width: 22 }
+      - { id: description, header: Description, value: card.Description, width: 60 }
+      - { id: projects, projects: true, width: 14 }

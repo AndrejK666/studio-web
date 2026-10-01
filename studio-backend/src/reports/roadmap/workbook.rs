@@ -22,8 +22,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde_json::{Map, Value as Json};
 use time::{Date, Duration, Month};
 
-use super::roadmap_plan::{Plan, UNASSIGNED, hex};
-use super::xlsx::{
+use super::plan::{Plan, UNASSIGNED, hex};
+use crate::reports::definition::{
+    Definition, Key, Late, SheetDef, Sort, Source, TableDef, resolve,
+};
+use crate::reports::xlsx::{
     Align, Border, Cell, Font, Rule, Shape, Sheet, Side, Style, Value, col_name, workbook,
 };
 
@@ -255,7 +258,7 @@ impl Row {
 }
 
 fn normalize(name: &str) -> String {
-    super::roadmap_plan::normalize(name)
+    super::plan::normalize(name)
 }
 
 fn json_text(v: &Json) -> String {
@@ -1062,10 +1065,10 @@ fn months_index((y, m): (i32, u32)) -> i64 {
 
 // ── the workbook ────────────────────────────────────────────────────────────
 
-/// The workbook for these gears and this plan, as of `today`: the `.xlsx`
-/// file's bytes.
-pub fn build(planned: &[Json], plan: &Plan, today: Date) -> Vec<u8> {
-    workbook(&sheets(planned, plan, today))
+/// The workbook for these gears, this plan and this definition, as of
+/// `today`: the `.xlsx` file's bytes.
+pub fn build(planned: &[Json], plan: &Plan, def: &Definition, today: Date) -> Vec<u8> {
+    workbook(&sheets(planned, plan, def, today))
 }
 
 /// The rows the workbook lists: the boards' gears, in board order.
@@ -1082,13 +1085,8 @@ pub fn rows_of(planned: &[Json]) -> Vec<Row> {
     rows
 }
 
-pub fn sheets(planned: &[Json], plan: &Plan, today: Date) -> Vec<Sheet> {
-    let mut rows = rows_of(planned);
-    let cx = Context { plan, today };
-    cx.forecasts(&mut rows);
-    let prio = prio_field(&rows);
-
-    // Groups in first-seen order, then the configured order first.
+/// The groups in first-seen order, the plan's swimlane order first.
+fn groups_of(rows: &[Row], plan: &Plan) -> Vec<(String, Vec<usize>)> {
     let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
     for (i, r) in rows.iter().enumerate() {
         let g = r.group();
@@ -1114,38 +1112,74 @@ pub fn sheets(planned: &[Json], plan: &Plan, today: Date) -> Vec<Sheet> {
             ordered.push((k.clone(), v.clone()));
         }
     }
+    ordered
+}
 
-    let mut names: Vec<String> = vec![
-        "Summary".into(),
-        "Roadmap".into(),
-        "Gantt".into(),
-        "People".into(),
-    ];
-    let mut out: Vec<Sheet> = Vec::new();
-    let roadmap = roadmap_sheet(&cx, &rows, &ordered);
-    let gantt = gantt_sheet(&cx, &rows);
-    let people = people_sheet(plan);
-    let mut group_sheets: Vec<(String, String, usize)> = Vec::new();
-    let mut tables: Vec<Sheet> = Vec::new();
-    for (group, ix) in &ordered {
-        let name = unique_name(group, &names);
-        names.push(name.clone());
-        let picked: Vec<&Row> = ix.iter().map(|i| &rows[*i]).collect();
-        let mut s = issues_sheet(&name, plan, &picked, &prio, today);
-        metrics_block(&mut s, picked.len());
-        group_sheets.push((group.clone(), name, picked.len()));
-        tables.push(s);
+pub fn sheets(planned: &[Json], plan: &Plan, def: &Definition, today: Date) -> Vec<Sheet> {
+    let mut rows = rows_of(planned);
+    let cx = Context { plan, today };
+    cx.forecasts(&mut rows);
+    let prio = prio_field(&rows);
+    let ordered = groups_of(&rows, plan);
+
+    // Every fixed name first, so a group sheet never takes one.
+    let mut names: Vec<String> = def
+        .sheets
+        .iter()
+        .filter_map(|s| match s {
+            SheetDef::Summary { name }
+            | SheetDef::Timeline { name, .. }
+            | SheetDef::Gantt { name, .. }
+            | SheetDef::People { name } => Some(name.clone()),
+            SheetDef::Table(_) => None,
+        })
+        .collect();
+    // The group sheets' names, decided before any sheet is drawn: the
+    // summary, which comes first, refers to them.
+    let mut group_sheets: Vec<(String, String, Vec<usize>)> = Vec::new();
+    let mut all_name: Option<String> = None;
+    if let Some(t) = def.table() {
+        if t.per_group {
+            for (group, ix) in &ordered {
+                let name = unique_name(group, &names);
+                names.push(name.clone());
+                group_sheets.push((group.clone(), name, ix.clone()));
+            }
+        }
+        if let Some(a) = &t.all {
+            all_name = Some(unique_name(a, &names));
+        }
     }
-    let all_name = unique_name("ALL", &names);
-    let every: Vec<&Row> = rows.iter().collect();
-    let mut all = issues_sheet(&all_name, plan, &every, &prio, today);
-    metrics_block(&mut all, every.len());
-    out.push(summary_sheet(plan, &group_sheets));
-    out.push(roadmap);
-    out.push(gantt);
-    out.push(people);
-    out.extend(tables);
-    out.push(all);
+
+    let mut out: Vec<Sheet> = Vec::new();
+    for sheet in &def.sheets {
+        match sheet {
+            SheetDef::Summary { name } => {
+                if let Some(t) = def.table() {
+                    let counts: Vec<(String, String, usize)> = group_sheets
+                        .iter()
+                        .map(|(g, n, ix)| (g.clone(), n.clone(), ix.len()))
+                        .collect();
+                    out.push(summary_sheet(name, plan, t, &counts));
+                }
+            }
+            SheetDef::Timeline { name, title } => {
+                out.push(roadmap_sheet(&cx, &rows, &ordered, name, title))
+            }
+            SheetDef::Gantt { name, title } => out.push(gantt_sheet(&cx, &rows, name, title)),
+            SheetDef::People { name } => out.push(people_sheet(plan, name)),
+            SheetDef::Table(t) => {
+                for (_, name, ix) in &group_sheets {
+                    let picked: Vec<&Row> = ix.iter().map(|i| &rows[*i]).collect();
+                    out.push(table_sheet(name, plan, t, &picked, &prio, today));
+                }
+                if let Some(name) = &all_name {
+                    let every: Vec<&Row> = rows.iter().collect();
+                    out.push(table_sheet(name, plan, t, &every, &prio, today));
+                }
+            }
+        }
+    }
     out
 }
 
@@ -1193,267 +1227,303 @@ fn prio_field(rows: &[Row]) -> String {
     found.unwrap_or_else(|| "Prio".to_string())
 }
 
-// ── an issue table (a group sheet, or ALL) ──────────────────────────────────
+// ── a table (a group sheet, or ALL) ─────────────────────────────────────────
 
-const PROJECT_COL: u32 = 26;
+/// A table's columns laid out: where each definition column starts, and the
+/// sheet column of each consumer project.
+struct Layout {
+    /// The 1-based sheet column of each definition column; a projects column
+    /// starts there and takes one per project.
+    starts: Vec<u32>,
+    last: u32,
+}
 
-fn issues_sheet(name: &str, plan: &Plan, rows: &[&Row], prio: &str, today: Date) -> Sheet {
+impl Layout {
+    fn of(t: &TableDef, plan: &Plan) -> Layout {
+        let mut starts = Vec::with_capacity(t.columns.len());
+        let mut next = 1u32;
+        for c in &t.columns {
+            starts.push(next);
+            next += match c.source {
+                Source::Projects => plan.projects.len() as u32,
+                _ => 1,
+            };
+        }
+        Layout {
+            starts,
+            last: next.saturating_sub(1).max(1),
+        }
+    }
+
+    fn letter(&self, t: &TableDef, id: &str) -> Option<String> {
+        t.by_id(id).map(|i| col_name(self.starts[i]))
+    }
+
+    fn role(&self, t: &TableDef, key: &Key, helper: bool) -> Option<String> {
+        t.role(key, helper).map(|i| col_name(self.starts[i]))
+    }
+}
+
+/// What one value column holds for one row.
+fn value_of(key: &Key, r: &Row, ri: u32, plan: &Plan, prio: &str) -> Option<Value> {
+    let text = |t: String| (!t.is_empty()).then_some(Value::Text(t));
+    match key {
+        Key::Index => Some(Value::Number(f64::from(ri - 1))),
+        Key::Number => r.number.map(|n| Value::Number(n as f64)),
+        Key::Title => Some(Value::Text(r.title.clone())),
+        Key::Type => r.kind.clone().map(Value::Text),
+        Key::Assignees => text(r.assignees.join(", ")),
+        Key::Aliases => text(
+            r.assignees
+                .iter()
+                .map(|l| plan.alias(l))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        Key::Teams => {
+            let mut teams: Vec<String> = Vec::new();
+            for l in &r.assignees {
+                let t = plan.user_team_name(l);
+                let t = if t.is_empty() { plan.user_unit(l) } else { t };
+                if !t.is_empty() && !teams.contains(&t) {
+                    teams.push(t);
+                }
+            }
+            text(teams.join(", "))
+        }
+        Key::Prio => r.fields.get(prio).map(json_text).and_then(text),
+        Key::Spec => opt_num(r.spec()),
+        Key::Sdk => opt_num(r.sdk()),
+        Key::Impl => opt_num(r.implemented()),
+        Key::Overall => {
+            let known: Vec<f64> = [r.spec(), r.sdk(), r.implemented()]
+                .into_iter()
+                .flatten()
+                .collect();
+            (!known.is_empty())
+                .then(|| Value::Number(known.iter().sum::<f64>() / known.len() as f64))
+        }
+        Key::Status => r.status().and_then(text),
+        Key::Effort => r.effort().map(|e| Value::Number(e as f64)),
+        Key::Commitment => r.commitment().and_then(text),
+        Key::Milestone => milestone_cell(r.milestone.as_deref().unwrap_or_default()),
+        Key::Forecast => milestone_cell(&r.forecast),
+        Key::Card(f) => r.card.get(f).cloned().map(Value::Text),
+        Key::Field(f) => r.fields.get(f).and_then(|v| match v {
+            Json::Number(n) => n.as_f64().map(Value::Number),
+            other => text(json_text(other)),
+        }),
+    }
+}
+
+/// `AND(` with "the gear is not done" first, when the table shows how far it is.
+fn not_done(impl_col: Option<&str>) -> String {
+    impl_col.map(|k| format!("${k}2<>1,")).unwrap_or_default()
+}
+
+fn table_sheet(
+    name: &str,
+    plan: &Plan,
+    t: &TableDef,
+    rows: &[&Row],
+    prio: &str,
+    today: Date,
+) -> Sheet {
     let mut s = Sheet::new(name);
-    let mut headers: Vec<&str> = vec![
-        "#",
-        "ID",
-        "Title",
-        "Type",
-        "Assignees",
-        "Name",
-        "Team",
-        "Prio",
-        "Spec",
-        "SDK",
-        "Impl.",
-        "Status",
-        "Effort m*d",
-        "Remaining (m*d)",
-        "Commitment",
-        "Milestone",
-        "Forecast",
-        "",
-        "",
-        "",
-        "",
-        "Is Plugin",
-        "Has Plugins",
-        "Has Extension Point",
-        "Description",
-    ];
-    headers.extend(plan.projects.iter().map(|(_, n)| n.as_str()));
-    for (i, h) in headers.iter().enumerate() {
-        let col = i as u32 + 1;
-        let c = s.set(
-            1,
-            col,
-            (!h.is_empty()).then(|| Value::Text((*h).to_string())),
-        );
-        c.style = header_style(if col >= PROJECT_COL {
-            PROJECT_HEADER_FILL
-        } else {
-            HEADER_FILL
-        });
+    let layout = Layout::of(t, plan);
+
+    for (i, c) in t.columns.iter().enumerate() {
+        let start = layout.starts[i];
+        match c.source {
+            Source::Projects => {
+                for (k, (_, project)) in plan.projects.iter().enumerate() {
+                    s.text(1, start + k as u32, project.clone()).style =
+                        header_style(PROJECT_HEADER_FILL);
+                }
+            }
+            _ => {
+                let h = (!c.header.is_empty()).then(|| Value::Text(c.header.clone()));
+                s.set(1, start, h).style = header_style(HEADER_FILL);
+            }
+        }
     }
 
     let mut sorted: Vec<&Row> = rows.to_vec();
-    let prio_of = |r: &Row| {
-        r.fields
-            .get(prio)
-            .map(json_text)
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "zzz".to_string())
-    };
-    sorted.sort_by_key(|r| prio_of(r));
+    if t.sort == Sort::Prio {
+        let prio_of = |r: &Row| {
+            r.fields
+                .get(prio)
+                .map(json_text)
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| "zzz".to_string())
+        };
+        sorted.sort_by_key(|r| prio_of(r));
+    }
 
-    let pct = |v: Option<f64>| (v, Some("0%"));
     let now = i64::from(today.year() % 100) * 12 + i64::from(u8::from(today.month()));
+    let milestone_ix = t.role(&Key::Milestone, false);
     for (i, r) in sorted.iter().enumerate() {
         let ri = i as u32 + 2;
-        let implemented = r.implemented();
-        let done = implemented == Some(1.0);
-        let spec = r.spec();
-        let sdk = r.sdk();
-        let effort = r.effort();
+        let done = r.implemented() == Some(1.0);
         let milestone = r.milestone.clone().unwrap_or_default();
-        let link = |s: &mut Sheet, col: u32| {
-            if let Some(url) = &r.url {
+        let values: Vec<Option<Value>> = t
+            .columns
+            .iter()
+            .map(|c| match &c.source {
+                Source::Value(k) => value_of(k, r, ri, plan, prio),
+                _ => None,
+            })
+            .collect();
+        for (ci, c) in t.columns.iter().enumerate() {
+            let col = layout.starts[ci];
+            match &c.source {
+                Source::Projects => {
+                    for (k, (key, _)) in plan.projects.iter().enumerate() {
+                        let need = plan.need(r.number, key);
+                        let cell = s.set(ri, col + k as u32, need.clone().map(Value::Text));
+                        cell.style.align.horizontal = Some("center");
+                        cell.style.border = Border::all(Side::thin(None));
+                        let n = need.unwrap_or_default();
+                        let tone = if !done && milestone_ix.is_some() && need_late(&n, &milestone) {
+                            Some(LATE)
+                        } else if n == "?" {
+                            Some(UNKNOWN)
+                        } else if n.eq_ignore_ascii_case("no") {
+                            Some(NO)
+                        } else if !n.is_empty() {
+                            Some(YES)
+                        } else {
+                            None
+                        };
+                        if let Some((f, font)) = tone {
+                            cell.style.fill = Some(f.to_string());
+                            cell.style.font = Font::default().color(font);
+                        }
+                    }
+                    continue;
+                }
+                Source::Value(_) => {
+                    s.set(ri, col, values[ci].clone());
+                }
+                Source::Formula(f) => {
+                    let wanted = c
+                        .when
+                        .as_deref()
+                        .and_then(|w| t.by_id(w))
+                        .is_none_or(|w| values[w].is_some());
+                    let formula = wanted
+                        .then(|| resolve(f, ri, |id| layout.letter(t, id)))
+                        .flatten()
+                        .map(Value::Formula);
+                    s.set(ri, col, formula);
+                }
+            }
+            s.cell(ri, col).style.num_fmt = c.format;
+            if c.link
+                && let Some(url) = &r.url
+            {
                 s.link(ri, col, url);
                 s.cell(ri, col).style.font = Font::default().underline().color(LINK);
             }
-        };
-        s.set(ri, 1, Some(Value::Number(f64::from(ri - 1))));
-        s.set(ri, 2, r.number.map(|n| Value::Number(n as f64)));
-        link(&mut s, 2);
-        s.set(ri, 3, Some(Value::Text(r.title.clone())));
-        link(&mut s, 3);
-        s.set(ri, 4, r.kind.clone().map(Value::Text));
-        let text_or_none = |t: String| (!t.is_empty()).then_some(Value::Text(t));
-        s.set(ri, 5, text_or_none(r.assignees.join(", ")));
-        let aliases: Vec<String> = r.assignees.iter().map(|l| plan.alias(l)).collect();
-        s.set(ri, 6, text_or_none(aliases.join(", ")));
-        let mut teams: Vec<String> = Vec::new();
-        for l in &r.assignees {
-            let t = plan.user_team_name(l);
-            let t = if t.is_empty() { plan.user_unit(l) } else { t };
-            if !t.is_empty() && !teams.contains(&t) {
-                teams.push(t);
+            if c.helper {
+                continue;
             }
-        }
-        s.set(ri, 7, text_or_none(teams.join(", ")));
-        s.set(
-            ri,
-            8,
-            r.fields.get(prio).map(json_text).and_then(text_or_none),
-        );
-        for (col, (v, fmt)) in [(9, pct(spec)), (10, pct(sdk)), (11, pct(implemented))] {
-            let c = s.set(ri, col, opt_num(v));
-            c.style.num_fmt = fmt;
-        }
-        s.set(ri, 12, r.status().and_then(text_or_none));
-        s.set(ri, 13, effort.map(|e| Value::Number(e as f64)))
-            .style
-            .num_fmt = Some("0");
-        s.set(
-            ri,
-            14,
-            effort.map(|_| Value::Formula(format!("M{ri}*(1-K{ri})"))),
-        )
-        .style
-        .num_fmt = Some("0.00");
-        s.set(ri, 15, r.commitment().and_then(text_or_none));
-        s.set(ri, 16, milestone_cell(&milestone)).style.num_fmt = Some("yy.mm");
-        s.set(ri, 17, milestone_cell(&r.forecast)).style.num_fmt = Some("yy.mm");
-        for col in 1..=17 {
             if done {
                 paint(&mut s, ri, col, DONE_FILL);
-            }
-        }
-        if !done {
-            let late = |s: &mut Sheet, col: u32| {
-                let c = s.cell(ri, col);
-                c.style.fill = Some(LATE.0.to_string());
-                c.style.font = Font::default().color(LATE.1);
-            };
-            if milestone_past(&milestone, now) {
-                late(&mut s, 16);
-            }
-            if later(&r.forecast, &milestone) {
-                late(&mut s, 17);
-            }
-        }
-        let helpers = [spec, sdk, implemented];
-        for (k, v) in helpers.iter().enumerate() {
-            s.set(ri, 18 + k as u32, opt_num(*v)).style.num_fmt = Some("0%");
-        }
-        let known: Vec<f64> = helpers.iter().flatten().copied().collect();
-        let overall = (!known.is_empty()).then(|| known.iter().sum::<f64>() / known.len() as f64);
-        s.set(ri, 21, opt_num(overall)).style.num_fmt = Some("0%");
-        for (k, field) in [
-            "Is Plugin",
-            "Has Plugins",
-            "Has Extension Point",
-            "Description",
-        ]
-        .iter()
-        .enumerate()
-        {
-            let col = 22 + k as u32;
-            s.set(ri, col, r.card.get(*field).cloned().map(Value::Text));
-            if done {
-                paint(&mut s, ri, col, DONE_FILL);
-            }
-        }
-        for (k, (key, _)) in plan.projects.iter().enumerate() {
-            let col = PROJECT_COL + k as u32;
-            let need = plan.need(r.number, key);
-            let c = s.set(ri, col, need.clone().map(Value::Text));
-            c.style.align.horizontal = Some("center");
-            c.style.border = Border::all(Side::thin(None));
-            let t = need.unwrap_or_default();
-            let (f, font) = if !done && need_late(&t, &milestone) {
-                (Some(LATE.0), Some(LATE.1))
-            } else if t == "?" {
-                (Some(UNKNOWN.0), Some(UNKNOWN.1))
-            } else if t.eq_ignore_ascii_case("no") {
-                (Some(NO.0), Some(NO.1))
-            } else if !t.is_empty() {
-                (Some(YES.0), Some(YES.1))
             } else {
-                (None, None)
-            };
-            if let (Some(f), Some(font)) = (f, font) {
-                c.style.fill = Some(f.to_string());
-                c.style.font = Font::default().color(font);
+                let late = match c.late {
+                    Some(Late::MilestonePast) => milestone_past(&milestone, now),
+                    Some(Late::ForecastLate) => later(&r.forecast, &milestone),
+                    None => false,
+                };
+                if late {
+                    let cell = s.cell(ri, col);
+                    cell.style.fill = Some(LATE.0.to_string());
+                    cell.style.font = Font::default().color(LATE.1);
+                }
             }
         }
     }
 
     let last = rows.len() as u32 + 1;
+    let impl_col = layout.role(t, &Key::Impl, false);
+    let milestone_col = layout.role(t, &Key::Milestone, false);
     if last >= 2 {
-        for (col, color) in [("I", "63C384"), ("J", "5B9BD5"), ("K", "ED7D31")] {
+        for (ci, c) in t.columns.iter().enumerate() {
+            if let Some(color) = &c.bar {
+                let l = col_name(layout.starts[ci]);
+                s.rule(
+                    format!("{l}2:{l}{last}"),
+                    Rule::DataBar {
+                        color: color.clone(),
+                    },
+                );
+            }
+        }
+        for (ci, c) in t.columns.iter().enumerate() {
+            let l = col_name(layout.starts[ci]);
+            let nd = not_done(impl_col.as_deref());
+            let formula = match (c.late, milestone_col.as_deref()) {
+                (Some(Late::MilestonePast), _) => format!(
+                    "AND({nd}${l}2<>\"\",IFERROR(IF(ISNUMBER(${l}2),DATE(YEAR(${l}2),MONTH(${l}2),1),DATE(2000+VALUE(LEFT(${l}2,2)),VALUE(RIGHT(${l}2,2)),1))<DATE(YEAR(TODAY()),MONTH(TODAY()),1),FALSE))"
+                ),
+                (Some(Late::ForecastLate), Some(m)) => format!(
+                    "AND({nd}${l}2<>\"\",${m}2<>\"\",IFERROR((IF(ISNUMBER(${l}2),YEAR(${l}2)-2000,VALUE(LEFT(${l}2,2)))*12+IF(ISNUMBER(${l}2),MONTH(${l}2),VALUE(RIGHT(${l}2,2))))>(IF(ISNUMBER(${m}2),YEAR(${m}2)-2000,VALUE(LEFT(${m}2,2)))*12+IF(ISNUMBER(${m}2),MONTH(${m}2),VALUE(RIGHT(${m}2,2)))),FALSE))"
+                ),
+                _ => continue,
+            };
             s.rule(
-                format!("{col}2:{col}{last}"),
-                Rule::DataBar {
-                    color: color.into(),
+                format!("{l}2:{l}{last}"),
+                Rule::Formula {
+                    formula,
+                    fill: LATE.0.into(),
+                    font: LATE.1.into(),
+                    stop: false,
                 },
             );
         }
-        s.rule(
-            format!("P2:P{last}"),
-            Rule::Formula {
-                formula: "AND($K2<>1,$P2<>\"\",IFERROR(IF(ISNUMBER($P2),DATE(YEAR($P2),MONTH($P2),1),DATE(2000+VALUE(LEFT($P2,2)),VALUE(RIGHT($P2,2)),1))<DATE(YEAR(TODAY()),MONTH(TODAY()),1),FALSE))".into(),
-                fill: LATE.0.into(),
-                font: LATE.1.into(),
-                stop: false,
-            },
+    }
+    for (ci, c) in t.columns.iter().enumerate() {
+        let start = layout.starts[ci];
+        if c.helper {
+            s.hide(start);
+        }
+        if let Some(w) = c.width {
+            match c.source {
+                Source::Projects => {
+                    for k in 0..plan.projects.len() as u32 {
+                        s.width(start + k, w);
+                    }
+                }
+                _ => s.width(start, w),
+            }
+        }
+    }
+    if let Some(pi) = t.columns.iter().position(|c| c.source == Source::Projects)
+        && !plan.projects.is_empty()
+        && last >= 2
+    {
+        let first_col = layout.starts[pi];
+        let first = format!("{}2", col_name(first_col));
+        let range = format!(
+            "{first}:{}{last}",
+            col_name(first_col + plan.projects.len() as u32 - 1)
         );
-        s.rule(
-            format!("Q2:Q{last}"),
-            Rule::Formula {
-                formula: "AND($K2<>1,$Q2<>\"\",$P2<>\"\",IFERROR((IF(ISNUMBER($Q2),YEAR($Q2)-2000,VALUE(LEFT($Q2,2)))*12+IF(ISNUMBER($Q2),MONTH($Q2),VALUE(RIGHT($Q2,2))))>(IF(ISNUMBER($P2),YEAR($P2)-2000,VALUE(LEFT($P2,2)))*12+IF(ISNUMBER($P2),MONTH($P2),VALUE(RIGHT($P2,2)))),FALSE))".into(),
-                fill: LATE.0.into(),
-                font: LATE.1.into(),
-                stop: false,
-            },
-        );
-    }
-    for col in 18..=21 {
-        s.hide(col);
-    }
-    for (col, w) in [
-        (1, 4.0),
-        (2, 7.0),
-        (3, 40.0),
-        (4, 14.0),
-        (5, 18.0),
-        (6, 24.0),
-        (7, 16.0),
-        (8, 14.0),
-        (9, 14.0),
-        (10, 12.0),
-        (11, 12.0),
-        (12, 14.0),
-        (13, 14.0),
-        (14, 18.0),
-        (15, 14.0),
-        (16, 14.0),
-        (17, 14.0),
-        (22, 14.0),
-        (23, 14.0),
-        (24, 22.0),
-        (25, 60.0),
-    ] {
-        s.width(col, w);
-    }
-    for k in 0..plan.projects.len() as u32 {
-        s.width(PROJECT_COL + k, 14.0);
-    }
-    let last_project = if plan.projects.is_empty() {
-        25
-    } else {
-        PROJECT_COL + plan.projects.len() as u32 - 1
-    };
-    if !plan.projects.is_empty() && last >= 2 {
-        let first = format!("{}2", col_name(PROJECT_COL));
-        let range = format!("{first}:{}{last}", col_name(last_project));
-        let m = "$P2";
-        s.rule(
-            range.clone(),
-            Rule::Formula {
-                formula: format!(
-                    "AND($K2<>1,LEFT({first},1)=\"Q\",IFERROR((IF(ISNUMBER({m}),YEAR({m})-2000,VALUE(LEFT({m},2)))*12+IF(ISNUMBER({m}),MONTH({m}),VALUE(RIGHT({m},2))))>(VALUE(RIGHT({first},2))*12+VALUE(MID({first},2,1))*3),FALSE))"
-                ),
-                fill: LATE.0.into(),
-                font: LATE.1.into(),
-                stop: true,
-            },
-        );
+        if let Some(m) = milestone_col.as_deref() {
+            let m = format!("${m}2");
+            let nd = not_done(impl_col.as_deref());
+            s.rule(
+                range.clone(),
+                Rule::Formula {
+                    formula: format!(
+                        "AND({nd}LEFT({first},1)=\"Q\",IFERROR((IF(ISNUMBER({m}),YEAR({m})-2000,VALUE(LEFT({m},2)))*12+IF(ISNUMBER({m}),MONTH({m}),VALUE(RIGHT({m},2))))>(VALUE(RIGHT({first},2))*12+VALUE(MID({first},2,1))*3),FALSE))"
+                    ),
+                    fill: LATE.0.into(),
+                    font: LATE.1.into(),
+                    stop: true,
+                },
+            );
+        }
         for (formula, (f, font)) in [
             (format!("{first}=\"?\""), UNKNOWN),
             (format!("LOWER({first})=\"no\""), NO),
@@ -1473,8 +1543,13 @@ fn issues_sheet(name: &str, plan: &Plan, rows: &[&Row], prio: &str, today: Date)
             );
         }
     }
-    s.freeze(2, 4);
-    s.filter(format!("A1:{}{last}", col_name(last_project.max(25))));
+    if let Some((r, c)) = t.freeze {
+        s.freeze(r, c);
+    }
+    s.filter(format!("A1:{}{last}", col_name(layout.last)));
+    if t.metrics {
+        metrics_block(&mut s, t, &layout, rows.len());
+    }
     s
 }
 
@@ -1496,9 +1571,17 @@ fn need_late(need: &str, milestone: &str) -> bool {
     }
 }
 
-/// The metrics under a table: count, the three progress averages, overall,
-/// how much is estimated, and the estimate in person-months.
-fn metrics_block(s: &mut Sheet, count: usize) {
+/// `IF(COUNT(R2:R9)=0,0,SUM(R2:R9)/COUNT(R2:R9))`, on `sheet!` when given.
+fn average(sheet: &str, col: &str, last: u32) -> String {
+    format!(
+        "IF(COUNT({sheet}{col}2:{col}{last})=0,0,SUM({sheet}{col}2:{col}{last})/COUNT({sheet}{col}2:{col}{last}))"
+    )
+}
+
+/// The metrics under a table: count, the progress averages, overall, how much
+/// is estimated, and the estimate in person-months -- each from the column
+/// that holds it, and left out when the table has none.
+fn metrics_block(s: &mut Sheet, t: &TableDef, layout: &Layout, count: usize) {
     let last = if count > 0 { count as u32 + 1 } else { 2 };
     let sr = last + 2;
     let label = Font::default().bold().sized(11.0);
@@ -1508,58 +1591,76 @@ fn metrics_block(s: &mut Sheet, count: usize) {
         c.style.fill = Some("5B9BD5".into());
         c.style.align.horizontal = Some("center");
     }
-    let lines: [(&str, String, Option<&'static str>); 7] = [
-        ("Items Count", format!("COUNTA(C2:C{last})"), None),
+    let title_col = layout.role(t, &Key::Title, false);
+    let effort = layout.role(t, &Key::Effort, false);
+    let avg = |key: Key| layout.role(t, &key, true).map(|c| average("", &c, last));
+    let lines: [(&str, Option<String>, Option<&'static str>, bool); 7] = [
         (
-            "Spec progress",
-            format!("IF(COUNT(R2:R{last})=0,0,SUM(R2:R{last})/COUNT(R2:R{last}))"),
-            Some("0%"),
+            "Items Count",
+            title_col
+                .as_ref()
+                .map(|c| format!("COUNTA({c}2:{c}{last})")),
+            None,
+            false,
         ),
+        ("Spec progress", avg(Key::Spec), Some("0%"), true),
         (
             "Estimation progress",
-            format!("IF(COUNTA(C2:C{last})=0,0,COUNT(M2:M{last})/COUNTA(C2:C{last}))"),
+            title_col.as_ref().zip(effort.as_ref()).map(|(c, m)| {
+                format!(
+                    "IF(COUNTA({c}2:{c}{last})=0,0,COUNT({m}2:{m}{last})/COUNTA({c}2:{c}{last}))"
+                )
+            }),
             Some("0%"),
+            true,
         ),
-        (
-            "SDK progress",
-            format!("IF(COUNT(S2:S{last})=0,0,SUM(S2:S{last})/COUNT(S2:S{last}))"),
-            Some("0%"),
-        ),
-        (
-            "Impl. Progress",
-            format!("IF(COUNT(T2:T{last})=0,0,SUM(T2:T{last})/COUNT(T2:T{last}))"),
-            Some("0%"),
-        ),
-        (
-            "Overall progress",
-            format!("IF(COUNT(U2:U{last})=0,0,SUM(U2:U{last})/COUNT(U2:U{last}))"),
-            Some("0%"),
-        ),
+        ("SDK progress", avg(Key::Sdk), Some("0%"), true),
+        ("Impl. Progress", avg(Key::Impl), Some("0%"), true),
+        ("Overall progress", avg(Key::Overall), Some("0%"), true),
         (
             "Estimates total (m*m)",
-            format!("SUM(M2:M{last})/{MAN_DAYS_PER_MONTH}"),
+            effort
+                .as_ref()
+                .map(|m| format!("SUM({m}2:{m}{last})/{MAN_DAYS_PER_MONTH}")),
             Some("0.00"),
+            false,
         ),
     ];
-    for (k, (name, formula, fmt)) in lines.into_iter().enumerate() {
-        let r = sr + 1 + k as u32;
+    let mut r = sr;
+    let mut bar: Option<(u32, u32)> = None;
+    for (name, formula, fmt, progress) in lines {
+        let Some(formula) = formula else {
+            continue;
+        };
+        r += 1;
         s.text(r, 3, name).style.font = label.clone();
         let c = s.set(r, 4, Some(Value::Formula(formula)));
         c.style.font = Font::default().bold().sized(11.0);
         c.style.num_fmt = fmt;
+        if progress {
+            bar = Some(bar.map_or((r, r), |(a, _)| (a, r)));
+        }
     }
-    s.rule(
-        format!("D{}:D{}", sr + 2, sr + 6),
-        Rule::DataBar {
-            color: "63C384".into(),
-        },
-    );
+    if let Some((a, b)) = bar {
+        s.rule(
+            format!("D{a}:D{b}"),
+            Rule::DataBar {
+                color: "63C384".into(),
+            },
+        );
+    }
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 
-fn summary_sheet(plan: &Plan, groups: &[(String, String, usize)]) -> Sheet {
-    let mut s = Sheet::new("Summary");
+fn summary_sheet(
+    name: &str,
+    plan: &Plan,
+    t: &TableDef,
+    groups: &[(String, String, usize)],
+) -> Sheet {
+    let mut s = Sheet::new(name);
+    let layout = Layout::of(t, plan);
     let headers = [
         "#",
         "Subsystem",
@@ -1576,40 +1677,73 @@ fn summary_sheet(plan: &Plan, groups: &[(String, String, usize)]) -> Sheet {
     for (i, h) in headers.iter().enumerate() {
         s.text(1, i as u32 + 1, *h).style = header_style(HEADER_FILL);
     }
+    let title_col = layout.role(t, &Key::Title, false);
+    let effort = layout.role(t, &Key::Effort, false);
+    let done = layout.role(t, &Key::Impl, true);
+    let remaining = layout.letter(t, "remaining");
+    let helper = |key: Key| layout.role(t, &key, true);
     for (i, (group, sheet, count)) in groups.iter().enumerate() {
         let r = i as u32 + 2;
         let last = if *count > 0 { *count as u32 + 1 } else { 2 };
-        let sn = format!("'{sheet}'");
+        let sn = format!("'{sheet}'!");
         s.set(r, 1, Some(Value::Number(f64::from(r - 1))))
             .style
             .font = Font::default().sized(11.0);
         s.text(r, 2, plan.swimlane_label(group)).style.font = Font::default().bold().sized(11.0);
-        let avg = |col: &str| {
-            format!(
-                "IF(COUNT({sn}!{col}2:{col}{last})=0,0,SUM({sn}!{col}2:{col}{last})/COUNT({sn}!{col}2:{col}{last}))"
-            )
-        };
-        let cells: [(u32, String, Option<&'static str>); 9] = [
-            (3, format!("COUNTA({sn}!C2:C{last})"), None),
-            (4, format!("COUNTIF({sn}!T2:T{last},1)"), None),
-            (5, format!("IF(C{r}=0,0,D{r}/C{r})"), Some("0%")),
-            (6, avg("R"), Some("0%")),
-            (7, avg("S"), Some("0%")),
-            (8, avg("T"), Some("0%")),
+        let cells: [(u32, Option<String>, Option<&'static str>); 9] = [
+            (
+                3,
+                title_col
+                    .as_ref()
+                    .map(|c| format!("COUNTA({sn}{c}2:{c}{last})")),
+                None,
+            ),
+            (
+                4,
+                done.as_ref()
+                    .map(|c| format!("COUNTIF({sn}{c}2:{c}{last},1)")),
+                None,
+            ),
+            (5, Some(format!("IF(C{r}=0,0,D{r}/C{r})")), Some("0%")),
+            (
+                6,
+                helper(Key::Spec).map(|c| average(&sn, &c, last)),
+                Some("0%"),
+            ),
+            (
+                7,
+                helper(Key::Sdk).map(|c| average(&sn, &c, last)),
+                Some("0%"),
+            ),
+            (
+                8,
+                helper(Key::Impl).map(|c| average(&sn, &c, last)),
+                Some("0%"),
+            ),
             (
                 9,
-                format!("IF(C{r}=0,0,COUNT({sn}!M2:M{last})/C{r})"),
+                effort
+                    .as_ref()
+                    .map(|m| format!("IF(C{r}=0,0,COUNT({sn}{m}2:{m}{last})/C{r})")),
                 Some("0%"),
             ),
             (
                 10,
-                format!("SUM({sn}!M2:M{last})/{MAN_DAYS_PER_MONTH}"),
+                effort
+                    .as_ref()
+                    .map(|m| format!("SUM({sn}{m}2:{m}{last})/{MAN_DAYS_PER_MONTH}")),
                 Some("0.00"),
             ),
-            (11, format!("SUM({sn}!N2:N{last})"), Some("0.00")),
+            (
+                11,
+                remaining
+                    .as_ref()
+                    .map(|n| format!("SUM({sn}{n}2:{n}{last})")),
+                Some("0.00"),
+            ),
         ];
         for (col, f, fmt) in cells {
-            let c = s.set(r, col, Some(Value::Formula(f)));
+            let c = s.set(r, col, f.map(Value::Formula));
             c.style.num_fmt = fmt;
             c.style.font = Font::default().sized(11.0);
         }
@@ -1652,8 +1786,8 @@ fn summary_sheet(plan: &Plan, groups: &[(String, String, usize)]) -> Sheet {
 
 // ── People ──────────────────────────────────────────────────────────────────
 
-fn people_sheet(plan: &Plan) -> Sheet {
-    let mut s = Sheet::new("People");
+fn people_sheet(plan: &Plan, name: &str) -> Sheet {
+    let mut s = Sheet::new(name);
     for (i, h) in [
         "github person",
         "unit",
@@ -1957,10 +2091,16 @@ impl LaneFrame<'_> {
     }
 }
 
-fn roadmap_sheet(cx: &Context<'_>, rows: &[Row], groups: &[(String, Vec<usize>)]) -> Sheet {
+fn roadmap_sheet(
+    cx: &Context<'_>,
+    rows: &[Row],
+    groups: &[(String, Vec<usize>)],
+    name: &str,
+    heading: &str,
+) -> Sheet {
     let plan = cx.plan;
     let today = cx.today;
-    let mut s = Sheet::new("Roadmap");
+    let mut s = Sheet::new(name);
     let frame = Frame {
         right: RIGHT_COL,
         roadmap: true,
@@ -1991,7 +2131,7 @@ fn roadmap_sheet(cx: &Context<'_>, rows: &[Row], groups: &[(String, Vec<usize>)]
     frame.gray(&mut s, cur);
     cur += 1;
     s.height(cur, TITLE_HEIGHT);
-    title(&mut s, cur, "Cyber Fabric Roadmap");
+    title(&mut s, cur, heading);
     frame.gray(&mut s, cur);
     cur += 1;
     s.height(cur, POST_TITLE_HEIGHT);
@@ -2234,9 +2374,9 @@ fn past_months(today: Date) -> Vec<(i32, u32)> {
 /// A bar drawn on the Gantt: first and last column, row, and what blocks it.
 type Bar = (u32, u32, u32, Vec<u64>);
 
-fn gantt_sheet(cx: &Context<'_>, rows: &[Row]) -> Sheet {
+fn gantt_sheet(cx: &Context<'_>, rows: &[Row], name: &str, heading: &str) -> Sheet {
     let plan = cx.plan;
-    let mut s = Sheet::new("Gantt");
+    let mut s = Sheet::new(name);
     let lanes = cx.lanes(rows);
     let max_slots = if lanes.is_empty() {
         18
@@ -2276,7 +2416,7 @@ fn gantt_sheet(cx: &Context<'_>, rows: &[Row]) -> Sheet {
     frame.gray(&mut s, cur);
     cur += 1;
     s.height(cur, TITLE_HEIGHT);
-    title(&mut s, cur, "Gear Delivery Gantt");
+    title(&mut s, cur, heading);
     s.merge(cur, 3, cur, last.min(10));
     frame.gray(&mut s, cur);
     cur += 1;
@@ -2462,5 +2602,5 @@ fn gantt_sheet(cx: &Context<'_>, rows: &[Row]) -> Sheet {
 }
 
 #[cfg(test)]
-#[path = "roadmap_workbook_tests.rs"]
+#[path = "workbook_tests.rs"]
 mod tests;

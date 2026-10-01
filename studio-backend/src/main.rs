@@ -32,6 +32,7 @@ mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;
+mod reports; // studio-reports: report definitions, sources and drawing (ADR-0033)
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
@@ -420,7 +421,7 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 17] = [
+    const REST_MODULES: [(&str, &str); 18] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
         (
             "components_catalog",
@@ -438,6 +439,7 @@ mod operation_docs_tests {
         ("kit_registry", include_str!("kit_registry/rest.rs")),
         ("llm_proxy", include_str!("llm_proxy/rest.rs")),
         ("notify", include_str!("notify/rest.rs")),
+        ("reports", include_str!("reports/rest.rs")),
         ("scheduler", include_str!("scheduler/rest.rs")),
         ("spec_quality", include_str!("spec_quality/rest.rs")),
         ("studio_session", include_str!("studio_session/rest.rs")),

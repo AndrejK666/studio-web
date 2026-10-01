@@ -1274,12 +1274,6 @@ impl CatalogService {
                 value["gear"] = json!(board_gears.contains(&ix));
                 planned.push(gts::roadmap_item_node(&id, &roadmap::item_key(item), value));
             }
-            if let Some(plan) = &source.plan {
-                planned.push(gts::roadmap_plan_node(
-                    &id,
-                    json!({ "board": id, "plan_yaml": plan }),
-                ));
-            }
             boards_read.push(id);
             for node in profiles.iter_mut() {
                 let Some(name) = node
@@ -1766,33 +1760,6 @@ impl CatalogService {
             .filter(|n| n.type_id == gts::ROADMAP_ITEM_TYPE)
             .map(|n| n.value)
             .collect())
-    }
-
-    /// The plan the last sync was handed for a board -- teams, people,
-    /// swimlanes, consumer projects -- or, with several boards, the first.
-    pub async fn roadmap_plan(&self, ctx: &SecurityContext) -> anyhow::Result<Option<String>> {
-        let mut plans: Vec<GtsNode> = self
-            .sink
-            .list(ctx, Some("roadmap_plan"))
-            .await?
-            .into_iter()
-            .filter(|n| n.type_id == gts::ROADMAP_PLAN_TYPE)
-            .collect();
-        plans.sort_by(|a, b| {
-            let board = |n: &GtsNode| {
-                n.value
-                    .get("board")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            };
-            board(a).cmp(&board(b))
-        });
-        Ok(plans.into_iter().find_map(|n| {
-            n.value
-                .get("plan_yaml")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        }))
     }
 
     /// Read back catalog nodes, optionally filtered by type substring

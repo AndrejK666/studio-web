@@ -1,0 +1,671 @@
+//! `/studio-reports/v1/reports` -- every report this deployment draws, its
+//! source in the caller's organization, and the report itself.
+
+use std::sync::Arc;
+
+use axum::extract::{Path, Query};
+use axum::response::Response;
+use axum::{Extension, Router};
+use toolkit::api::canonical_prelude::*;
+use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
+use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::{ClientHub, ClientScope};
+use toolkit_canonical_errors::resource_error;
+use toolkit_security::SecurityContext;
+use uuid::Uuid;
+
+use super::refresh_task::{RefreshPayload, TASK_TYPE};
+use super::roadmap::summary::RoadmapReportDto;
+use super::service::{REPORTS, ReportKind, ReportsService, kind};
+use super::source::{PlanSnapshot, Refresh, ReportSource};
+
+#[resource_error(gts_id!("cf.studio._.reports.v1~"))]
+pub struct StudioReportsError;
+
+struct License;
+impl AsRef<str> for License {
+    fn as_ref(&self) -> &'static str {
+        CORE_GLOBAL_BASE_LICENSE_FEATURE
+    }
+}
+impl LicenseFeature for License {}
+
+#[derive(Clone)]
+pub struct Reports {
+    pub service: Arc<ReportsService>,
+    hub: Arc<ClientHub>,
+}
+
+impl Reports {
+    fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
+        self.hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(crate::tasks::TASK_QUEUE_INSTANCE_ID))
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail("reports cannot be refreshed in this deployment (studio-tasks has no database configured)")
+                    .create()
+            })
+    }
+}
+
+fn internal(e: impl std::fmt::Display) -> CanonicalError {
+    CanonicalError::internal(e.to_string()).create()
+}
+
+fn report(id: &str) -> ApiResult<&'static ReportKind> {
+    kind(id).ok_or_else(|| {
+        StudioReportsError::not_found(format!("there is no report `{id}`"))
+            .with_resource(id)
+            .create()
+    })
+}
+
+// ── DTOs ────────────────────────────────────────────────────────────────────
+
+/// The plan as last read.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlanSnapshotDto {
+    /// `owner/repo:path@ref`, or `upload`.
+    pub from: String,
+    pub sha: Option<String>,
+    /// RFC 3339.
+    pub read_at: String,
+    /// The plan's size, in bytes: the text itself stays on the server.
+    pub size: u32,
+}
+
+/// What the last refresh did.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RefreshDto {
+    /// RFC 3339.
+    pub at: String,
+    /// The board sync it queued: a studio-tasks run.
+    pub sync_run: Option<String>,
+    /// Why it did not finish, when it did not.
+    pub error: Option<String>,
+}
+
+/// A report's source in the caller's organization.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReportSourceDto {
+    pub report: String,
+    pub connection_id: Option<Uuid>,
+    pub plan_file: Option<String>,
+    /// Whether the plan was uploaded rather than read from a file.
+    pub plan_uploaded: bool,
+    pub board: Option<String>,
+    pub roots: Vec<String>,
+    pub consumers: std::collections::BTreeMap<String, String>,
+    pub snapshot: Option<PlanSnapshotDto>,
+    pub last_refresh: Option<RefreshDto>,
+}
+
+/// What a person saves as a report's source. Every field optional: the plan
+/// file can say the rest (`board`, `roots`, `consumers`, `report`).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReportSourceInputDto {
+    /// The GitHub connection to read the board and the plan file through;
+    /// the organization's first GitHub connection when absent.
+    pub connection_id: Option<Uuid>,
+    /// `owner/repo:path@ref`, or a GitHub link to the file.
+    pub plan_file: Option<String>,
+    /// The plan's text, for a file the connection cannot read. Absent keeps
+    /// an uploaded plan; empty removes it.
+    pub plan_yaml: Option<String>,
+    /// `owner/number`; overrides the plan's `board`.
+    pub board: Option<String>,
+    pub roots: Option<Vec<String>>,
+    pub consumers: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// One report this deployment draws.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReportDto {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// The definition it is drawn with: the plan's, else its built-in.
+    pub definition: String,
+    /// The definition's sheets, in order (`Summary`, `Roadmap`, …).
+    pub sheets: Vec<String>,
+    /// Why the plan's definition does not read, when it does not.
+    pub definition_error: Option<String>,
+    pub source: ReportSourceDto,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReportListDto {
+    pub items: Vec<ReportDto>,
+    pub total: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReportSyncEnqueued {
+    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}`.
+    pub task_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct WorkbookQuery {
+    /// The day the workbook is drawn as of (`YYYY-MM-DD`); today when absent.
+    #[serde(default)]
+    pub date: Option<String>,
+}
+
+fn snapshot_dto(s: &PlanSnapshot) -> PlanSnapshotDto {
+    PlanSnapshotDto {
+        from: s.from.clone(),
+        sha: s.sha.clone(),
+        read_at: s.read_at.clone(),
+        size: u32::try_from(s.text.len()).unwrap_or(u32::MAX),
+    }
+}
+
+fn refresh_dto(r: &Refresh) -> RefreshDto {
+    RefreshDto {
+        at: r.at.clone(),
+        sync_run: r.sync_run.map(|u| u.to_string()),
+        error: r.error.clone(),
+    }
+}
+
+pub fn source_dto(s: &ReportSource) -> ReportSourceDto {
+    ReportSourceDto {
+        report: s.report.clone(),
+        connection_id: s.connection_id,
+        plan_file: s.plan_file.clone(),
+        plan_uploaded: s.snapshot.as_ref().is_some_and(|x| x.from == "upload"),
+        board: s.board.clone(),
+        roots: s.roots.clone(),
+        consumers: s.consumers.clone(),
+        snapshot: s.snapshot.as_ref().map(snapshot_dto),
+        last_refresh: s.last_refresh.as_ref().map(refresh_dto),
+    }
+}
+
+/// The input applied over what is saved: an absent field keeps its value.
+pub fn apply(prev: &ReportSource, input: ReportSourceInputDto) -> ReportSource {
+    let trimmed = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    ReportSource {
+        report: prev.report.clone(),
+        connection_id: input.connection_id.or(prev.connection_id),
+        plan_file: match input.plan_file {
+            Some(f) => trimmed(Some(f)),
+            None => prev.plan_file.clone(),
+        },
+        // An upload is an act, not a setting: it travels to the save once.
+        plan_yaml: input.plan_yaml,
+        board: match input.board {
+            Some(b) => trimmed(Some(b)),
+            None => prev.board.clone(),
+        },
+        roots: input.roots.unwrap_or_else(|| prev.roots.clone()),
+        consumers: input.consumers.unwrap_or_else(|| prev.consumers.clone()),
+        snapshot: prev.snapshot.clone(),
+        last_refresh: prev.last_refresh.clone(),
+    }
+}
+
+fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
+    let (plan, _) = ReportsService::plan_of(source);
+    let (definition, sheets, definition_error) =
+        match ReportsService::definition_of(k, plan.as_ref()) {
+            Ok(d) => {
+                let names = d
+                    .sheets
+                    .iter()
+                    .map(|s| match s {
+                        super::definition::SheetDef::Summary { name }
+                        | super::definition::SheetDef::Timeline { name, .. }
+                        | super::definition::SheetDef::Gantt { name, .. }
+                        | super::definition::SheetDef::People { name } => name.clone(),
+                        super::definition::SheetDef::Table(t) => match (&t.all, t.per_group) {
+                            (Some(a), true) => format!("a sheet per group, {a}"),
+                            (Some(a), false) => a.clone(),
+                            (None, _) => "a sheet per group".into(),
+                        },
+                    })
+                    .collect();
+                (d.id, names, None)
+            }
+            Err(e) => (k.default_definition.to_string(), Vec::new(), Some(e)),
+        };
+    ReportDto {
+        id: k.id.to_string(),
+        title: k.title.to_string(),
+        description: k.description.to_string(),
+        definition,
+        sheets,
+        definition_error,
+        source: source_dto(source),
+    }
+}
+
+// ── handlers ────────────────────────────────────────────────────────────────
+
+async fn list_reports(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+) -> ApiResult<JsonBody<ReportListDto>> {
+    let mut items = Vec::new();
+    for k in &REPORTS {
+        let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+        items.push(report_dto(k, &source));
+    }
+    Ok(Json(ReportListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+async fn get_report(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<ReportDto>> {
+    let k = report(&id)?;
+    let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    Ok(Json(report_dto(k, &source)))
+}
+
+async fn get_report_summary(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<RoadmapReportDto>> {
+    report(&id)?;
+    Ok(Json(
+        reports
+            .service
+            .summary(&ctx)
+            .await
+            .map_err(|e| internal(format!("{e:#}")))?,
+    ))
+}
+
+async fn export_report(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Query(query): Query<WorkbookQuery>,
+) -> ApiResult<Response> {
+    let k = report(&id)?;
+    let today = match query
+        .date
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
+        None => time::OffsetDateTime::now_utc().date(),
+        Some(d) => time::Date::parse(d, &time::format_description::well_known::Iso8601::DATE)
+            .map_err(|e| {
+                StudioReportsError::invalid_argument()
+                    .with_field_violation("date", format!("not a YYYY-MM-DD date: {e}"), "INVALID")
+                    .create()
+            })?,
+    };
+    let bytes = reports
+        .service
+        .workbook(&ctx, k, today)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    let name = format!("back_{}_{today}.xlsx", k.id);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(internal)
+}
+
+async fn get_report_source(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<ReportSourceDto>> {
+    let k = report(&id)?;
+    let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    Ok(Json(source_dto(&source)))
+}
+
+async fn update_report_source(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<ReportSourceInputDto>,
+) -> ApiResult<JsonBody<ReportSourceDto>> {
+    let k = report(&id)?;
+    let prev = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    let saved = reports
+        .service
+        .save_source(&ctx, apply(&prev, input))
+        .await
+        .map_err(|e| {
+            StudioReportsError::invalid_argument()
+                .with_constraint(e)
+                .create()
+        })?;
+    Ok(Json(source_dto(&saved)))
+}
+
+async fn sync_report(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<ReportSyncEnqueued>> {
+    let k = report(&id)?;
+    let payload = serde_json::to_value(RefreshPayload {
+        report: k.id.to_string(),
+    })
+    .map_err(internal)?;
+    let run = reports
+        .queue()?
+        .enqueue(
+            &ctx,
+            crate::tasks::service::NewRun {
+                tenant: ctx.subject_tenant_id(),
+                task_type: TASK_TYPE,
+                payload,
+                partition_key: Some("reports"),
+                idempotency_key: None,
+                coalesce_queued: true,
+                notify_workspace_id: None,
+            },
+        )
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    Ok(Json(ReportSyncEnqueued {
+        task_id: run.to_string(),
+        status: "queued".into(),
+    }))
+}
+
+// ── routes ──────────────────────────────────────────────────────────────────
+
+pub fn register_routes(
+    router: Router,
+    openapi: &dyn OpenApiRegistry,
+    service: Arc<ReportsService>,
+    hub: Arc<ClientHub>,
+) -> Router {
+    let router = OperationBuilder::get("/studio-reports/v1/reports")
+        .operation_id("studio_reports.list_reports")
+        .summary("Every report this deployment draws, with its source here")
+        .description(
+            "One entry per report: what it is, the definition it is drawn with (the plan's own, \
+             or the report's built-in), the sheets that gives, and the caller's organization's \
+             source for it -- the connection, the plan file, the board, and what the last refresh \
+             read and did. A report nobody configured is listed with an empty source.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_reports)
+        .json_response_with_schema::<ReportListDto>(openapi, StatusCode::OK, "The reports")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}")
+        .operation_id("studio_reports.get_report")
+        .summary("One report, its definition and its source here")
+        .description(
+            "What one entry of the report list says: the report, the definition it is drawn with \
+             and its sheets, and the organization's source. `definition_error` says why a plan's \
+             own definition does not read; the report is then drawn with its built-in.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report)
+        .json_response_with_schema::<ReportDto>(openapi, StatusCode::OK, "The report")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/summary")
+        .operation_id("studio_reports.get_report_summary")
+        .summary("The report's data, as typed JSON: one row per planned gear and the summary")
+        .description(
+            "Every gear the roadmap board plans, one row each -- stage, milestone and due date, \
+             commitment, progress per axis, who needs it and how badly, whether the plan holds \
+             and why not, assignees, effort, and the repository's side (lifecycle, last release, \
+             grade) where a catalogued component implements it -- soonest due first, with what \
+             a planning meeting reads first: per group, per stage, per milestone, per consumer, \
+             per plan state, and the overdue ones. What a screen draws; the workbook is the \
+             export.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_summary)
+        .json_response_with_schema::<RoadmapReportDto>(openapi, StatusCode::OK, "The report's data")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/workbook")
+        .operation_id("studio_reports.export_report")
+        .summary("The report as a workbook: the planning team's back_roadmap spreadsheet")
+        .description(
+            "The report drawn by its definition as an .xlsx: for the built-in back_roadmap, \
+             Summary (per group, formulas over the group sheets), Roadmap (groups as swimlanes \
+             over the coming nine months, a box per gear at its milestone), Gantt (each team's \
+             remaining work scheduled against its people and power, blockers first), People, a \
+             sheet per group and ALL, with every forecast and every cell the planning sheet \
+             colours. Drawn from the gears the last board sync stored and the plan the last \
+             refresh read; `date` sets the day it is drawn as of.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(export_report)
+        .text_response(
+            StatusCode::OK,
+            "The workbook",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/source")
+        .operation_id("studio_reports.get_report_source")
+        .summary("Where the report's board and plan come from in this organization")
+        .description(
+            "The organization's source for the report: the GitHub connection, the plan file \
+             (`owner/repo:path@ref`) or an uploaded plan, the board, roots and consumers when the \
+             source overrides the plan's, the plan as the last refresh read it (where from, which \
+             blob, when) and what that refresh did. Empty until someone saves one.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_source)
+        .json_response_with_schema::<ReportSourceDto>(openapi, StatusCode::OK, "The source")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/source")
+        .operation_id("studio_reports.update_report_source")
+        .summary("Set where the report's board and plan come from in this organization")
+        .description(
+            "Saves the organization's source for the report. A field left out keeps what is \
+             saved; an empty string clears it. The plan file is written `owner/repo:path@ref` or \
+             as a GitHub link, and the plan can carry the rest itself -- `board`, `roots`, \
+             `consumers` and `report` (a built-in definition's id, or a definition). A plan file \
+             that does not parse, a plan that is not YAML or a board that is not owner/number is \
+             refused. Uploading a plan makes it the plan at once; a file is read on the next \
+             refresh.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_source)
+        .json_request::<ReportSourceInputDto>(openapi, "The source")
+        .json_response_with_schema::<ReportSourceDto>(openapi, StatusCode::OK, "The saved source")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-reports/v1/reports/{report_id}/sync")
+        .operation_id("studio_reports.sync_report")
+        .summary("Refresh the report: read its plan again and sync its board")
+        .description(
+            "Queues a `reports.refresh` run: it reads the plan file again through the source's \
+             connection, keeps what it read, and queues a sync of the board the plan names (a \
+             `catalog.sync` run). What it did -- and why not, when it failed -- is on the source \
+             afterwards. A schedule on `studio-scheduler` with task type `reports.refresh` and \
+             payload `{\"report\": \"roadmap\"}` keeps a report current on its own.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(sync_report)
+        .json_response_with_schema::<ReportSyncEnqueued>(openapi, StatusCode::OK, "The queued run")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router.layer(Extension(Reports { service, hub }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input() -> ReportSourceInputDto {
+        ReportSourceInputDto {
+            connection_id: None,
+            plan_file: None,
+            plan_yaml: None,
+            board: None,
+            roots: None,
+            consumers: None,
+        }
+    }
+
+    fn saved() -> ReportSource {
+        ReportSource {
+            report: "roadmap".into(),
+            connection_id: Some(Uuid::from_u128(1)),
+            plan_file: Some("o/r:p.yaml".into()),
+            board: Some("o/48".into()),
+            roots: vec!["1".into()],
+            ..ReportSource::default()
+        }
+    }
+
+    #[test]
+    fn a_field_left_out_keeps_what_is_saved() {
+        assert_eq!(apply(&saved(), input()), saved());
+    }
+
+    #[test]
+    fn an_empty_field_clears_it() {
+        let cleared = apply(
+            &saved(),
+            ReportSourceInputDto {
+                plan_file: Some("  ".into()),
+                plan_yaml: Some("".into()),
+                board: Some("".into()),
+                roots: Some(Vec::new()),
+                ..input()
+            },
+        );
+        assert_eq!(cleared.plan_yaml.as_deref(), Some(""));
+        assert!(cleared.plan_file.is_none() && cleared.board.is_none());
+        assert!(cleared.roots.is_empty());
+        assert_eq!(cleared.connection_id, Some(Uuid::from_u128(1)));
+    }
+
+    #[test]
+    fn the_dto_says_whether_the_plan_was_uploaded_but_not_its_text() {
+        let mut s = saved();
+        s.snapshot = Some(PlanSnapshot {
+            text: "board: o/48\n".into(),
+            from: "upload".into(),
+            sha: None,
+            read_at: "t".into(),
+        });
+        let dto = source_dto(&s);
+        assert!(dto.plan_uploaded);
+        assert_eq!(dto.snapshot.as_ref().map(|x| x.size), Some(12));
+        s.snapshot = Some(PlanSnapshot {
+            from: "o/r:p.yaml".into(),
+            ..s.snapshot.clone().unwrap()
+        });
+        assert!(!source_dto(&s).plan_uploaded);
+    }
+
+    #[test]
+    fn a_report_lists_its_sheets_and_says_when_the_plans_definition_does_not_read() {
+        let k = kind("roadmap").unwrap();
+        let dto = report_dto(
+            k,
+            &ReportSource {
+                report: "roadmap".into(),
+                ..ReportSource::default()
+            },
+        );
+        assert_eq!(dto.definition, "back_roadmap");
+        assert_eq!(
+            dto.sheets,
+            vec![
+                "Summary",
+                "Roadmap",
+                "Gantt",
+                "People",
+                "a sheet per group, ALL"
+            ]
+        );
+        assert!(dto.definition_error.is_none());
+        let bad = ReportSource {
+            report: "roadmap".into(),
+            snapshot: Some(PlanSnapshot {
+                text: "report: weekly\n".into(),
+                from: "upload".into(),
+                sha: None,
+                read_at: "t".into(),
+            }),
+            ..ReportSource::default()
+        };
+        let dto = report_dto(k, &bad);
+        assert!(dto.definition_error.is_some_and(|e| e.contains("weekly")));
+    }
+
+    #[test]
+    fn an_unknown_report_is_not_found() {
+        assert!(report("roadmap").is_ok());
+        assert!(report("weekly").is_err());
+    }
+}
