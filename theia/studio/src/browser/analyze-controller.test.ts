@@ -13,7 +13,7 @@ import { Emitter } from '@theia/core/lib/common';
 import type { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextEditor, TextDocumentChangeEvent } from '@theia/editor/lib/browser/editor';
 import { ANALYZE_WIDGET_ID, AnalyzeFrontendController, AnalyzeViewModel, findingFor } from './analyze-controller';
-import type { AnalyzeScope, AnalyzeStudioClient, DocumentBinding, FindingToSave, TaskRun } from './analyze-studio-client';
+import type { AnalyzeScope, AnalyzeStudioClient, DocumentBinding, TaskRun } from './analyze-studio-client';
 import type { ConformanceReport } from './analyze-metrics';
 import { studioDocumentUri } from '../common/studio-document-uri';
 
@@ -173,13 +173,7 @@ describe('AnalyzeFrontendController', () => {
         expect(studio.verdict).toHaveBeenCalledWith('task-purpose', 'purpose', []);
         expect(studio.verdict).toHaveBeenCalledWith('task-bloat', 'bloat', ['docs/prd.md', 'docs/adr.md']);
 
-        expect(studio.saveFindings).toHaveBeenCalledTimes(1);
-        const [findings, workspaceId, projectId] = studio.saveFindings.mock.calls[0];
-        expect([workspaceId, projectId]).toEqual(['ws-1', 'p-1']);
-        expect(findings.map((f: { detector: string }) => f.detector)).toEqual(['purpose', 'leak', 'bloat', 'traceability']);
-        expect(findings.every((f: { subject: string; path: string }) => f.subject === 'node-b-prd' && f.path === 'docs/prd.md')).toBe(true);
-        expect(findings[3]).toMatchObject({ details: { references: ['docs/adr.md'], referenced_by: ['docs/adr.md'] } });
-        expect(studio.recordBindingAnalysis).toHaveBeenCalledWith('ws-1', 'b-prd', 'purpose', expect.objectContaining({ state: 'passed', task_id: 'task-purpose' }));
+        // The runs record their own results; the panel writes nothing.
 
         expect(seen.some(model => model.status === 'running' && !model.canAnalyze)).toBe(true);
         expect(seen.some(model => model.progress?.includes('Purpose: done'))).toBe(true);
@@ -203,7 +197,7 @@ describe('AnalyzeFrontendController', () => {
         expect(note).toContain('the project has no other typed one');
     });
 
-    it('records a Studio document\'s run under studio-doc:<id> and keeps no binding gate for it', async () => {
+    it('sends a Studio document as studio-doc/<id>.md with its own text and type', async () => {
         const studio = createStudio();
         studio.studioDocument.mockResolvedValue({ id: 'd-1', project_id: 'p-1', type_key: 'adr', title: 'Roles', updated_at: '' });
         const uri = studioDocumentUri({ workspaceId: 'ws-1', documentId: 'd-1' }, 'Roles').toString();
@@ -217,12 +211,10 @@ describe('AnalyzeFrontendController', () => {
         });
         // Every typed repository document is the set it is compared with.
         expect(studio.startRun).toHaveBeenCalledWith('ws-1', 'p-1', 'bloat', expect.objectContaining({ binding_ids: ['b-prd', 'b-adr'] }));
-        const [findings] = studio.saveFindings.mock.calls[0];
-        expect(findings.every((f: { subject: string }) => f.subject === 'studio-doc:d-1')).toBe(true);
-        expect(studio.recordBindingAnalysis).not.toHaveBeenCalled();
+        expect(controller.getViewModel().note).toContain('Analysed the text on screen');
     });
 
-    it('says which detector failed and why, and records the ones that finished', async () => {
+    it('says which detector failed and why, and names the ones that finished', async () => {
         const studio = createStudio();
         studio.run.mockImplementation(async (runId: string): Promise<TaskRun> => runId === 'run-leak'
             ? { id: runId, state: 'failed', last_error: 'Spec Quality does not analyse `prd` documents' }
@@ -241,7 +233,6 @@ describe('AnalyzeFrontendController', () => {
         expect(note).toContain('Analysed the text on screen: Purpose, Bloat.');
         expect(note).toContain('Leak: Spec Quality does not analyse `prd` documents');
         expect(note).toContain('Traceability: documents cannot be analysed in this deployment');
-        expect(studio.saveFindings.mock.calls[0][0].map((f: { detector: string }) => f.detector)).toEqual(['purpose', 'bloat']);
     });
 
     it('does not run a document it could not place', async () => {
@@ -444,8 +435,6 @@ function createStudio(options: { scope?: AnalyzeScope | undefined; bindings?: Do
                     return { recognised: true, by_path: { 'docs/prd.md': ['docs/adr.md'], 'docs/adr.md': ['docs/prd.md'] } };
             }
         }),
-        saveFindings: jest.fn(async (_findings: FindingToSave[], _ws: string, _project: string) => undefined),
-        recordBindingAnalysis: jest.fn(async (_ws: string, _binding: string, _detector: string, _body: object) => undefined),
     };
     // The run echoes the inline document back under the path it was sent as.
     studio.startRun.mockImplementation(async (_ws, _p, detector, body) => {

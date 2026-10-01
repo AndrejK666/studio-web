@@ -34,6 +34,24 @@ use crate::pagination::PageQuery;
 pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
     account_management: Arc<dyn AccountManagementClient>,
+    sync_analysis: Option<SyncAnalysis>,
+}
+
+/// Spec Quality analysis a source sync starts for the documents it changed.
+///
+/// A sync already reads every file and records each binding's `content_sha`,
+/// so it is the one place that knows, for free, which documents are new or
+/// different since they were last looked at. Analysing those then and there
+/// is what makes a document's findings exist without anybody pressing a
+/// button — and analysing ONLY those is what makes a re-sync of an unchanged
+/// repository cost nothing.
+pub struct SyncAnalysis {
+    /// Where the task queue is found, lazily, as the REST routes find it.
+    pub hub: Arc<toolkit::client_hub::ClientHub>,
+    /// The most documents one sync will have analysed. A first sync of a large
+    /// repository sees every document as new; past this many it analyses the
+    /// first ones and says so, rather than queueing hours of upstream work.
+    pub max_documents: usize,
 }
 
 impl DocumentsService {
@@ -44,7 +62,106 @@ impl DocumentsService {
         Self {
             repo,
             account_management,
+            sync_analysis: None,
         }
+    }
+
+    /// Analyse what a sync changed. `None` leaves a sync to classify only.
+    #[must_use]
+    pub fn with_sync_analysis(mut self, sync_analysis: Option<SyncAnalysis>) -> Self {
+        self.sync_analysis = sync_analysis;
+        self
+    }
+
+    /// Queue Spec Quality over the documents a sync changed, recording each
+    /// result as it finishes. Returns how many runs were queued.
+    ///
+    /// `purpose` and `leak` run on the changed documents; `bloat` runs over
+    /// every typed document the sync read, because a changed document can now
+    /// repeat an unchanged one. Never fails the sync: the repository is
+    /// classified either way, and a document whose analysis could not be
+    /// queued is analysed on its next change or by hand.
+    async fn analyze_synced(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        changed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)>,
+        typed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)>,
+    ) -> usize {
+        let Some(sync) = &self.sync_analysis else {
+            return 0;
+        };
+        if changed.is_empty() || !crate::spec_quality::is_configured() {
+            return 0;
+        }
+        let Ok(queue) = sync.hub.get_scoped::<dyn crate::tasks::TaskQueue>(
+            &toolkit::client_hub::ClientScope::gts_id(crate::tasks::TASK_QUEUE_INSTANCE_ID),
+        ) else {
+            tracing::warn!(
+                "studio-documents: no task queue — documents a sync changed are not analysed"
+            );
+            return 0;
+        };
+        if changed.len() > sync.max_documents {
+            tracing::warn!(
+                changed = changed.len(),
+                analysed = sync.max_documents,
+                "studio-documents: a sync changed more documents than one sync analyses; the rest wait for their next change or a manual run"
+            );
+        }
+        let set_id = project_id.unwrap_or(workspace_id).to_string();
+        let spec = |docs: &[(quality::SpecDoc, crate::spec_quality::record::RecordSubject)]| {
+            crate::spec_quality::record::RecordSpec {
+                workspace_id,
+                project_id,
+                subjects: docs
+                    .iter()
+                    .map(|(d, s)| (d.path.clone(), s.clone()))
+                    .collect(),
+            }
+        };
+        let changed: Vec<_> = changed.into_iter().take(sync.max_documents).collect();
+        let mut typed: Vec<_> = typed.into_iter().take(sync.max_documents).collect();
+        typed.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+
+        let mut runs: Vec<(quality::Detector, Vec<(quality::SpecDoc, _)>)> = vec![
+            (quality::Detector::Purpose, changed.clone()),
+            (quality::Detector::Leak, changed),
+        ];
+        // Duplication needs something to be duplicated against.
+        if typed.len() >= 2 {
+            runs.push((quality::Detector::Bloat, typed));
+        }
+
+        let mut queued = 0usize;
+        for (detector, docs) in runs {
+            let texts: Vec<quality::SpecDoc> = docs.iter().map(|(d, _)| d.clone()).collect();
+            let payload = quality::batch_payload(detector, &texts, &set_id, Some(&spec(&docs)));
+            match queue
+                .enqueue(
+                    ctx,
+                    crate::tasks::service::NewRun {
+                        tenant: ctx.subject_tenant_id(),
+                        task_type: crate::spec_quality::batch_task::BATCH_TASK_TYPE,
+                        payload,
+                        partition_key: None,
+                        idempotency_key: None,
+                        coalesce_queued: false,
+                        notify_workspace_id: None,
+                    },
+                )
+                .await
+            {
+                Ok(_) => queued += 1,
+                Err(e) => tracing::warn!(
+                    detector = detector.as_str(),
+                    error = %e,
+                    "studio-documents: could not queue the analysis of synced documents"
+                ),
+            }
+        }
+        queued
     }
 
     /// Authorize the caller against a tenant from the request path. Resolving
@@ -1109,6 +1226,10 @@ pub struct ClassifyOutcome {
     /// Files left exactly as they were, because a person had ruled on them or
     /// Spec Quality had paid for the answer.
     pub kept: usize,
+    /// Typed documents whose text is new or different since the last sync.
+    pub changed_documents: usize,
+    /// Spec Quality runs queued for them (see [`SyncAnalysis`]).
+    pub analyses_queued: usize,
 }
 
 /// How many binding names one feed will resolve. Far above any real
@@ -1241,6 +1362,8 @@ impl DocumentClassifier for DocumentsService {
             classified: outcome.bindings.len().saturating_sub(outcome.not_documents),
             not_documents: outcome.not_documents,
             kept: outcome.kept,
+            changed_documents: outcome.changed_documents,
+            analyses_queued: outcome.analyses_queued,
         })
     }
 
@@ -1314,6 +1437,75 @@ impl DocumentsService {
 
         let by_path = self.checkout_files(ctx, &tenants, reader).await;
         Ok(quality::docs_for(&wanted, &by_path))
+    }
+
+    /// What each analysed document's result is recorded against, by the path
+    /// the run names it with.
+    ///
+    /// A binding is recorded against its graph file node (what the Specs tab
+    /// keys findings on) and its own id (what a stage gate reads). A Studio
+    /// document has no graph node, so it is `studio-doc:<id>` — the same key
+    /// both clients used — and its id. An inline text at one of those paths
+    /// is the same document, so it needs no subject of its own; one at
+    /// `studio-doc/<id>.md` is that Studio document even when the request did
+    /// not name it.
+    pub async fn record_subjects(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        binding_ids: &[Uuid],
+        document_ids: &[Uuid],
+        paths: &[String],
+    ) -> Result<crate::spec_quality::record::RecordSpec> {
+        use crate::spec_quality::record::{RecordSpec, RecordSubject};
+        let mut subjects = std::collections::BTreeMap::new();
+        // A repository path sent inline is that file's binding: the IDE sends
+        // the document on screen as text alone, without naming its binding.
+        let repository_path = |p: &String| !p.starts_with("studio-doc/");
+        if !binding_ids.is_empty() || paths.iter().any(repository_path) {
+            let (rows, _) = self
+                .repo
+                .list_bindings(workspace_id, binding_scope(project_id), 0, None)
+                .await?;
+            for row in rows
+                .into_iter()
+                .filter(|r| binding_ids.contains(&r.id) || paths.contains(&r.path))
+            {
+                subjects.insert(
+                    row.path,
+                    RecordSubject {
+                        node: row.node_id,
+                        binding_id: Some(row.id),
+                        document_id: None,
+                    },
+                );
+            }
+        }
+        let studio_doc = |id: Uuid| RecordSubject {
+            node: format!("studio-doc:{id}"),
+            binding_id: None,
+            document_id: Some(id),
+        };
+        for id in document_ids {
+            subjects.insert(quality::studio_doc_path(*id), studio_doc(*id));
+        }
+        for path in paths {
+            if subjects.contains_key(path) {
+                continue;
+            }
+            if let Some(id) = path
+                .strip_prefix("studio-doc/")
+                .and_then(|rest| rest.strip_suffix(".md"))
+                .and_then(|id| Uuid::parse_str(id).ok())
+            {
+                subjects.insert(path.clone(), studio_doc(id));
+            }
+        }
+        Ok(RecordSpec {
+            workspace_id,
+            project_id,
+            subjects,
+        })
     }
 
     /// Documents written in Studio, as a detector run takes them: their own
@@ -1585,6 +1777,16 @@ impl DocumentsService {
         let mut written: Vec<document_binding::Model> = Vec::new();
         let mut not_documents = 0usize;
         let mut kept = 0usize;
+        // For the analysis a sync starts: the typed documents it read, and the
+        // ones among them whose text is new or different. Only typed ones,
+        // because the detectors judge a document against its type. Collected
+        // only when there is analysis to start, so a deployment without it
+        // copies no text.
+        let collect = self.sync_analysis.is_some();
+        let mut changed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)> =
+            Vec::new();
+        let mut typed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)> =
+            Vec::new();
 
         for file in files {
             let id = binding_row_id(workspace_id, project_id, &file.node_id);
@@ -1700,6 +1902,26 @@ impl DocumentsService {
             // the evidence it holds. Either one missing, it stays a proposal.
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
             let capabilities = super::intake::declared_capabilities(&file.content);
+            if collect
+                && type_key.is_some()
+                && state != BindingState::NotADocument
+                && !file.content.trim().is_empty()
+            {
+                let doc = quality::SpecDoc {
+                    path: file.path.clone(),
+                    text: file.content.clone(),
+                    doc_type: type_key.clone(),
+                };
+                let subject = crate::spec_quality::record::RecordSubject {
+                    node: file.node_id.clone(),
+                    binding_id: Some(id),
+                    document_id: None,
+                };
+                if prior.is_none_or(|p| p.content_sha != sha) {
+                    changed.push((doc.clone(), subject.clone()));
+                }
+                typed.push((doc, subject));
+            }
             written.push(document_binding::Model {
                 id,
                 tenant_id: workspace_id,
@@ -1728,10 +1950,16 @@ impl DocumentsService {
             .into_iter()
             .map(binding_from_row)
             .collect::<Result<Vec<_>>>()?;
+        let changed_documents = changed.len();
+        let analyses_queued = self
+            .analyze_synced(ctx, workspace_id, project_id, changed, typed)
+            .await;
         Ok(ClassifyOutcome {
             bindings,
             not_documents,
             kept,
+            changed_documents,
+            analyses_queued,
         })
     }
 
@@ -2736,5 +2964,47 @@ mod reclassification_tests {
         assert!(keep_existing_verdict(&row("detected", Some("heuristic"))).is_none());
         assert!(keep_existing_verdict(&row("detected", Some("front_matter"))).is_none());
         assert!(keep_existing_verdict(&row("unknown", None)).is_none());
+    }
+}
+
+/// A gate verdict a Spec Quality run records itself — the same rows the REST
+/// `PUT …/analyses/{detector}` routes write.
+#[async_trait::async_trait]
+impl crate::documents::port::AnalysisRecorder for DocumentsService {
+    async fn record_detector_verdict(
+        &self,
+        verdict: crate::documents::port::DetectorVerdict,
+    ) -> anyhow::Result<()> {
+        let crate::documents::port::DetectorVerdict {
+            workspace_id,
+            binding_id,
+            document_id,
+            detector,
+            state,
+            task_id,
+            summary,
+        } = verdict;
+        let detector = detector.as_str();
+        let state = AnalysisState::parse(&state)
+            .ok_or_else(|| anyhow::anyhow!("state must be pending, passed or failed"))?;
+        match (binding_id, document_id) {
+            (Some(binding), None) => {
+                self.record_binding_analysis(
+                    workspace_id,
+                    binding,
+                    detector,
+                    state,
+                    task_id,
+                    summary,
+                )
+                .await?;
+            }
+            (None, Some(document)) => {
+                self.record_analysis(workspace_id, document, detector, state, task_id, summary)
+                    .await?;
+            }
+            _ => anyhow::bail!("a verdict names exactly one of a binding and a document"),
+        }
+        Ok(())
     }
 }

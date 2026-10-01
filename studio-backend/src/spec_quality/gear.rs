@@ -44,6 +44,7 @@ impl Gear for SpecQualityGear {
             );
         } else {
             info!(base_url = %base_url, "studio-spec-quality: configured");
+            super::CONFIGURED.store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         // Submit/poll calls are short JSON round-trips (the upstream is async:

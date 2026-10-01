@@ -1817,14 +1817,25 @@ async fn analyze_project_documents(
     }
 
     let documents = docs.len() as i64;
-    let items = crate::documents::quality::build_items(detector, &docs, &project_id.to_string());
-    let payload = serde_json::json!({
-        "detector": detector.as_str(),
-        "items": items
-            .into_iter()
-            .map(|i| serde_json::json!({ "id": i.id, "payload": i.payload }))
-            .collect::<Vec<_>>(),
-    });
+    // The run records each document's result itself, against these subjects,
+    // so the result is kept whether or not the tab that asked stays open.
+    let paths: Vec<String> = docs.iter().map(|d| d.path.clone()).collect();
+    let record = service
+        .record_subjects(
+            workspace_id,
+            Some(project_id),
+            &body.binding_ids,
+            &body.document_ids,
+            &paths,
+        )
+        .await
+        .map_err(internal)?;
+    let payload = crate::documents::quality::batch_payload(
+        detector,
+        &docs,
+        &project_id.to_string(),
+        Some(&record),
+    );
 
     let run_id = quality
         .queue()?
@@ -2722,7 +2733,7 @@ pub fn register_routes(
     .operation_id("studio_documents.analyze_project_documents")
     .summary("Run a Spec Quality detector over a project's documents")
     .description(
-        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.",
+        "Hands the named bindings to Spec Quality as one background run. The          request carries binding ids, NOT text: the server reads the documents          from the checkout a sync left on disk, which is where they already are.          The one exception is `documents`: texts the server cannot have, such as          an editor's unsaved buffer, each analysed under its own `path` and          replacing the named binding at the same path. At most 20 of them, 256 KiB          each and 1 MiB together; more is a 400.          `bloat` and `traceability` judge a set and become one analysis over all          of them; `purpose` and `leak` judge a document and become one each.          Which bindings deserve a detector is the caller's decision and is not          made here. Follow the run at the returned `poll`.          The run RECORDS each document's result itself as it finishes: a          `spec_finding` node per detector per document, whose `details.findings`          are the findings placed in the text, and the gate verdict a stage reads.          A caller does not write them back, and should not: a second write          without `details.findings` would replace the one the run made.",
     )
     .tag("StudioDocuments")
     .authenticated()

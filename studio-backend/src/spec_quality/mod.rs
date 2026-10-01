@@ -32,5 +32,20 @@ pub mod batch_task;
 pub mod config;
 pub mod findings;
 pub mod gear;
+pub mod record;
 pub mod rest;
 pub mod verdict;
+
+/// Whether this process can reach the upstream: a base URL and a key were
+/// configured. Set once, when the gear initialises.
+///
+/// For a caller deciding whether to queue analysis nobody asked for — a source
+/// sync — where a run that can only fail item by item is noise, not news. A
+/// caller a person is waiting on submits anyway and shows the 500 that says
+/// what is missing.
+static CONFIGURED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[must_use]
+pub fn is_configured() -> bool {
+    CONFIGURED.load(std::sync::atomic::Ordering::Relaxed)
+}

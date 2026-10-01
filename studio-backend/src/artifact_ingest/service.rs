@@ -780,6 +780,8 @@ impl IngestService {
                     classified = counts.classified,
                     not_documents = counts.not_documents,
                     kept = counts.kept,
+                    changed_documents = counts.changed_documents,
+                    analyses_queued = counts.analyses_queued,
                     repo = repo_full_path,
                     "studio-artifact-ingest: files classified"
                 ),
@@ -2411,5 +2413,22 @@ mod prune_tests {
             other.is_empty(),
             "another connection's clone is not this one"
         );
+    }
+}
+
+/// Findings a Spec Quality run records itself. A forward to the method the
+/// REST `POST /quality` uses, so both writers produce the same nodes.
+#[async_trait::async_trait]
+impl super::port::SpecFindingWriter for IngestService {
+    async fn write_spec_findings(
+        &self,
+        ctx: &SecurityContext,
+        findings: &[QualityFinding],
+        duplicates: &[QualityLink],
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> anyhow::Result<(usize, usize)> {
+        self.upsert_quality(ctx, findings, duplicates, &[], workspace_id, project_id)
+            .await
     }
 }

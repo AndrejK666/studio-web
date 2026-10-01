@@ -91,49 +91,64 @@ That run on this repository's own documents, as a sample of what comes back:
 the quote. Line numbers are deliberately left out: lines shift whenever someone
 edits above the passage, and a dismissal must survive that.
 
-## Lifecycle, storage, API
+## Recording, and analysis on sync
 
-This is the second half of the iteration, after the verdict carries findings.
+**The run records its own results.** Until now the Specs tab and the IDE's
+Analyze panel each followed a run, read every verdict and posted a
+`spec_finding` node back, so nothing was kept unless a tab stayed open to the
+end, and an analysis nobody watched could not be kept at all. A
+`spec_quality.analyze_batch` run whose payload names what each document is
+(`record`: workspace, project, and per path the graph node, binding or Studio
+document) records as each document finishes:
 
-- **States.** A finding is `open`, `dismissed` ("As intended", with an optional
-  reason) or `resolved`. A dismissal is kept for as long as the fingerprint
-  keeps appearing.
+- the `spec_finding` node per detector per document, with `severity`,
+  `summary` and `score` in the words the clients used, and the findings under
+  `details.findings` in the same shape `/verdicts` answers;
+- the gate verdict on the binding or Studio document that a stage reads;
+- for `bloat`, a `duplicates` edge between the two documents of each pair.
+
+`POST /studio-documents/v1/…/quality/{detector}` always asks for it. The
+clients no longer write anything: a second write without `details.findings`
+would replace the one the run made.
+
+**On source sync.** A sync already reads every file and records each binding's
+`content_sha`. The classification pass now also notes the typed documents
+whose text is new or different, and queues `purpose` and `leak` for them and
+`bloat` over every typed document the sync read, each recording as above.
+Capped at `analyze_on_sync_max_documents` (50) per sync, skipped while Spec
+Quality has no key, switchable with `gears.studio-documents.config.analyze_on_sync`.
+A re-sync of an unchanged repository queues nothing.
+
+Checked end to end on a local backend with the graph (2026-10-01): one
+classification pass over three documents queued three runs, which recorded 9
+`spec_finding` nodes with their findings and 9 gate verdicts within 25 s; a
+second pass with one document changed queued `purpose` and `leak` for that
+document only, plus `bloat`; a third with nothing changed queued nothing.
+
+**Still to come**, after this iteration's UI step:
+
+- **As intended.** Dismissing a finding by its id, kept for as long as the id
+  keeps appearing. It needs storage that survives a re-run upserting the node,
+  so a dismissal does not live inside the node.
 - **Resolved needs the text to have changed.** The detectors are not
   deterministic, so a finding missing from one run of an unchanged document has
-  not been fixed, it was just not reported that time. A finding is `resolved`
-  only when a run on a different `content_sha` does not report it; a run on the
-  same text only adds.
-- **Staleness.** A finding remembers the `content_sha` of the text it was
-  computed on. When the document has changed since, the client looks for the
-  passage in the current text and shows the finding as stale if it cannot find
-  it.
-- **Storage.** One table in `studio-documents`, `studio_document_findings`,
-  keyed by subject (binding or Studio document, exactly one, as in
-  `studio_document_analyses`) and fingerprint. The graph's `spec_finding` nodes
-  stay as the per-detector summary the activity feed and rollups read.
-- **API**, in `studio-documents`:
-  - `GET …/document-bindings/{id}/findings?state=` returns `{ items, total }`
-    and defaults to `open`. The same route exists for `…/documents/{id}`.
-  - `PATCH …/findings/{finding_id}` with `{ state: "dismissed" | "open", reason? }`.
-  - `…/document-bindings?expand=findings` adds `findings_open` and
-    `findings_high` per row, for the Specs list.
-- **On source sync.** A sync already reads every file and records each
-  binding's `content_sha`. It ends by enqueueing `purpose` and `leak` for the
-  bindings whose text changed since their last analysis, and `bloat` over the
-  set if any changed. The number of documents per sync is capped. Nothing is
-  enqueued when the gear has no key, and the whole step can be switched off per
-  deployment (`analyze_on_sync`). A re-sync of an unchanged repository costs
-  nothing.
+  not been fixed. Today a re-run replaces the node; with dismissals, a finding
+  only becomes resolved when a run on a different `content_sha` does not
+  report it.
+- **Staleness.** Each finding's lines refer to the text that was analysed. When
+  the document has changed since, the client finds the passage again, by quote
+  or section, and shows the finding as stale when it cannot.
 
 ## Order of work
 
-1. **The verdict carries findings.** `verdict.rs` reads them out of the raw
-   result, and `GET /studio-spec-quality/v1/verdicts` returns them in
-   `findings[]`. Both portals and Theia read verdicts there today, so they get
-   positions without a new call.
-2. **Lifecycle.** The findings table, the routes, As intended.
-3. **On sync.** Enqueue analysis for changed documents.
-4. **Portal and Theia.** The findings panel, Show in text, the underline.
+1. **The verdict carries findings** (#594). `GET /studio-spec-quality/v1/verdicts`
+   returns `findings[]`.
+2. **The run records them, and a sync starts it.** The Specs row counts and
+   lists the findings.
+3. **Theia.** Findings in the editor: the panel, Show in text, the underline,
+   through the quality pipeline the Markdown editor already has
+   (`product-ext/src/browser/quality-anchor.js`, `quality-marks.js`).
+4. **As intended**, resolved and staleness, as above.
 
 ## Later
 
