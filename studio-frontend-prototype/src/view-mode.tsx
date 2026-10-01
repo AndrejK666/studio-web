@@ -166,6 +166,24 @@ export function useViewMode(
   return [mode, setMode];
 }
 
+/** Any other remembered choice — the theme, the language — kept with the
+ *  views in the person's one preference record (`studio-user`
+ *  `/me/ui-preferences`), so there is a single place a preference lives and a
+ *  single writer of it. `""` reads as `fallback`. */
+export function usePreference(key: string, fallback = ""): [string, (value: string) => void] {
+  const store = useContext(Ctx);
+  const [local, setLocal] = useState(fallback);
+  const value = store ? store.prefs[key] || fallback : local;
+  const set = useCallback(
+    (next: string) => {
+      if (store) store.set(key, next);
+      else setLocal(next);
+    },
+    [store, key],
+  );
+  return [value, set];
+}
+
 /** How many rows a page of one list shows, remembered the same way as the
  *  view: a preference about the person, so not in the address — a shared link
  *  opens at the reader's own size. `key` is `<list>.size`. A stored value that

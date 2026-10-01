@@ -49,7 +49,7 @@ organization — rather than a concept invented here.
 | `GET /connections/{id}/repositories` | pick a repository instead of typing a URL |
 | `GET /connections/{id}/targets` | chat channels this connection can reach |
 | `POST /connections/{id}/messages` | send one now (the synchronous path) |
-| `POST /connections/{id}/graph-sync` → `GET /graph-sync/tasks/{id}` | mirror the provider into the graph |
+| `POST /connections/{id}/graph-sync` → `GET /studio-tasks/v1/runs/{id}` | mirror the provider into the graph |
 | `POST /probe` | check a credential before storing it |
 
 Notifications that must survive a failure go through

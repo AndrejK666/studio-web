@@ -175,8 +175,8 @@ TASK=$(curl -s -X POST "${H[@]}" -d '{
 }' "http://127.0.0.1:8090/cf/studio-connector/v1/connections/<connection-id>/graph-sync" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 
-# status: queued | running (message = current phase) | succeeded (outcome) | failed (message)
-curl -s "${H[@]}" "http://127.0.0.1:8090/cf/studio-connector/v1/graph-sync/tasks/$TASK"
+# state: queued | running (progress = current phase) | succeeded (result) | failed (last_error)
+curl -s "${H[@]}" "http://127.0.0.1:8090/cf/studio-tasks/v1/runs/$TASK"
 ```
 
 `"wait": true` in the body runs the import inline and answers with the outcome;

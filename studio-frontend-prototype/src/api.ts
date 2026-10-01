@@ -69,6 +69,22 @@ export interface OrgInvitation {
 
 /* ── studio-tasks / studio-scheduler ── */
 
+export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+/** One count from a run's `result`, 0 when the run has not reported it. */
+export function runCount(run: Pick<TaskRun, "result">): (key: string) => number {
+  return (key) => {
+    const v = run.result?.[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  };
+}
+
+/** What a poller shows for a run: what it did if it finished, why it stopped
+ *  if it failed, where it is if it is still going. */
+export function runMessage(run: Pick<TaskRun, "summary" | "last_error" | "progress">): string | null {
+  return run.summary ?? run.last_error ?? run.progress ?? null;
+}
+
 /** One unit of background work. `GET /studio-tasks/v1/runs`. */
 export interface TaskRun {
   id: string;
@@ -1071,12 +1087,6 @@ export interface PresenceMessage {
   from_display_name?: string | null;
   text: string;
   sent_ms: number;
-}
-
-// simple-user-settings gear stores exactly these two per-user fields.
-export interface UserPrefs {
-  theme?: string;
-  language?: string;
 }
 
 /* ── mini-chat / conversions / file-storage shapes ── */
@@ -2807,13 +2817,15 @@ export const api = {
       body: JSON.stringify(message),
     }),
 
-  /* ── Per-user UI choices (studio-user gear) ──
+  /* ── Per-user preferences (studio-user gear) ──
    *
-   * Separate from `userSettings` below on purpose: that gear stores exactly
-   * `theme` and `language`, two declared columns with no room for anything
-   * else. These are the portal's own remembered choices — which lists read as
-   * a table and which as tiles — and they live with the profile, bounded to
-   * 64 short entries so the map stays a preference store. */
+   * The one record of what a person chose about how Studio looks to them:
+   * which lists read as a table and which as tiles, how many rows a page
+   * shows, the theme and the language (`app.theme`, `app.language`). It used
+   * to share the job with the platform's simple-user-settings gear, which
+   * holds only those last two; one record means one writer and nothing to
+   * reconcile. Bounded to 64 short entries so the map stays a preference
+   * store. */
 
   uiPreferences: async (token: string): Promise<Record<string, string>> => {
     try {
@@ -2836,36 +2848,6 @@ export const api = {
     request<{ preferences: Record<string, string> }>("/studio-user/v1/me/ui-preferences", token, {
       method: "PUT",
       body: JSON.stringify({ preferences }),
-    }),
-
-  /* ── Per-user settings (simple-user-settings gear: fixed theme/language) ── */
-
-  userSettings: async (token: string): Promise<UserPrefs> => {
-    try {
-      const s = await request<{ theme?: string | null; language?: string | null }>(
-        "/simple-user-settings/v1/settings",
-        token,
-      );
-      return { theme: s.theme ?? undefined, language: s.language ?? undefined };
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) return {};
-      throw e;
-    }
-  },
-
-  saveUserSettings: (token: string, prefs: Required<UserPrefs>) =>
-    request<unknown>("/simple-user-settings/v1/settings", token, {
-      method: "PATCH",
-      body: JSON.stringify(prefs),
-    }).catch(async (e) => {
-      // First write for this user needs POST (create), PATCH 404s.
-      if (e instanceof ApiError && e.status === 404) {
-        return request<unknown>("/simple-user-settings/v1/settings", token, {
-          method: "POST",
-          body: JSON.stringify(prefs),
-        });
-      }
-      throw e;
     }),
 
   /* ── Workspace AI chat (mini-chat gear) ── */
@@ -3038,23 +3020,27 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
-  /** Poll a background sync task. Terminal states are `succeeded` / `failed` /
-   * `cancelled`. The task id is a studio-tasks run id, so `taskRun` reads the
-   * same work with attempts, timings and a cancel verb. */
-  artifactSyncTask: (token: string, taskId: string) =>
-    request<{
-      task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-      repo_full_path: string;
-      message?: string | null;
-      issues: number;
-      pull_requests: number;
-      files: number;
+  /** Poll a background sync. Terminal states are `succeeded` / `failed` /
+   * `cancelled`. The task id is a studio-tasks run id, read through the one
+   * route every background run has (`taskRun`); the counts are the run's
+   * `result`, which the sync updates per phase. */
+  artifactSyncTask: async (token: string, taskId: string) => {
+    const run = await api.taskRun(token, taskId);
+    const n = runCount(run);
+    return {
+      task_id: run.id,
+      status: run.state as RunState,
+      repo_full_path: String(run.payload?.repo_full_path ?? ""),
+      message: runMessage(run),
+      issues: n("issues"),
+      pull_requests: n("pull_requests"),
+      files: n("files"),
       /** Live per-phase counts + nodes already stored in the graph (mid-sync). */
-      comments: number;
-      commits: number;
-      stored: number;
-    }>(`/studio-artifact-ingest/v1/tasks/${encodeURIComponent(taskId)}`, token),
+      comments: n("comments"),
+      commits: n("commits"),
+      stored: n("stored"),
+    };
+  },
 
   /** Text files (path + content) from a repository's IDE checkout, for running
    * analysis over the actual repo. Empty until the IDE has cloned it. */
@@ -3211,17 +3197,20 @@ export const api = {
       method: "POST",
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
-  /** Poll a background catalog sync task. The task id is a studio-tasks run
-   * id — see `taskRun`. */
-  componentsCatalogTask: (token: string, taskId: string) =>
-    request<{
-      task_id: string;
-      status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-      message?: string | null;
-      gears: number;
-      versions: number;
-      stored: number;
-    }>(`/studio-components-catalog/v1/tasks/${encodeURIComponent(taskId)}`, token),
+  /** Poll a background catalog sync. The task id is a studio-tasks run id,
+   * read through `taskRun`; the counts are the run's `result`. */
+  componentsCatalogTask: async (token: string, taskId: string) => {
+    const run = await api.taskRun(token, taskId);
+    const n = runCount(run);
+    return {
+      task_id: run.id,
+      status: run.state as RunState,
+      message: runMessage(run),
+      gears: n("gears"),
+      versions: n("versions"),
+      stored: n("stored"),
+    };
+  },
   /** Match what a product needs against the components this system knows.
    *
    *  The rules — head-anchored term matching, built-first ordering, one

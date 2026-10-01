@@ -215,18 +215,6 @@ pub struct SyncSummary {
 }
 
 impl SyncSummary {
-    /// The counts recorded on a run, or zeroes when it has not reported any
-    /// yet.
-    ///
-    /// Tolerant on purpose: a run queued by an older version of this code, or
-    /// one whose result is some other shape, polls as zeroes rather than as a
-    /// 500.
-    pub fn of_result(result: Option<serde_json::Value>) -> Self {
-        result
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default()
-    }
-
     /// This value as a progress detail. Infallible in practice — six integers
     /// always serialize — and an empty document rather than a panic if not.
     fn as_detail(self) -> serde_json::Value {

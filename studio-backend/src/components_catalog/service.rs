@@ -979,8 +979,9 @@ fn stale_planned<'a>(
 /// What a catalog sync has counted.
 ///
 /// Reported live through the progress bridge as the sync runs, and again as the
-/// run's final result when it finishes — one shape, so the poll endpoint reads
-/// a half-finished sync and a completed one the same way.
+/// run's final result when it finishes — one shape, so a poll of the run
+/// (`GET /studio-tasks/v1/runs/{id}`) reads a half-finished sync and a
+/// completed one the same way.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct CatalogCounts {
     /// Gears (crates) discovered so far.
@@ -995,14 +996,6 @@ pub struct CatalogCounts {
 }
 
 impl CatalogCounts {
-    /// The counts recorded on a run, or zeroes when it has not reported any
-    /// yet. Tolerant on purpose — see the artifact-ingest twin of this method.
-    pub fn of_result(result: Option<Value>) -> Self {
-        result
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default()
-    }
-
     /// This value as a progress detail. Infallible in practice — three
     /// integers always serialize.
     fn as_detail(self) -> Value {
