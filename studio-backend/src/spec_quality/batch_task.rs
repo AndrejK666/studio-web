@@ -107,6 +107,38 @@ impl AnalyzeBatchTask {
         Self { state }
     }
 
+    /// A document the service will not analyse — a type it does not judge —
+    /// recorded as a pending gate verdict that says so.
+    async fn record_refusal(&self, spec: &RecordSpec, detector: &str, item_id: &str, why: &str) {
+        let Some(subject) = spec.subjects.get(item_id) else {
+            return;
+        };
+        if subject.binding_id.is_none() && subject.document_id.is_none() {
+            return;
+        }
+        let Ok(recorder) = self
+            .state
+            .hub
+            .get::<dyn crate::documents::port::AnalysisRecorder>()
+        else {
+            return;
+        };
+        if let Err(e) = recorder
+            .record_detector_verdict(crate::documents::port::DetectorVerdict {
+                workspace_id: spec.workspace_id,
+                binding_id: subject.binding_id,
+                document_id: subject.document_id,
+                detector: detector.to_owned(),
+                state: "pending".to_owned(),
+                task_id: None,
+                summary: format!("{detector}: not analysed — {why}"),
+            })
+            .await
+        {
+            warn!(detector, item = %item_id, error = %e, "studio-spec-quality: could not record why a document was not analysed");
+        }
+    }
+
     /// Record one finished item's readings against the subjects `spec`
     /// names, and say how many documents were recorded.
     ///
@@ -276,6 +308,13 @@ impl TaskHandler for AnalyzeBatchTask {
                 .await;
 
             if let Some(why) = unanalysable(accepted.as_deref(), &item.payload) {
+                // Recorded as a pending gate with the reason, so a stage says
+                // why it is not satisfied, and a sync that analyses documents
+                // never analysed does not ask about this one every time.
+                if let Some(spec) = payload.record.as_ref() {
+                    self.record_refusal(spec, &payload.detector, &item.id, &why)
+                        .await;
+                }
                 outcomes.push(ItemOutcome {
                     id: item.id.clone(),
                     task_id: None,

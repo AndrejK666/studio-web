@@ -1772,6 +1772,23 @@ impl DocumentsService {
             .await?;
         let existing: BTreeMap<Uuid, document_binding::Model> =
             rows.into_iter().map(|row| (row.id, row)).collect();
+        // The bindings Spec Quality has already given a `purpose` verdict.
+        // One that never had one is analysed on the next sync even though its
+        // text has not changed: otherwise a repository synced before the sync
+        // started analysing would never get findings until somebody edited
+        // each document. Only read when there is analysis to start.
+        let analysed: std::collections::BTreeSet<Uuid> = if self.sync_analysis.is_some() {
+            let ids: Vec<Uuid> = existing.keys().copied().collect();
+            self.repo
+                .list_binding_analyses(workspace_id, &ids)
+                .await?
+                .into_iter()
+                .filter(|a| a.detector == "purpose")
+                .filter_map(|a| a.binding_id)
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
 
         let now = OffsetDateTime::now_utc();
         let mut written: Vec<document_binding::Model> = Vec::new();
@@ -1787,6 +1804,10 @@ impl DocumentsService {
             Vec::new();
         let mut typed: Vec<(quality::SpecDoc, crate::spec_quality::record::RecordSubject)> =
             Vec::new();
+        let mut never_analysed: Vec<(
+            quality::SpecDoc,
+            crate::spec_quality::record::RecordSubject,
+        )> = Vec::new();
 
         for file in files {
             let id = binding_row_id(workspace_id, project_id, &file.node_id);
@@ -1919,6 +1940,8 @@ impl DocumentsService {
                 };
                 if prior.is_none_or(|p| p.content_sha != sha) {
                     changed.push((doc.clone(), subject.clone()));
+                } else if !analysed.contains(&id) {
+                    never_analysed.push((doc.clone(), subject.clone()));
                 }
                 typed.push((doc, subject));
             }
@@ -1951,6 +1974,10 @@ impl DocumentsService {
             .map(binding_from_row)
             .collect::<Result<Vec<_>>>()?;
         let changed_documents = changed.len();
+        // Changed documents first, then the ones never analysed, both inside
+        // the one cap: a repository synced before analysis existed catches up
+        // a batch per sync rather than in one sync of hours.
+        changed.extend(never_analysed);
         let analyses_queued = self
             .analyze_synced(ctx, workspace_id, project_id, changed, typed)
             .await;
