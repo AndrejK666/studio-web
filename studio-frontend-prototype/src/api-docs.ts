@@ -7,7 +7,7 @@
  *
  * The grouping is recovered here, on our side, from what the document already
  * says: a gear mounts its routes under its own first path segment
- * (`/studio-git/v1/…`, `/account-management/v1/…`; `/api/file-storage/…` is
+ * (studio-git/v1/…, account-management/v1/…; api/file-storage/… is
  * the one gear one level down). Each such prefix is a component, its
  * operations' tags are its sections, and `x-tagGroups` carries that to the
  * viewer. Nothing in the toolkit changes, and a gear added tomorrow lands in a
