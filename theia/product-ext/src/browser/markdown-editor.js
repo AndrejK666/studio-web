@@ -1481,8 +1481,7 @@ class MarkdownEditorWidget extends Widget {
              * reach any more is a trap. Close it, and give the width back to the
              * document exactly as the selector's own toggle would.
              */
-            if (!fileTypeSettings.qualitySignalsForFile(this.uri) && !studioQuality.hasFindings(this.uri)
-                && this.rail === 'quality' && this.railOpen) {
+            if (!this.qualityAvailable() && this.rail === 'quality' && this.railOpen) {
                 this.closeSlot();
             }
             this.renderSlotCluster();
@@ -2125,7 +2124,27 @@ class MarkdownEditorWidget extends Widget {
      * thing on screen saying a document-scope thread exists at all (constraint
      * 22 — those threads have no gutter mark to fall back on).
      */
-    slotCapabilities() { return ['comments', 'changes', 'history', 'quality', 'claude', 'codex']; }
+    slotCapabilities() {
+        const caps = ['comments', 'changes', 'history', 'claude', 'codex'];
+        if (this.qualityAvailable()) { caps.splice(3, 0, 'quality'); }
+        return caps;
+    }
+
+    /*
+     * Whether the Quality destination is live for this document: Studio has
+     * findings for it, the rail has findings loaded, or the project turned on
+     * local signals (whose rail is also where they are run from).
+     */
+    qualityAvailable() {
+        return studioQuality.hasFindings(this.uri)
+            || (Array.isArray(this.qualityFindings) && this.qualityFindings.length > 0)
+            || fileTypeSettings.qualitySignalsForFile(this.uri);
+    }
+
+    /** Why a destination is disabled, in this document's own words. */
+    slotHints() {
+        return { quality: 'No findings for this document yet' };
+    }
 
     slotState() {
         return {
@@ -5595,6 +5614,10 @@ class MarkdownEditorWidget extends Widget {
             }
             : undefined;
         studioQuality.markFindings(this.uri, !!(this.studioQuality && this.studioQuality.findings.length));
+        // One line per hand-over, so "why is the Quality button grey" is answered
+        // from the console: zero here means Studio recorded no placed findings.
+        console.info('[studio] quality: ' + (this.studioQuality ? this.studioQuality.findings.length : 0)
+            + ' Studio finding(s) for ' + (this.uri ? this.uri.path.base : '?'));
         // The destination may have just appeared (or gone) for this document.
         slotStrip.refresh();
         if (typeof this.renderSlotCluster === 'function') { this.renderSlotCluster(); }
@@ -5756,6 +5779,8 @@ class MarkdownEditorWidget extends Widget {
         } finally {
             this.qualityLoading = false;
             this.qualityLoaded = true;
+            // Findings loaded (or gone): the Quality button follows.
+            if (!this.isDisposed) { this.renderSlotCluster(); slotStrip.refresh(); }
             if (this.qualityRefreshAgain && !this.isDisposed) {
                 this.qualityRefreshAgain = false;
                 this.qualityLoaded = false;
