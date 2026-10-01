@@ -848,6 +848,13 @@ gears:
       # xvfb — see theia/README.md. Set STUDIO_ORCA_ENABLED=false for a
       # deployment that would rather not spend the memory.
       orca_enabled: ${STUDIO_ORCA_ENABLED:-true}
+      # 4Gi, not the gear's 2Gi default: on 2026-10-01 a studio-web session
+      # (two repositories, the Orca runtime, the assistants' plugin hosts)
+      # reached 2.03Gi within a minute of starting and was OOM-killed three
+      # times in a row. A killed session leaves the portal showing an IDE whose
+      # backend is gone. The request stays 512Mi, so this costs quota headroom
+      # (limits), not scheduling.
+      k8s_session_memory_limit: "${STUDIO_SESSION_MEMORY_LIMIT:-4Gi}"
       # Keep /workspace on a per-workspace PersistentVolumeClaim instead of
       # an emptyDir. Off by default: it turns session scratch space into
       # cluster storage that outlives the session, and nothing reclaims a
