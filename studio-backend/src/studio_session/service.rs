@@ -404,6 +404,27 @@ impl SessionService {
         out
     }
 
+    /// The project's own repositories, as its config records them
+    /// (`project_sources`): what every session of it clones, whichever portal
+    /// launched it. Empty when the config cannot be read or the
+    /// account-management client is not wired yet.
+    pub async fn project_git_sources(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> Vec<crate::git_proxy::sources::Source> {
+        let client = {
+            let guard = self.account_management.read().await;
+            match guard.as_ref() {
+                Some(client) => Arc::clone(client),
+                None => return Vec::new(),
+            }
+        };
+        crate::project_sources::git_sources(client.as_ref(), ctx, workspace_id)
+            .await
+            .unwrap_or_default()
+    }
+
     /// Commit authorship for a session, read from the caller's IdP record.
     ///
     /// Without it the entrypoint falls back to `Constructor Studio

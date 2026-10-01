@@ -147,7 +147,10 @@ pub struct CreateSessionRequest {
     /// credstore secret reference with a PAT for the workspace repository.
     #[serde(default)]
     pub root_token_ref: Option<String>,
-    /// Workspace sources (multiple repositories/folders per workspace).
+    /// Sources beyond the project's own. The project's repositories are read
+    /// from its config and always cloned; list here only what is not one of
+    /// them (a backend-host folder, the gear corpus). One the project already
+    /// has is cloned once, as the project's.
     #[serde(default)]
     pub repos: Vec<RepoSpecDto>,
 }
@@ -210,10 +213,27 @@ async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let svc = sessions.get()?;
-    // Map DTOs to specs, resolving per-repo PATs from credstore under the
+    // The project's own repositories, then what the caller adds that is not
+    // one of them (`launch_sources`).
+    let planned = super::launch_sources::plan(
+        svc.project_git_sources(&ctx, req.workspace_id).await,
+        req.repos
+            .into_iter()
+            .map(|r| super::launch_sources::Planned {
+                name: r.name,
+                kind: r.kind,
+                url: r.url,
+                path: r.path,
+                target: r.target,
+                branch: r.branch,
+                token_ref: r.token_ref,
+            })
+            .collect(),
+    );
+    // Map them to specs, resolving per-repo PATs from credstore under the
     // caller's tenant.
-    let mut repos = Vec::with_capacity(req.repos.len());
-    for r in req.repos {
+    let mut repos = Vec::with_capacity(planned.len());
+    for r in planned {
         let kind = match r.kind.as_str() {
             "git" => RepoKind::Git,
             "local" => RepoKind::Local,

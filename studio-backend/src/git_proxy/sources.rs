@@ -1,15 +1,11 @@
-//! What the proxy decides without the network: which sources a workspace's
-//! settings name, where a request goes upstream, and what credential it came
-//! with. Kept apart from `rest` so each decision is a plain function with a test.
+//! What the proxy decides without the network: where a request goes upstream,
+//! and what credential it came with. Kept apart from `rest` so each decision
+//! is a plain function with a test. Which sources a project has is
+//! `project_sources`.
 
 use base64::Engine;
 
-/// The name the workspace's own repository (`root_repo_url`) is served under.
-/// A leading underscore keeps it out of the way of a source named by a person,
-/// and it still matches the `[a-z0-9_-]+` rule every source name follows.
-pub const ROOT_SOURCE: &str = "_root";
-
-/// One Git source of a workspace, as its settings record it.
+/// One Git source of a project, as a session or a desktop clones it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
     pub name: String,
@@ -20,64 +16,6 @@ pub struct Source {
     pub target: Option<String>,
     /// credstore reference of the source host token. Never returned either.
     pub token_ref: Option<String>,
-}
-
-fn text(value: &serde_json::Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-}
-
-/// Every Git source in a workspace settings document: the root repository
-/// first, when there is one, then `repos` in order. A `local` source is a
-/// folder on the backend host, so there is nothing to clone and it is left out;
-/// so is an entry with no URL or with a name the rest of Studio would refuse.
-pub fn sources_in(settings: &serde_json::Value) -> Vec<Source> {
-    let mut out = Vec::new();
-    if let Some(url) = text(settings, "root_repo_url") {
-        out.push(Source {
-            name: ROOT_SOURCE.to_owned(),
-            url,
-            branch: text(settings, "root_branch"),
-            target: None,
-            token_ref: text(settings, "root_token_ref"),
-        });
-    }
-    let repos = settings
-        .get("repos")
-        .and_then(serde_json::Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    for repo in repos {
-        if text(repo, "source").as_deref() == Some("local") {
-            continue;
-        }
-        let (Some(name), Some(url)) = (text(repo, "name"), text(repo, "url")) else {
-            continue;
-        };
-        if !valid_name(&name) || out.iter().any(|s: &Source| s.name == name) {
-            continue;
-        }
-        out.push(Source {
-            name,
-            url,
-            branch: text(repo, "branch"),
-            target: text(repo, "target"),
-            token_ref: text(repo, "token_ref"),
-        });
-    }
-    out
-}
-
-/// The source-name rule `studio-session` enforces at launch.
-pub fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// The two Git services the smart-HTTP protocol names in `info/refs`.
@@ -150,56 +88,6 @@ pub fn upstream_authorization(token: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn the_root_repository_comes_first_under_its_reserved_name() {
-        let got = sources_in(&json!({
-            "root_repo_url": "https://example.com/acme/root.git",
-            "root_branch": "main",
-            "root_token_ref": "root-token",
-            "repos": [{ "name": "api", "source": "github", "url": "https://github.com/acme/api" }]
-        }));
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0].name, ROOT_SOURCE);
-        assert_eq!(got[0].branch.as_deref(), Some("main"));
-        assert_eq!(got[0].token_ref.as_deref(), Some("root-token"));
-        assert_eq!(got[1].name, "api");
-    }
-
-    #[test]
-    fn a_local_folder_is_not_a_git_source() {
-        let got = sources_in(&json!({
-            "repos": [
-                { "name": "here", "source": "local", "path": "/srv/here" },
-                { "name": "there", "source": "git", "url": "https://example.com/there.git" }
-            ]
-        }));
-        assert_eq!(
-            got.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
-            ["there"]
-        );
-    }
-
-    #[test]
-    fn an_entry_studio_would_refuse_is_left_out() {
-        let got = sources_in(&json!({
-            "repos": [
-                { "name": "Bad Name", "url": "https://example.com/a.git" },
-                { "name": "nourl" },
-                { "name": "dup", "url": "https://example.com/1.git" },
-                { "name": "dup", "url": "https://example.com/2.git" }
-            ]
-        }));
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].url, "https://example.com/1.git");
-    }
-
-    #[test]
-    fn settings_without_sources_have_none() {
-        assert!(sources_in(&json!({})).is_empty());
-        assert!(sources_in(&json!({ "repos": [], "root_repo_url": "  " })).is_empty());
-    }
 
     #[test]
     fn the_protocol_path_is_appended_like_git_does() {

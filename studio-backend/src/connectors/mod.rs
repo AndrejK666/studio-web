@@ -161,41 +161,6 @@ pub fn source_driver_ids() -> [&'static str; 3] {
     ]
 }
 
-/// The repository a clone URL names, as a provider's API spells it:
-/// `https://github.com/acme/api.git` → `acme/api`, a GitLab subgroup path kept
-/// whole. A workspace's settings record a repository only by its URL, and every
-/// driver call takes this path instead.
-pub fn repo_path_of(clone_url: &str) -> Option<String> {
-    let (_, rest) = clone_url.trim().split_once("://")?;
-    let (_, path) = rest.split_once('/')?;
-    let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
-    path.contains('/').then(|| path.to_owned())
-}
-
-#[cfg(test)]
-mod repo_path_tests {
-    use super::repo_path_of;
-
-    #[test]
-    fn a_clone_url_names_its_repository_as_the_api_does() {
-        assert_eq!(
-            repo_path_of("https://github.com/acme/api.git").as_deref(),
-            Some("acme/api")
-        );
-        assert_eq!(
-            repo_path_of("https://x-access-token@github.com/acme/api/").as_deref(),
-            Some("acme/api")
-        );
-        assert_eq!(
-            repo_path_of("https://gitlab.example.com/group/sub/api.git").as_deref(),
-            Some("group/sub/api")
-        );
-        assert_eq!(repo_path_of("https://github.com/acme"), None);
-        assert_eq!(repo_path_of("git@github.com:acme/api.git"), None);
-    }
-}
-
 #[toolkit::gear(
     name = "studio-connector",
     deps = [types_registry, account_management, credstore],

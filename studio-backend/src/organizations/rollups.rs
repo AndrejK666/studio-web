@@ -51,9 +51,6 @@ pub const WORKSPACE_TENANT_TYPE: &str =
 pub const ORGANIZATION_TENANT_TYPE: &str = super::service::ORGANIZATION_TENANT_TYPE;
 /// Tenant type of a project.
 pub const PROJECT_TENANT_TYPE: &str = "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~";
-/// Where a project's attached repositories are recorded.
-const SETTINGS_METADATA_TYPE: &str =
-    "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 /// What a project is: its kind and its brief.
 const PROJECT_CONFIG_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
 /// The node type a detector writes its verdicts as.
@@ -367,14 +364,14 @@ impl Sources {
             }
         };
         let team = team.map(|basis| team_of(basis, &scope));
-        let (documents, findings, specs, signals, repos, config) = tokio::join!(
+        let (documents, findings, specs, signals, config) = tokio::join!(
             documents,
             findings,
             specs,
             signals,
-            self.repos(ctx, project_id),
             self.config(ctx, project_id),
         );
+        let repos = repos_in(config.as_ref());
         let text = |key: &str| {
             config
                 .as_ref()
@@ -409,21 +406,6 @@ impl Sources {
             .await
             .ok()
             .map(|e| e.value)
-    }
-
-    /// Repositories attached to a project.
-    ///
-    /// A project whose settings read back has exactly as many repositories as
-    /// they list, including none. A project whose settings could not be read has
-    /// an unknown number — which is why a settings entry without the field is
-    /// `Some(0)` and a failed read is `None`.
-    async fn repos(&self, ctx: &SecurityContext, project_id: Uuid) -> Option<u32> {
-        let entry = self
-            .am
-            .get_metadata(ctx, project_id, gts::GtsTypeId::new(SETTINGS_METADATA_TYPE))
-            .await
-            .ok();
-        repos_in(entry.as_ref().map(|e| &e.value))
     }
 }
 
@@ -480,20 +462,16 @@ fn team_of(basis: &TeamBasis, project_id: &str) -> u32 {
     u32::try_from(people.len()).unwrap_or(u32::MAX)
 }
 
-/// How many repositories a project's settings list.
+/// How many repositories a project has, by its config (`project_sources`).
 ///
-/// `None` in means the settings could not be read, and `None` out says so. A
-/// settings document that simply has no `repos` is `Some(0)` — the project
-/// really has none, which is a different sentence and renders differently.
+/// `None` in means the config could not be read, and `None` out says so. A
+/// config that simply lists no `sources` is `Some(0)` — the project really has
+/// none, which is a different sentence and renders differently.
 ///
 /// Pulled out of the read so the distinction can be tested without standing up
 /// an account-management client: this is the rule, the read is plumbing.
-fn repos_in(settings: Option<&serde_json::Value>) -> Option<u32> {
-    let repos = settings?
-        .get("repos")
-        .and_then(serde_json::Value::as_array)
-        .map(|repos| repos.len())
-        .unwrap_or(0);
+fn repos_in(config: Option<&serde_json::Value>) -> Option<u32> {
+    let repos = crate::project_sources::parse(config?).len();
     Some(u32::try_from(repos).unwrap_or(u32::MAX))
 }
 
@@ -504,29 +482,31 @@ mod tests {
 
     /// The distinction the whole file turns on, at the one place it is decided.
     #[test]
-    fn settings_that_could_not_be_read_are_unknown_not_empty() {
+    fn a_config_that_could_not_be_read_is_unknown_not_empty() {
         assert_eq!(repos_in(None), None);
     }
 
     #[test]
-    fn settings_without_the_field_mean_the_project_has_none() {
+    fn a_config_without_sources_means_the_project_has_none() {
         assert_eq!(repos_in(Some(&json!({}))), Some(0));
-        assert_eq!(repos_in(Some(&json!({ "repos": [] }))), Some(0));
+        assert_eq!(repos_in(Some(&json!({ "sources": [] }))), Some(0));
     }
 
     #[test]
     fn repositories_are_counted_as_listed() {
-        assert_eq!(
-            repos_in(Some(&json!({ "repos": ["a", "b", "c"] }))),
-            Some(3)
-        );
+        let config = json!({ "sources": [
+            { "full_path": "a/a", "clone_url": "https://h/a/a" },
+            { "full_path": "a/b", "clone_url": "https://h/a/b" },
+            { "full_path": "a/c", "clone_url": "https://h/a/c" },
+        ]});
+        assert_eq!(repos_in(Some(&config)), Some(3));
     }
 
-    /// A `repos` of the wrong shape is a malformed document, not a claim that
-    /// the project has repositories nobody can name.
+    /// A `sources` of the wrong shape is a malformed document, not a claim
+    /// that the project has repositories nobody can name.
     #[test]
-    fn a_repos_field_of_the_wrong_shape_counts_as_none_listed() {
-        assert_eq!(repos_in(Some(&json!({ "repos": "nope" }))), Some(0));
+    fn a_sources_field_of_the_wrong_shape_counts_as_none_listed() {
+        assert_eq!(repos_in(Some(&json!({ "sources": "nope" }))), Some(0));
     }
 
     /* ── team_of ── */
