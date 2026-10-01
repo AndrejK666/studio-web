@@ -14,7 +14,7 @@
  */
 
 const assert = require('node:assert');
-const { studioReports, flattenVerdicts, latestRecordedAt, markFindings, hasFindings } = require('../src/browser/studio-quality');
+const { studioReports, flattenVerdicts, latestRecordedAt, purposeGate, markFindings, hasFindings } = require('../src/browser/studio-quality');
 const qualityScan = require('../src/browser/quality-scan');
 
 // A purpose verdict exactly as the server recorded it for ADR-0019 on
@@ -126,6 +126,18 @@ assert.ok(purposeCards.every(f => f.anchors[0].file === relPath && f.anchors[0].
 const duplicate = envelope.findings.find(f => f.rule === 'duplicate');
 assert.strictEqual(duplicate.anchors.filter(a => a.file === relPath).length, 1);
 assert.ok(new Set(envelope.findings.map(f => f.fingerprint)).size === 3, 'distinct fingerprints');
+
+// The gate numbers Studio recorded reach the verdict card; none, none invented.
+const gate = purposeGate([{ detector: 'purpose', details: { gate_passed: false, gate_leak_share: 0.18, gate_threshold: 0.05 } }]);
+assert.deepStrictEqual(gate, { passed: false, leakShare: 0.18, threshold: 0.05 });
+const withGate = studioReports(findings, relPath, ['docs/adr/0019.md'], gate);
+assert.strictEqual(withGate.purpose.gate.leak_share, 0.18);
+assert.strictEqual(withGate.purpose.gate.threshold, 0.05);
+const gated = qualityScan.normalizeDocument({ bloat: withGate.bloat, purpose: withGate.purpose, docPath: relPath, root: 'file:///w' });
+const purposeGateRow = gated.gates.find(g => g.name === 'purpose');
+assert.strictEqual(purposeGateRow.observed, 0.18);
+assert.strictEqual(purposeGateRow.threshold, 0.05);
+assert.strictEqual(studioReports(findings, relPath).purpose.gate.threshold, undefined);
 
 // Nothing to show is nothing, not a broken report.
 const empty = studioReports([], relPath);

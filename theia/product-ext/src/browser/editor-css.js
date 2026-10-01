@@ -115,18 +115,20 @@ const WIDGET_CSS = `
  * what the file is doing, the other opens things beside it -- so it gets a rule
  * rather than more air: 18px of --studio-line (constraint 24: this is a divider
  * inside a panel, not a shell seam), with 2px margins so the 10px gaps either
- * side still carry most of the separation. -4px on the right pulls the cluster
- * to the bar's 12px padding: a 28px tile has its own visual inset, and without
- * this the last button floated ~7px off the window's right edge while the mode
- * segment sat flush on the left. */
+ * side still carry most of the separation. The cluster ends at the bar's own
+ * padding (see the margin note below). */
 .studio-slot-divider {
   flex: none; width: 1px; height: 14px; background: var(--studio-line); margin: 0 2px;
 }
 /* --studio-slot-ring is restated rather than inherited: the badge has to read as
  * sitting on THIS bar, and the cluster's own default is the same tone only by
  * coincidence -- the raised surface is where a cluster happens to live today. */
+/* No negative margin any more. -4px pulled the last button to the bar's edge,
+ * which was fine while the last one was History; with Quality last, its count
+ * badge (top-right of the tile) sat against the window's edge and read as a
+ * button half-hidden there. The bar's own padding is the inset. */
 .studio-doc-topbar .studio-slot-cluster {
-  margin-right: -4px; --studio-slot-ring: var(--studio-surface-raised);
+  margin-right: 0; --studio-slot-ring: var(--studio-surface-raised);
 }
 /* Never hidden, and never emptied: membership is fixed, so the cluster is the
  * one thing in this bar that is always there. See updateTopbarVisibility. */
