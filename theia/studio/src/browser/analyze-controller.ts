@@ -124,6 +124,9 @@ export interface AnalyzeApplicationShellLike {
     /** The tab in front of the editor area, focused or not. */
     getCurrentWidget(area: 'main'): unknown;
     onDidChangeActiveWidget(listener: () => void): { dispose(): void };
+    /** The shell's current widget changed: a tab picked in the editor area
+     *  while focus stays elsewhere, such as in this panel. */
+    onDidChangeCurrentWidget?(listener: () => void): { dispose(): void };
 }
 
 export const AnalyzeApplicationShellProvider = Symbol('AnalyzeApplicationShellProvider');
@@ -200,6 +203,13 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         this.toDispose.push(this.documentListener);
         this.editorListener.push(this.editorManager.onCurrentEditorChanged(() => this.syncActiveEditor()));
         this.editorListener.push(this.applicationShellProvider().onDidChangeActiveWidget(() => this.syncActiveEditor()));
+        // Active alone misses a tab picked in the editor area while focus is in
+        // this panel: the shell's current widget changes, its active one does
+        // not, and the panel kept describing the previous document.
+        const shell = this.applicationShellProvider();
+        if (typeof shell.onDidChangeCurrentWidget === 'function') {
+            this.editorListener.push(shell.onDidChangeCurrentWidget(() => this.syncActiveEditor()));
+        }
         this.syncActiveEditor();
     }
 
@@ -401,7 +411,10 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
     protected resolveActiveDocument(): DocumentLike | undefined {
         const activeWidget = this.applicationShellProvider().activeWidget;
         if (this.isAnalyzeWidget(activeWidget)) {
-            return this.currentDocument;
+            // Focus in this panel is not a reason to keep describing the old
+            // document: the tab in front of the editor area is the one it is
+            // about. Only with no document there does the last one stand.
+            return this.normalizeDocument(this.applicationShellProvider().getCurrentWidget('main')) ?? this.currentDocument;
         }
         const activeDocument = this.normalizeDocument(activeWidget);
         if (activeDocument) {
