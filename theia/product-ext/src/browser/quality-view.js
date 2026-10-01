@@ -389,8 +389,15 @@ function verdictBlockHtml(envelope, gate) {
     const balance = dist ? balanceSentence(dist.value) : '';
     return '<div class="studio-quality-verdict">' +
         '<div class="studio-quality-verdict-title">Purpose — failed</div>' +
-        '<div class="studio-quality-verdict-sentence">' + pct1(gate.observed) + '% of this ' + esc(docType) +
-        ' reads as DESIGN. The limit is ' + pctWhole(gate.threshold) + '%.</div>' +
+        // The numbers when the report carries them. A verdict Studio recorded
+        // may not (it keeps the gate's outcome, not always its share), and
+        // "NaN% … The limit is NaN%" is worse than saying less.
+        (Number.isFinite(Number(gate.observed)) && gate.observed !== null && gate.observed !== undefined
+            && Number.isFinite(Number(gate.threshold)) && gate.threshold !== null && gate.threshold !== undefined
+            ? '<div class="studio-quality-verdict-sentence">' + pct1(gate.observed) + '% of this ' + esc(docType) +
+                ' reads as DESIGN. The limit is ' + pctWhole(gate.threshold) + '%.</div>'
+            : '<div class="studio-quality-verdict-sentence">Parts of this ' + esc(docType) +
+                ' read as another kind of document — see the sections below.</div>') +
         (balance ? '<div class="studio-quality-verdict-balance">Balance: ' + esc(balance) + '</div>' : '') +
         '</div>';
 }

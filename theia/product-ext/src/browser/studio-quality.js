@@ -66,7 +66,7 @@ function occurrence(file, anchor) {
  * "Studio has not looked" from "Studio looked and found nothing" by whether it
  * passed any verdicts at all — see `studioReportsFor`.
  */
-function studioReports(findings, relPath, ownPaths = []) {
+function studioReports(findings, relPath, ownPaths = [], gate = undefined) {
     const own = new Set([relPath, ...ownPaths].filter(Boolean));
     const isOwn = path => !path || own.has(path);
     const violations = [];
@@ -106,7 +106,13 @@ function studioReports(findings, relPath, ownPaths = []) {
     return {
         bloat: { clusters },
         purpose: {
-            gate: { passed: violations.length === 0, violations }
+            gate: {
+                passed: gate && typeof gate.passed === 'boolean' ? gate.passed : violations.length === 0,
+                // The numbers the verdict card states, when Studio recorded them.
+                leak_share: gate && Number.isFinite(gate.leakShare) ? gate.leakShare : undefined,
+                threshold: gate && Number.isFinite(gate.threshold) ? gate.threshold : undefined,
+                violations
+            }
         }
     };
 }
@@ -127,6 +133,19 @@ function flattenVerdicts(verdicts) {
         out.push(...items);
     }
     return out;
+}
+
+/** The purpose gate as Studio recorded it: passed, the share that read as
+ *  another kind, and the limit. Undefined when there is no purpose verdict. */
+function purposeGate(verdicts) {
+    const purpose = (Array.isArray(verdicts) ? verdicts : []).find(v => v && v.detector === 'purpose');
+    const d = purpose && purpose.details;
+    if (!d) { return undefined; }
+    return {
+        passed: typeof d.gate_passed === 'boolean' ? d.gate_passed : undefined,
+        leakShare: typeof d.gate_leak_share === 'number' ? d.gate_leak_share : undefined,
+        threshold: typeof d.gate_threshold === 'number' ? d.gate_threshold : undefined
+    };
 }
 
 /** The latest time any of these verdicts was recorded, or undefined. */
@@ -161,4 +180,4 @@ function hasFindings(uri) {
     return !!uri && withFindings.has(uri.toString());
 }
 
-module.exports = { studioReports, flattenVerdicts, latestRecordedAt, markFindings, hasFindings };
+module.exports = { studioReports, flattenVerdicts, latestRecordedAt, purposeGate, markFindings, hasFindings };

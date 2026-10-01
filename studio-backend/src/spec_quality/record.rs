@@ -155,6 +155,16 @@ fn purpose(path: &str, result: Option<&Value>) -> Reading {
             "doc_type": v.doc_type,
             "spec_share": share,
             "gate_passed": v.gate_passed,
+            // The gate itself, so a reader can say "18% reads as another kind;
+            // the limit is 5%" rather than only that it failed.
+            "gate_leak_share": result
+                .and_then(|r| r.get("gate"))
+                .and_then(|g| g.get("leak_share"))
+                .and_then(Value::as_f64),
+            "gate_threshold": result
+                .and_then(|r| r.get("gate"))
+                .and_then(|g| g.get("threshold"))
+                .and_then(Value::as_f64),
             "findings": findings_json(findings),
         }),
     }
@@ -292,10 +302,22 @@ mod tests {
         assert_eq!(r.severity, "gate-failed");
         assert_eq!(r.summary, "purpose: prd (90% specification)");
         assert_eq!(r.gate, Gate::Failed);
+        assert!(
+            r.details["gate_leak_share"].is_null(),
+            "no share in this answer, none invented"
+        );
         let findings = r.details["findings"].as_array().unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0]["rule"], "purpose.foreign_section");
         assert_eq!(findings[0]["anchor"]["line_start"], 4);
+    }
+
+    #[test]
+    fn the_gate_share_and_threshold_travel_with_the_reading() {
+        let result = json!({ "doc_type": "adr", "gate": { "passed": false, "leak_share": 0.18, "threshold": 0.05, "violations": [] } });
+        let r = &readings("purpose", "a.md", Some(&result), &[])[0];
+        assert_eq!(r.details["gate_leak_share"], 0.18);
+        assert_eq!(r.details["gate_threshold"], 0.05);
     }
 
     #[test]

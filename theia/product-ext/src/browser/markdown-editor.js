@@ -5609,6 +5609,7 @@ class MarkdownEditorWidget extends Widget {
         this.studioQuality = list.length > 0
             ? {
                 findings: studioQuality.flattenVerdicts(list),
+                gate: studioQuality.purposeGate(list),
                 paths: Array.isArray(paths) ? paths : [],
                 producedAt: studioQuality.latestRecordedAt(list)
             }
@@ -5669,7 +5670,8 @@ class MarkdownEditorWidget extends Widget {
              */
             let fromStudio = false;
             if ((!reports.present || (!pair.bloat && !pair.purpose)) && this.studioQuality) {
-                pair = studioQuality.studioReports(this.studioQuality.findings, relPath, this.studioQuality.paths);
+                pair = studioQuality.studioReports(this.studioQuality.findings, relPath, this.studioQuality.paths,
+                    this.studioQuality.gate);
                 reports = { ...reports, present: true, runId: 'studio', producedAt: this.studioQuality.producedAt };
                 fromStudio = true;
             }
