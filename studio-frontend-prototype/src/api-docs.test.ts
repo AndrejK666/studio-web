@@ -5,7 +5,7 @@ import type { OpenApiDoc } from "./api-docs";
 
 describe("componentOf", () => {
   it("is the first path segment", () => {
-    expect(componentOf("/studio-git/v1/repos/{id}")).toBe("studio-git");
+    expect(componentOf("/studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs")).toBe("studio-git");
     expect(componentOf("/account-management/v1/tenants")).toBe("account-management");
   });
   it("looks under a shared mount", () => {
@@ -27,9 +27,9 @@ describe("groupByComponent", () => {
       "/account-management/v1/tenants": { get: { tags: ["Tenants"] }, post: { tags: ["Tenants"] } },
       "/account-management/v1/users": { get: { tags: ["Identity"] } },
       "/authz-resolver/v1/evaluate": { post: {} },
-      "/studio-git/v1/repos": { get: { tags: ["StudioGit"] }, parameters: [] },
-      "/spec-quality/v1/runs": { get: { tags: ["SpecQuality"] }, post: { tags: ["SpecQuality"] } },
-      "/studio-spec-quality/v1/x": { get: { tags: ["SpecQuality"] } },
+      "/studio-git/v1/sources": { get: { tags: ["StudioGit"] }, parameters: [] },
+      "/spec-quality/v1/tasks": { get: { tags: ["SpecQuality"] }, post: { tags: ["SpecQuality"] } },
+      "/studio-spec-quality/v1/verdicts": { get: { tags: ["SpecQuality"] } },
     },
   };
   const out = groupByComponent(doc);
@@ -56,6 +56,6 @@ describe("groupByComponent", () => {
   it("declares every tag once, in group order, and leaves the input alone", () => {
     expect(out.tags!.map((t) => t.name)).toEqual(["Identity", "Tenants", "AuthZ Resolver", "StudioGit", "SpecQuality"]);
     expect((doc.paths!["/authz-resolver/v1/evaluate"].post as { tags?: string[] }).tags).toBeUndefined();
-    expect(out.paths!["/studio-git/v1/repos"].parameters).toEqual([]);
+    expect(out.paths!["/studio-git/v1/sources"].parameters).toEqual([]);
   });
 });
