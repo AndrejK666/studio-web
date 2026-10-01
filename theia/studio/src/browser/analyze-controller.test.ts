@@ -345,6 +345,23 @@ describe('AnalyzeFrontendController', () => {
         expect(controller.getViewModel()).toMatchObject({ status: 'empty', emptyStateTitle: 'No active document' });
     });
 
+    it('follows a tab picked in the editor area while focus stays in the Analyze panel', async () => {
+        // Seen on dev: with the panel focused, picking another document's tab
+        // changed the shell's current widget but not its active one, and the
+        // panel went on describing the previous document.
+        const studio = createStudio();
+        const first = createEditor('file:///workspace/docs/prd.md');
+        const second = createEditor('file:///workspace/docs/adr.md');
+        const { controller, shell, currentWidgetEvents } = await start(studio, first);
+        shell.mainWidget = first.editor;
+        shell.activeWidget = { id: ANALYZE_WIDGET_ID };
+
+        shell.mainWidget = second.editor;
+        currentWidgetEvents.fire();
+        await settle();
+        expect(controller.getViewModel().documentUri).toBe(second.uri.toString());
+    });
+
     it('never paints an older document\'s answer over a newer one', async () => {
         const studio = createStudio();
         let release: () => void = () => undefined;
@@ -469,7 +486,8 @@ function createStudio(options: { scope?: AnalyzeScope | undefined; bindings?: Do
 async function start(studio: ReturnType<typeof createStudio>, active: unknown, wait = true) {
     const editorEvents = new Emitter<TextEditor | undefined>();
     const activeWidgetEvents = new Emitter<void>();
-    const shell = createShell(activeWidgetEvents, active);
+    const currentWidgetEvents = new Emitter<void>();
+    const shell = createShell(activeWidgetEvents, active, currentWidgetEvents);
     const editorManager = createEditorManager(editorEvents, undefined);
     const controller = new AnalyzeFrontendController();
     Object.defineProperty(controller, 'editorManager', { value: editorManager as unknown as EditorManager });
@@ -482,7 +500,7 @@ async function start(studio: ReturnType<typeof createStudio>, active: unknown, w
     if (wait) {
         await settle();
     }
-    return { controller, shell, activeWidgetEvents, editorManager };
+    return { controller, shell, activeWidgetEvents, currentWidgetEvents, editorManager };
 }
 
 /** Let the reads a document switch starts run to their end. */
@@ -492,7 +510,7 @@ async function settle(): Promise<void> {
     }
 }
 
-function createShell(activeWidgetEvents: Emitter<void>, activeWidget: unknown) {
+function createShell(activeWidgetEvents: Emitter<void>, activeWidget: unknown, currentWidgetEvents?: Emitter<void>) {
     const listenerDisposable = { dispose: jest.fn() };
     const shell = {
         activeWidget,
@@ -509,7 +527,9 @@ function createShell(activeWidgetEvents: Emitter<void>, activeWidget: unknown) {
                     listenerDisposable.dispose();
                 })
             };
-        })
+        }),
+        onDidChangeCurrentWidget: jest.fn((listener: () => void) =>
+            (currentWidgetEvents ?? new Emitter<void>()).event(listener)),
     };
     return shell;
 }
