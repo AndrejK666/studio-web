@@ -17,6 +17,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiUrl } from "./api";
+import { projectRepoRows } from "./project-sources";
 import { weightedMixture } from "./analysis";
 import type { DocDuplication } from "./api";
 import type { ArtifactNode } from "./api";
@@ -644,8 +645,9 @@ export function SpecQuality({
     setArtifactNote("");
     setError("");
     try {
-      const settings = await api.workspaceSettings(token, workspaceId).catch(() => null);
-      const repos = (settings?.repos ?? []).filter((r) => r.source !== "local");
+      // The project's repositories, named by the directory a session
+      // checks each one out into (`project-sources.ts`).
+      const repos = await projectRepoRows(token, workspaceId).catch(() => []);
       if (repos.length === 0) {
         setArtifactNote("No git repositories attached to this project.");
         return;

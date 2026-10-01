@@ -43,6 +43,7 @@ import { WorkInbox, taskLabel, useCompletedWork, type CompletedRun } from "./wor
 import { Notifications } from "./notifications";
 import { StudioAI } from "./studio-ai";
 import { runRepoSync, pruneDetached, findRepoNode, type SyncProgress } from "./artifact-sync";
+import { hasRepository, projectRepoRows, withPicked, without, type ProjectSource } from "./project-sources";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { GearsTable, PermissionsTable } from "./system-tables";
@@ -5492,12 +5493,15 @@ function WorkspaceDashboard({
   embedded?: boolean;
 }) {
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  /** The repositories (`project-sources.ts`), as rows. */
+  const [repos, setRepos] = useState<RepoEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const s = await api.workspaceSettings(token, ws.id);
+      setRepos(await projectRepoRows(token, ws.id).catch((): RepoEntry[] => []));
       setSettings(s ?? { automation_level: "recommendations", approved_worker_categories: [] });
     } catch (e) {
       setError(errText(e));
@@ -5559,7 +5563,7 @@ function WorkspaceDashboard({
         <div className="card-head">
           <h2>
             Repositories
-            {settings?.repos && settings.repos.length > 0 ? ` · ${settings.repos.length}` : ""}
+            {repos && repos.length > 0 ? ` · ${repos.length}` : ""}
           </h2>
           {onOpenStudio && (
             <button className="primary" onClick={() => onOpenStudio(ws)}>
@@ -5567,13 +5571,13 @@ function WorkspaceDashboard({
             </button>
           )}
         </div>
-        {!settings ? (
+        {!repos ? (
           <p className="empty">Loading…</p>
-        ) : (settings.repos?.length ?? 0) === 0 ? (
+        ) : repos.length === 0 ? (
           <p className="empty">No repositories attached — add them on the Artifacts tab.</p>
         ) : (
           <ul className="rows">
-            {settings.repos!.map((r) => (
+            {repos.map((r) => (
               <li key={r.name}>
                 <div className="grow">
                   <div className="name">{r.name}</div>
@@ -6322,16 +6326,19 @@ function useKnownSecretRefs(token: string, workspaces: Workspace[]): SecretRow[]
       const map = new Map<string, Set<string>>();
       await Promise.all(
         workspaces.map(async (ws) => {
-          const s = await api.workspaceSettings(token, ws.id).catch(() => null);
-          if (!s) return;
+          const [s, own] = await Promise.all([
+            api.workspaceSettings(token, ws.id).catch(() => null),
+            projectRepoRows(token, ws.id).catch((): RepoEntry[] => []),
+          ]);
           const add = (ref?: string | null, what = "") => {
             const r = ref?.trim();
             if (!r) return;
             if (!map.has(r)) map.set(r, new Set());
             map.get(r)?.add(`${ws.name}${what}`);
           };
-          add(s.root_token_ref, " (project root)");
-          for (const repo of s.repos ?? []) add(repo.token_ref, ` / ${repo.name}`);
+          add(s?.root_token_ref, " (project root)");
+          // A repository's token is its connection's.
+          for (const repo of own) add(repo.token_ref, ` / ${repo.name}`);
         }),
       );
       if (!cancelled) {
@@ -6512,55 +6519,21 @@ type Reach = "organization" | "workspace" | "personal";
 
 /** The project's current sources (workspace repos) with detach + Open in IDE, so
  *  the Sources tab shows the RESULT of attaching, not only the connectors. */
-/** Attach chosen remote repositories to a workspace as sources (the repos a
- *  session clones on launch). Shared by the Sources-tab repository browser and
- *  the Nested-projects "Pick from a connector…" picker so both build identical
- *  RepoEntry rows — same name sanitisation, same provider→source mapping, same
- *  server-side token reference. Returns how many were added. */
+/** Attach chosen remote repositories to a project: into its config's
+ *  `sources` (`project-sources.ts`), the record every session clones from and
+ *  both portals read. Shared by the Sources-tab repository browser and the
+ *  "Pick from a connector…" picker. The connection is named by id; its token
+ *  stays server-side. Returns how many were added. */
 async function attachReposToWorkspace(
   token: string,
   ws: Workspace,
   connection: Connection,
   picks: RemoteRepo[],
 ): Promise<number> {
-  const current = (await api.workspaceSettings(token, ws.id)) ?? {};
-  const existing = current.repos ?? [];
-  const taken = new Set(existing.map((r) => r.name));
-  const added: RepoEntry[] = [];
-  for (const r of picks) {
-    // Directory name must be [a-z0-9_-]+. De-duplicate against what the
-    // workspace already has rather than shadowing an existing source.
-    const base =
-      r.name
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, "-")
-        .replace(/^-+|-+$/g, "") || `repo-${r.id}`;
-    let candidate = base;
-    let n = 2;
-    while (taken.has(candidate)) candidate = `${base}-${n++}`;
-    taken.add(candidate);
-    added.push({
-      name: candidate,
-      // github/gitlab compose a provider URL; anything else (bitbucket,
-      // self-hosted) is a plain git clone URL — don't mislabel it gitlab.
-      source:
-        connection.provider === "github"
-          ? "github"
-          : connection.provider === "gitlab"
-            ? "gitlab"
-            : "git",
-      url: r.clone_url,
-      branch: r.default_branch,
-      // studio-session resolves this from credstore itself, so the token
-      // stays server-side end to end.
-      token_ref: connection.secret_ref,
-    });
-  }
-  await api.putWorkspaceSettings(token, ws.id, {
-    ...current,
-    repos: [...existing, ...added],
-  });
-  return added.length;
+  const current = (await api.projectConfig(token, ws.id)) ?? {};
+  const { sources, added } = withPicked(current.sources, connection, picks);
+  if (added > 0) await api.putProjectConfig(token, ws.id, { ...current, sources });
+  return added;
 }
 
 /** The repositories attached to a project — the sources a session clones on
@@ -7138,8 +7111,7 @@ function ProjectSources({
   };
 
   const reload = useCallback(async () => {
-    const s = await api.workspaceSettings(token, ws.id).catch(() => null);
-    setRepos(s?.repos ?? []);
+    setRepos(await projectRepoRows(token, ws.id).catch(() => []));
     // The graph's side of a source: present once it has been synced at least
     // once, carrying when that was and what came in. This used to be readable
     // only from the Overview card, which is why that card existed at all —
@@ -7195,14 +7167,14 @@ function ProjectSources({
     void reload();
   }, [reload]);
 
-  /** Detach a repository: out of the settings, and out of the graph with it
-   *  (the graph keeps what was synced until it is told otherwise). Throws, so
-   *  the confirm dialog stays open with the reason. */
+  /** Detach a repository: out of the project's config, and out of the graph
+   *  with it (the graph keeps what was synced until it is told otherwise).
+   *  Throws, so the confirm dialog stays open with the reason. */
   const detach = async (name: string) => {
     setErr(null);
-    const s = (await api.workspaceSettings(token, ws.id)) ?? {};
-    const remaining = (s.repos ?? []).filter((r) => r.name !== name);
-    await api.putWorkspaceSettings(token, ws.id, { ...s, repos: remaining });
+    const config = (await api.projectConfig(token, ws.id)) ?? {};
+    await api.putProjectConfig(token, ws.id, { ...config, sources: without(config.sources, name) });
+    const remaining = (repos ?? []).filter((r) => r.name !== name);
     await pruneDetached(token, remaining, {
       workspaceId: parentWorkspaceId ?? ws.id,
       projectId: ws.id,
@@ -7411,13 +7383,13 @@ function SourceAttachPicker({
   const [search, setSearch] = useState("");
   const [repos, setRepos] = useState<RemoteRepo[] | null>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [attached, setAttached] = useState<Set<string>>(new Set());
+  const [attached, setAttached] = useState<ProjectSource[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const loadAttached = useCallback(async () => {
-    const s = await api.workspaceSettings(token, ws.id).catch(() => null);
-    setAttached(new Set((s?.repos ?? []).map((r) => r.url).filter((u): u is string => Boolean(u))));
+    const config = await api.projectConfig(token, ws.id).catch(() => null);
+    setAttached(config?.sources ?? []);
   }, [token, ws.id]);
 
   useEffect(() => {
@@ -7521,7 +7493,7 @@ function SourceAttachPicker({
           ) : (
             <ul className="rows">
               {repos.map((r) => {
-                const isAttached = attached.has(r.clone_url);
+                const isAttached = hasRepository(attached, r.clone_url);
                 return (
                   <li key={r.id} className={isAttached ? "attached" : undefined}>
                     <input
@@ -8227,13 +8199,11 @@ function RepoBrowser({
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   // Clone URLs already attached to this project — so a repo can't be added twice.
-  const [attached, setAttached] = useState<Set<string>>(new Set());
+  const [attached, setAttached] = useState<ProjectSource[]>([]);
 
   const loadAttached = useCallback(async () => {
-    const s = await api.workspaceSettings(token, workspace.id).catch(() => null);
-    setAttached(
-      new Set((s?.repos ?? []).map((r) => r.url).filter((u): u is string => Boolean(u))),
-    );
+    const config = await api.projectConfig(token, workspace.id).catch(() => null);
+    setAttached(config?.sources ?? []);
   }, [token, workspace.id]);
 
   const load = useCallback(
@@ -8299,7 +8269,7 @@ function RepoBrowser({
       ) : (
         <ul className="rows">
           {repos.map((r) => {
-            const isAttached = attached.has(r.clone_url);
+            const isAttached = hasRepository(attached, r.clone_url);
             return (
               <li key={r.id} className={isAttached ? "attached" : undefined}>
                 <input
@@ -9447,9 +9417,10 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
  *  session for this target", which is what makes the editing hand-off a single
  *  gesture (`studio-bridge`) rather than a launch click plus an edit click.
  *
- *  Sources are read at launch time on purpose: a launcher card may have been
- *  open since before the last "Save repositories", and a stale snapshot
- *  silently launches without the new sources/targets/token refs.
+ *  The project's repositories are not sent: the backend reads them from the
+ *  project's config and clones them whoever launches (`project-sources.ts`).
+ *  This sends only what is not the project's — a backend-host folder from the
+ *  settings, the gear corpus — and reads the repositories just to show them.
  *
  *  `onResolved` reports the sources back so a caller that displays them (the
  *  launcher card) does not need a second round trip. */
@@ -9462,6 +9433,7 @@ async function startStudioSession(
     kind?: string;
   }) => void,
 ): Promise<StudioSession> {
+  const own = await projectRepoRows(token, target.id).catch((): RepoEntry[] => []);
   let repos = target.repos ?? [];
   let root = target.root ?? {};
   // A nested project is standalone — it carries its own repos/root and has no
@@ -9469,7 +9441,8 @@ async function startStudioSession(
   if (!target.standalone) {
     try {
       const s = await api.workspaceSettings(token, target.id);
-      repos = s?.repos ?? [];
+      // Only a working copy's folders: the repositories are the config's.
+      repos = (s?.repos ?? []).filter((r) => r.source === "local");
       root = {
         path: s?.root_path?.trim() || undefined,
         repoUrl: s?.root_repo_url?.trim() || undefined,
@@ -9500,12 +9473,16 @@ async function startStudioSession(
       .projectProduct(token, target.id)
       .then((p) => p !== null)
       .catch(() => false));
+  // Checked against the project's own too, so a project that IS the corpus
+  // does not get it twice.
+  let shown = [...own, ...repos];
   if (kind === "product" || kind === "new_gears" || hasProduct) {
-    repos = withCorpusSource(repos, await api.gearboxStatus(token).catch(() => null));
+    shown = withCorpusSource(shown, await api.gearboxStatus(token).catch(() => null));
   }
-  onResolved?.({ repos, root, kind });
-  const usable = repos.filter((r) =>
-    r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim()),
+  onResolved?.({ repos: shown, root, kind });
+  const ownNames = new Set(own.map((r) => r.name));
+  const usable = shown.filter(
+    (r) => !ownNames.has(r.name) && (r.source === "local" ? Boolean(r.path?.trim()) : Boolean(r.url?.trim())),
   );
   const created = await api.createStudioSession(token, target.id, usable, root);
   // The backend probes the session on its own run; this only watches it, and
@@ -9543,19 +9520,19 @@ function StudioLauncher({
   const [error, setError] = useState<string | null>(null);
   const autoLaunched = useRef(false);
 
-  // A root project reads its sources from workspaceSettings. A nested project
-  // is standalone — it carries its own repos/root on the target (its single
-  // source), and has no workspaceSettings of its own to read.
+  // A root project's repositories are its config's; its settings add only a
+  // working copy's folders and root. A nested project is standalone — it
+  // carries its own repos/root on the target (its single source), and has no
+  // workspaceSettings of its own to read.
   useEffect(() => {
     if (target.standalone) {
       setRepos(target.repos ?? []);
       setRoot(target.root ?? {});
       return;
     }
-    api
-      .workspaceSettings(token, target.id)
-      .then((s) => {
-        setRepos(s?.repos ?? []);
+    Promise.all([projectRepoRows(token, target.id), api.workspaceSettings(token, target.id)])
+      .then(([own, s]) => {
+        setRepos([...own, ...(s?.repos ?? []).filter((r) => r.source === "local")]);
         setRoot({
           path: s?.root_path?.trim() || undefined,
           repoUrl: s?.root_repo_url?.trim() || undefined,

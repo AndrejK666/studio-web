@@ -36,6 +36,7 @@ import type {
   WorkspaceSettings,
 } from "./api";
 import { findRepoNode } from "./artifact-sync";
+import { projectRepoRows } from "./project-sources";
 import { errText, initials, relTime } from "./format";
 import { OpenInDesktop } from "./open-in-desktop";
 
@@ -176,6 +177,8 @@ export function ProjectOverview({
   onOpenStudio: () => void;
 }) {
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  /** The project's repositories (`project-sources.ts`), as rows. */
+  const [repos, setRepos] = useState<RepoEntry[]>([]);
   const [config, setConfig] = useState<ProjectConfig | null>(null);
   const [types, setTypes] = useState<DocType[]>([]);
   // The workspace's effective stage catalogue: names, order and which are
@@ -222,6 +225,7 @@ export function ProjectOverview({
       const [
         s,
         cfg,
+        ownRepos,
         typePage,
         stagePage,
         docPage,
@@ -239,6 +243,7 @@ export function ProjectOverview({
         await Promise.all([
           optional("workspace settings", api.workspaceSettings(token, project.id), null, misses),
           optional("project config", api.projectConfig(token, project.id), null, misses),
+          optional("repositories", projectRepoRows(token, project.id), [] as RepoEntry[], misses),
           optional("document types", api.docTypes(token, parentWorkspaceId), { items: [] as DocType[] }, misses),
           optional(
             "journey stages",
@@ -294,6 +299,7 @@ export function ProjectOverview({
         ]);
 
       setSettings(s);
+      setRepos(ownRepos);
       setConfig(cfg);
       setTypes(typePage.items ?? []);
       setStageCatalogue(stagePage.items ?? []);
@@ -336,8 +342,6 @@ export function ProjectOverview({
   /** True when the gear behind a number did not answer — the number is then
    *  unknown, which is not the same as zero. */
   const missed = (label: string) => missing.includes(label);
-
-  const repos = settings?.repos ?? [];
 
   /** The graph's record of an attached source: present once it has been synced
    *  at least once, and carrying when that was and what came in. */
@@ -510,7 +514,7 @@ export function ProjectOverview({
         />
         <Stat
           label="Repositories"
-          value={missed("workspace settings") ? "—" : repos.length}
+          value={missed("repositories") ? "—" : repos.length}
           sub={repos.length ? `${syncedRepos} synced` : "none attached"}
           tone={repos.length > 0 && syncedRepos < repos.length ? "warn" : undefined}
           /* Sources, not Artifacts. The stat counts sources and the tone warns
