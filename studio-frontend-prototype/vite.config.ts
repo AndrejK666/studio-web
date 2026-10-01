@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -8,6 +9,16 @@ export default defineConfig({
   // dedicated POC host and with the legacy `/prototype/` container mount.
   base: "./",
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      // The portal, and the backend's API reference grouped by component
+      // (/api-docs/, see src/api-docs.ts).
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        apiDocs: fileURLToPath(new URL("./api-docs/index.html", import.meta.url)),
+      },
+    },
+  },
   server: {
     port: 5173,
     // The repo lives on the Windows FS (/mnt/c) while vite runs in WSL:
