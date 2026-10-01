@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use account_management_sdk::{AccountManagementClient, Tenant};
 use anyhow::{Context, Result, bail};
-use gts::GtsTypeId;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
@@ -25,8 +24,6 @@ use super::model::{
 use super::port::{ClassifiedCounts, DocumentClassifier, IngestedDocument};
 use super::quality;
 
-/// Where a workspace records its repositories, as the portal writes them.
-const WS_SETTINGS_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
 use super::repo::{
     DocScope, DocumentsRepo, analysis_row_id, binding_row_id, capability_row_id, stage_row_id,
     type_row_id,
@@ -1367,13 +1364,12 @@ impl DocumentsService {
     /// Every file the named tenants' checkouts hold, keyed by repo-relative
     /// path.
     ///
-    /// Several tenants, tried in order, because the sources are recorded
-    /// against whichever tenant the portal called a workspace when they were
-    /// connected -- and for a project created under one, that is the project's
-    /// own tenant, not its parent's. Guessing wrong reads an empty checkout and
-    /// reports that nothing can be analysed, which is how this was found: on a
-    /// stand whose settings sat on the project. The first tenant that has
-    /// sources wins; the rest are not read.
+    /// Several tenants, tried in order — the bindings' projects, the project
+    /// asked about, then the workspace — because a binding may be recorded
+    /// under any of them, and the repositories are the project's
+    /// (`project_sources`). Guessing wrong reads an empty checkout and reports
+    /// that nothing can be analysed. The first tenant that has sources wins;
+    /// the rest are not read.
     async fn checkout_files(
         &self,
         ctx: &SecurityContext,
@@ -1385,16 +1381,19 @@ impl DocumentsService {
         for tenant in tenants {
             // A tenant that has recorded no sources has no checkout to read,
             // which is an answer rather than a failure.
-            let Ok(entry) = self
-                .account_management
-                .get_metadata(ctx, *tenant, GtsTypeId::new(WS_SETTINGS_TYPE))
-                .await
+            let Some(sources) =
+                crate::project_sources::resolve(self.account_management.as_ref(), ctx, *tenant)
+                    .await
             else {
                 continue;
             };
-            for source in quality::checkout_sources(&entry.value) {
+            for resolved in sources {
                 // One repository that was never cloned must not cost the others.
-                let dir = source.dir.as_str();
+                let dir = resolved.source.dir.as_str();
+                let clone = resolved
+                    .secret_ref
+                    .as_ref()
+                    .map(|secret_ref| (secret_ref, &resolved.source.full_path));
                 let mut files = match reader.read_repo_files(&tenant.to_string(), dir).await {
                     Ok(files) => files,
                     Err(error) => {
@@ -1406,7 +1405,7 @@ impl DocumentsService {
                 // sessions keep theirs in their own volume. The sync's clone
                 // holds the same repository, as last synced.
                 if files.is_empty()
-                    && let Some((secret_ref, full_path)) = &source.clone
+                    && let Some((secret_ref, full_path)) = clone
                 {
                     files = reader
                         .read_synced_clone(secret_ref, full_path)

@@ -30,6 +30,7 @@ mod organizations; // studio-organizations: a person creates an organization and
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
+mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot

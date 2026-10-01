@@ -34,9 +34,6 @@ impl LicenseFeature for License {}
 #[resource_error(gts_id!("cf.studio.git.source.v1~"))]
 pub struct StudioGitError;
 
-/// Where a workspace records its repositories, as the portal writes them.
-const WS_SETTINGS_TYPE: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~";
-
 /// Request headers the Git protocol needs upstream. Everything else — the
 /// caller's own `Authorization` first of all — stays here.
 const FORWARD_REQUEST: [header::HeaderName; 5] = [
@@ -70,16 +67,12 @@ pub struct GitProxy {
 }
 
 impl GitProxy {
-    /// The workspace's Git sources, read under the caller's identity. Reading
-    /// the settings IS the access decision: account-management answers only
-    /// for a tenant the caller reaches.
+    /// The project's Git sources, read under the caller's identity. Reading
+    /// its config IS the access decision: account-management answers only for
+    /// a tenant the caller reaches.
     async fn sources(&self, ctx: &SecurityContext, workspace_id: Uuid) -> Option<Vec<Source>> {
-        let entry = self
-            .account_management
-            .get_metadata(ctx, workspace_id, gts::GtsTypeId::new(WS_SETTINGS_TYPE))
+        crate::project_sources::git_sources(self.account_management.as_ref(), ctx, workspace_id)
             .await
-            .ok()?;
-        Some(sources::sources_in(&entry.value))
     }
 
     async fn token(&self, ctx: &SecurityContext, token_ref: &str) -> Result<String, String> {
@@ -109,50 +102,22 @@ impl GitProxy {
             .map(|p| p.0);
         let mut runs = Vec::new();
 
-        // The source that was pushed to is in the workspace's settings, which
-        // both portals write and every session clones from: its URL names the
-        // repository and its `token_ref` names the connection.
-        if let (Some(token_ref), Some(repo_path)) = (
-            pushed.token_ref.as_deref(),
-            crate::connectors::repo_path_of(&pushed.url),
-        ) && let Some((_, c)) = self
-            .connectors
-            .by_secret_ref(ctx, project_id, token_ref)
-            .await
+        // The project's record of its repositories names each one's
+        // connection by id; the pushed source is one of them.
+        if let Some(sources) =
+            crate::project_sources::read(self.account_management.as_ref(), ctx, project_id).await
         {
-            runs.push(refresh::run_for(
-                project_id,
-                workspace_id,
-                &repo_path,
-                &Upstream {
-                    provider: c.provider,
-                    base_url: c.base_url,
-                    secret_ref: c.secret_ref,
-                },
-            ));
-        }
-
-        // A project the portal created also records its sources in its config,
-        // with the connection by id. Read too, for a source whose settings entry
-        // carries no token reference.
-        if let Ok(entry) = self
-            .account_management
-            .get_metadata(
-                ctx,
-                project_id,
-                gts::GtsTypeId::new(refresh::PROJECT_CONFIG_TYPE),
-            )
-            .await
-        {
-            let sources = refresh::project_sources(&entry.value);
             let mut connections = std::collections::HashMap::new();
             for source in sources
                 .iter()
-                .filter(|s| refresh::same_repository(&s.clone_url, &pushed.url))
+                .filter(|s| crate::project_sources::same_repository(&s.clone_url, &pushed.url))
             {
+                let Some(connection_id) = source.connection_id else {
+                    continue;
+                };
                 if let Some((_, c)) = self
                     .connectors
-                    .nearest_by_id(ctx, project_id, source.connection_id)
+                    .nearest_by_id(ctx, project_id, connection_id)
                     .await
                 {
                     connections.insert(
