@@ -7,18 +7,28 @@
 // @cpt-dod:cpt-studiofrontend-dod-editor-session-retry:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-session-switch:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-session-address:p1
+// @cpt-flow:cpt-studiofrontend-flow-editor-bridge-open:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-answer:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-init:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-theme:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-file:p1
+// @cpt-dod:cpt-studiofrontend-dod-editor-bridge-component:p1
 
-import { apiRegistry, type FrontXApp } from '@gears-frontx/react';
+import { apiRegistry, type AuthSession, type FrontXApp } from '@gears-frontx/react';
+import { toast } from 'sonner';
 import {
   AccountsApiService,
   ConnectorsApiService,
   PROJECT_CONFIG_TYPE,
+  checkoutDirectory,
   errorMessage,
   isNotFound,
   parseProblemDetails,
   sessionSources,
   type ProjectConfig,
+  type ProjectSource,
   type SessionSource,
+  type StudioArtifact,
 } from '@constructor-studio/mfe-shared';
 import {
   StudioEventsApiService,
@@ -29,7 +39,13 @@ import {
   type StudioRunState,
   type StudioSession,
 } from '@/app/api';
+import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app/mfe/editorBridge';
+import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
 import { publishFrameUrl } from '@/app/mfe/sharedContext';
+import { readAppContext } from '@/app/slices/appContextSlice';
+import { readSessionProfile } from '@/app/slices/appSessionSlice';
+import { DEFAULT_THEME_ID } from '@/app/themes/default';
+import { LIGHT_THEME_ID } from '@/app/themes/light';
 import {
   editorSessionFailed,
   editorSessionLaunching,
@@ -44,16 +60,34 @@ const POLL_INTERVAL_MS = 2_000;
 const RECORD_DEADLINE_MS = 3 * 60_000;
 /** Consecutive reads of the run or the record that may fail (not 404) before the wait ends: ten seconds of 401, 403 or 5xx. */
 const MAX_READ_FAILURES = 5;
+/**
+ * How long the IDE in the frame may stay silent once the session is up. The
+ * backend calls a session ready when its gate takes a connection, which is
+ * before Theia is serving: a new session can show the gate's splash for tens
+ * of seconds before the IDE loads and answers.
+ */
+const ANSWER_DEADLINE_MS = 2 * 60_000;
+
+/** `space-mfe`'s entry (`src-app/mfe_packages/space-mfe/mfe.json`, checked by the tests): the one frame the editor's bridge attaches to. */
+export const EDITOR_FRAME_ENTRY =
+  'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
+
+/** The portal's light themes; the IDE has one light theme, and every other portal theme is dark there. */
+const LIGHT_THEMES: ReadonlySet<string> = new Set([DEFAULT_THEME_ID, LIGHT_THEME_ID]);
 
 export interface EditorScope {
   projectId: string | null;
   orgId: string | null;
   editor: boolean;
+  /** What the editor shows; only a file is told to the IDE. */
+  artifact: StudioArtifact | null;
 }
 
 export interface EditorSession {
   sync(scope: EditorScope): void;
   retry(): void;
+  /** `MfeHandlerIframe`'s `onFrame`: attaches the bridge to the editor's frame. */
+  frame: FrameHook;
 }
 
 type Outcome = { ready: true } | { ready: false; failure: EditorSessionFailure };
@@ -98,6 +132,15 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   let inFlight = false;
   /** Ends the wait in flight at once, closing its stream. */
   let stopWait: (() => void) | null = null;
+  /** The project's sources as last read: where each repository is checked out. */
+  let projectSources: readonly ProjectSource[] = [];
+  /** The file the editor shows, told to the IDE when it changes and to every new frame. */
+  let file: StudioArtifact | null = null;
+  /** The bridge to the editor's frame, and whether the IDE in it has answered. */
+  let bridge: ReturnType<typeof connectEditorBridge> | null = null;
+  let answered = false;
+  let answerTimer: ReturnType<typeof setTimeout> | undefined;
+  let token: string | undefined;
 
   const readCursor = async (): Promise<number | null> => {
     try {
@@ -120,7 +163,10 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     }
   };
 
-  const readSources = async (projectId: string, orgId: string): Promise<SessionSource[]> => {
+  const readSources = async (
+    projectId: string,
+    orgId: string
+  ): Promise<{ repos: SessionSource[]; sources: readonly ProjectSource[] }> => {
     const [config, connections] = await Promise.all([
       apiRegistry
         .getService(AccountsApiService)
@@ -128,7 +174,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
         .fetch(),
       apiRegistry.getService(ConnectorsApiService).connections({ tenantId: orgId }).fetch(),
     ]);
-    return sessionSources(config?.value?.sources ?? [], connections.items);
+    const sources = config?.value?.sources ?? [];
+    return { repos: sessionSources(sources, connections.items), sources };
   };
 
   /** The run on the stream from `cursor`; read every two seconds when the stream cannot answer */
@@ -257,21 +304,22 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     superseded: () => boolean
   ): Promise<Launched | null> => {
     const cursor = await readCursor();
-    let repos: SessionSource[];
+    let read: Awaited<ReturnType<typeof readSources>>;
     try {
-      repos = await readSources(projectId, orgId);
+      read = await readSources(projectId, orgId);
     } catch (error) {
       // A session launched without its sources would be reused as it is.
       console.warn('[editor-session] sources unreadable:', errorMessage(error));
       return { ready: false, failure: { kind: 'sources' } };
     }
     if (superseded()) return null;
+    projectSources = read.sources;
 
     let session: StudioSession;
     try {
       // @cpt-dod:cpt-studiofrontend-dod-editor-session-per-project:p1
       // The session is the project's (backend, 2026-09-29): its tenant id is the workspace id.
-      session = await sessions().launch.fetch({ workspace_id: projectId, repos });
+      session = await sessions().launch.fetch({ workspace_id: projectId, repos: read.repos });
     } catch (error) {
       return { ready: false, failure: launchRefusal(error) };
     }
@@ -294,33 +342,163 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     const mine = generation;
     const superseded = (): boolean => generation !== mine;
     inFlight = true;
-    // Drawn at once only when somebody is waiting on an answer: a live session never flashes it.
+    // Drawn at once only when somebody is waiting on an answer; otherwise from the address on, until the IDE answers.
     if (retrying || readEditorSession(app).phase === 'failed') dispatch(editorSessionLaunching());
     try {
       const outcome = await reuseOrLaunch(projectId, orgId, retrying, superseded);
       if (!outcome || superseded()) return;
       if (outcome.ready) {
         publishFrameUrl(app, outcome.url);
-        dispatch(editorSessionReady());
+        // Up for the backend; ready once the IDE in the frame says so.
+        awaitAnswer();
       } else {
+        clearAnswerTimer();
         dispatch(editorSessionFailed(outcome.failure));
       }
     } catch (error) {
       // The portal's own fault — a bug, a malformed answer — not the backend giving up.
       console.error('[editor-session] launch failed:', error);
-      if (!superseded()) dispatch(editorSessionFailed({ kind: 'unexpected' }));
+      if (!superseded()) {
+        clearAnswerTimer();
+        dispatch(editorSessionFailed({ kind: 'unexpected' }));
+      }
     } finally {
       if (!superseded()) inFlight = false;
     }
   };
 
+  const clearAnswerTimer = (): void => clearTimeout(answerTimer);
+
+  const armAnswerTimer = (): void => {
+    clearAnswerTimer();
+    answerTimer = setTimeout(() => {
+      // A launch in flight speaks for itself, and waits again once it publishes.
+      if (answered || inFlight) return;
+      dispatch(editorSessionFailed({ kind: 'unanswered' }));
+    }, ANSWER_DEADLINE_MS);
+  };
+
+  // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-3
+  /** Launching until the IDE in the frame answers; the bridge keeps asking, so a late answer still wins. */
+  const awaitAnswer = (): void => {
+    if (answered) {
+      dispatch(editorSessionReady());
+      return;
+    }
+    dispatch(editorSessionLaunching());
+    // Nobody waits on a hidden editor: coming back mounts a frame, and the frame arms its own.
+    if (readEditorSession(app).shown) armAnswerTimer();
+  };
+  // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-3
+
   const abandon = (): void => {
     generation += 1;
     inFlight = false;
     stopWait?.();
+    clearAnswerTimer();
   };
 
-  const sync = ({ projectId, orgId, editor }: EditorScope): void => {
+  /** Without its directory the IDE looks in every root and one level below, and the first match wins. */
+  const openMessage = (artifact: StudioArtifact): EditorMessage => {
+    const directory = checkoutDirectory(projectSources, artifact.repository);
+    return { type: 'studio.openInEditor', path: directory ? `${directory}/${artifact.path}` : artifact.path };
+  };
+
+  // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
+  const showFile = (artifact: StudioArtifact | null): void => {
+    const next = artifact?.kind === 'file' && artifact.path ? artifact : null;
+    if (next?.repository === file?.repository && next?.path === file?.path) return;
+    file = next;
+    if (next) bridge?.post(openMessage(next));
+  };
+  // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
+
+  /**
+   * Who the IDE is working for, and what to call the workspace: an empty name
+   * would rename it "workspace". Read when a message goes out: the profile is
+   * in the store long before an IDE answers (bootstrap reads it), and one that
+   * came later would reach the IDE with the next token.
+   */
+  const person = () => {
+    const profile = readSessionProfile(app);
+    return {
+      viewer: profile ? { sub: profile.id, name: profile.displayName, email: profile.email, kind: 'person' as const } : undefined,
+      workspaceName: readAppContext(app).project?.name || undefined,
+    };
+  };
+
+  const theme = (): EditorTheme => (LIGHT_THEMES.has(app.themeRegistry.getCurrent()?.id ?? '') ? 'light' : 'dark');
+
+  const adoptToken = (session: AuthSession | null | undefined): void => {
+    const next = session?.kind === 'bearer' ? session.token : undefined;
+    if (next === token) return;
+    token = next;
+    // With the viewer, always: a token without one makes the IDE forget who is at the keyboard.
+    // A session that ends is not told: the bridge has no message that takes a token back, and the
+    // sign-in screen that follows replaces the shell, the frame with it.
+    if (next) bridge?.post({ type: 'studio.token', apiToken: next, ...person() });
+  };
+
+  // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-4
+  const frame: FrameHook = (element, entry) => {
+    if (entry.id !== EDITOR_FRAME_ENTRY) return undefined;
+    bridge?.dispose();
+    answered = false;
+    const mine = connectEditorBridge(element, {
+      init: () => ({
+        theme: theme(),
+        workspaceId: project ?? '',
+        ...(token ? { apiToken: token } : {}),
+        ...person(),
+      }),
+      // A disposed bridge reports nothing, so these come from the current frame only.
+      onAnswer: () => {
+        answered = true;
+        clearAnswerTimer();
+        dispatch(editorSessionReady());
+      },
+      onReload: () => {
+        answered = false;
+        dispatch(editorSessionLaunching());
+        armAnswerTimer();
+      },
+      onOpenComponent: () => {
+        // TODO(#583): open the component's page once the portal has one.
+        toast.info(app.i18nRegistry.t('shell:editor_component_unavailable'));
+      },
+    });
+    bridge = mine;
+    if (file) mine.post(openMessage(file));
+    const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.post({ type: 'studio.theme', theme: theme() }));
+    // Every renewal; the read only until one is heard, and only for this frame.
+    let heard = false;
+    const unsubscribeAuth = app.auth?.subscribe?.((event) => {
+      heard = true;
+      adoptToken(event.state === 'authenticated' ? event.session : null);
+    });
+    void app.auth?.getSession().then(
+      (session) => {
+        if (!heard && bridge === mine) adoptToken(session);
+      },
+      (error: unknown) => console.warn('[editor-session] no session for the editor:', errorMessage(error))
+    );
+    // A frame that has just been made has not answered yet.
+    dispatch(editorSessionLaunching());
+    armAnswerTimer();
+
+    return () => {
+      unsubscribeTheme();
+      unsubscribeAuth?.();
+      mine.dispose();
+      if (bridge !== mine) return;
+      bridge = null;
+      answered = false;
+      clearAnswerTimer();
+    };
+  };
+  // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-4
+
+  const sync = ({ projectId, orgId, editor, artifact }: EditorScope): void => {
     if (projectId !== project) {
       if (project !== null) publishFrameUrl(app, null);
       abandon();
@@ -335,6 +513,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       entered = false;
       return;
     }
+    showFile(artifact);
     if (entered || !projectId || !orgId) return;
     entered = true;
     if (!inFlight) void launch(projectId, orgId, false);
@@ -342,8 +521,10 @@ export function createEditorSession(app: FrontXApp): EditorSession {
 
   const retry = (): void => {
     if (!project || !org || inFlight) return;
+    // A new frame for whatever comes back: the one that failed may hold an IDE that never answered.
+    publishFrameUrl(app, null);
     void launch(project, org, true);
   };
 
-  return { sync, retry };
+  return { sync, retry, frame };
 }
