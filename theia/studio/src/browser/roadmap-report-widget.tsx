@@ -9,14 +9,14 @@ import { FileService } from '@theia/filesystem/lib/browser/file-service';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { demandText, gradeTone } from './components-reference-model';
 import { ComponentsReferenceContribution } from './components-reference-contribution';
-import { RoadmapReport, groupAxes, loadRoadmapReport, reportSheets, workbookName } from './roadmap-report-model';
-import { makeXlsx } from './xlsx';
+import { RoadmapReport, groupAxes, loadRoadmapReport, loadRoadmapWorkbook, workbookName } from './roadmap-report-model';
 
 /*
  * The roadmap report in the IDE: every component the roadmap board plans,
  * whether its plan holds, and who is waiting for it -- the platform team's
- * spreadsheet, answered by the catalogue. "Save as workbook" writes the same
- * report as an .xlsx (Roadmap and Summary sheets) wherever the person picks,
+ * spreadsheet, answered by the catalogue. "Save as workbook" saves that
+ * spreadsheet itself -- Summary, Roadmap, Gantt, People, a sheet per group and
+ * ALL, as the backend writes it -- wherever the person picks,
  * through Theia's save dialog, so it works the same in the portal's session
  * and on the desktop. A component's name opens it in the components reference.
  */
@@ -75,7 +75,7 @@ export class RoadmapReportWidget extends ReactWidget {
         this.update();
     }
 
-    protected async save(report: RoadmapReport): Promise<void> {
+    protected async save(_report: RoadmapReport): Promise<void> {
         const asOf = new Date().toISOString().slice(0, 10);
         const uri = await this.fileDialogs.showSaveDialog(
             { title: 'Save the roadmap report', inputValue: workbookName(asOf), filters: { 'Excel workbook': ['xlsx'] } },
@@ -87,8 +87,13 @@ export class RoadmapReportWidget extends ReactWidget {
         this.saving = true;
         this.update();
         try {
-            await this.files.writeFile(uri, BinaryBuffer.wrap(makeXlsx(reportSheets(report, asOf))));
-            this.messages.info(`Saved the roadmap report to ${uri.path.base}.`);
+            const load = await loadRoadmapWorkbook(asOf);
+            if (load.kind === 'error') {
+                this.messages.error(load.message);
+                return;
+            }
+            await this.files.writeFile(uri, BinaryBuffer.wrap(load.bytes));
+            this.messages.info(`Saved the roadmap workbook to ${uri.path.base}.`);
         } catch (e) {
             this.messages.error(`Could not save the roadmap report: ${e instanceof Error ? e.message : String(e)}`);
         } finally {

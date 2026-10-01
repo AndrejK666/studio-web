@@ -135,6 +135,14 @@ pub struct RoadmapSource {
     /// gear.
     #[serde(default)]
     pub roots: Vec<String>,
+    /// Who works on the board's gears and who needs them: teams, people and
+    /// their power, swimlanes, consumer projects -- the planning team's
+    /// `gears.yaml`, kept as its text because its order is part of it (the
+    /// column, lane and People order), and JSON keeps none. What the
+    /// workbook's Gantt, People and project columns are drawn from; absent
+    /// keeps what the last sync stored.
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 /// Which of a board's columns answer which question. Every one optional: the
@@ -195,6 +203,13 @@ pub struct RoadmapItem {
     pub parent: Option<u64>,
     /// Read from a root's sub-issues rather than from the board.
     pub off_board: bool,
+    /// The issue's type (`Feature`).
+    pub kind: Option<String>,
+    /// The `**Name**: value` lines of the issue body the planning team keeps
+    /// a gear's card in (`Description`, `Is Plugin`, …), by field.
+    pub card: BTreeMap<String, String>,
+    /// The issues this one is blocked by.
+    pub blocked_by: Vec<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -224,12 +239,14 @@ impl FieldValue {
 // ── reading a board ─────────────────────────────────────────────────────────
 
 /// What is read of an issue, on the board and under a root alike.
-const ISSUE_CONTENT: &str = "number title url state assignees(first:10){nodes{login}} milestone{title dueOn} parent{number}";
+const ISSUE_CONTENT: &str = "number title url state body assignees(first:10){nodes{login}} milestone{title dueOn} parent{number}";
 
 /// The issue's own fields -- GitHub's issue fields, where the platform team
-/// keeps the effort estimate. Asked separately so a host without them (an
-/// older GitHub Enterprise) still answers the rest.
-const ISSUE_FIELDS: &str = "issueFieldValues(first:50){nodes{__typename \
+/// keeps the effort estimate -- with its type and what blocks it, the other
+/// two things only a recent host answers. Asked separately so a host without
+/// them (an older GitHub Enterprise) still answers the rest.
+const ISSUE_FIELDS: &str = "issueType{name} blockedBy(first:50){nodes{number}} \
+issueFieldValues(first:50){nodes{__typename \
 ... on IssueFieldNumberValue{value field{... on IssueFieldNumber{name}}} \
 ... on IssueFieldTextValue{value field{... on IssueFieldText{name}}} \
 ... on IssueFieldSingleSelectValue{value field{... on IssueFieldSingleSelect{name}}} \
@@ -281,9 +298,11 @@ fn refused_issue_fields(reply: &Value) -> bool {
         .and_then(Value::as_array)
         .is_some_and(|errors| {
             errors.iter().any(|e| {
-                e.get("message")
-                    .and_then(Value::as_str)
-                    .is_some_and(|m| m.contains("issueFieldValues") || m.contains("IssueField"))
+                e.get("message").and_then(Value::as_str).is_some_and(|m| {
+                    ["issueFieldValues", "IssueField", "issueType", "blockedBy"]
+                        .iter()
+                        .any(|f| m.contains(f))
+                })
             })
         })
 }
@@ -532,6 +551,24 @@ fn issue_item(content: &Value, parent: Option<u64>, off_board: bool) -> RoadmapI
         fields: BTreeMap::new(),
         parent: parent.or_else(|| content.pointer("/parent/number").and_then(Value::as_u64)),
         off_board,
+        kind: s(content, "/issueType/name").filter(|k| !k.is_empty()),
+        card: card_of(
+            content
+                .get("body")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+        blocked_by: {
+            let mut out: Vec<u64> = Vec::new();
+            for n in array(content, "/blockedBy/nodes") {
+                if let Some(number) = n.get("number").and_then(Value::as_u64)
+                    && !out.contains(&number)
+                {
+                    out.push(number);
+                }
+            }
+            out
+        },
     };
     for fv in array(content, "/issueFieldValues/nodes") {
         let Some(field) = s(fv, "/field/name") else {
@@ -552,6 +589,37 @@ fn issue_item(content: &Value, parent: Option<u64>, off_board: bool) -> RoadmapI
         }
     }
     item
+}
+
+/// The card the planning team keeps in an issue body, one `**Name**: value`
+/// line per field. Only the four fields the card has; the rest of the body is
+/// prose, not data, and is not kept.
+pub fn card_of(body: &str) -> BTreeMap<String, String> {
+    const FIELDS: [(&str, &str); 5] = [
+        ("description", "Description"),
+        ("is plugin", "Is Plugin"),
+        ("has plugins", "Has Plugins"),
+        ("has extension points", "Has Extension Point"),
+        ("has extension point", "Has Extension Point"),
+    ];
+    let mut out = BTreeMap::new();
+    for line in body.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("**") else {
+            continue;
+        };
+        let Some((name, tail)) = rest.split_once("**") else {
+            continue;
+        };
+        let Some(value) = tail.trim_start().strip_prefix(':') else {
+            continue;
+        };
+        let name = name.trim().to_lowercase();
+        if let Some((_, field)) = FIELDS.iter().find(|(k, _)| *k == name) {
+            out.insert((*field).to_string(), value.trim().to_string());
+        }
+    }
+    out
 }
 
 /// Fold one GraphQL page of `projectV2` into `board`; the next cursor, if any.
@@ -1242,6 +1310,39 @@ pub fn item_node_value(
         "board_title": title,
         "components": components,
         "auto": Value::Object(fields),
+        "sheet": sheet_of(item),
+    })
+}
+
+/// The item as the board says it, before any of it is interpreted: every
+/// field's value under the board's own column name, the milestone's title,
+/// the issue's type, card and blockers. What the roadmap workbook is drawn
+/// from, so it reads a board the way the planning team's sheet does.
+pub fn sheet_of(item: &RoadmapItem) -> Value {
+    let fields: Map<String, Value> = item
+        .fields
+        .iter()
+        .map(|(k, v)| {
+            let value = match v {
+                FieldValue::Number(n) => json!(n),
+                FieldValue::Text(s) | FieldValue::Date(s) => json!(s),
+            };
+            (k.clone(), value)
+        })
+        .collect();
+    json!({
+        "type": item.kind,
+        // The board's Milestone column, which an issue off the board has no
+        // cell in: the planning sheet leaves it empty (and the gear in the
+        // backlog) rather than read the issue's own.
+        "milestone": item
+            .milestone
+            .as_ref()
+            .filter(|_| !item.off_board)
+            .map(|m| m.title.clone()),
+        "fields": fields,
+        "card": item.card,
+        "blocked_by": item.blocked_by,
     })
 }
 

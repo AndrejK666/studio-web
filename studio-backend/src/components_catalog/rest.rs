@@ -609,12 +609,27 @@ pub struct RoadmapSourceDto {
     /// The issues whose direct sub-issues are the gears: `owner/repo#123`, or
     /// `123` for an issue on the board. Omitted: every board item is a gear.
     pub roots: Option<Vec<String>>,
+    /// The board's plan -- teams, people and their power, swimlanes, consumer
+    /// projects -- as the planning team's `gears.yaml` text. Omitted keeps
+    /// the plan the last sync stored.
+    pub plan_yaml: Option<String>,
 }
 
 impl RoadmapSourceDto {
-    fn into_source(self) -> RoadmapSource {
+    fn into_source(self) -> Result<RoadmapSource, String> {
         let named = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        RoadmapSource {
+        let plan = match self.plan_yaml.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(text) => {
+                let plan = super::roadmap_plan::parse(text)
+                    .map_err(|e| format!("the roadmap plan is not YAML: {e}"))?;
+                if !plan.is_mapping() {
+                    return Err("the roadmap plan is not a mapping".to_string());
+                }
+                Some(text.to_string())
+            }
+        };
+        Ok(RoadmapSource {
             tenant: self.tenant,
             connection_id: self.connection_id,
             owner: self.owner.trim().to_string(),
@@ -633,7 +648,8 @@ impl RoadmapSourceDto {
                 .map(|r| r.trim().to_string())
                 .filter(|r| !r.is_empty())
                 .collect(),
-        }
+            plan,
+        })
     }
 }
 
@@ -651,7 +667,7 @@ pub struct SyncRequestDto {
 }
 
 impl SyncRequestDto {
-    fn into_sources(self, default_keyword: &str) -> SyncSources {
+    fn into_sources(self, default_keyword: &str) -> Result<SyncSources, String> {
         let repos: Vec<RepoSource> = self
             .repositories
             .unwrap_or_default()
@@ -671,7 +687,7 @@ impl SyncRequestDto {
             .into_iter()
             .filter(|r| !r.owner.trim().is_empty())
             .map(RoadmapSourceDto::into_source)
-            .collect();
+            .collect::<Result<_, _>>()?;
         let crates_io = match self.crates_io {
             Some(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
             Some(_) => None,
@@ -683,11 +699,11 @@ impl SyncRequestDto {
                 }
             }
         };
-        SyncSources {
+        Ok(SyncSources {
             crates_io,
             repos,
             roadmaps,
-        }
+        })
     }
 }
 
@@ -705,7 +721,13 @@ async fn sync(
 ) -> ApiResult<JsonBody<CatalogSyncEnqueued>> {
     let queue = catalog.queue()?;
     let sources = match body {
-        Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
+        Some(Json(req)) => req
+            .into_sources(catalog.service.default_keyword())
+            .map_err(|e| {
+                StudioComponentsCatalogError::invalid_argument()
+                    .with_constraint(e)
+                    .create()
+            })?,
         None => SyncSources {
             crates_io: Some(catalog.service.default_keyword().to_string()),
             ..SyncSources::default()
@@ -1668,6 +1690,59 @@ async fn roadmap_report(
         })
         .collect();
     Ok(Json(super::roadmap_report::build(&views, &planned)))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct WorkbookQuery {
+    /// The day the workbook is drawn as of (`YYYY-MM-DD`); today when absent.
+    #[serde(default)]
+    pub date: Option<String>,
+}
+
+/// GET /studio-components-catalog/v1/roadmap-report/workbook — the planning
+/// team's roadmap workbook, as an `.xlsx`.
+async fn roadmap_workbook(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<WorkbookQuery>,
+) -> ApiResult<Response> {
+    let today = match query
+        .date
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
+        None => time::OffsetDateTime::now_utc().date(),
+        Some(d) => time::Date::parse(d, &time::format_description::well_known::Iso8601::DATE)
+            .map_err(|e| {
+                StudioComponentsCatalogError::invalid_argument()
+                    .with_field_violation("date", format!("not a YYYY-MM-DD date: {e}"), "INVALID")
+                    .create()
+            })?,
+    };
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let planned = catalog.service.list_planned(&ctx).await.map_err(internal)?;
+    let plan = catalog
+        .service
+        .roadmap_plan(&ctx)
+        .await
+        .map_err(internal)?
+        .map(|text| super::roadmap_plan::Plan::from_yaml(&text))
+        .unwrap_or_default();
+    let bytes = super::roadmap_workbook::build(&planned, &plan, today);
+    let name = format!("back_roadmap_{today}.xlsx");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())
 }
 
 // ── the components reference ─────────────────────────────────────────────────
@@ -3196,6 +3271,26 @@ pub fn register_routes(
             StatusCode::OK,
             "The roadmap report",
         )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/roadmap-report/workbook")
+        .operation_id("studio_components_catalog.get_roadmap_workbook")
+        .summary("The roadmap workbook: the planning team's back_roadmap spreadsheet")
+        .description(
+            "The roadmap board's gears as the planning team's `back_roadmap.xlsx` lays them              out: Summary (per group, as formulas over the group sheets), Roadmap (the groups              as swimlanes over the next nine months, a box per gear at its milestone), Gantt              (each team's remaining work scheduled against its people and power, blockers              first), People, a sheet per group and ALL -- with the forecast each gear's              schedule gives it and every cell the planning sheet colours. Drawn from the gears              the last sync stored and the plan (`plan_yaml`) it was handed; `date` sets the              day it is drawn as of.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(roadmap_workbook)
+        .text_response(
+            StatusCode::OK,
+            "The workbook",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

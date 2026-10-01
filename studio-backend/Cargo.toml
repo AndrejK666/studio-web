@@ -83,6 +83,10 @@ serde_json = "1"
 # (studio-domain-model). Already in the lockfile as a transitive dependency.
 json-patch = "4"
 serde_yaml = "0.9"
+# The roadmap workbook is an .xlsx -- a zip of deflated XML parts. Both are
+# already in the lockfile as transitive dependencies.
+flate2 = "1"
+crc32fast = "1"
 tokio-postgres = "0.7"
 inventory = "0.3"
 tracing = "0.1"
