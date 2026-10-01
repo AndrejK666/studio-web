@@ -150,9 +150,6 @@ impl TaskQueue for TaskService {
         match TaskService::get(self, &ctx, tenant, run).await? {
             Some(row) => Ok(Some(RunView {
                 state: RunState::parse(&row.state)?,
-                payload: row.payload,
-                progress: row.progress,
-                summary: row.summary,
                 result: row.result,
                 last_error: row.last_error,
             })),
@@ -213,12 +210,6 @@ pub fn platform_schedules() -> Vec<PlatformSchedule> {
 #[derive(Debug, Clone)]
 pub struct RunView {
     pub state: RunState,
-    /// What the handler was given.
-    pub payload: serde_json::Value,
-    /// The phase it last reported.
-    pub progress: Option<String>,
-    /// One line for a person, once it succeeded.
-    pub summary: Option<String>,
     /// The handler's structured result, where it has one.
     pub result: Option<serde_json::Value>,
     pub last_error: Option<String>,

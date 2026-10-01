@@ -28,7 +28,7 @@ feature it falls back to an in-memory store, so the catalogue still works.
 
 | Method + path | Does |
 |---|---|
-| `POST /sync` → `GET /tasks/{id}` | refresh the catalogue from crates.io, then poll |
+| `POST /sync` → `GET /studio-tasks/v1/runs/{id}` | refresh the catalogue from crates.io, then poll the run |
 | `GET /components`, `GET /versions` | the catalogue itself |
 | `GET /reference` | the catalogue joined with the Gearbox engine's gears, one entry per component — the IDE's Components view ([`reference.rs`](reference.rs)), with each gear's readiness and grade; `?include=all` adds what is not a component, with the reason |
 | `GET /component-values` | each component's resolved profile values, and its quality grade ([`quality.rs`](quality.rs)) |

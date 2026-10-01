@@ -291,7 +291,7 @@ Definitions of Done, which are traced.
 2. [x] - `p1` - **IF** a source's connection cannot be resolved - `inst-2`
    1. [x] - `p1` - Record that repository as unsyncable and continue with the rest - `inst-3`
 3. [x] - `p1` - `API: POST /cf/studio-artifact-ingest/v1/sync (provider, base_url, secret_ref, repo_full_path, project, workspace)` for each source, a bounded number at a time - `inst-4`
-4. [x] - `p1` - `API: GET /cf/studio-artifact-ingest/v1/tasks/{id}` for the tasks not yet settled, on an interval - `inst-5`
+4. [x] - `p1` - `API: GET /cf/studio-tasks/v1/runs/{id}` for the runs not yet settled, on an interval - `inst-5`
 5. [x] - `p1` - Report each task's stored count onward, so a reader can tell that what is queryable has grown - `inst-6`
    1. [x] - `p1` - **IF** it has grown, the read that displays it re-issues itself; the import does not reach into its cache - `inst-7`
 6. [x] - `p1` - **IF** the gear no longer knows a task, or three polls in a row go unanswered - `inst-8`
@@ -622,7 +622,7 @@ the tasks run on. Every poll asks the gear, never the shared fetch cache.
 - `cpt-studiofrontend-algo-project-artifacts-sync`
 
 **Touches**:
-- API: `POST /cf/studio-artifact-ingest/v1/sync`, `GET /cf/studio-artifact-ingest/v1/tasks/{id}`
+- API: `POST /cf/studio-artifact-ingest/v1/sync`, `GET /cf/studio-tasks/v1/runs/{id}`
 - Entities: `artifactEffects`, `artifactSync`, `artifactSyncSlice`
 
 ### A first import is recognised from data

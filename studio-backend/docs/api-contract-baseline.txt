@@ -154,15 +154,12 @@ list-envelope	GET /studio-user/v1/organizations/{org_id}/invitations
 list-envelope	GET /studio-user/v1/users/{user_id}/memberships
 list-envelope	POST /studio-artifact-ingest/v1/search
 
-# --- local-task-endpoint (4) ---------------------------------------------------
+# --- local-task-endpoint (1) ---------------------------------------------------
 # Rule D2. A private background-status endpoint beside studio-tasks.
 # Each is a second vocabulary for the frontend to learn for the same thing.
 local-task-endpoint	GET /spec-quality/v1/tasks/{task_id}
-local-task-endpoint	GET /studio-artifact-ingest/v1/tasks/{id}
-local-task-endpoint	GET /studio-components-catalog/v1/tasks/{id}
-local-task-endpoint	GET /studio-connector/v1/graph-sync/tasks/{task_id}
 
-# --- op-id-verb (36) ---------------------------------------------------
+# --- op-id-verb (33) ---------------------------------------------------
 # Rule A2. The operation_id does not start with a verb from the closed
 # list. Two kinds: a synonym of a lifecycle verb (`save`/`set`/`put`/`edit` for
 # update or upsert, `add` for create, `remove` for delete) and a bare noun
@@ -173,9 +170,6 @@ op-id-verb	DELETE /studio-kits/v1/projects/{project_id}/installations/{kit_slug}
 op-id-verb	GET /spec-quality/v1/health
 op-id-verb	GET /spec-quality/v1/status
 op-id-verb	GET /studio-artifact-ingest/v1/repo-files
-op-id-verb	GET /studio-artifact-ingest/v1/tasks/{id}
-op-id-verb	GET /studio-components-catalog/v1/tasks/{id}
-op-id-verb	GET /studio-connector/v1/graph-sync/tasks/{task_id}
 op-id-verb	GET /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/stage-status
 op-id-verb	GET /studio-domain-model/v1/model/graph
 op-id-verb	GET /studio-domain-model/v1/objects/graph

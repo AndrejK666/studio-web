@@ -166,9 +166,10 @@ commits and files into the artifact graph. Two things are worth knowing:
   read is answered on that request.
 - **Its counts tick up while it runs.** The pipeline reports every phase with
   the counts so far, and those land in the run's `result` — the same field the
-  final counts land in, in the same shape. That is what
-  `GET /studio-artifact-ingest/v1/tasks/{id}` reads, so the portal's existing
-  poll shows live progress exactly as it did.
+  final counts land in, in the same shape. A poll of
+  `GET /studio-tasks/v1/runs/{id}` therefore shows live progress; there is no
+  second, gear-local poll route (the ingest, catalog and graph-sync ones were
+  removed as rule D2 asks).
 
 `catalog.sync` reads crates.io and the gear repositories into the catalog
 graph. One partition key (`catalog`) for the whole gear: two syncs at once

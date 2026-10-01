@@ -1,12 +1,12 @@
 //! REST surface for the gears catalog.
 //!
 //! `POST /studio-components-catalog/v1/sync` enqueues a background sync of the
-//! crates.io keyword into the graph and returns a task id; `GET /tasks/{id}`
-//! polls it. `GET /gears` and `GET /versions` read the catalog back.
+//! crates.io keyword into the graph and returns a task id. `GET /gears` and
+//! `GET /versions` read the catalog back.
 //!
 //! The sync is a `catalog.sync` run on `studio-tasks`, so the task id is a run
-//! id and `GET /studio-tasks/v1/runs/{task_id}` answers the same question with
-//! more detail. The response shapes here are unchanged.
+//! id and `GET /studio-tasks/v1/runs/{task_id}` is how it is polled; its
+//! `result` carries the gear, version and stored counts as they tick up.
 
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
 use super::reference::ComponentReferenceListDto;
 use super::roadmap::{RoadmapFields, RoadmapSource};
 use super::roadmap_report::RoadmapReportDto;
-use super::service::{CatalogCounts, CatalogService, RepoSource, SyncSources};
+use super::service::{CatalogService, RepoSource, SyncSources};
 use super::sync_task::TASK_TYPE;
 use uuid::Uuid;
 
@@ -118,26 +118,10 @@ impl LicenseFeature for License {}
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct CatalogSyncEnqueued {
-    /// Poll `GET /studio-components-catalog/v1/tasks/{task_id}` for the outcome.
+    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}` for the
+    /// outcome; its `result` carries the counts as they tick up.
     pub task_id: String,
     pub status: String,
-}
-
-/// The state of a background catalog sync task.
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct CatalogTaskStatusResponse {
-    /// The run id. `GET /studio-tasks/v1/runs/{task_id}` has the full record.
-    pub task_id: String,
-    /// `queued` | `running` | `succeeded` | `failed` | `cancelled`.
-    pub status: String,
-    /// Current phase while running, or the error message on failure.
-    pub message: Option<String>,
-    /// Live counts, updated per gear while running.
-    pub gears: u32,
-    pub versions: u32,
-    /// Nodes already flushed to the graph store.
-    pub stored: u32,
 }
 
 /// One catalog node (gear or crate_version).
@@ -758,47 +742,6 @@ async fn sync(
     Ok(Json(CatalogSyncEnqueued {
         task_id: run_id.to_string(),
         status: "queued".to_string(),
-    }))
-}
-
-/// The state of one background catalog sync.
-///
-/// Served from the `catalog.sync` run rather than from a registry of this
-/// gear's own: same response shape, but it survives a restart and the counts
-/// come from the run's `result` — which the sync updates per phase, so they
-/// tick up while it works.
-async fn task_status(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(catalog): Extension<Catalog>,
-    Path(id): Path<String>,
-) -> ApiResult<JsonBody<CatalogTaskStatusResponse>> {
-    let queue = catalog.queue()?;
-    let not_found = || {
-        StudioComponentsCatalogError::not_found("no such sync task")
-            .with_resource(id.clone())
-            .create()
-    };
-    // Task ids used to be this gear's own strings; they are run ids now, and an
-    // unparseable one is simply not a task this deployment has.
-    let run_id = Uuid::parse_str(&id).map_err(|_| not_found())?;
-    let run = queue
-        .run(ctx.subject_tenant_id(), run_id)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .ok_or_else(not_found)?;
-
-    let counts = CatalogCounts::of_result(run.result);
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    Ok(Json(CatalogTaskStatusResponse {
-        task_id: id,
-        status: run.state.as_str().to_string(),
-        // What it did if it finished, why it stopped if it failed, where it is
-        // if it is still going — in that order of usefulness to whoever is
-        // polling.
-        message: run.summary.or(run.last_error).or(run.progress),
-        gears: count(counts.gears),
-        versions: count(counts.versions),
-        stored: count(counts.stored),
     }))
 }
 
@@ -3135,30 +3078,6 @@ pub fn register_routes(
         .handler(sync)
         .json_response_with_schema::<CatalogSyncEnqueued>(openapi, StatusCode::OK, "Sync enqueued")
         .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    let router = OperationBuilder::get("/studio-components-catalog/v1/tasks/{id}")
-        .operation_id("studio_components_catalog.task_status")
-        .summary("Poll a background catalog sync task")
-        .description(
-            "Reports the state of a `catalog.sync` run — queued, running, \
-             succeeded or failed — with the gear, version and stored counts as \
-             they tick up. The id is a studio-tasks run id, so the same run can \
-             be cancelled or retried there.",
-        )
-        .tag("StudioComponentsCatalog")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("id", "Sync task id (a studio-tasks run id)")
-        .handler(task_status)
-        .json_response_with_schema::<CatalogTaskStatusResponse>(
-            openapi,
-            StatusCode::OK,
-            "Task status",
-        )
-        .error_401(openapi)
-        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

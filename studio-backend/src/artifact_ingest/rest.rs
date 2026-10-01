@@ -1,16 +1,17 @@
 //! REST surface for artifact ingest.
 //!
 //! `POST /studio-artifact-ingest/v1/sync` enqueues a background sync (issues,
-//! pull requests and files) and returns a task id; `GET /tasks/{id}` polls it.
+//! pull requests and files) and returns a task id.
 //!
-//! Both are served by `studio-tasks` now: the task id *is* a run id, so
-//! `GET /studio-tasks/v1/runs/{task_id}` answers the same question with more
-//! detail, and the sync survives the process that accepted it. The response
-//! shapes here are unchanged.
+//! The sync is an `artifact.ingest` run on `studio-tasks`: the task id *is* a
+//! run id, `GET /studio-tasks/v1/runs/{task_id}` is how it is polled (its
+//! `result` carries the counts per phase), and the sync survives the process
+//! that accepted it. This gear used to answer the same poll a second time
+//! under its own path.
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query};
+use axum::extract::Query;
 use axum::{Extension, Router};
 use serde_json::Value;
 use toolkit::api::canonical_prelude::*;
@@ -23,7 +24,7 @@ use uuid::Uuid;
 
 use super::graph::{NodePageQuery, PageStart};
 use super::ingest_task::{IngestPayload, TASK_TYPE};
-use super::service::{IngestService, KeptRepo, ProjectArtifact, SyncSummary};
+use super::service::{IngestService, KeptRepo, ProjectArtifact};
 use crate::pagination::{PageQuery, page_of};
 
 /// Errors attributable to an artifact-ingest resource (e.g. an unknown task).
@@ -143,7 +144,8 @@ pub struct SyncRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct SyncEnqueued {
-    /// Poll `GET /studio-artifact-ingest/v1/tasks/{task_id}` for the outcome.
+    /// A studio-tasks run id: poll `GET /studio-tasks/v1/runs/{task_id}` for the
+    /// outcome; its `result` carries the counts as they tick up.
     pub task_id: String,
     /// `queued` at enqueue time.
     pub status: String,
@@ -185,29 +187,6 @@ pub struct ReconcileResponse {
     pub nodes: usize,
     /// Document bindings dropped for those files.
     pub bindings: usize,
-}
-
-/// The state of a background sync task.
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct TaskStatusResponse {
-    /// The run id. `GET /studio-tasks/v1/runs/{task_id}` has the full record.
-    pub task_id: String,
-    /// `queued` | `running` | `succeeded` | `failed` | `cancelled`.
-    pub status: String,
-    pub repo_full_path: String,
-    /// Current phase while running, or the error message on failure.
-    pub message: Option<String>,
-    /// Live counts, updated per phase while running (not only on success) so the
-    /// portal can show progress as objects are pulled and stored.
-    pub issues: u32,
-    pub pull_requests: u32,
-    pub files: u32,
-    pub comments: u32,
-    pub commits: u32,
-    /// Nodes already flushed to the graph store so far — the objects that are
-    /// queryable right now, mid-sync.
-    pub stored: u32,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -595,51 +574,6 @@ async fn reconcile(
     }))
 }
 
-/// The state of one background sync.
-///
-/// Served from the `artifact.ingest` run rather than from a registry of this
-/// gear's own: same response shape, but it survives a restart and the counts
-/// come from the run's `result` — which the sync updates per phase, so they
-/// tick up while it works.
-async fn task_status(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(ingest): Extension<Ingest>,
-    Path(id): Path<String>,
-) -> ApiResult<JsonBody<TaskStatusResponse>> {
-    let queue = ingest.queue()?;
-    let not_found = || {
-        StudioArtifactIngestError::not_found("no such sync task")
-            .with_resource(id.clone())
-            .create()
-    };
-    // Task ids used to be this gear's own strings; they are run ids now, and an
-    // unparseable one is simply not a task this deployment has.
-    let run_id = Uuid::parse_str(&id).map_err(|_| not_found())?;
-    let run = queue
-        .run(ctx.subject_tenant_id(), run_id)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .ok_or_else(not_found)?;
-
-    let payload: Option<IngestPayload> = serde_json::from_value(run.payload).ok();
-    let counts = SyncSummary::of_result(run.result);
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    Ok(Json(TaskStatusResponse {
-        task_id: id,
-        status: run.state.as_str().to_string(),
-        repo_full_path: payload.map(|p| p.repo_full_path).unwrap_or_default(),
-        // What it did if it finished, why it stopped if it failed, where it is
-        // if it is still going — in that order of usefulness to whoever is
-        // polling.
-        message: run.summary.or(run.last_error).or(run.progress),
-        issues: count(counts.issues),
-        pull_requests: count(counts.pull_requests),
-        files: count(counts.files),
-        comments: count(counts.comments),
-        commits: count(counts.commits),
-        stored: count(counts.stored),
-    }))
-}
 async fn list_nodes(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
@@ -1184,25 +1118,6 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    let router = OperationBuilder::get("/studio-artifact-ingest/v1/tasks/{id}")
-        .operation_id("studio_artifact_ingest.task_status")
-        .summary("Poll a background sync task")
-        .description(
-            "Returns the status of a sync task and its counts, which tick up per \
-             phase while it runs. 404 once the run has been pruned by the \
-             retention sweep.",
-        )
-        .tag("StudioArtifactIngest")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("id", "Sync task id (a studio-tasks run id)")
-        .handler(task_status)
-        .json_response_with_schema::<TaskStatusResponse>(openapi, StatusCode::OK, "Task status")
-        .error_401(openapi)
-        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

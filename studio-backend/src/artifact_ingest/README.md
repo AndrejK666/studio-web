@@ -135,7 +135,7 @@ back to an in-memory store so the portal still reads something back.
 | Method + path | Does |
 |---|---|
 | `POST /sync` | queue an ingest run; returns a task id that is also a `studio-tasks` run id |
-| `GET /tasks/{id}` | that run's state and counts |
+| `GET /studio-tasks/v1/runs/{id}` | that run's state, and the counts in its `result` (no route of this gear) |
 | `GET /nodes`, `GET /edges` | read back what was ingested, optionally by type |
 | `GET /repo-files` | the file side of the graph |
 | `POST /search` | retrieval over the ingested artifacts |

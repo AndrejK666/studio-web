@@ -88,7 +88,12 @@ import {
 import {
   Tile as VTile,
   ViewModePreferences,
+  usePreference,
 } from "./view-mode";
+
+/** The person's theme and language, among their other preferences. */
+const PREF_THEME = "app.theme";
+const PREF_LANGUAGE = "app.language";
 import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
@@ -1363,17 +1368,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   const [panelOpen, setPanelOpen] = useState(false);
 
   // The saved theme applies on login, not on the first visit to Profile —
-  // ProfileView only edits it.
+  // ProfileView only edits it. It is one of the person's preferences
+  // (`usePreference`), so it arrives with the rest of them.
+  const [savedTheme] = usePreference(PREF_THEME);
   useEffect(() => {
-    api
-      .userSettings(token)
-      .then((p) => {
-        if (p.theme) document.documentElement.dataset.theme = p.theme;
-      })
-      .catch(() => {
-        /* theme is cosmetic — never block the shell on it */
-      });
-  }, [token]);
+    if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  }, [savedTheme]);
 
   // Who is signed in — from the token claims (display only; the backend
   // validates). Static dev tokens are opaque → fall back to the subject id.
@@ -9277,35 +9277,27 @@ function AiKeysCard({ token }: { token: string }) {
 }
 
 function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: string }) {
-  const [theme, setTheme] = useState("light");
-  const [language, setLanguage] = useState("en");
+  // Stored with the person's other preferences (`usePreference`); the form
+  // edits a draft and Save commits it.
+  const [savedTheme, saveTheme] = usePreference(PREF_THEME, "light");
+  const [savedLanguage, saveLanguage] = usePreference(PREF_LANGUAGE, "en");
+  const [theme, setTheme] = useState(savedTheme);
+  const [language, setLanguage] = useState(savedLanguage);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error] = useState<string | null>(null);
 
-  useEffect(() => {
-    api
-      .userSettings(token)
-      .then((p) => {
-        if (p.theme) {
-          setTheme(p.theme);
-          document.documentElement.dataset.theme = p.theme;
-        }
-        if (p.language) setLanguage(p.language);
-      })
-      .catch((e) => setError(errText(e)));
-  }, [token]);
+  // The record answers a moment after mount; the draft follows it until the
+  // person starts editing.
+  useEffect(() => setTheme(savedTheme), [savedTheme]);
+  useEffect(() => setLanguage(savedLanguage), [savedLanguage]);
 
-  async function save(e: FormEvent) {
+  function save(e: FormEvent) {
     e.preventDefault();
-    setError(null);
     setSaved(false);
-    try {
-      await api.saveUserSettings(token, { theme, language });
-      document.documentElement.dataset.theme = theme;
-      setSaved(true);
-    } catch (err) {
-      setError(errText(err));
-    }
+    saveTheme(theme);
+    saveLanguage(language);
+    document.documentElement.dataset.theme = theme;
+    setSaved(true);
   }
 
   const claims = decodeJwtClaims(token);
@@ -9388,7 +9380,7 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
 
       <div className="card">
         <h2>Preferences</h2>
-        <p className="hint">Stored server-side per user (simple-user-settings gear).</p>
+        <p className="hint">Stored server-side per user, with your other Studio preferences.</p>
         <form className="inline" onSubmit={save}>
           <select value={theme} onChange={(e) => setTheme(e.target.value)}>
             <option value="light">light</option>

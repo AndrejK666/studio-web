@@ -1088,8 +1088,8 @@ pub fn register_routes(
             "Reads the repository's file tree and contributor list through this \
              connection and upserts them as typed nodes and edges; the graph \
              embeds every node on write. The import runs in the background — \
-             this returns a task id at once, poll `GET /graph-sync/tasks/{task_id}` \
-             for the phase and the outcome. Node keys are derived, so re-running \
+             this returns a task id at once — a studio-tasks run id: poll \
+             `GET /studio-tasks/v1/runs/{task_id}` for the phase and the outcome. Node keys are derived, so re-running \
              converges instead of duplicating. `wait: true` runs the import \
              inline instead and answers with the outcome, which fits the gateway \
              deadline only for small repositories.",
@@ -1106,27 +1106,6 @@ pub fn register_routes(
             "The task id to poll, or (with `wait`) the outcome",
         )
         .error_400(openapi)
-        .error_401(openapi)
-        .error_404(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    #[cfg(feature = "graph")]
-    let router = OperationBuilder::get("/studio-connector/v1/graph-sync/tasks/{task_id}")
-        .operation_id("studio_connector.graph_sync_task")
-        .summary("Poll a repository import")
-        .description(
-            "The status of a background import: `queued`, `running` (with the \
-             current phase in `message`), `succeeded` (with `outcome`) or `failed` \
-             (with the error in `message`). Tasks live in this process's memory: \
-             a restart forgets them, and an import is cheap to re-run.",
-        )
-        .tag("StudioConnectors")
-        .authenticated()
-        .require_license_features::<License>([])
-        .path_param("task_id", "Task id returned by the import call")
-        .handler(graph_sync_task)
-        .json_response_with_schema::<GraphSyncTaskDto>(openapi, StatusCode::OK, "Task status")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1231,22 +1210,6 @@ pub struct GraphSyncAcceptedDto {
     pub status: String,
     pub repo_full_path: String,
     /// Present with `wait: true`.
-    pub outcome: Option<GraphSyncResultDto>,
-}
-
-#[cfg(feature = "graph")]
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct GraphSyncTaskDto {
-    pub task_id: String,
-    #[schema(value_type = String)]
-    pub connection_id: Uuid,
-    pub repo_full_path: String,
-    /// `queued` | `running` | `succeeded` | `failed`.
-    pub status: String,
-    /// The current phase while running; the error once failed.
-    pub message: Option<String>,
-    /// What the import wrote, once succeeded.
     pub outcome: Option<GraphSyncResultDto>,
 }
 
@@ -1401,46 +1364,4 @@ fn sync_outcome_of(result: serde_json::Value) -> Option<SyncOutcome> {
     serde_json::from_value(result)
         .inspect_err(|e| tracing::warn!("studio-connector: unreadable import result: {e}"))
         .ok()
-}
-
-/// The state of one background import.
-///
-/// Served from the `connector.graph_sync` run rather than from a registry of
-/// this gear's own: the route and its response shape are unchanged, the state
-/// behind them now survives a restart. `task_id` is the run id, so
-/// `GET /studio-tasks/v1/runs/{task_id}` answers the same question with more
-/// detail.
-#[cfg(feature = "graph")]
-async fn graph_sync_task(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(graph): Extension<GraphSink>,
-    Path(task_id): Path<String>,
-) -> ApiResult<JsonBody<GraphSyncTaskDto>> {
-    let queue = graph.queue()?;
-    let not_found = || {
-        StudioConnectorError::not_found("no such import task")
-            .with_resource(task_id.clone())
-            .create()
-    };
-    // Task ids used to be this gear's own strings; they are run ids now, and an
-    // unparseable one is simply not a task this deployment has.
-    let run_id = Uuid::parse_str(&task_id).map_err(|_| not_found())?;
-    let run = queue
-        .run(ctx.subject_tenant_id(), run_id)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .ok_or_else(not_found)?;
-
-    let payload: Option<SyncPayload> = serde_json::from_value(run.payload).ok();
-    Ok(Json(GraphSyncTaskDto {
-        task_id,
-        connection_id: payload.as_ref().map_or_else(Uuid::nil, |p| p.connection_id),
-        repo_full_path: payload.map(|p| p.repo_full_path).unwrap_or_default(),
-        status: run.state.as_str().to_owned(),
-        // What it did if it finished, why it stopped if it failed, where it is
-        // if it is still going — in that order of usefulness to whoever is
-        // polling.
-        message: run.summary.or(run.last_error).or(run.progress),
-        outcome: run.result.and_then(sync_outcome_of).map(Into::into),
-    }))
 }
