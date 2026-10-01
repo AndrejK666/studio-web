@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use super::reference::{ReferenceReadinessDto, readiness_of};
+use crate::components_catalog::reference::{ReferenceReadinessDto, readiness_of};
 
 /// One gear on the board.
 #[derive(Debug, Clone, PartialEq)]
@@ -194,7 +194,9 @@ fn component_rows(components: &[ComponentValues<'_>]) -> Vec<RoadmapRowDto> {
                 c.name.to_string(),
                 title.clone(),
                 None,
-                super::roadmap::group_of(title.split_once(' ').map_or(&title[..], |(_, t)| t)),
+                crate::components_catalog::roadmap::group_of(
+                    title.split_once(' ').map_or(&title[..], |(_, t)| t),
+                ),
                 vec![c.name.to_string()],
                 false,
                 false,
@@ -475,5 +477,5 @@ fn summarize(items: &[RoadmapRowDto]) -> RoadmapSummaryDto {
 }
 
 #[cfg(test)]
-#[path = "roadmap_report_tests.rs"]
+#[path = "summary_tests.rs"]
 mod tests;

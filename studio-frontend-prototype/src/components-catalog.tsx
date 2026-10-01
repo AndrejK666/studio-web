@@ -280,41 +280,6 @@ interface Sources {
   frontx: RepoSel;
   kits: RepoSel;
   kitsPm: RepoSel;
-  roadmap: RoadmapSel;
-}
-
-/** A GitHub Project the gears are planned on. Its items give each gear a
- *  stage, a due date and the consumers waiting for it; the server reads the
- *  columns' meaning off the board, so all it needs is where the board is and
- *  what its priority letters stand for. */
-interface RoadmapSel {
-  enabled: boolean;
-  connectionId: string;
-  owner: string;
-  number: string;
-  /** `A=Acronis, C=Constructor` -- one entry per priority letter. */
-  consumers: string;
-  /** The issues whose sub-issues are the gears: `owner/repo#123`, space- or
-   *  comma-separated. Empty: every board item is a gear. */
-  roots?: string;
-  /** The planning team's `gears.yaml`, as text: teams, people and their
-   *  power, swimlanes, consumer projects. Sent with each sync; the server
-   *  keeps the last one it was given, so clearing it here keeps that. */
-  plan?: string;
-  /** The file it was read from, to show which one is loaded. */
-  planName?: string;
-}
-
-/** `A=Acronis, C=Constructor` -> `{ A: "Acronis", C: "Constructor" }`. */
-function parseConsumers(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const part of text.split(/[,;\n]/)) {
-    const [letter, ...name] = part.split("=");
-    const k = letter?.trim();
-    const v = name.join("=").trim();
-    if (k && v) out[k] = v;
-  }
-  return out;
 }
 
 /** The branches worth one click. `HEAD` is the repository's default branch —
@@ -362,18 +327,6 @@ const DEFAULT_SOURCES: Sources = {
     repo: "constructorfabric/studio-kits-pm",
     gitRef: "HEAD",
   },
-  // The platform's backend roadmap. Reading it needs a connection whose token
-  // may read organization projects (`read:project`).
-  roadmap: {
-    enabled: false,
-    connectionId: "",
-    owner: "constructorfabric",
-    number: "48",
-    consumers: "A=Acronis, C=Constructor, V=Virtuozzo",
-    // The platform team's gear roots: the workbook lists their sub-issues.
-    roots:
-      "constructorfabric/gears-rust#3342 constructorfabric/gears-rust#4507 constructorfabric/gears-rust#4336 constructorfabric/gears-rust#4810 constructorfabric/gears-rust#4811 constructorfabric/gears-rust#4812 constructorfabric/gears-rust#4813 constructorfabric/gears-rust#4814",
-  },
 };
 
 const SOURCES_KEY = "cf.components.sources";
@@ -404,23 +357,11 @@ interface RepoBody {
   mode: string;
 }
 
-interface RoadmapBody {
-  tenant: string;
-  connection_id: string | null;
-  owner: string;
-  number: number;
-  consumers: Record<string, string>;
-  /** `owner/repo#123`: the issues whose sub-issues are the gears. */
-  roots: string[];
-  /** `gears.yaml` text; null keeps the plan the server has. */
-  plan_yaml: string | null;
-}
-
 /** The POST body for /sync derived from the selection, or an error string. */
 function syncBody(
   s: Sources,
   tenantId: string | undefined,
-): { crates_io: string | null; repositories: RepoBody[]; roadmaps: RoadmapBody[] } | string {
+): { crates_io: string | null; repositories: RepoBody[] } | string {
   const crates_io = s.cratesIo ? s.keyword.trim() || "constructorfabric" : null;
   const repositories: RepoBody[] = [];
   const pairs: [string, RepoSel][] = [
@@ -441,25 +382,8 @@ function syncBody(
       mode,
     });
   }
-  const roadmaps: RoadmapBody[] = [];
-  if (s.roadmap.enabled) {
-    if (!tenantId) return "No workspace/organization in context to read connections from.";
-    const number = Number.parseInt(s.roadmap.number, 10);
-    if (!s.roadmap.owner.trim() || !Number.isFinite(number) || number <= 0)
-      return "Enter the roadmap board's owner and number.";
-    roadmaps.push({
-      tenant: tenantId,
-      connection_id: s.roadmap.connectionId || null,
-      owner: s.roadmap.owner.trim(),
-      number,
-      consumers: parseConsumers(s.roadmap.consumers),
-      roots: (s.roadmap.roots ?? "").split(/[\s,;]+/).filter(Boolean),
-      plan_yaml: s.roadmap.plan?.trim() ? s.roadmap.plan : null,
-    });
-  }
-  if (!crates_io && repositories.length === 0 && roadmaps.length === 0)
-    return "Enable at least one source.";
-  return { crates_io, repositories, roadmaps };
+  if (!crates_io && repositories.length === 0) return "Enable at least one source.";
+  return { crates_io, repositories };
 }
 
 
@@ -929,7 +853,6 @@ export function ComponentsCatalog({
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
     (sources.kits.enabled || sources.kitsPm.enabled) && "kits",
-    sources.roadmap.enabled && "roadmap",
     sources.cratesIo && "crates.io",
   ]
     .filter(Boolean)
@@ -1176,128 +1099,6 @@ function RepoSourceEditor({
   );
 }
 
-function RoadmapSourceEditor({
-  sel,
-  onChange,
-  connections,
-  tenantId,
-}: {
-  sel: RoadmapSel;
-  onChange: (patch: Partial<RoadmapSel>) => void;
-  connections: Connection[];
-  tenantId: string | undefined;
-}) {
-  return (
-    <div className="src-col">
-      <label className="src-head">
-        <input
-          type="checkbox"
-          checked={sel.enabled}
-          onChange={(e) => onChange({ enabled: e.target.checked })}
-        />
-        <span>Roadmap (GitHub Project)</span>
-      </label>
-      <div className="src-body">
-        <label className="src-row">
-          <span>Connection</span>
-          <select
-            value={sel.connectionId}
-            disabled={!sel.enabled}
-            onChange={(e) => onChange({ connectionId: e.target.value })}
-          >
-            <option value="">
-              {connections.length ? "First GitHub connection" : "No GitHub connection"}
-            </option>
-            {connections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label || c.account || c.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="src-row">
-          <span>Owner</span>
-          <input
-            placeholder="organization or user"
-            value={sel.owner}
-            disabled={!sel.enabled}
-            onChange={(e) => onChange({ owner: e.target.value })}
-          />
-        </label>
-        <label className="src-row">
-          <span>Project #</span>
-          <input
-            inputMode="numeric"
-            placeholder="48"
-            value={sel.number}
-            disabled={!sel.enabled}
-            onChange={(e) => onChange({ number: e.target.value })}
-          />
-        </label>
-        <label className="src-row">
-          <span>Consumers</span>
-          <input
-            placeholder="A=Acronis, C=Constructor"
-            value={sel.consumers}
-            disabled={!sel.enabled}
-            onChange={(e) => onChange({ consumers: e.target.value })}
-          />
-        </label>
-        <label className="src-row">
-          <span>Root issues</span>
-          <input
-            placeholder="owner/repo#3342 owner/repo#4810"
-            value={sel.roots ?? ""}
-            disabled={!sel.enabled}
-            onChange={(e) => onChange({ roots: e.target.value })}
-          />
-        </label>
-        <div className="src-row">
-          <span>Plan</span>
-          <label className="iconbtn" style={{ cursor: sel.enabled ? "pointer" : "default" }}>
-            {sel.planName ? "Replace…" : "Load gears.yaml…"}
-            <input
-              type="file"
-              accept=".yaml,.yml,text/yaml"
-              hidden
-              disabled={!sel.enabled}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                void file.text().then((plan) => onChange({ plan, planName: file.name }));
-              }}
-            />
-          </label>
-          {sel.planName && (
-            <>
-              <code title={`${sel.plan?.length ?? 0} characters`}>{sel.planName}</code>
-              <button
-                className="iconbtn"
-                disabled={!sel.enabled}
-                onClick={() => onChange({ plan: undefined, planName: undefined })}
-              >
-                Clear
-              </button>
-            </>
-          )}
-        </div>
-        <p className="src-note">
-          Every gear the board plans is listed, written or not: with root issues, a gear is a direct
-          sub-issue of one of them (off the board too); without, every item is one. A gear whose
-          code is catalogued shows its plan on that component; the title names it, or its Roadmap
-          item field pins it. Consumers name the letters of the priority column. The plan is the
-          planning team&apos;s <code>gears.yaml</code> — teams, people and power, swimlanes, consumer
-          projects — which the roadmap workbook&apos;s Gantt, People and project columns are drawn
-          from; the server keeps the last one a sync sent. The connection needs{" "}
-          <code>read:project</code>.
-          {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 /** The component kinds in the list, as a row of chips.
  *
  *  Built by `kindChips` from the same list and the same predicate the table
@@ -1379,12 +1180,6 @@ function SourcesPanel({
         note="`studio-kits-pm` — one repository, several kits: its root manifest carries a `[[kits]]` entry each, so the scan finds whatever has been added since. Competitive analysis is the one there today."
         sel={sources.kitsPm}
         onChange={(p) => setRepo("kitsPm", p)}
-        connections={connections}
-        tenantId={tenantId}
-      />
-      <RoadmapSourceEditor
-        sel={sources.roadmap}
-        onChange={(p) => setSrc({ roadmap: { ...sources.roadmap, ...p } })}
         connections={connections}
         tenantId={tenantId}
       />

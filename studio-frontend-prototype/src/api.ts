@@ -1,6 +1,7 @@
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
+import type { Report, ReportSource, ReportSourceInput } from "./reports-model";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -3288,17 +3289,6 @@ export const api = {
       token,
     ),
 
-  /** The roadmap report: every component the roadmap board plans, and the
-   *  summary per stage, milestone, consumer and plan state
-   *  (`components_catalog/roadmap_report.rs`). */
-  roadmapReport: (token: string) =>
-    request<RoadmapReport>("/studio-components-catalog/v1/roadmap-report", token),
-
-  /** The planning team's roadmap workbook as of `date` (`YYYY-MM-DD`), an
-   *  `.xlsx` the server writes (`components_catalog/roadmap_workbook.rs`). */
-  roadmapWorkbook: (token: string, date: string) =>
-    requestBlob(`/studio-components-catalog/v1/roadmap-report/workbook?date=${encodeURIComponent(date)}`, token),
-
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
     request<{ nodes: CatalogNode[]; truncated?: boolean }>(
@@ -3673,6 +3663,48 @@ export const api = {
   runScheduleNow: (token: string, scheduleId: string) =>
     request<{ run_id: string }>(
       `/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}/run-now`,
+      token,
+      { method: "POST" },
+    ),
+
+  createSchedule: (token: string, body: Record<string, unknown>) =>
+    request<TaskSchedule>("/studio-scheduler/v1/schedules", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  patchSchedule: (token: string, scheduleId: string, body: Record<string, unknown>) =>
+    request<TaskSchedule>(`/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  /* ── studio-reports gear: report definitions, sources and drawing ── */
+
+  /** Every report this deployment draws, with this organization's source. */
+  reports: (token: string) => request<{ items: Report[]; total: number }>("/studio-reports/v1/reports", token),
+
+  /** A report's data as typed JSON (for `roadmap`: one row per planned gear). */
+  reportSummary: (token: string, report: string) =>
+    request<RoadmapReport>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/summary`, token),
+
+  /** The report as of `date` (`YYYY-MM-DD`), as the `.xlsx` the server draws. */
+  exportReport: (token: string, report: string, date: string) =>
+    requestBlob(
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/workbook?date=${encodeURIComponent(date)}`,
+      token,
+    ),
+
+  updateReportSource: (token: string, report: string, body: ReportSourceInput) =>
+    request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  /** Read the plan again and sync the board: a `reports.refresh` run. */
+  syncReport: (token: string, report: string) =>
+    request<{ task_id: string; status: string }>(
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync`,
       token,
       { method: "POST" },
     ),

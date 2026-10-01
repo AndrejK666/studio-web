@@ -82,14 +82,8 @@ pub const COMPONENT_SNAPSHOT_TYPE: &str = "gts.cf.studio.catalog.component_snaps
 /// component carries the plan and this node stops being listed as one.
 pub const ROADMAP_ITEM_TYPE: &str = "gts.cf.studio.catalog.roadmap_item.v1~";
 
-/// Who plans a roadmap board's gears and who needs them: its teams, people
-/// and their power, swimlanes and consumer projects, as the planning team
-/// keeps them. One per board, keyed on the board, written by the sync that
-/// was handed it and kept until another is.
-pub const ROADMAP_PLAN_TYPE: &str = "gts.cf.studio.catalog.roadmap_plan.v1~";
-
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 10] = [
+pub const ALL_NODE_TYPES: [&str; 9] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
@@ -99,7 +93,6 @@ pub const ALL_NODE_TYPES: [&str; 10] = [
     FRONTX_TYPE,
     FIELD_SCHEMA_TYPE,
     ROADMAP_ITEM_TYPE,
-    ROADMAP_PLAN_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -179,7 +172,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 9] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -224,11 +217,6 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
         ROADMAP_ITEM_TYPE,
         "Planned gear",
         "A gear a roadmap board plans: its stage, milestone, progress and demand, and the catalogued components that implement it, if any yet.",
-    ),
-    (
-        ROADMAP_PLAN_TYPE,
-        "Roadmap plan",
-        "Who plans a roadmap board's gears and who needs them: teams, people and their power, swimlanes and consumer projects.",
     ),
 ];
 
@@ -493,15 +481,6 @@ pub fn roadmap_item_node(board: &str, key: &str, value: Value) -> GtsNode {
     GtsNode {
         type_id: ROADMAP_ITEM_TYPE,
         instance_id: roadmap_item_instance_id(board, key),
-        value,
-    }
-}
-
-/// A board's plan.
-pub fn roadmap_plan_node(board: &str, value: Value) -> GtsNode {
-    GtsNode {
-        type_id: ROADMAP_PLAN_TYPE,
-        instance_id: anon_id(&["roadmap_plan", board]),
         value,
     }
 }

@@ -560,34 +560,6 @@
     },
     {
       "method": "GET",
-      "path": "/studio-components-catalog/v1/roadmap-report",
-      "operation_id": "studio_components_catalog.get_roadmap_report",
-      "tag": "StudioComponentsCatalog",
-      "summary": "The roadmap report: what the board plans, and whether the plan holds",
-      "authenticated": true,
-      "responses": [
-        "RoadmapReportDto"
-      ],
-      "errors": [
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/studio-components-catalog/v1/roadmap-report/workbook",
-      "operation_id": "studio_components_catalog.get_roadmap_workbook",
-      "tag": "StudioComponentsCatalog",
-      "summary": "The roadmap workbook: the planning team's back_roadmap spreadsheet",
-      "authenticated": true,
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
       "path": "/studio-components-catalog/v1/types",
       "operation_id": "studio_components_catalog.list_types",
       "tag": "StudioComponentsCatalog",
@@ -1346,6 +1318,83 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports",
+      "operation_id": "studio_reports.list_reports",
+      "tag": "StudioReports",
+      "summary": "Every report this deployment draws, with its source here",
+      "authenticated": true,
+      "responses": [
+        "ReportListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}",
+      "operation_id": "studio_reports.get_report",
+      "tag": "StudioReports",
+      "summary": "One report, its definition and its source here",
+      "authenticated": true,
+      "responses": [
+        "ReportDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/source",
+      "operation_id": "studio_reports.get_report_source",
+      "tag": "StudioReports",
+      "summary": "Where the report's board and plan come from in this organization",
+      "authenticated": true,
+      "responses": [
+        "ReportSourceDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/summary",
+      "operation_id": "studio_reports.get_report_summary",
+      "tag": "StudioReports",
+      "summary": "The report's data, as typed JSON: one row per planned gear and the summary",
+      "authenticated": true,
+      "responses": [
+        "RoadmapReportDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/workbook",
+      "operation_id": "studio_reports.export_report",
+      "tag": "StudioReports",
+      "summary": "The report as a workbook: the planning team's back_roadmap spreadsheet",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -2782,6 +2831,22 @@
     },
     {
       "method": "POST",
+      "path": "/studio-reports/v1/reports/{report_id}/sync",
+      "operation_id": "studio_reports.sync_report",
+      "tag": "StudioReports",
+      "summary": "Refresh the report: read its plan again and sync its board",
+      "authenticated": true,
+      "responses": [
+        "ReportSyncEnqueued"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-scheduler/v1/schedules",
       "operation_id": "studio_scheduler.create",
       "tag": "StudioScheduler",
@@ -3282,6 +3347,24 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/source",
+      "operation_id": "studio_reports.update_report_source",
+      "tag": "StudioReports",
+      "summary": "Set where the report's board and plan come from in this organization",
+      "authenticated": true,
+      "request": "ReportSourceInputDto",
+      "responses": [
+        "ReportSourceDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

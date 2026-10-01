@@ -116,6 +116,15 @@ pub fn schemas() -> Vec<Value> {
         out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
     }
 
+    // ── studio-reports ────────────────────────────────────────────────────
+    let gear = "studio-reports";
+    for s in crate::reports::gts::type_schemas() {
+        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
+    }
+    for s in crate::reports::gts::graph_node_type_schemas() {
+        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
+    }
+
     // ── studio-documents ──────────────────────────────────────────────────
     // The one gear that logs and continues when the registry refuses a
     // document (`documents/mod.rs`): document types are also stored in its own

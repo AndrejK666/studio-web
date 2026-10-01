@@ -5,7 +5,8 @@
 //! (colour, head count, power), the people (GitHub login → team, alias,
 //! power, email) and the consumer projects with, per gear, when each needs
 //! it. None of it is on the board, and all of it is data: a sync is handed
-//! the file and stores it with the board ([`super::gts::ROADMAP_PLAN_TYPE`]).
+//! the file -- or reads it from a repository -- and keeps it on the report's
+//! source ([`crate::reports::gts::REPORT_SOURCE_TYPE`]).
 //!
 //! The lookups here are the planning script's, rule for rule: a team is
 //! found by tag or by name, a user's unit by their team, a team's power is
@@ -197,6 +198,7 @@ fn slug(name: &str) -> String {
 
 impl Plan {
     /// Read a plan from `gears.yaml`'s text; one that does not parse is empty.
+    #[cfg(test)]
     pub fn from_yaml(text: &str) -> Plan {
         parse(text)
             .map(|v| Plan::from_value(&v))

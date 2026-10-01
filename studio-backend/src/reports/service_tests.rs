@@ -1,0 +1,439 @@
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+
+use super::*;
+use crate::components_catalog::port::ComponentValues as Component;
+use crate::reports::github::FileText;
+use crate::reports::source::PlanFile;
+use crate::reports::store::MemoryStore;
+
+/// A catalogue that remembers what it was asked to sync.
+#[derive(Default)]
+struct FakeCatalog {
+    planned: Vec<Value>,
+    synced: Mutex<Vec<BoardSource>>,
+    fail: bool,
+}
+
+#[async_trait]
+impl RoadmapCatalog for FakeCatalog {
+    async fn planned(&self, _ctx: &SecurityContext) -> Result<Vec<Value>> {
+        Ok(self.planned.clone())
+    }
+    async fn components(&self, _ctx: &SecurityContext) -> Result<Vec<Component>> {
+        Ok(Vec::new())
+    }
+    async fn sync_board(&self, _ctx: &SecurityContext, board: BoardSource) -> Result<Uuid> {
+        if self.fail {
+            anyhow::bail!("studio-tasks has no database configured");
+        }
+        self.synced.lock().unwrap().push(board);
+        Ok(Uuid::from_u128(77))
+    }
+}
+
+/// A repository with one file in it.
+struct FakeRepo {
+    text: &'static str,
+    asked: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl PlanReader for FakeRepo {
+    async fn read(
+        &self,
+        _ctx: &SecurityContext,
+        _t: Uuid,
+        _c: Option<Uuid>,
+        file: &PlanFile,
+    ) -> Result<FileText> {
+        self.asked.lock().unwrap().push(file.display());
+        if file.path == "missing.yaml" {
+            anyhow::bail!("{} is not visible to this connection", file.display());
+        }
+        if file.path == "README.md" {
+            return Ok(FileText {
+                text: "# A readme
+
+prose"
+                    .into(),
+                sha: None,
+            });
+        }
+        Ok(FileText {
+            text: self.text.to_string(),
+            sha: Some("abc123".into()),
+        })
+    }
+}
+
+const PLAN: &str = "board: constructorfabric/48\nroots: [3342]\nconsumers: { A: Acronis }\nusers:\n  alice: { team: t }\n";
+
+fn ctx() -> SecurityContext {
+    crate::reports::test_ctx(0x7e4a47)
+}
+
+fn service(catalog: Arc<FakeCatalog>, repo: Option<Arc<FakeRepo>>) -> ReportsService {
+    let link: CatalogLink = Arc::new(move || Ok(Arc::clone(&catalog) as Arc<dyn RoadmapCatalog>));
+    ReportsService::new(
+        Arc::new(MemoryStore::default()),
+        link,
+        repo.map(|r| r as Arc<dyn PlanReader>),
+    )
+}
+
+fn repo() -> Arc<FakeRepo> {
+    Arc::new(FakeRepo {
+        text: PLAN,
+        asked: Mutex::new(Vec::new()),
+    })
+}
+
+#[tokio::test]
+async fn an_unsaved_source_is_an_empty_one() {
+    let s = service(Arc::default(), None);
+    let src = s.source(&ctx(), "roadmap").await.unwrap();
+    assert_eq!(src.report, "roadmap");
+    assert!(src.plan_file.is_none() && src.snapshot.is_none());
+}
+
+#[tokio::test]
+async fn an_uploaded_plan_is_its_own_snapshot() {
+    let s = service(Arc::default(), None);
+    let saved = s
+        .save_source(
+            &ctx(),
+            ReportSource {
+                report: "roadmap".into(),
+                plan_yaml: Some(PLAN.into()),
+                ..ReportSource::default()
+            },
+        )
+        .await
+        .unwrap();
+    let snap = saved.snapshot.expect("snapshot");
+    assert_eq!(snap.from, "upload");
+    assert_eq!(snap.text, PLAN.trim());
+    let (plan, parsed) = ReportsService::plan_of(&s.source(&ctx(), "roadmap").await.unwrap());
+    assert!(plan.is_some());
+    assert_eq!(parsed.users.len(), 1);
+}
+
+#[tokio::test]
+async fn a_source_that_does_not_read_is_refused_before_it_is_saved() {
+    let s = service(Arc::default(), None);
+    let err = s
+        .save_source(
+            &ctx(),
+            ReportSource {
+                report: "roadmap".into(),
+                plan_file: Some("not a file".into()),
+                ..ReportSource::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(err.contains("names no file"), "{err}");
+    assert!(
+        s.source(&ctx(), "roadmap")
+            .await
+            .unwrap()
+            .plan_file
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_refresh_reads_the_file_and_syncs_the_board_it_names() {
+    let catalog = Arc::new(FakeCatalog::default());
+    let repo = repo();
+    let s = service(Arc::clone(&catalog), Some(Arc::clone(&repo)));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("constructorfabric/cf-internal:gears/gears.yaml@main".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let r = s.refresh(&ctx(), "roadmap").await.expect("refreshed");
+    assert_eq!(r.sync_run, Some(Uuid::from_u128(77)));
+    assert_eq!(
+        *repo.asked.lock().unwrap(),
+        vec!["constructorfabric/cf-internal:gears/gears.yaml@main"]
+    );
+    let synced = catalog.synced.lock().unwrap().clone();
+    assert_eq!(synced.len(), 1);
+    assert_eq!(
+        (synced[0].owner.as_str(), synced[0].number),
+        ("constructorfabric", 48)
+    );
+    assert_eq!(synced[0].roots, vec!["3342"]);
+    assert_eq!(
+        synced[0].consumers.get("A").map(String::as_str),
+        Some("Acronis")
+    );
+    assert_eq!(synced[0].tenant, ctx().subject_tenant_id());
+    let stored = s.source(&ctx(), "roadmap").await.unwrap();
+    let snap = stored.snapshot.expect("snapshot");
+    assert_eq!(
+        (snap.from.as_str(), snap.sha.as_deref()),
+        (
+            "constructorfabric/cf-internal:gears/gears.yaml@main",
+            Some("abc123")
+        )
+    );
+    assert_eq!(
+        stored.last_refresh.and_then(|r| r.sync_run),
+        Some(Uuid::from_u128(77))
+    );
+}
+
+#[tokio::test]
+async fn a_failed_refresh_is_recorded_and_keeps_the_last_plan() {
+    let catalog = Arc::new(FakeCatalog::default());
+    let s = service(Arc::clone(&catalog), Some(repo()));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("o/r:gears.yaml".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    s.refresh(&ctx(), "roadmap").await.expect("first read");
+    // The file goes away: the refresh fails, says why, and the report is
+    // still drawn from the plan read last time.
+    let mut src = s.source(&ctx(), "roadmap").await.unwrap();
+    src.plan_file = Some("o/r:missing.yaml".into());
+    let kept = src.snapshot.clone();
+    s.store.put(&ctx(), &src).await.unwrap();
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(format!("{err:#}").contains("not visible"), "{err:#}");
+    let after = s.source(&ctx(), "roadmap").await.unwrap();
+    assert!(
+        after
+            .last_refresh
+            .as_ref()
+            .and_then(|r| r.error.as_deref())
+            .is_some_and(|e| e.contains("not visible"))
+    );
+    assert_eq!(after.snapshot, kept);
+    assert_eq!(catalog.synced.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_refresh_without_a_board_anywhere_says_so() {
+    let s = service(Arc::default(), None);
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_yaml: Some("users: {}\n".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(format!("{err:#}").contains("no board"), "{err:#}");
+}
+
+#[tokio::test]
+async fn a_file_with_no_connector_to_read_it_says_so() {
+    let s = service(Arc::default(), None);
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("o/r:p.yaml".into()),
+            board: Some("o/1".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("no GitHub connector"),
+        "{err:#}"
+    );
+}
+
+#[tokio::test]
+async fn a_changed_file_drops_the_snapshot_of_the_old_one() {
+    let s = service(Arc::default(), Some(repo()));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("o/r:a.yaml".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    s.refresh(&ctx(), "roadmap").await.unwrap();
+    // Saved again with the same file: the snapshot stays.
+    let same = s
+        .save_source(
+            &ctx(),
+            ReportSource {
+                report: "roadmap".into(),
+                plan_file: Some("o/r:a.yaml".into()),
+                ..ReportSource::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(same.snapshot.is_some());
+    assert!(same.last_refresh.is_some());
+    // Another file: what was read from the old one is no longer this plan.
+    let other = s
+        .save_source(
+            &ctx(),
+            ReportSource {
+                report: "roadmap".into(),
+                plan_file: Some("o/r:b.yaml".into()),
+                ..ReportSource::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(other.snapshot.is_none());
+}
+
+#[test]
+fn the_plan_picks_the_definition_and_the_report_has_its_own() {
+    let roadmap = kind("roadmap").expect("roadmap");
+    assert_eq!(
+        ReportsService::definition_of(roadmap, None).unwrap().id,
+        "back_roadmap"
+    );
+    let plan = parse_plan("report: back_roadmap\n").unwrap();
+    assert_eq!(
+        ReportsService::definition_of(roadmap, Some(&plan))
+            .unwrap()
+            .id,
+        "back_roadmap"
+    );
+    let plan = parse_plan("report:\n  id: mine\n  sheets:\n    - kind: people\n").unwrap();
+    assert_eq!(
+        ReportsService::definition_of(roadmap, Some(&plan))
+            .unwrap()
+            .id,
+        "mine"
+    );
+    let plan = parse_plan("report: weekly\n").unwrap();
+    assert!(ReportsService::definition_of(roadmap, Some(&plan)).is_err());
+    assert!(kind("nope").is_none());
+}
+
+#[tokio::test]
+async fn a_workbook_is_drawn_with_the_plans_definition() {
+    let catalog = Arc::new(FakeCatalog {
+        planned: vec![json!({
+            "board": "o/projects/48", "ix": 0, "gear": true, "number": 1, "title": "CORE - X",
+            "url": "https://github.com/o/r/issues/1", "assignees": ["alice"],
+            "sheet": { "milestone": "26.11", "fields": { "Implemenation": "Todo" } },
+        })],
+        ..FakeCatalog::default()
+    });
+    let s = service(catalog, None);
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_yaml: Some("report:\n  sheets:\n    - kind: people\n      name: Team\n".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let bytes = s
+        .workbook(
+            &ctx(),
+            kind("roadmap").unwrap(),
+            Date::from_calendar_date(2026, time::Month::October, 1).unwrap(),
+        )
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("xl/worksheets/sheet1.xml"));
+    assert!(!text.contains("xl/worksheets/sheet2.xml"), "one sheet only");
+}
+
+#[tokio::test]
+async fn a_file_that_is_not_a_plan_is_refused_and_the_board_is_not_synced() {
+    let catalog = Arc::new(FakeCatalog::default());
+    let s = service(Arc::clone(&catalog), Some(repo()));
+    s.save_source(
+        &ctx(),
+        ReportSource {
+            report: "roadmap".into(),
+            plan_file: Some("o/r:README.md".into()),
+            board: Some("o/48".into()),
+            ..ReportSource::default()
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(format!("{err:#}").contains("not a mapping"), "{err:#}");
+    assert!(catalog.synced.lock().unwrap().is_empty());
+    assert!(
+        s.source(&ctx(), "roadmap")
+            .await
+            .unwrap()
+            .snapshot
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn an_upload_is_kept_until_it_is_taken_back_or_a_file_replaces_it() {
+    let s = service(Arc::default(), Some(repo()));
+    let up = |t: Option<&str>, file: Option<&str>| ReportSource {
+        report: "roadmap".into(),
+        plan_yaml: t.map(str::to_string),
+        plan_file: file.map(str::to_string),
+        ..ReportSource::default()
+    };
+    let saved = s.save_source(&ctx(), up(Some(PLAN), None)).await.unwrap();
+    assert!(
+        saved.plan_yaml.is_none(),
+        "the text is the snapshot's, not the source's"
+    );
+    // Saved again without an upload: still the plan.
+    let again = s.save_source(&ctx(), up(None, None)).await.unwrap();
+    assert_eq!(
+        again.snapshot.as_ref().map(|x| x.from.as_str()),
+        Some("upload")
+    );
+    // Taken back.
+    let cleared = s.save_source(&ctx(), up(Some(""), None)).await.unwrap();
+    assert!(cleared.snapshot.is_none());
+    // Uploaded, then a file named: the upload stays the plan until the
+    // file is read, then the file's is.
+    s.save_source(&ctx(), up(Some(PLAN), None)).await.unwrap();
+    let named = s
+        .save_source(&ctx(), up(None, Some("o/r:gears.yaml")))
+        .await
+        .unwrap();
+    assert!(
+        named.snapshot.is_none(),
+        "a named file is the plan from its first read"
+    );
+    s.refresh(&ctx(), "roadmap").await.unwrap();
+    let read = s.source(&ctx(), "roadmap").await.unwrap();
+    assert_eq!(
+        read.snapshot.map(|x| x.from),
+        Some("o/r:gears.yaml".to_string())
+    );
+}

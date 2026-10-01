@@ -14,22 +14,19 @@ pub(crate) mod field_schema;
 mod gearbox;
 pub(crate) mod gts;
 mod history;
+pub mod port;
 mod quality;
-mod reference;
+pub(crate) mod reference;
 mod repo_enrich;
 mod repo_facts;
 mod rest;
-mod roadmap;
-mod roadmap_plan;
-mod roadmap_report;
-mod roadmap_workbook;
+pub(crate) mod roadmap;
 mod scaffold;
 mod service;
 mod skeleton;
 mod sync_task;
 mod taxonomy;
 mod values;
-mod xlsx;
 
 use std::sync::Arc;
 
@@ -101,7 +98,9 @@ fn build_sink(ctx: &GearCtx) -> Arc<dyn service::CatalogSink> {
 /// Build the repository enricher when a GitHub connector is linked and the
 /// catalogue tenant is configured (see [`repo_enrich`]). Best-effort: any
 /// missing piece disables enrichment, leaving a crates.io-only catalogue.
-fn build_connectors(ctx: &GearCtx) -> Option<Arc<crate::connectors::service::ConnectorService>> {
+pub(crate) fn build_connectors(
+    ctx: &GearCtx,
+) -> Option<Arc<crate::connectors::service::ConnectorService>> {
     use crate::connectors::driver::ConnectorDriver;
     let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
     for id in crate::connectors::source_driver_ids() {
@@ -185,6 +184,13 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         {
             service.set_account_management(am);
         }
+
+        // What the reports gear reads the roadmap through (`port.rs`).
+        ctx.client_hub()
+            .register::<dyn port::RoadmapCatalog>(Arc::new(port::CatalogRoadmaps::new(
+                Arc::clone(&service),
+                ctx.client_hub(),
+            )));
 
         let _ = self.service.set(service.clone());
         Ok(rest::register_routes(

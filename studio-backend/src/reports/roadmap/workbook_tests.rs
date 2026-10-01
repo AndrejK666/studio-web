@@ -2,6 +2,10 @@ use serde_json::json;
 
 use super::*;
 
+fn preset() -> Definition {
+    Definition::preset("back_roadmap").expect("preset")
+}
+
 fn day(y: i32, m: u8, d: u8) -> Date {
     Date::from_calendar_date(y, Month::try_from(m).expect("month"), d).expect("date")
 }
@@ -82,7 +86,7 @@ fn progress_is_read_the_way_the_board_writes_it() {
 #[test]
 fn the_card_is_the_bold_lines_of_the_body() {
     let body = "> mirrored\n\n**Description**: stores secrets\n**Is Plugin**: NO\n**Has Extension Points**: YES (types)\n**Other**: x\nprose **not**: this";
-    let card = super::super::roadmap::card_of(body);
+    let card = crate::components_catalog::roadmap::card_of(body);
     assert_eq!(
         card.get("Description").map(String::as_str),
         Some("stores secrets")
@@ -261,7 +265,7 @@ fn the_workbook_has_the_planning_teams_sheets() {
         // A pinned plan that is not one of the board's gears is left out.
         json!({ "board": "o/projects/48", "ix": 9, "gear": false, "title": "CORE - Pinned" }),
     ];
-    let sheets = sheets(&planned, &plan, day(2026, 10, 1));
+    let sheets = sheets(&planned, &plan, &preset(), day(2026, 10, 1));
     let names: Vec<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         names,
@@ -331,7 +335,7 @@ fn the_workbook_has_the_planning_teams_sheets() {
     let bars: Vec<&str> = gantt.shapes().iter().map(|s| s.text.as_str()).collect();
     assert_eq!(bars, vec!["LLM Gateway (4.8 m*w)", "Monitoring (4 m*w)"]);
 
-    let bytes = build(&planned, &plan, day(2026, 10, 1));
+    let bytes = build(&planned, &plan, &preset(), day(2026, 10, 1));
     assert_eq!(&bytes[..2], b"PK");
 }
 
@@ -347,7 +351,7 @@ fn a_workbook_without_a_plan_still_lists_every_gear() {
         10.0,
         &[],
     )];
-    let sheets = sheets(&planned, &Plan::default(), day(2026, 10, 1));
+    let sheets = sheets(&planned, &Plan::default(), &preset(), day(2026, 10, 1));
     let core = &sheets[4];
     assert_eq!(core.value(2, 6), Some(&Value::Text("alice".into())));
     assert_eq!(core.value(1, 26), None);

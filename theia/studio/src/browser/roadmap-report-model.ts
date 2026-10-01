@@ -4,20 +4,20 @@ import { ReferenceReadiness, failureMessage } from './components-reference-model
 /*
  * The roadmap report, as the IDE reads it.
  *
- * One read -- `GET /studio-components-catalog/v1/roadmap-report` -- answers
+ * One read -- `GET /studio-reports/v1/reports/roadmap/summary` -- answers
  * every component the roadmap board plans, one row each, and a summary per
  * stage, milestone, consumer and plan state. The numbers are the backend's
- * (`components_catalog/roadmap_report.rs`); this file only reads them for the
+ * (`reports/roadmap/summary.rs`); this file only reads them for the
  * widget. The workbook is the backend's too
- * (`components_catalog/roadmap_workbook.rs`): the planning team's
+ * (`reports/roadmap/workbook.rs`, drawn by the report's definition): the planning team's
  * `back_roadmap.xlsx`, which this saves as the server wrote it.
  *
  * Through `StudioApi.fetch`, which the portal session and the desktop both
  * answer, so there is no host branch here.
  */
 
-export const ROADMAP_REPORT_PATH = '/studio-components-catalog/v1/roadmap-report';
-export const ROADMAP_WORKBOOK_PATH = '/studio-components-catalog/v1/roadmap-report/workbook';
+export const ROADMAP_REPORT_PATH = '/studio-reports/v1/reports/roadmap/summary';
+export const ROADMAP_WORKBOOK_PATH = '/studio-reports/v1/reports/roadmap/workbook';
 
 export interface RoadmapRow {
     /** The implementing component, or the board's title for a gear with no code. */
