@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { SpecFinding } from "./api";
-import { findingCount, findingDotTone, findingLabel } from "./spec-findings";
+import {
+  findingBreakdown,
+  findingCount,
+  findingDotTone,
+  findingLabel,
+  findingsByKind,
+} from "./spec-findings";
 
 // A `purpose` verdict exactly as the server recorded it on a local run over
 // ADR-0019 (2026-10-01): the gate passed, and one section still read as design.
@@ -79,5 +85,32 @@ describe("a document's findings on the Specs list", () => {
     expect(findingLabel(undefined)).toBe("No findings");
     expect(findingDotTone(undefined, false)).toBe("var(--warning)");
     expect(findingDotTone([], true)).toBe("var(--success)");
+  });
+});
+
+describe("a document's findings by kind", () => {
+  it("counts each kind and lists the commonest first", () => {
+    const verdicts: SpecFinding[] = [
+      purposeRecorded,
+      {
+        detector: "bloat",
+        subject: "n",
+        severity: "clean",
+        details: { findings: [lowRepeat("a"), lowRepeat("b")] },
+      },
+      { detector: "leak", subject: "n", severity: "high" },
+    ];
+    expect(findingsByKind(verdicts).map((k) => [k.rule, k.count, k.high])).toEqual([
+      ["bloat.self_repeat", 2, false],
+      ["leak", 1, true],
+      ["purpose.foreign_section", 1, true],
+    ]);
+    expect(findingBreakdown(verdicts)).toBe(
+      "2 repeats within the doc · 1 leak · 1 section of another kind",
+    );
+  });
+
+  it("has nothing to say about a clean document", () => {
+    expect(findingBreakdown([{ detector: "leak", subject: "n", severity: "clean", details: { findings: [] } }])).toBe("");
   });
 });

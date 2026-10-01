@@ -288,6 +288,27 @@ describe('AnalyzeFrontendController', () => {
         expect(listenerDisposable.dispose).toHaveBeenCalledTimes(1);
     });
 
+    it('hands the document\'s recorded findings to the product\'s editor, to show in the text', async () => {
+        const studio = createStudio();
+        const recorded = {
+            detector: 'purpose', subject: 'node-b-prd', severity: 'gate-failed', recordedAt: '2026-10-01T14:09:11Z',
+            details: { findings: [{ id: 'f1', rule: 'purpose.foreign_section', severity: 'high', message: 'PRD section reads as DESIGN',
+                anchor: { section: 'Scope', line_start: 4, line_end: 9 }, related: [], evidence: [] }] },
+        };
+        studio.findings.mockResolvedValue([recorded]);
+        const setStudioFindings = jest.fn();
+        const product = {
+            id: 'studio-md:file:///workspace/api/docs/prd.md',
+            uri: new URI('file:///workspace/api/docs/prd.md'),
+            readDocumentText: () => '# PRD',
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+            setStudioFindings,
+        };
+        await start(studio, product);
+
+        expect(setStudioFindings).toHaveBeenCalledWith({ verdicts: [recorded], paths: ['docs/prd.md'] });
+    });
+
     it('says there is no text yet while the product\'s editor is still reading its file', async () => {
         const studio = createStudio();
         const product = {

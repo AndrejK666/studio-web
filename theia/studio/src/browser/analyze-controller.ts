@@ -23,7 +23,7 @@ import { EditorManager } from '@theia/editor/lib/browser/editor-manager';
 import type { TextDocumentChangeEvent, TextEditor } from '@theia/editor/lib/browser/editor';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 import { parseStudioDocumentUri, StudioDocumentRef } from '../common/studio-document-uri';
-import { AnalyzeMetric, ConformanceReport, buildMetrics } from './analyze-metrics';
+import { AnalyzeMetric, ConformanceReport, SpecFinding, buildMetrics } from './analyze-metrics';
 import {
     AnalyzeStudioClient, DocumentBinding, FindingToSave, InlineDocument, SpecDetector, SpecVerdict, TaskRun,
     matchBindingByPath, pathCandidates,
@@ -111,6 +111,12 @@ export interface StudioDocumentWidget {
     readonly uri: { toString(): string };
     readDocumentText(): string | undefined;
     onDocumentTextChanged(listener: () => void): { dispose(): void };
+    /**
+     * Show Studio's recorded findings in the editor: the rail's cards, the
+     * underline, "jump to". Optional, so an editor without it is still a
+     * document this panel can analyse.
+     */
+    setStudioFindings?(findings: { verdicts: readonly SpecFinding[]; paths: readonly string[] }): void;
 }
 
 export interface AnalyzeApplicationShellLike {
@@ -472,6 +478,8 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
                 return;
             }
             this.currentTarget = target;
+            // The editor shows them in the text; this panel shows the numbers.
+            this.showInEditor(document, target, findings);
             this.publishTarget(document, target, buildMetrics({
                 conformance: target.conformance,
                 conformanceMissing: target.conformanceMissing,
@@ -635,6 +643,25 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
     protected publishIfCurrent(uri: string): void {
         if (!this.stopped && this.currentDocument?.uri === uri && this.currentTarget) {
             this.publishTarget(this.currentDocument, this.currentTarget, this.viewModel.metrics);
+        }
+    }
+
+    /**
+     * Hand the document's recorded findings to the editor it is open in, when
+     * that editor can show them (the product's Markdown editor). Every load
+     * hands over the current set, so a run that finished, or a sync that
+     * re-analysed the file, reaches the text the next time this panel looks.
+     */
+    protected showInEditor(document: DocumentLike, target: AnalyzeTarget, findings: readonly SpecFinding[]): void {
+        const widget = this.asStudioDocumentWidget(document.widget);
+        if (!widget || typeof widget.setStudioFindings !== 'function') {
+            return;
+        }
+        try {
+            widget.setStudioFindings({ verdicts: findings, paths: [target.runPath] });
+        } catch (error) {
+            // An editor that cannot draw them is no reason to fail the panel.
+            console.warn('[studio] analyze: the editor could not show the findings', error);
         }
     }
 
