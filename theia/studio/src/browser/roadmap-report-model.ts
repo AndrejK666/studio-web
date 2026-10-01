@@ -1,6 +1,5 @@
 import { StudioApi } from './studio-api';
-import { ReferenceReadiness, demandText, failureMessage } from './components-reference-model';
-import type { Cell, Sheet } from './xlsx';
+import { ReferenceReadiness, failureMessage } from './components-reference-model';
 
 /*
  * The roadmap report, as the IDE reads it.
@@ -8,15 +7,17 @@ import type { Cell, Sheet } from './xlsx';
  * One read -- `GET /studio-components-catalog/v1/roadmap-report` -- answers
  * every component the roadmap board plans, one row each, and a summary per
  * stage, milestone, consumer and plan state. The numbers are the backend's
- * (`components_catalog/roadmap_report.rs`); this file only lays them out, for
- * the widget and for the workbook's Roadmap and Summary sheets, so the layout
- * is testable without a widget.
+ * (`components_catalog/roadmap_report.rs`); this file only reads them for the
+ * widget. The workbook is the backend's too
+ * (`components_catalog/roadmap_workbook.rs`): the planning team's
+ * `back_roadmap.xlsx`, which this saves as the server wrote it.
  *
  * Through `StudioApi.fetch`, which the portal session and the desktop both
  * answer, so there is no host branch here.
  */
 
 export const ROADMAP_REPORT_PATH = '/studio-components-catalog/v1/roadmap-report';
+export const ROADMAP_WORKBOOK_PATH = '/studio-components-catalog/v1/roadmap-report/workbook';
 
 export interface RoadmapRow {
     /** The implementing component, or the board's title for a gear with no code. */
@@ -128,19 +129,6 @@ export function roadmapFailure(status: number): string {
     }
 }
 
-/** The progress axes across all rows, in the order the board lists them. */
-export function axesOf(items: readonly RoadmapRow[]): string[] {
-    const out: string[] = [];
-    for (const row of items) {
-        for (const a of row.readiness.progress) {
-            if (!out.includes(a.label)) {
-                out.push(a.label);
-            }
-        }
-    }
-    return out;
-}
-
 /** The progress axes across the groups, in board order. */
 export function groupAxes(groups: readonly RoadmapGroup[]): string[] {
     const out: string[] = [];
@@ -154,95 +142,33 @@ export function groupAxes(groups: readonly RoadmapGroup[]): string[] {
     return out;
 }
 
-/** `roadmap-2026-09-29.xlsx`. */
+/** `back_roadmap_2026-09-29.xlsx`, the name the planning team gives it. */
 export function workbookName(asOf: string): string {
-    return `roadmap-${asOf}.xlsx`;
+    return `back_roadmap_${asOf}.xlsx`;
 }
 
-const yesNo = (b: boolean | null) => (b === null ? null : b ? 'yes' : 'no');
+export type WorkbookLoad =
+    | { readonly kind: 'ok'; readonly bytes: Uint8Array }
+    | { readonly kind: 'error'; readonly message: string };
 
-export function roadmapSheet(report: RoadmapReport): Sheet {
-    const axes = axesOf(report.items);
-    const header = [
-        'ID', 'Group', 'Gear', 'Components', 'Stage', 'Milestone', 'Due', 'Committed', 'Plan', 'Why', 'Demand',
-        ...axes,
-        'Assignees', 'Effort m*d', 'Remaining m*d', 'Lifecycle', 'Last release', 'Released on', 'Grade', 'Board item', 'Link',
-    ];
-    const rows: Cell[][] = report.items.map(row => {
-        const r = row.readiness;
-        return [
-            row.number,
-            row.group,
-            row.title,
-            row.components.join(', ') || 'not in code yet',
-            r.stage,
-            r.milestone,
-            r.due,
-            yesNo(r.committed),
-            r.plan,
-            r.plan_reasons.join('; ') || null,
-            demandText(r)?.replace(/ · /g, ', ') ?? null,
-            // A percentage as a number, so the sheet can sort and sum it; `Done`
-            // or `N/A` as the board wrote it.
-            ...axes.map(label => {
-                const a = r.progress.find(p => p.label === label);
-                if (!a) {
-                    return null;
-                }
-                return /^\d+%$/.test(a.value) && a.pct !== null ? a.pct : a.value;
-            }),
-            row.assignees,
-            row.effort_md,
-            row.remaining_md === null ? null : Math.round(row.remaining_md * 10) / 10,
-            r.lifecycle,
-            r.last_release,
-            r.released_on,
-            r.grade,
-            row.roadmap_title,
-            r.roadmap_item,
-        ];
-    });
-    const widths = header.map(h =>
-        h === 'Gear' || h === 'Components' ? 34 : h === 'Why' ? 48 : h === 'Board item' ? 40 : h === 'Link' ? 44 : Math.max(8, h.length + 2));
-    return { name: 'Roadmap', rows: [header, ...rows], widths };
-}
-
-export function summarySheet(report: RoadmapReport, asOf: string): Sheet {
-    const s = report.summary;
-    const labels = groupAxes(s.by_group);
-    const rows: Cell[][] = [
-        ['Roadmap report', asOf],
-        ['Gears on the board', report.total],
-        ['Not in code yet', report.not_in_code],
-        ['Catalogued, not on the board', report.not_on_board],
-        [],
-        ['Group', 'Gears', 'Done', 'In code', ...labels.map(l => `${l} %`), 'Estimated', 'Effort m*d', 'Remaining m*d'],
-        ...s.by_group.map(g => [
-            g.group, g.total, g.done, g.in_code,
-            ...labels.map(l => g.axes.find(a => a.label === l)?.average ?? null),
-            g.estimated, g.effort_md, Math.round(g.remaining_md * 10) / 10,
-        ]),
-        [],
-        ['Stage', 'Gears'],
-        ...s.by_stage.map(c => [c.label, c.count]),
-        [],
-        ['Milestone', 'Due', 'Gears', 'Committed', 'At risk'],
-        ...s.by_milestone.map(m => [m.milestone, m.due, m.total, m.committed, m.at_risk]),
-        [],
-        ['Consumer', 'P1', 'P2', 'P3', 'P1 not on track'],
-        ...s.by_consumer.map(c => [c.consumer, c.p1, c.p2, c.p3, c.p1_not_on_track]),
-        [],
-        ['Plan', 'Gears'],
-        ...s.by_plan.map(c => [c.label, c.count]),
-    ];
-    if (s.overdue.length) {
-        rows.push([], ['Overdue'], ...s.overdue.map(n => [n]));
+/** Read the workbook as of `asOf` (`YYYY-MM-DD`). Never throws, like the report. */
+export async function loadRoadmapWorkbook(
+    asOf: string,
+    fetchApi: Fetch = path => StudioApi.fetch(path),
+): Promise<WorkbookLoad> {
+    let res: Response;
+    try {
+        res = await fetchApi(`${ROADMAP_WORKBOOK_PATH}?date=${encodeURIComponent(asOf)}`);
+    } catch (e) {
+        return { kind: 'error', message: `Studio could not be reached: ${e instanceof Error ? e.message : String(e)}` };
     }
-    // The title, and the first row of each section after a blank one.
-    const bold = rows.flatMap((_, i) => (i === 0 || rows[i - 1].length === 0 ? [i] : []));
-    return { name: 'Summary', rows, widths: [34, 14, 12, 12, 16], bold, freeze: false };
-}
-
-export function reportSheets(report: RoadmapReport, asOf: string): Sheet[] {
-    return [roadmapSheet(report), summarySheet(report, asOf)];
+    if (!res.ok) {
+        return {
+            kind: 'error',
+            message: res.status === 404
+                ? 'This Studio does not write the roadmap workbook yet (its backend is older than the IDE).'
+                : roadmapFailure(res.status),
+        };
+    }
+    return { kind: 'ok', bytes: new Uint8Array(await res.arrayBuffer()) };
 }

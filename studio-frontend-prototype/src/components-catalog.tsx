@@ -297,6 +297,12 @@ interface RoadmapSel {
   /** The issues whose sub-issues are the gears: `owner/repo#123`, space- or
    *  comma-separated. Empty: every board item is a gear. */
   roots?: string;
+  /** The planning team's `gears.yaml`, as text: teams, people and their
+   *  power, swimlanes, consumer projects. Sent with each sync; the server
+   *  keeps the last one it was given, so clearing it here keeps that. */
+  plan?: string;
+  /** The file it was read from, to show which one is loaded. */
+  planName?: string;
 }
 
 /** `A=Acronis, C=Constructor` -> `{ A: "Acronis", C: "Constructor" }`. */
@@ -364,7 +370,9 @@ const DEFAULT_SOURCES: Sources = {
     owner: "constructorfabric",
     number: "48",
     consumers: "A=Acronis, C=Constructor, V=Virtuozzo",
-    roots: "",
+    // The platform team's gear roots: the workbook lists their sub-issues.
+    roots:
+      "constructorfabric/gears-rust#3342 constructorfabric/gears-rust#4507 constructorfabric/gears-rust#4336 constructorfabric/gears-rust#4810 constructorfabric/gears-rust#4811 constructorfabric/gears-rust#4812 constructorfabric/gears-rust#4813 constructorfabric/gears-rust#4814",
   },
 };
 
@@ -404,6 +412,8 @@ interface RoadmapBody {
   consumers: Record<string, string>;
   /** `owner/repo#123`: the issues whose sub-issues are the gears. */
   roots: string[];
+  /** `gears.yaml` text; null keeps the plan the server has. */
+  plan_yaml: string | null;
 }
 
 /** The POST body for /sync derived from the selection, or an error string. */
@@ -444,6 +454,7 @@ function syncBody(
       number,
       consumers: parseConsumers(s.roadmap.consumers),
       roots: (s.roadmap.roots ?? "").split(/[\s,;]+/).filter(Boolean),
+      plan_yaml: s.roadmap.plan?.trim() ? s.roadmap.plan : null,
     });
   }
   if (!crates_io && repositories.length === 0 && roadmaps.length === 0)
@@ -1241,12 +1252,45 @@ function RoadmapSourceEditor({
             onChange={(e) => onChange({ roots: e.target.value })}
           />
         </label>
+        <div className="src-row">
+          <span>Plan</span>
+          <label className="iconbtn" style={{ cursor: sel.enabled ? "pointer" : "default" }}>
+            {sel.planName ? "Replace…" : "Load gears.yaml…"}
+            <input
+              type="file"
+              accept=".yaml,.yml,text/yaml"
+              hidden
+              disabled={!sel.enabled}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                void file.text().then((plan) => onChange({ plan, planName: file.name }));
+              }}
+            />
+          </label>
+          {sel.planName && (
+            <>
+              <code title={`${sel.plan?.length ?? 0} characters`}>{sel.planName}</code>
+              <button
+                className="iconbtn"
+                disabled={!sel.enabled}
+                onClick={() => onChange({ plan: undefined, planName: undefined })}
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
         <p className="src-note">
           Every gear the board plans is listed, written or not: with root issues, a gear is a direct
           sub-issue of one of them (off the board too); without, every item is one. A gear whose
           code is catalogued shows its plan on that component; the title names it, or its Roadmap
-          item field pins it. Consumers name the letters of the priority column. The connection
-          needs <code>read:project</code>.
+          item field pins it. Consumers name the letters of the priority column. The plan is the
+          planning team&apos;s <code>gears.yaml</code> — teams, people and power, swimlanes, consumer
+          projects — which the roadmap workbook&apos;s Gantt, People and project columns are drawn
+          from; the server keeps the last one a sync sent. The connection needs{" "}
+          <code>read:project</code>.
           {sel.enabled && !tenantId ? " — no workspace in context to list connections." : ""}
         </p>
       </div>

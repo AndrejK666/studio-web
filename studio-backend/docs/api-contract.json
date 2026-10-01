@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 251,
+  "open_violations": 252,
   "operations": [
     {
       "method": "DELETE",
@@ -651,6 +651,19 @@
         "RoadmapReportDto"
       ],
       "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/roadmap-report/workbook",
+      "operation_id": "studio_components_catalog.get_roadmap_workbook",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The roadmap workbook: the planning team's back_roadmap spreadsheet",
+      "authenticated": true,
+      "errors": [
+        "400",
         "401",
         "500"
       ]

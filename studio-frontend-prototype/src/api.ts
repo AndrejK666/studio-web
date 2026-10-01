@@ -1454,6 +1454,20 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return body as T;
 }
 
+/** A file the server writes, as a blob: the same auth and errors as `request`. */
+async function requestBlob(path: string, token: string): Promise<Blob> {
+  if (!token) {
+    window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
+    throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
+  }
+  const res = await fetch(apiUrl(path), { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
+    throw new ApiError(res.status, await res.json().catch(() => undefined));
+  }
+  return res.blob();
+}
+
 /** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
 const MAX_PAGE = 200;
 
@@ -3287,6 +3301,11 @@ export const api = {
    *  (`components_catalog/roadmap_report.rs`). */
   roadmapReport: (token: string) =>
     request<RoadmapReport>("/studio-components-catalog/v1/roadmap-report", token),
+
+  /** The planning team's roadmap workbook as of `date` (`YYYY-MM-DD`), an
+   *  `.xlsx` the server writes (`components_catalog/roadmap_workbook.rs`). */
+  roadmapWorkbook: (token: string, date: string) =>
+    requestBlob(`/studio-components-catalog/v1/roadmap-report/workbook?date=${encodeURIComponent(date)}`, token),
 
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>

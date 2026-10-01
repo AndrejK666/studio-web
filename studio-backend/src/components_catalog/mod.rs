@@ -20,13 +20,16 @@ mod repo_enrich;
 mod repo_facts;
 mod rest;
 mod roadmap;
+mod roadmap_plan;
 mod roadmap_report;
+mod roadmap_workbook;
 mod scaffold;
 mod service;
 mod skeleton;
 mod sync_task;
 mod taxonomy;
 mod values;
+mod xlsx;
 
 use std::sync::Arc;
 

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { axesOf, demandText, reportSheets, type RoadmapReport, type RoadmapRow } from "./roadmap-report";
-import { columnName, sheetName, sheetXml, xlsxFiles } from "./xlsx";
+import { demandText, type RoadmapReport, type RoadmapRow } from "./roadmap-report";
 
 const row = (name: string, over: Partial<RoadmapRow["readiness"]> = {}): RoadmapRow => ({
   name,
@@ -87,70 +86,8 @@ const report: RoadmapReport = {
   },
 };
 
-describe("roadmap report sheets", () => {
-  it("lists demand most urgent first and axes in board order", () => {
+describe("roadmap report", () => {
+  it("lists demand most urgent first", () => {
     expect(demandText(report.items[0].readiness.demand)).toBe("Acronis P1, Virtuozzo P3");
-    expect(axesOf(report.items)).toEqual(["Design", "SDK", "Tests"]);
-  });
-
-  it("writes one Roadmap row per component, axes as columns", () => {
-    const [roadmap, summary] = reportSheets(report, "2026-09-29");
-    expect(roadmap.name).toBe("Roadmap");
-    const [header, broker, files] = roadmap.rows;
-    const col = (h: string) => header.indexOf(h);
-    expect(broker[col("Gear")]).toBe("CORE - cf-gears-event-broker");
-    expect(broker[col("Group")]).toBe("CORE");
-    expect(broker[col("Components")]).toBe("cf-gears-event-broker");
-    expect(broker[col("Remaining m*d")]).toBe(20);
-    expect(broker[col("Design")]).toBe(80);
-    expect(broker[col("SDK")]).toBe("Done");
-    expect(broker[col("Tests")]).toBeNull();
-    expect(broker[col("Effort m*d")]).toBe(40);
-    expect(broker[col("Committed")]).toBe("yes");
-    expect(broker[col("Why")]).toBeNull();
-    expect(files[col("Why")]).toBe("overdue: due 2026-07-31; P1 for Acronis");
-    expect(files[col("Tests")]).toBe("N/A");
-
-    expect(summary.name).toBe("Summary");
-    expect(summary.rows).toContainEqual(["Catalogued, not on the board", 5]);
-    expect(summary.rows).toContainEqual(["Group", "Gears", "Done", "In code", "Design %", "SDK %", "Estimated", "Effort m*d", "Remaining m*d"]);
-    expect(summary.rows).toContainEqual(["CORE", 2, 0, 2, 80, null, 2, 80, 40]);
-    expect(summary.rows).toContainEqual(["26.10", "2026-10-31", 2, 2, 1]);
-    expect(summary.rows.at(-1)).toEqual(["cf-gears-file-storage"]);
-    const boldText = (summary.bold ?? []).map((i) => summary.rows[i][0]);
-    expect(boldText).toEqual(["Roadmap report", "Group", "Stage", "Milestone", "Consumer", "Plan", "Overdue"]);
-    expect(summary.freeze).toBe(false);
-  });
-});
-
-describe("xlsx", () => {
-  it("names columns past Z", () => {
-    expect([0, 25, 26, 51, 701, 702].map(columnName)).toEqual(["A", "Z", "AA", "AZ", "ZZ", "AAA"]);
-  });
-
-  it("keeps sheet names legal", () => {
-    expect(sheetName("a/b:c")).toBe("a b c");
-    expect(sheetName("x".repeat(40))).toHaveLength(31);
-  });
-
-  it("escapes text, writes numbers as numbers, skips empty cells", () => {
-    const xml = sheetXml({ name: "S", rows: [["h"], ["<a & b>", 3, null, ""]] });
-    expect(xml).toContain("&lt;a &amp; b&gt;");
-    expect(xml).toContain('<c r="B2"><v>3</v></c>');
-    expect(xml).not.toContain('r="C2"');
-    expect(xml).toContain('<c r="A1" t="inlineStr" s="1">');
-    expect(xml).toContain('state="frozen"');
-  });
-
-  it("packages one worksheet per sheet, with unique names", () => {
-    const files = xlsxFiles([
-      { name: "Roadmap", rows: [["a"]] },
-      { name: "roadmap", rows: [["b"]] },
-    ]);
-    const names = files.map((f) => f.name);
-    expect(names).toContain("xl/worksheets/sheet2.xml");
-    const workbook = files.find((f) => f.name === "xl/workbook.xml")!.content;
-    expect(workbook).toContain('name="Roadmap"');
-    expect(workbook).toContain('name="roadmap 2"');
   });
 });

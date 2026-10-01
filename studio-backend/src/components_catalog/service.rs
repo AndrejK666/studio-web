@@ -1327,10 +1327,18 @@ impl CatalogService {
                 if let Some(first) = names.first() {
                     roadmap::check_release(&mut fields, lifecycle_of(first).as_deref());
                 }
-                planned.push(gts::roadmap_item_node(
+                let mut value = roadmap::item_node_value(&board, source, item, fields, &names);
+                // Where the board lists it, and whether it is one of the
+                // board's gears or only a plan a person pinned: the workbook
+                // keeps the board's order and only the board's gears.
+                value["ix"] = json!(ix);
+                value["gear"] = json!(board_gears.contains(&ix));
+                planned.push(gts::roadmap_item_node(&id, &roadmap::item_key(item), value));
+            }
+            if let Some(plan) = &source.plan {
+                planned.push(gts::roadmap_plan_node(
                     &id,
-                    &roadmap::item_key(item),
-                    roadmap::item_node_value(&board, source, item, fields, &names),
+                    json!({ "board": id, "plan_yaml": plan }),
                 ));
             }
             boards_read.push(id);
@@ -1819,6 +1827,33 @@ impl CatalogService {
             .filter(|n| n.type_id == gts::ROADMAP_ITEM_TYPE)
             .map(|n| n.value)
             .collect())
+    }
+
+    /// The plan the last sync was handed for a board -- teams, people,
+    /// swimlanes, consumer projects -- or, with several boards, the first.
+    pub async fn roadmap_plan(&self, ctx: &SecurityContext) -> anyhow::Result<Option<String>> {
+        let mut plans: Vec<GtsNode> = self
+            .sink
+            .list(ctx, Some("roadmap_plan"))
+            .await?
+            .into_iter()
+            .filter(|n| n.type_id == gts::ROADMAP_PLAN_TYPE)
+            .collect();
+        plans.sort_by(|a, b| {
+            let board = |n: &GtsNode| {
+                n.value
+                    .get("board")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            board(a).cmp(&board(b))
+        });
+        Ok(plans.into_iter().find_map(|n| {
+            n.value
+                .get("plan_yaml")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        }))
     }
 
     /// Read back catalog nodes, optionally filtered by type substring

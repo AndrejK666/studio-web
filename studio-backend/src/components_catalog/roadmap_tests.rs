@@ -338,6 +338,7 @@ fn source() -> RoadmapSource {
             .collect(),
         fields: RoadmapFields::default(),
         roots: Vec::new(),
+        plan: None,
     }
 }
 

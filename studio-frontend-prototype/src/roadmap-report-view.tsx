@@ -1,15 +1,15 @@
 /** The roadmap report dialog on the Components screen: what the board plans,
- *  whether the plan holds, and a download of the same as a workbook with the
- *  Roadmap and Summary sheets — the spreadsheet the platform team built from
- *  the board by script, answered by the catalogue instead. */
+ *  whether the plan holds, and a download of the planning team's workbook —
+ *  the `back_roadmap.xlsx` they built from the board by script (Summary,
+ *  Roadmap, Gantt, People, a sheet per group, ALL), written by the server from
+ *  what the last sync stored and the plan it was handed. */
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "./api";
 import { errText } from "./format";
 import { Modal } from "./modal";
-import { demandText, reportSheets, type RoadmapGroup, type RoadmapReport } from "./roadmap-report";
-import { makeXlsx } from "./xlsx";
+import { demandText, type RoadmapGroup, type RoadmapReport } from "./roadmap-report";
 
 const LAMP: Record<string, string> = {
   good: "var(--success, #16a34a)",
@@ -41,11 +41,12 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function download(report: RoadmapReport, asOf = today()) {
-  const url = URL.createObjectURL(makeXlsx(reportSheets(report, asOf)));
+async function download(token: string, asOf = today()) {
+  const blob = await api.roadmapWorkbook(token, asOf);
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `roadmap-${asOf}.xlsx`;
+  a.download = `back_roadmap_${asOf}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -53,6 +54,7 @@ export function download(report: RoadmapReport, asOf = today()) {
 export function RoadmapReportDialog({ token, onClose }: { token: string; onClose: () => void }) {
   const [report, setReport] = useState<RoadmapReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -70,8 +72,17 @@ export function RoadmapReportDialog({ token, onClose }: { token: string; onClose
     <Modal label="Roadmap report" onClose={onClose} cardStyle={{ width: "min(1100px, 100%)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>Roadmap report</h2>
-        <button className="iconbtn primary" disabled={!report?.total} onClick={() => report && download(report)}>
-          Download .xlsx
+        <button
+          className="iconbtn primary"
+          disabled={!report?.total || saving}
+          onClick={() => {
+            setSaving(true);
+            download(token)
+              .catch((e) => setErr(errText(e)))
+              .finally(() => setSaving(false));
+          }}
+        >
+          {saving ? "Writing…" : "Download .xlsx"}
         </button>
         <button className="iconbtn" onClick={onClose}>
           Close

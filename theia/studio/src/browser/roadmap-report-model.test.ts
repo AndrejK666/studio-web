@@ -3,18 +3,11 @@ import {
     RoadmapReport,
     RoadmapRow,
     ROADMAP_REPORT_PATH,
-    axesOf,
+    ROADMAP_WORKBOOK_PATH,
     loadRoadmapReport,
-    reportSheets,
+    loadRoadmapWorkbook,
     workbookName,
 } from './roadmap-report-model';
-import { columnName, makeXlsx, sheetName, sheetXml, xlsxFiles } from './xlsx';
-import { TextEncoder as NodeTextEncoder } from 'util';
-
-// jsdom has no TextEncoder; every browser the IDE runs in does.
-if (typeof globalThis.TextEncoder === 'undefined') {
-    (globalThis as { TextEncoder?: unknown }).TextEncoder = NodeTextEncoder;
-}
 
 function answer(status: number, body: unknown): Response {
     return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
@@ -106,66 +99,19 @@ describe('roadmap report', () => {
         expect(down).toEqual({ kind: 'error', message: expect.stringContaining('offline') });
     });
 
-    it('lists the axes in board order and names the workbook by date', () => {
-        expect(axesOf(report.items)).toEqual(['Design', 'SDK', 'Tests']);
-        expect(workbookName('2026-09-29')).toBe('roadmap-2026-09-29.xlsx');
-    });
-
-    it('writes one Roadmap row per component, axes as columns', () => {
-        const [roadmap, summary] = reportSheets(report, '2026-09-29');
-        expect(roadmap.name).toBe('Roadmap');
-        const [header, broker, files] = roadmap.rows;
-        const col = (h: string) => header.indexOf(h);
-        expect(broker[col('Gear')]).toBe('CORE - cf-gears-event-broker');
-        expect(broker[col('Group')]).toBe('CORE');
-        expect(broker[col('Components')]).toBe('cf-gears-event-broker');
-        expect(broker[col('Remaining m*d')]).toBe(20);
-        expect(broker[col('Demand')]).toBe('Acronis P1, Virtuozzo P3');
-        expect(broker[col('Design')]).toBe(80);
-        expect(broker[col('SDK')]).toBe('Done');
-        expect(broker[col('Tests')]).toBeNull();
-        expect(broker[col('Effort m*d')]).toBe(40);
-        expect(broker[col('Committed')]).toBe('yes');
-        expect(broker[col('Why')]).toBeNull();
-        expect(files[col('Why')]).toBe('overdue: due 2026-07-31; P1 for Acronis');
-        expect(files[col('Tests')]).toBe('N/A');
-
-        expect(summary.name).toBe('Summary');
-        expect(summary.rows).toContainEqual(['Catalogued, not on the board', 5]);
-        expect(summary.rows).toContainEqual(['26.10', '2026-10-31', 2, 2, 1]);
-        expect(summary.rows[summary.rows.length - 1]).toEqual(['cf-gears-file-storage']);
-        expect((summary.bold ?? []).map(i => summary.rows[i][0]))
-            .toEqual(['Roadmap report', 'Group', 'Stage', 'Milestone', 'Consumer', 'Plan', 'Overdue']);
-        expect(summary.rows).toContainEqual(['CORE', 2, 0, 2, 80, null, 2, 80, 40]);
-        expect(summary.freeze).toBe(false);
-    });
-});
-
-describe('xlsx', () => {
-    it('names columns past Z and keeps sheet names legal', () => {
-        expect([0, 25, 26, 51, 701, 702].map(columnName)).toEqual(['A', 'Z', 'AA', 'AZ', 'ZZ', 'AAA']);
-        expect(sheetName('a/b:c')).toBe('a b c');
-        expect(sheetName('x'.repeat(40))).toHaveLength(31);
-    });
-
-    it('escapes text, writes numbers as numbers, skips empty cells', () => {
-        const xml = sheetXml({ name: 'S', rows: [['h'], ['<a & b>', 3, null, '']] });
-        expect(xml).toContain('&lt;a &amp; b&gt;');
-        expect(xml).toContain('<c r="B2"><v>3</v></c>');
-        expect(xml).not.toContain('r="C2"');
-        expect(xml).toContain('<c r="A1" t="inlineStr" s="1">');
-        expect(xml).toContain('state="frozen"');
-    });
-
-    it('packages one worksheet per sheet, with unique names, as a zip', () => {
-        const files = xlsxFiles([{ name: 'Roadmap', rows: [['a']] }, { name: 'roadmap', rows: [['b']] }]);
-        expect(files.map(f => f.name)).toContain('xl/worksheets/sheet2.xml');
-        const workbook = files.find(f => f.name === 'xl/workbook.xml')!.content;
-        expect(workbook).toContain('name="Roadmap"');
-        expect(workbook).toContain('name="roadmap 2"');
-        const bytes = makeXlsx([{ name: 'S', rows: [['a']] }]);
-        // Local file header first, end of central directory last.
-        expect(Array.from(bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
-        expect(Array.from(bytes.slice(bytes.length - 22, bytes.length - 18))).toEqual([0x50, 0x4b, 0x05, 0x06]);
+    it('saves the workbook the server writes, named the way the planning team names it', async () => {
+        expect(workbookName('2026-09-29')).toBe('back_roadmap_2026-09-29.xlsx');
+        const asked: string[] = [];
+        const bytes = [0x50, 0x4b, 0x03, 0x04];
+        const ok = await loadRoadmapWorkbook('2026-09-29', async path => {
+            asked.push(path);
+            return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array(bytes).buffer } as Response;
+        });
+        expect(asked).toEqual([`${ROADMAP_WORKBOOK_PATH}?date=2026-09-29`]);
+        expect(ok.kind === 'ok' && Array.from(ok.bytes)).toEqual(bytes);
+        const old = await loadRoadmapWorkbook('2026-09-29', async () => answer(404, {}));
+        expect(old).toEqual({ kind: 'error', message: expect.stringContaining('older than the IDE') });
+        const down = await loadRoadmapWorkbook('2026-09-29', async () => { throw new Error('offline'); });
+        expect(down).toEqual({ kind: 'error', message: expect.stringContaining('offline') });
     });
 });
