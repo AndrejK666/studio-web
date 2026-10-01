@@ -29,6 +29,8 @@ mod rest;
 mod review_guide;
 mod service;
 mod spec_rows;
+#[cfg(test)]
+mod sync_analysis_tests;
 mod validate;
 
 use std::sync::{Arc, OnceLock};

@@ -174,5 +174,75 @@ assert.ok(/aria-disabled="true"/.test(off), 'and disabled');
 assert.ok(/title="No findings for this document yet"/.test(off), 'saying why');
 const on = qualityButton(cluster(['comments', 'changes', 'history', 'quality']));
 assert.ok(on && !/aria-disabled/.test(on), 'live with findings');
+// A surface that cannot explain its own gap gets the generic wording, and
+// still draws the button: "always there" does not depend on slotHints().
+const generic = qualityButton(cluster(['comments', 'changes', 'history'], undefined));
+assert.ok(generic && /aria-disabled="true"/.test(generic));
+assert.ok(/title="Specification signals are only available for Markdown documents"/.test(generic));
+// No node to paint into is nothing to do, not a throw.
+renderDocCluster(null, { uri });
+
+// --- what the conversion refuses to invent -----------------------------------
+
+// A section finding with no section has nowhere to land; a passage finding
+// with no quote has nothing to find again in the live text. Both are dropped
+// rather than anchored to line numbers computed on other text.
+const unplaced = studioReports([
+    { rule: 'purpose.foreign_section', message: 'm', anchor: { line_start: 3 } },
+    { rule: 'leak.foreign_content', message: 'm' },
+    { rule: 'bloat.cross_document', message: 'm', anchor: { section: 'S', line_start: 3, quote: null } }
+], relPath);
+assert.deepStrictEqual(unplaced.purpose.gate.violations, []);
+assert.deepStrictEqual(unplaced.bloat.clusters, []);
+// And with nothing placed, an unknown gate reads as passed.
+assert.strictEqual(unplaced.purpose.gate.passed, true);
+
+// A rule this editor has no report entry for is not shown as something else.
+const unknown = studioReports([
+    { rule: 'traceability.missing_reference', message: 'm', anchor: { section: 'S', quote: 'q' } },
+    null
+], relPath);
+assert.deepStrictEqual(unknown.purpose.gate.violations, []);
+assert.deepStrictEqual(unknown.bloat.clusters, []);
+
+// The recorded gate wins over what the violations imply: Studio's run judged
+// the whole document, and a passed gate with a low-confidence violation in it
+// is a real answer, not a contradiction to resolve here.
+const recordedPass = studioReports(findings, relPath, [], { passed: true, leakShare: 0.02, threshold: 0.05 });
+assert.strictEqual(recordedPass.purpose.gate.passed, true);
+assert.strictEqual(recordedPass.purpose.gate.violations.length, 2);
+// A gate without a boolean falls back to the violations.
+assert.strictEqual(studioReports(findings, relPath, [], { passed: undefined }).purpose.gate.passed, false);
+
+// A related passage at one of this document's own Studio paths is this
+// document, under the editor's path; one with no path at all is too.
+const selfRelated = studioReports([{
+    rule: 'bloat.self_repeat', message: 'm',
+    anchor: { section: 'S', line_start: 1, line_end: 1, quote: 'q' },
+    related: [
+        { path: 'studio-doc/abc.md', anchor: { line_start: 7, quote: 'q' } },
+        { anchor: { line_start: 9, quote: 'q' } }
+    ]
+}], relPath, ['studio-doc/abc.md']);
+assert.deepStrictEqual(selfRelated.bloat.clusters[0].occurrences.map(o => [o.file, o.line]),
+    [[relPath, 1], [relPath, 7], [relPath, 9]]);
+
+// Anything that is not a list of verdicts is no verdicts.
+assert.deepStrictEqual(flattenVerdicts(undefined), []);
+assert.deepStrictEqual(flattenVerdicts([null, { details: { findings: 'x' } }]), []);
+assert.strictEqual(latestRecordedAt([]), undefined);
+
+// No purpose verdict is no gate, not a failed one; a purpose verdict that
+// predates the gate numbers names none.
+assert.strictEqual(purposeGate([{ detector: 'leak', details: {} }]), undefined);
+assert.strictEqual(purposeGate(undefined), undefined);
+assert.deepStrictEqual(purposeGate([{ detector: 'purpose', details: { spec_share: 0.9 } }]),
+    { passed: undefined, leakShare: undefined, threshold: undefined });
+
+// Marking with no uri is ignored rather than recorded under "".
+markFindings(undefined, true);
+markFindings({ toString: () => '' }, true);
+assert.strictEqual(hasFindings({ toString: () => '' }), false);
+assert.strictEqual(hasFindings(undefined), false);
 
 console.log('studio-quality: all cases pass');

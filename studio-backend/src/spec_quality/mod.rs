@@ -49,3 +49,12 @@ static CONFIGURED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 pub fn is_configured() -> bool {
     CONFIGURED.load(std::sync::atomic::Ordering::Relaxed)
 }
+
+/// Flip [`is_configured`] for a test of a caller that consults it.
+///
+/// Process-wide, like the flag: a test that sets it must hold whatever lock
+/// its suite uses to keep tests that read it apart, and put it back.
+#[cfg(test)]
+pub(crate) fn set_configured_for_tests(configured: bool) {
+    CONFIGURED.store(configured, std::sync::atomic::Ordering::Relaxed);
+}

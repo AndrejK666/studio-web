@@ -54,7 +54,7 @@ async fn db() -> &'static str {
         .await
 }
 
-async fn repo() -> DocumentsRepo {
+pub(super) async fn repo() -> DocumentsRepo {
     let dsn = db().await;
     let conn = connect_db(
         dsn,

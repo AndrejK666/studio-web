@@ -161,6 +161,33 @@ impl TaskContext {
     pub fn cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
+
+    /// A context for driving a handler's own methods in a unit test, with no
+    /// queue behind it.
+    ///
+    /// Only the dispatcher may build a real one -- `progress` is this
+    /// module's -- and that is right for the product: a handler must not be
+    /// able to forge a run. A test of what a handler WRITES, though, needs a
+    /// context to hand it and no database to report progress into, so its
+    /// progress goes nowhere and it is never cancelled.
+    #[cfg(test)]
+    pub fn for_tests(payload: Value, security: SecurityContext) -> Self {
+        struct Nowhere;
+        #[async_trait]
+        impl ProgressSink for Nowhere {
+            async fn set(&self, _: Uuid, _: Uuid, _: String, _: Option<Value>) {}
+        }
+        Self {
+            tenant: security.subject_tenant_id(),
+            run_id: Uuid::new_v4(),
+            task_type: String::new(),
+            payload,
+            attempt: 1,
+            security,
+            cancel: CancellationToken::new(),
+            progress: Arc::new(Nowhere),
+        }
+    }
 }
 
 /// Progress reporting from code that cannot await. Built by
