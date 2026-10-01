@@ -30,6 +30,7 @@ pub mod analysis;
 pub mod analyze_task;
 pub mod batch_task;
 pub mod config;
+pub mod findings;
 pub mod gear;
 pub mod rest;
 pub mod verdict;

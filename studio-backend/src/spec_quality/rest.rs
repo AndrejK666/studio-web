@@ -7,10 +7,14 @@ use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit::client_hub::{ClientHub, ClientScope};
+use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
 use super::analyze_task::{ANALYZE_TASK_TYPE, AnalyzePayload};
 use super::batch_task::{BATCH_TASK_TYPE, BatchItem, BatchPayload, MAX_ITEMS};
+
+#[resource_error(gts_id!("cf.studio._.spec_quality.v1~"))]
+pub struct SpecQualityError;
 
 struct License;
 impl AsRef<str> for License {
@@ -534,6 +538,95 @@ pub struct VerdictDto {
     /// `traceability`: false when the result carried no edge key this reader
     /// knows. An empty answer then means unreadable, not "nothing found".
     pub recognised: Option<bool>,
+    /// What the detector found, each placed in the text it analysed. Empty
+    /// for `traceability`, which places nothing, and for a clean document.
+    /// See [`super::findings`].
+    pub findings: Vec<FindingDto>,
+}
+
+/// Where in the analysed text a finding is. Each field is present only when
+/// the detector gave it: `purpose` and `leak` place by section and lines,
+/// `bloat` by lines and the passage itself. No character offsets: the ones
+/// `bloat` reports do not match the text it analysed (see
+/// [`super::findings::Anchor`]), while its lines do.
+#[derive(Debug, Default)]
+#[toolkit_macros::api_dto(response)]
+pub struct FindingAnchorDto {
+    /// The section as the detector named it.
+    pub section: Option<String>,
+    /// 1-based, inclusive. For a `purpose` or `leak` section, its body; the
+    /// heading is just above.
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    /// The passage, reflowed onto one line by the service. Find it in the
+    /// lines above with whitespace collapsed; it is also what to look for when
+    /// the document has changed since the analysis.
+    pub quote: Option<String>,
+}
+
+/// Another place a finding is about: the other copy of a duplicated passage.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FindingRelatedDto {
+    pub path: String,
+    pub anchor: FindingAnchorDto,
+}
+
+/// One thing a detector found.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FindingDto {
+    /// Stable across re-runs: a hash of the rule, the document, the section
+    /// and the passage, never of line numbers, so a finding keeps its id when
+    /// text is added above it.
+    pub id: String,
+    /// `purpose.foreign_section` | `purpose.not_a_spec` |
+    /// `leak.foreign_content` | `bloat.cross_document` | `bloat.self_repeat`.
+    pub rule: String,
+    /// The document, as the run named it. Absent when the detector did not
+    /// echo one; it is then the document the analysis was of.
+    pub path: Option<String>,
+    /// `high` | `medium` | `low`.
+    pub severity: String,
+    /// The detector's own reason where it gave one.
+    pub message: String,
+    /// Absent when the finding is about the document as a whole.
+    pub anchor: Option<FindingAnchorDto>,
+    pub related: Vec<FindingRelatedDto>,
+    /// The detector's evidence, verbatim.
+    pub evidence: Vec<String>,
+    /// 0.0–1.0, when the detector reported one.
+    pub confidence: Option<f64>,
+}
+
+fn anchor_dto(a: super::findings::Anchor) -> FindingAnchorDto {
+    FindingAnchorDto {
+        section: a.section,
+        line_start: a.line_start,
+        line_end: a.line_end,
+        quote: a.quote,
+    }
+}
+
+fn finding_dto(f: super::findings::Finding) -> FindingDto {
+    FindingDto {
+        id: f.id,
+        rule: f.rule.to_owned(),
+        path: f.path,
+        severity: f.severity.as_str().to_owned(),
+        message: f.message,
+        anchor: f.anchor.map(anchor_dto),
+        related: f
+            .related
+            .into_iter()
+            .map(|r| FindingRelatedDto {
+                path: r.path,
+                anchor: anchor_dto(r.anchor),
+            })
+            .collect(),
+        evidence: f.evidence,
+        confidence: f.confidence,
+    }
 }
 
 /// Which detector's answer is being read.
@@ -562,7 +655,7 @@ impl Detector {
 }
 
 /// `?task_id=` names the analysis; `?path=` repeats for the set detectors.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug)]
 pub struct VerdictQuery {
     pub task_id: String,
     pub detector: Detector,
@@ -570,8 +663,45 @@ pub struct VerdictQuery {
     /// `traceability`, which answer about a set: a document absent from this
     /// list is absent from the answer, and absent reads as "not analysed"
     /// where an empty list reads as "analysed, nothing found".
-    #[serde(default)]
     pub path: Vec<String>,
+}
+
+impl VerdictQuery {
+    /// Read from the query's pairs, in order.
+    ///
+    /// Not `#[derive(Deserialize)]` behind `Query<VerdictQuery>`: axum's
+    /// `Query` is `serde_urlencoded`, which cannot read a repeated key into a
+    /// `Vec`. It refused `?path=` with a bare 400 even with ONE path, so every
+    /// `bloat` and `traceability` verdict failed for both portals, which send
+    /// exactly that. A list of pairs is something it can read.
+    fn from_pairs(pairs: Vec<(String, String)>) -> Result<Self, String> {
+        let mut task_id = None;
+        let mut detector = None;
+        let mut path = Vec::new();
+        for (key, value) in pairs {
+            match key.as_str() {
+                "task_id" => task_id = Some(value),
+                "detector" => {
+                    detector = Some(
+                        serde_json::from_value::<Detector>(serde_json::Value::String(value))
+                            .map_err(|_| {
+                                "detector must be one of purpose, leak, bloat, traceability"
+                                    .to_owned()
+                            })?,
+                    );
+                }
+                "path" => path.push(value),
+                _ => {}
+            }
+        }
+        Ok(Self {
+            task_id: task_id
+                .filter(|t| !t.trim().is_empty())
+                .ok_or("task_id is required")?,
+            detector: detector.ok_or("detector is required")?,
+            path,
+        })
+    }
 }
 
 fn pairs_of(pairs: Vec<(String, String)>) -> Vec<Vec<String>> {
@@ -582,8 +712,13 @@ fn pairs_of(pairs: Vec<(String, String)>) -> Vec<Vec<String>> {
 async fn get_verdict(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
-    axum::extract::Query(query): axum::extract::Query<VerdictQuery>,
+    axum::extract::Query(pairs): axum::extract::Query<Vec<(String, String)>>,
 ) -> ApiResult<JsonBody<VerdictDto>> {
+    let query = VerdictQuery::from_pairs(pairs).map_err(|why| {
+        SpecQualityError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    })?;
     let view = state
         .fetch_json(&format!("/v1/tasks/{}", query.task_id))
         .await?;
@@ -616,17 +751,29 @@ async fn get_verdict(
                 .and_then(|r| r.get("n_sections"))
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|n| u32::try_from(n).ok());
+            dto.findings = super::findings::purpose(result)
+                .into_iter()
+                .map(finding_dto)
+                .collect();
         }
         Detector::Leak => {
             let v = super::verdict::leak(result);
             dto.passed = v.passed;
             dto.leak_share = v.leak_share;
             dto.foreign_roles = Some(v.foreign_roles);
+            dto.findings = super::findings::leak(result)
+                .into_iter()
+                .map(finding_dto)
+                .collect();
         }
         Detector::Bloat => {
             let v = super::verdict::bloat(result, &query.path);
             dto.by_path = Some(v.by_path);
             dto.pairs = Some(pairs_of(v.pairs));
+            dto.findings = super::findings::bloat(result, &query.path)
+                .into_iter()
+                .map(finding_dto)
+                .collect();
         }
         Detector::Traceability => {
             let v = super::verdict::trace(result, &query.path);
@@ -921,7 +1068,9 @@ pub fn register_routes(
 
              The service does not document these shapes — its OpenAPI declares the four              request bodies and nothing else — so every key is read defensively and the              judgements are the product: a doc type is reported with the share of the document              that was recognised as specification at all, an absent boolean stays null rather              than becoming false, only duplication ACROSS documents counts as bloat, and              `recognised` separates a shape this reader did not understand from a document set              that genuinely references nothing.
 
-             `?path=` repeats for the set detectors (`bloat`, `traceability`): a document              absent from it is absent from the answer, and absent reads as not analysed where              an empty list reads as analysed and nothing found.",
+             `?path=` repeats for the set detectors (`bloat`, `traceability`): a document              absent from it is absent from the answer, and absent reads as not analysed where              an empty list reads as analysed and nothing found.
+
+             `findings` lists what the detector found, each placed in the analysed text: a              `purpose` gate violation by section and lines with its reason and evidence, a              `leak` by section and lines, a duplicated `bloat` passage by lines and the passage itself, with every              other copy as `related`. A finding's `id` hashes the rule, document, section and              passage and never the line numbers, so it is stable across re-runs and edits              elsewhere in the document.",
         )
         .tag("SpecQuality")
         .authenticated()
@@ -1048,5 +1197,54 @@ mod tests {
         let joined = upstream_url(BASE, "/healthz", None);
         assert_eq!(joined, "https://spec-quality.example/healthz");
         assert!(!joined.contains("//healthz"));
+    }
+}
+
+#[cfg(test)]
+mod verdict_query_tests {
+    //! The verdict's query, read the way axum hands it over.
+
+    use super::{Detector, VerdictQuery};
+
+    /// What `axum::extract::Query<Vec<(String, String)>>` makes of a query:
+    /// its pairs, decoded, in order. Only `%2F` occurs in these.
+    fn pairs(query: &str) -> Vec<(String, String)> {
+        query
+            .split('&')
+            .filter_map(|kv| kv.split_once('='))
+            .map(|(k, v)| (k.to_owned(), v.replace("%2F", "/")))
+            .collect()
+    }
+
+    /// The regression: both portals send `?path=` once per document, and a
+    /// derived `Query<VerdictQuery>` refused that with a bare 400.
+    #[test]
+    fn a_repeated_path_is_read_as_the_set_in_order() {
+        let q = VerdictQuery::from_pairs(pairs(
+            "task_id=t_1&detector=bloat&path=docs%2Fa.md&path=docs%2Fb.md",
+        ))
+        .expect("readable");
+        assert_eq!(q.task_id, "t_1");
+        assert!(matches!(q.detector, Detector::Bloat));
+        assert_eq!(q.path, vec!["docs/a.md", "docs/b.md"]);
+    }
+
+    #[test]
+    fn a_document_detector_needs_no_path() {
+        let q = VerdictQuery::from_pairs(pairs("detector=purpose&task_id=t_2")).expect("readable");
+        assert!(q.path.is_empty());
+    }
+
+    #[test]
+    fn a_missing_task_or_an_unknown_detector_is_refused_with_the_reason() {
+        assert_eq!(
+            VerdictQuery::from_pairs(pairs("detector=purpose")).unwrap_err(),
+            "task_id is required"
+        );
+        assert!(
+            VerdictQuery::from_pairs(pairs("task_id=t&detector=spelling"))
+                .unwrap_err()
+                .contains("purpose, leak, bloat, traceability")
+        );
     }
 }
