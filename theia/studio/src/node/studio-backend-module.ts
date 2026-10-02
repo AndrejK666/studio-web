@@ -97,6 +97,14 @@ type WorkspaceRuntimeMode = WorkspaceStartupMode;
 
 export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendApplicationContribution {
     protected readonly clients = new Set<StudioRuntimeClient>();
+    // Browser windows connected right now, and when the last one left -- from
+    // construction, which is the session's boot, until one ever connects. The
+    // event forwarder is a client too but no browser, so `clients` cannot
+    // say this. studio-session's reaper stops a session that has gone
+    // without a browser for long enough (`idle_session_secs`): the portal
+    // starts sessions ahead of a click, and most of those clicks never come.
+    protected browsers = 0;
+    protected browserlessSince = Date.now();
     protected readonly toDispose = new DisposableCollection();
     protected runtimeMode: WorkspaceRuntimeMode = 'legacy';
     protected canonicalConfigPath = '';
@@ -175,6 +183,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
                 ready: this.started,
                 workspaceMode: this.runtimeMode,
                 activeClients: this.clients.size,
+                idleSecs: this.idleSecs(),
                 lastEventSequence: this.lastEventSequence,
                 version: (process.env.STUDIO_THEIA_VERSION ?? '').trim() || 'dev'
             }),
@@ -250,6 +259,25 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
                 resolved.location.isDirectory
             )
         };
+    }
+
+    /** A browser window's connection: a client, and counted as a browser. */
+    addBrowserClient(client: StudioRuntimeClient): void {
+        this.addClient(client);
+        this.browsers++;
+    }
+
+    removeBrowserClient(client: StudioRuntimeClient): void {
+        this.removeClient(client);
+        this.browsers = Math.max(0, this.browsers - 1);
+        if (this.browsers === 0) {
+            this.browserlessSince = Date.now();
+        }
+    }
+
+    /** Seconds since a browser last had this IDE open; 0 while one has. */
+    idleSecs(now: number = Date.now()): number {
+        return this.browsers > 0 ? 0 : Math.max(0, Math.floor((now - this.browserlessSince) / 1000));
     }
 
     addClient(client: StudioRuntimeClient): void {
@@ -762,8 +790,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
     bind(ConnectionHandler).toDynamicValue(ctx =>
         new RpcConnectionHandler<StudioRuntimeClient>(studioRuntimeServicePath, client => {
             const endpoint = ctx.container.get(StudioRuntimeEndpoint);
-            endpoint.addClient(client);
-            client.onDidCloseConnection(() => endpoint.removeClient(client));
+            endpoint.addBrowserClient(client);
+            client.onDidCloseConnection(() => endpoint.removeBrowserClient(client));
             return endpoint;
         })
     ).inSingletonScope();

@@ -154,6 +154,20 @@ pub struct StudioSessionConfig {
     /// Stop sessions older than this (seconds). 0 disables the reaper.
     #[serde(default = "default_max_session_secs")]
     pub max_session_secs: u64,
+    /// Stop a session no browser has had open for this long (seconds). 0
+    /// disables it.
+    ///
+    /// The portal starts a project's session before anyone asks for the IDE —
+    /// when the project or its Specs tab is opened — so the IDE is up by the
+    /// time someone clicks a document. Most of those are never opened, and
+    /// without this each would hold its Pod for `max_session_secs`. The
+    /// session reports how long it has gone without a browser itself (the
+    /// control API's `getRuntimeStatus`): this backend may run several
+    /// replicas, and the IDE's traffic is the one thing none of them sees
+    /// all of. A session that cannot say — no control API, an image from
+    /// before it reported this — is left to `max_session_secs`.
+    #[serde(default = "default_idle_session_secs")]
+    pub idle_session_secs: u64,
     /// How long a listing of the runtime's sessions is reused before the next
     /// read asks the driver again.
     ///
@@ -241,6 +255,7 @@ impl Default for StudioSessionConfig {
             port_range_start: default_port_start(),
             port_range_end: default_port_end(),
             max_session_secs: default_max_session_secs(),
+            idle_session_secs: default_idle_session_secs(),
             registry_ttl_secs: default_registry_ttl_secs(),
             git_mode: default_git_mode(),
             agent_secrets: default_agent_secrets(),
@@ -327,6 +342,9 @@ fn default_session_memory_limit() -> String {
 }
 fn default_max_session_secs() -> u64 {
     4 * 3600
+}
+fn default_idle_session_secs() -> u64 {
+    15 * 60
 }
 fn default_registry_ttl_secs() -> u64 {
     3

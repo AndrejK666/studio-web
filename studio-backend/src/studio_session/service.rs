@@ -4,6 +4,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Context, anyhow};
+use async_trait::async_trait;
 use credstore_sdk::{CredStoreClientV1, SecretRef};
 use tokio::sync::RwLock;
 use toolkit_security::SecurityContext;
@@ -76,6 +77,72 @@ pub struct ReapOutcome {
     /// again.
     #[serde(default)]
     pub failed: usize,
+    /// Sessions stopped because no browser had them open for
+    /// `idle_session_secs` — mostly ones the portal started ahead of a click
+    /// that never came. Counted apart from `expired`, which is age alone.
+    #[serde(default)]
+    pub idle: usize,
+}
+
+/// Asks a running session how long it has been without a browser.
+///
+/// The session is the one that knows: on Kubernetes every replica proxies
+/// some of its traffic and none sees all of it, and on Docker the browser
+/// talks to it directly. A seam rather than a call in place so the reaper's
+/// rule can be tested without an IDE.
+#[async_trait]
+pub trait SessionActivity: Send + Sync {
+    /// Seconds since a browser last had the IDE open (0 while one has), or
+    /// `None` when the session cannot say: it is unreachable, it has no
+    /// control API, or it is an image from before it reported this. `None`
+    /// is never a reason to stop anything.
+    async fn idle_secs(&self, base_url: &str, token: &str) -> Option<u64>;
+}
+
+/// [`SessionActivity`] over the session's control API (`getRuntimeStatus`,
+/// the same call studio-theia makes).
+pub struct ControlApiActivity {
+    http: reqwest::Client,
+}
+
+impl ControlApiActivity {
+    pub fn new() -> Self {
+        Self {
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(3))
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl Default for ControlApiActivity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl SessionActivity for ControlApiActivity {
+    async fn idle_secs(&self, base_url: &str, token: &str) -> Option<u64> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Status {
+            idle_secs: Option<u64>,
+        }
+        let response = self
+            .http
+            .post(format!("{base_url}/internal/theia/v1/getRuntimeStatus"))
+            .header("X-CFS-Theia-Token", token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        response.json::<Status>().await.ok()?.idle_secs
+    }
 }
 
 /// UUIDv5 namespace for a session's deterministic id.
@@ -170,6 +237,8 @@ pub struct SessionService {
     /// refresh pull. Launch requests never pull inline: a registry pull of a
     /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
     pull_notify: tokio::sync::Notify,
+    /// How the reaper learns a session has gone without a browser.
+    activity: Arc<dyn SessionActivity>,
 }
 
 fn now_secs() -> u64 {
@@ -181,6 +250,14 @@ fn now_secs() -> u64 {
 
 impl SessionService {
     pub fn new(cfg: StudioSessionConfig, driver: Arc<dyn SessionDriver>) -> Arc<Self> {
+        Self::with_activity(cfg, driver, Arc::new(ControlApiActivity::new()))
+    }
+
+    pub fn with_activity(
+        cfg: StudioSessionConfig,
+        driver: Arc<dyn SessionDriver>,
+        activity: Arc<dyn SessionActivity>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             cfg,
             driver,
@@ -189,6 +266,7 @@ impl SessionService {
             account_management: RwLock::new(None),
             access: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
+            activity,
         })
     }
 
@@ -1186,17 +1264,22 @@ impl SessionService {
         if session.control_token.is_empty() {
             return None;
         }
-        let base_url = match &session.address {
+        Some(crate::studio_session::sdk::TheiaControlEndpoint {
+            session_id: session.id,
+            base_url: self.control_base_url(&session.address),
+            token: session.control_token.clone(),
+        })
+    }
+
+    /// Where a session's control API answers: the Theia node, on the
+    /// session's own port.
+    fn control_base_url(&self, address: &SessionAddress) -> String {
+        match address {
             SessionAddress::Loopback { port } => {
                 format!("http://{}:{port}", self.cfg.control_reach_host)
             }
             SessionAddress::Service { host, port } => format!("http://{host}:{port}"),
-        };
-        Some(crate::studio_session::sdk::TheiaControlEndpoint {
-            session_id: session.id,
-            base_url,
-            token: session.control_token.clone(),
-        })
+        }
     }
 
     /// Reverse-resolve a per-session S2S control token to its session's
@@ -1282,7 +1365,8 @@ impl SessionService {
         Ok(self.refresh().await?.len())
     }
 
-    /// One reaping pass: stop every session past `max_session_secs`.
+    /// One reaping pass: stop every session past `max_session_secs`, and
+    /// every one no browser has had open for `idle_session_secs`.
     ///
     /// The list comes from the **driver**, not from this process's session map.
     /// That map only holds what this replica launched, plus what it adopted when
@@ -1298,11 +1382,18 @@ impl SessionService {
     /// driver refuses to stop is counted in [`ReapOutcome::failed`] and left
     /// for the next pass.
     pub async fn reap_expired(&self) -> anyhow::Result<ReapOutcome> {
-        if self.cfg.max_session_secs == 0 {
+        let idle_reaping = self.cfg.idle_session_secs != 0 && self.cfg.theia_control_enabled;
+        if self.cfg.max_session_secs == 0 && !idle_reaping {
             return Ok(ReapOutcome::default());
         }
-        let cutoff = now_secs().saturating_sub(self.cfg.max_session_secs);
-        let expired: Vec<AdoptedSession> = self
+        let now = now_secs();
+        // 0 is before every creation time: with no maximum age, nothing expires.
+        let cutoff = if self.cfg.max_session_secs == 0 {
+            0
+        } else {
+            now.saturating_sub(self.cfg.max_session_secs)
+        };
+        let (expired, rest): (Vec<AdoptedSession>, Vec<AdoptedSession>) = self
             .driver
             .list_adoptable()
             .await?
@@ -1316,14 +1407,40 @@ impl SessionService {
             //
             // The cache already refuses to believe a zero (see `refresh`);
             // this is the same refusal on the path that acts on it.
-            .filter(|s| s.created_at_epoch_secs != 0 && s.created_at_epoch_secs < cutoff)
-            .collect();
+            .partition(|s| s.created_at_epoch_secs != 0 && s.created_at_epoch_secs < cutoff);
+
+        // Idle: asked only of a session old enough to have been idle that
+        // long, so a Pod still starting is never even probed. Its creation is
+        // also where its idle clock starts — one nobody opened is idle since
+        // boot — so a younger one cannot have been idle long enough anyway.
+        let mut idle = Vec::new();
+        if idle_reaping {
+            let old_enough = now.saturating_sub(self.cfg.idle_session_secs);
+            for session in rest {
+                if !session.running
+                    || session.control_token.is_empty()
+                    || session.created_at_epoch_secs == 0
+                    || session.created_at_epoch_secs > old_enough
+                {
+                    continue;
+                }
+                let base_url = self.control_base_url(&session.address);
+                let idle_for = self
+                    .activity
+                    .idle_secs(&base_url, &session.control_token)
+                    .await;
+                if idle_for.is_some_and(|secs| secs >= self.cfg.idle_session_secs) {
+                    idle.push(session);
+                }
+            }
+        }
 
         let mut outcome = ReapOutcome {
             expired: expired.len(),
+            idle: idle.len(),
             ..ReapOutcome::default()
         };
-        for session in expired {
+        for session in expired.into_iter().chain(idle) {
             match self.driver.destroy(&session.handle).await {
                 Ok(()) => {
                     outcome.stopped += 1;
@@ -1337,7 +1454,7 @@ impl SessionService {
                     tracing::warn!(
                         handle = %session.handle,
                         workspace_id = %session.workspace_id,
-                        "studio-session: could not stop an expired session: {e:#}"
+                        "studio-session: could not stop an expired or idle session: {e:#}"
                     );
                 }
             }
@@ -2036,6 +2153,97 @@ mod tests {
 
         assert_eq!(outcome.expired, 1);
         assert_eq!(outcome.stopped, 1);
+    }
+
+    // ── Idle sessions ─────────────────────────────────────────────────────
+    //
+    // The portal starts a project's session before anyone opens the IDE, so
+    // most sessions are never opened. These are about stopping those, and
+    // nothing else.
+
+    /// What the session says about its browsers, fixed; counts the asks.
+    struct Idle {
+        answer: Option<u64>,
+        asked: AtomicUsize,
+    }
+
+    impl Idle {
+        fn says(answer: Option<u64>) -> Arc<Self> {
+            Arc::new(Self {
+                answer,
+                asked: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl super::SessionActivity for Idle {
+        async fn idle_secs(&self, _base_url: &str, _token: &str) -> Option<u64> {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            self.answer
+        }
+    }
+
+    /// A session an hour old: past the idle threshold, inside the maximum age.
+    fn an_hour_old(workspace: Uuid) -> AdoptedSession {
+        AdoptedSession {
+            created_at_epoch_secs: super::now_secs() - 3600,
+            ..running_session(workspace, 41000)
+        }
+    }
+
+    async fn reap_with(session: AdoptedSession, idle: Arc<Idle>) -> super::ReapOutcome {
+        let runtime = FakeRuntime::with(vec![session]);
+        let service = SessionService::with_activity(config(), runtime, idle);
+        service.reap_expired().await.expect("the pass runs")
+    }
+
+    #[tokio::test]
+    async fn a_session_no_browser_has_had_open_is_stopped() {
+        let outcome = reap_with(an_hour_old(Uuid::from_u128(0xD1)), Idle::says(Some(3600))).await;
+        assert_eq!((outcome.idle, outcome.expired, outcome.stopped), (1, 0, 1));
+    }
+
+    #[tokio::test]
+    async fn a_session_a_browser_has_open_is_kept() {
+        let outcome = reap_with(an_hour_old(Uuid::from_u128(0xD2)), Idle::says(Some(0))).await;
+        assert_eq!((outcome.idle, outcome.stopped), (0, 0));
+    }
+
+    /// An image from before the session reported this, or one that does not
+    /// answer: not knowing is never a reason to stop it.
+    #[tokio::test]
+    async fn a_session_that_cannot_say_is_kept() {
+        let outcome = reap_with(an_hour_old(Uuid::from_u128(0xD3)), Idle::says(None)).await;
+        assert_eq!((outcome.idle, outcome.stopped), (0, 0));
+    }
+
+    /// One younger than the threshold cannot have been idle that long, and a
+    /// Pod still starting is exactly that — so it is not even asked.
+    #[tokio::test]
+    async fn a_session_younger_than_the_threshold_is_not_asked() {
+        let young = AdoptedSession {
+            created_at_epoch_secs: super::now_secs() - 60,
+            ..running_session(Uuid::from_u128(0xD4), 41000)
+        };
+        let idle = Idle::says(Some(u64::MAX));
+        let outcome = reap_with(young, idle.clone()).await;
+        assert_eq!(outcome.stopped, 0);
+        assert_eq!(idle.asked.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn idle_reaping_off_asks_nothing() {
+        let runtime = FakeRuntime::with(vec![an_hour_old(Uuid::from_u128(0xD5))]);
+        let idle = Idle::says(Some(u64::MAX));
+        let cfg = StudioSessionConfig {
+            idle_session_secs: 0,
+            ..config()
+        };
+        let service = SessionService::with_activity(cfg, runtime, idle.clone());
+        let outcome = service.reap_expired().await.expect("the pass runs");
+        assert_eq!(outcome.stopped, 0);
+        assert_eq!(idle.asked.load(Ordering::SeqCst), 0);
     }
 
     /// Whether the IDE answers is the one thing the runtime cannot report, so

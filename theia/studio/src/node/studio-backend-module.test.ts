@@ -266,6 +266,26 @@ describe('StudioRuntimeEndpoint', () => {
         expect(second.onOperationEvent).toHaveBeenCalledTimes(2);
     });
 
+    it('reports how long it has gone without a browser, which a server-side client is not', () => {
+        const harness = createHarness({
+            loadResult: validLoadResult(configPath, 'rev-1'),
+            startupMode: 'canonical-active'
+        });
+        const now = Date.now();
+        // Nobody opened it: idle since boot, whatever else is listening.
+        harness.endpoint.addClient(createClient().client);
+        expect(harness.endpoint.idleSecs(now + 600_000)).toBeGreaterThanOrEqual(600);
+
+        const tab = createClient();
+        harness.endpoint.addBrowserClient(tab.client);
+        expect(harness.endpoint.idleSecs(now + 900_000)).toBe(0);
+
+        // The clock starts again when the last window leaves.
+        harness.endpoint.removeBrowserClient(tab.client);
+        const left = Date.now();
+        expect(harness.endpoint.idleSecs(left + 30_000)).toBe(30);
+    });
+
     it('validates workspace identity and path-bounds requests', async () => {
         const harness = createHarness({
             loadResult: validLoadResult(configPath, 'rev-1'),

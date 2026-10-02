@@ -473,6 +473,47 @@ impl DocumentsRepo {
         Ok((query.all(&conn).await?, total))
     }
 
+    /// The bindings in `scope` at any of `paths`, in path order.
+    ///
+    /// What the IDE asks when a file is opened: it knows the file's path and
+    /// wants that one binding, and reading the whole list to find it was five
+    /// pages and most of a megabyte on a project of a thousand files. Unpaged,
+    /// because a path names at most a handful (one per repository).
+    pub async fn list_bindings_at(
+        &self,
+        workspace_id: Uuid,
+        scope: DocScope,
+        paths: &[String],
+    ) -> Result<Vec<document_binding::Model>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.db.conn()?;
+        let filter = match scope {
+            DocScope::WorkspaceLevel => {
+                Condition::all().add(document_binding::Column::ProjectId.is_null())
+            }
+            DocScope::Effective(project_id) => Condition::any()
+                .add(document_binding::Column::ProjectId.is_null())
+                .add(document_binding::Column::ProjectId.eq(project_id)),
+            DocScope::Everything => Condition::all(),
+        };
+        Ok(document_binding::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            // `all`, not `filter.add`: the effective scope is an `any`, and
+            // a path added to it would widen the answer instead of narrowing it.
+            .filter(
+                Condition::all()
+                    .add(filter)
+                    .add(document_binding::Column::Path.is_in(paths.iter().cloned())),
+            )
+            .order_by(document_binding::Column::Path, Order::Asc)
+            .order_by(document_binding::Column::Id, Order::Asc)
+            .all(&conn)
+            .await?)
+    }
+
     pub async fn get_binding(
         &self,
         workspace_id: Uuid,

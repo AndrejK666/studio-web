@@ -39,6 +39,8 @@ export interface StudioControlRuntimeStatus {
     readonly ready: boolean;
     readonly workspaceMode: string;
     readonly activeClients: number;
+    /** Seconds since a browser last had the IDE open; 0 while one has. */
+    readonly idleSecs: number;
     readonly lastEventSequence: number;
     readonly version: string;
 }

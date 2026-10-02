@@ -44,7 +44,7 @@ describe('AnalyzeFrontendController', () => {
 
         const model = controller.getViewModel();
         expect(model).toMatchObject({ status: 'ready', knownAs: 'docs/prd.md', typeKey: 'prd', canAnalyze: true, documentLabel: 'prd.md' });
-        expect(studio.bindings).toHaveBeenCalledWith('ws-1', 'p-1');
+        expect(studio.bindingsAt).toHaveBeenCalledWith('ws-1', 'p-1', expect.arrayContaining(['docs/prd.md']));
         expect(studio.findings).toHaveBeenCalledWith('p-1', 'node-b-prd');
         expect(studio.startRun).not.toHaveBeenCalled();
 
@@ -534,9 +534,13 @@ function succeeded(runId: string, path = 'docs/prd.md'): TaskRun {
 function createStudio(options: { scope?: AnalyzeScope | undefined; bindings?: DocumentBinding[] } = {}) {
     const scope = 'scope' in options ? options.scope : PROJECT;
     const runPaths = new Map<string, string>();
+    const bindings = jest.fn(async (_ws: string, _project: string) => options.bindings ?? [PRD, ADR]);
     const studio = {
         scope: jest.fn(async () => scope),
-        bindings: jest.fn(async (_ws: string, _project: string) => options.bindings ?? [PRD, ADR]),
+        bindings,
+        // By path, as the server answers it: the same bindings, kept to the paths asked.
+        bindingsAt: jest.fn(async (ws: string, project: string, paths: readonly string[]) =>
+            (await bindings(ws, project)).filter(binding => paths.includes(binding.path))),
         studioDocument: jest.fn(),
         validateStudioDocument: jest.fn(async (_ws: string, _id: string) => ({ conforms: true, sections: [] as ConformanceReport['sections'][number][], issues: [] as string[] })),
         findings: jest.fn(async (_project: string, _subject: string) => [] as unknown[]),

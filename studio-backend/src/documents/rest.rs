@@ -1925,6 +1925,9 @@ async fn list_project_bindings(
     Extension(service): Extension<Arc<DocumentsService>>,
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
     Query(page): Query<PageQuery>,
+    // Pairs, not a field of `PageQuery`: axum's `Query` cannot read a
+    // repeated key into a `Vec` (see spec_quality's `VerdictQuery`).
+    Query(pairs): Query<Vec<(String, String)>>,
 ) -> ApiResult<JsonBody<DocumentBindingListDto>> {
     service
         .authorize(&ctx, workspace_id)
@@ -1934,10 +1937,24 @@ async fn list_project_bindings(
         .authorize(&ctx, project_id)
         .await
         .map_err(no_tenant)?;
-    let (items, total) = service
-        .list_bindings(workspace_id, Some(project_id), page)
-        .await
-        .map_err(internal)?;
+    let paths: Vec<String> = pairs
+        .into_iter()
+        .filter(|(key, value)| key == "path" && !value.is_empty())
+        .map(|(_, value)| value)
+        .collect();
+    let (items, total) = if paths.is_empty() {
+        service
+            .list_bindings(workspace_id, Some(project_id), page)
+            .await
+            .map_err(internal)?
+    } else {
+        let items = service
+            .list_bindings_at(workspace_id, Some(project_id), &paths)
+            .await
+            .map_err(internal)?;
+        let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+        (items, total)
+    };
     Ok(Json(DocumentBindingListDto {
         items: items
             .into_iter()
@@ -3583,6 +3600,13 @@ pub fn register_routes(
         "integer",
     )
     .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+    .query_param(
+        "path",
+        false,
+        "Only the bindings at this repository path; repeat for several. With \
+         it the answer is every match, unpaged — a path names one file per \
+         repository — and `offset`/`limit` are ignored.",
+    )
     .handler(list_project_bindings)
     .json_response_with_schema::<DocumentBindingListDto>(
         openapi,

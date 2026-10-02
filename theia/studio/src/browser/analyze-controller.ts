@@ -585,7 +585,7 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         const candidates = pathCandidates(relative);
         const projects = scope.kind === 'project' ? [scope.projectId] : scope.projectIds;
         for (const projectId of projects) {
-            const match = matchBindingByPath(await this.studio.bindings(scope.workspaceId, projectId), candidates);
+            const match = matchBindingByPath(await this.studio.bindingsAt(scope.workspaceId, projectId, candidates), candidates);
             if (match.kind === 'ambiguous') {
                 return {
                     ok: false,

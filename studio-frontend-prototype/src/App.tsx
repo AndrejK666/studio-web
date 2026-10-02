@@ -1199,6 +1199,34 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     [postToFrame],
   );
 
+  /* Sessions started ahead of a click, by target, with when. Opening a
+     project is the moment someone is most likely to open one of its documents
+     next, and a session takes seconds to come up — a minute on a node that
+     has not pulled the image yet. Starting it then, in the background, leaves
+     the click only Theia's own frontend to wait for. A session nobody opens
+     is stopped by the backend once no browser has had it for
+     `idle_session_secs`, so this costs a Pod for minutes, not hours.
+
+     Once per target per PREWARM_EVERY_MS: moving between a project's tabs
+     remounts the screen, and each remount asking again would be noise. */
+  const prewarmedRef = useRef<Map<string, number>>(new Map());
+  const prewarm = useCallback(
+    (target: StudioTarget) => {
+      // Any mounted space already answers a document click (openDocument
+      // reuses whichever session is open), so one more Pod would buy nothing.
+      if (spacesRef.current.length > 0) return;
+      const at = prewarmedRef.current.get(target.id);
+      if (at !== undefined && Date.now() - at < PREWARM_EVERY_MS) return;
+      prewarmedRef.current.set(target.id, Date.now());
+      // Creation is idempotent per workspace, so a click arriving while this
+      // is in flight gets the same session rather than a second one.
+      startStudioSession(token, target).catch(() => {
+        prewarmedRef.current.delete(target.id);
+      });
+    },
+    [token],
+  );
+
   const openInStudio = useCallback(
     async (target: StudioTarget, msg: BridgeMessage, reuseAnySpace = false) => {
       // Already mounted: no wait to report at all, and switching never reloads
@@ -1269,11 +1297,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       openProduct: (target: StudioTarget, path: string) =>
         openInStudio(target, { type: "studio.openInEditor", path }),
       openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
+      prewarm,
       opening,
       isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
       savedDocument,
     }),
-    [openInStudio, opening, savedDocument],
+    [openInStudio, prewarm, opening, savedDocument],
   );
 
   useEffect(() => {
@@ -2266,10 +2295,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               onLoad={(e) => {
                 // Handshake: theme + the caller's API token (the IDE calls the
                 // gears same-origin through the session gate's /studio-api/*).
-                // Retried every 2s until the bridge acks (studio.status): the
-                // first load events are the gate's redirect/splash, where
-                // nobody is listening yet. Splash reloads re-fire onLoad —
-                // reset the timer each time.
+                // Retried every INIT_RETRY_MS until the bridge acks (any
+                // studio.* reply): the first load events are the gate's
+                // redirect/splash, where nobody is listening yet. The bridge
+                // cannot speak first — it learns the portal's origin from this
+                // message — so every retry interval is time the IDE sits ready
+                // and unaddressed; at 2s that was up to 2s on every open.
+                // Splash reloads re-fire onLoad — reset the timer each time.
                 const frame = e.currentTarget;
                 const origin = spaceOrigin(s.url);
                 // A (re)load means a fresh bridge that has not acked yet:
@@ -2306,12 +2338,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 stopInitRetry(s.wsId);
                 let tries = 0;
                 initTimersRef.current[s.wsId] = setInterval(() => {
-                  if (++tries > 150) {
+                  if (++tries > INIT_RETRY_LIMIT) {
                     stopInitRetry(s.wsId); // ~5 min — session is not coming up
                     return;
                   }
                   post();
-                }, 2000);
+                }, INIT_RETRY_MS);
               }}
               style={
                 activeSpace === s.wsId
@@ -5100,6 +5132,14 @@ function ProjectScreen({
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const studio = useStudioBridge();
+
+  // Someone who opens a project is likely to open one of its documents next:
+  // start its IDE now, so that click is not also the wait for a session.
+  const prewarm = studio?.prewarm;
+  useEffect(() => {
+    if (!tenant || !prewarm) return;
+    prewarm({ ...tenant, orgId: workspace.orgId, orgName: workspace.orgName } as Workspace);
+  }, [tenant, prewarm, workspace.orgId, workspace.orgName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -9408,6 +9448,16 @@ function ProfileView({ me, home, token }: { me: Me; home: Tenant | null; token: 
 }
 
 /* ── Studio launcher (studio-session gear → per-workspace Theia container) ── */
+
+/** How often the portal repeats `studio.init` to a booting IDE, and how many
+ *  times (~5 min) before it decides the session is not coming up. */
+const INIT_RETRY_MS = 300;
+const INIT_RETRY_LIMIT = Math.ceil((5 * 60 * 1000) / INIT_RETRY_MS);
+
+/** A target's session is started ahead of a click at most this often. Under
+ *  the backend's idle stop (15 min), so a person still on the project when it
+ *  fires gets it started again on their next visit to it. */
+const PREWARM_EVERY_MS = 10 * 60 * 1000;
 
 /** Reuse-or-launch the IDE session for a target and return it only once the
  *  backend's reachability probe says it is actually serving.

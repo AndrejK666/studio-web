@@ -2082,6 +2082,22 @@ impl DocumentsService {
         Ok((bindings, u32::try_from(total).unwrap_or(u32::MAX)))
     }
 
+    /// The bindings a project sees at any of `paths` (see
+    /// [`DocumentsRepo::list_bindings_at`]).
+    pub async fn list_bindings_at(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        paths: &[String],
+    ) -> Result<Vec<DocumentBinding>> {
+        self.repo
+            .list_bindings_at(workspace_id, binding_scope(project_id), paths)
+            .await?
+            .into_iter()
+            .map(binding_from_row)
+            .collect()
+    }
+
     /// Rule on a binding: accept the proposal, set a type outright, say the
     /// file is not a document, or put it back in the undecided queue.
     ///

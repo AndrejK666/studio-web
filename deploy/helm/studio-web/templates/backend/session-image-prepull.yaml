@@ -1,0 +1,64 @@
+{{/*
+  The IDE session image, already on the nodes before anyone opens an IDE.
+
+  A session is a bare Pod the backend creates on demand, and its image is
+  ~1.4 GB: on a node that has not pulled the current tag, the first IDE after a
+  deploy waited ~60 s for the pull alone (measured on dev; ~2 s once cached).
+  This holds one tiny Pod of that image per node, so the deploy itself pulls it
+  everywhere and every session after it starts from a cached image.
+
+  A Deployment rather than a DaemonSet because the deployer's Role may create
+  Deployments and may not create DaemonSets. One replica per node is asked for
+  with a spread constraint that never leaves a Pod Pending (`ScheduleAnyway`):
+  a Pending Pod would fail the deploy's `--wait`, and a node it missed costs
+  one slow first launch, which is what every node costs without this. Set
+  `replicas` to the number of worker nodes.
+
+  `Recreate`: the old Pod leaves before the new one is placed, so the spread
+  sees free nodes rather than surging onto an occupied one.
+*/}}
+{{- if and .Values.backend.sessions.enabled .Values.backend.sessions.prepull.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "studio-web.fullname" . }}-session-prepull
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.sessions.prepull.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "studio-web.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: session-prepull
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: session-prepull
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 0
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "studio-web.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: session-prepull
+      containers:
+        - name: hold
+          # The same reference the backend hands every session (STUDIO_SESSION_IMAGE).
+          image: "{{ .Values.backend.sessions.image.repository }}:{{ default .Values.backend.image.tag .Values.backend.sessions.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          # Only there to keep the image on the node: nothing of the IDE runs.
+          command: ["sleep", "infinity"]
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources: {{- toYaml .Values.backend.sessions.prepull.resources | nindent 12 }}
+{{- end }}

@@ -117,6 +117,10 @@ pub struct RuntimeStatus {
     pub ready: bool,
     pub workspace_mode: String,
     pub active_clients: u32,
+    /// Seconds since a browser last had the IDE open; 0 while one has.
+    /// `None` from an image that does not report it.
+    #[serde(default)]
+    pub idle_secs: Option<u64>,
     pub last_event_sequence: i64,
     pub version: String,
 }

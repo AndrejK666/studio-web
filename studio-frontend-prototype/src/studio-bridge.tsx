@@ -71,6 +71,10 @@ export interface StudioBridge {
   openProduct(target: StudioTarget, path: string, branch?: string): Promise<void>;
   /** Open the IDE's Artifact Graph view. */
   openGraph(target: StudioTarget): Promise<void>;
+  /** Start the target's session now, in the background, so that the IDE is
+   *  already up when someone asks for a document in it. Mounts nothing and
+   *  reports nothing: a failure here is the next open's to show. */
+  prewarm(target: StudioTarget): void;
   /** The target currently being launched, if any — for button spinners. */
   opening: string | null;
   /** True once the target has a mounted space, so callers can say "switch to"

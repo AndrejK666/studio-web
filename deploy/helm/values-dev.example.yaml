@@ -62,6 +62,10 @@ backend:
     enabled: false
   sessions:
     enabled: true
+    # dev has three worker nodes.
+    prepull:
+      enabled: true
+      replicas: 3
     # GitHub's studio-deployer cannot and must not administer RBAC. The
     # namespace-scoped session Role/RoleBinding is bootstrapped once by an
     # administrator (deploy/README.md).
