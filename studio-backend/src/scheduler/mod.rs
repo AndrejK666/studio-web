@@ -39,6 +39,7 @@ pub mod cron;
 mod entity;
 mod migrations;
 mod policy;
+pub mod port;
 mod rest;
 pub mod service;
 mod ticker;
@@ -158,6 +159,8 @@ impl Gear for StudioSchedulerGear {
         };
 
         let service = SchedulerService::new(db.clone(), ctx.client_hub(), cfg.owner_tenant_id);
+        // For a gear that keeps a schedule of its own (studio-reports).
+        port::publish(&ctx.client_hub(), &service);
         let _ = self.db.set(db);
         let owner = cfg.owner_tenant_id;
         let tick = cfg.tick_seconds;

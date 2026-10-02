@@ -1354,6 +1354,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-reports/v1/reports/{report_id}/schedule",
+      "operation_id": "studio_reports.get_report_schedule",
+      "tag": "StudioReports",
+      "summary": "Whether the report refreshes on its own, and when next",
+      "authenticated": true,
+      "responses": [
+        "ReportScheduleDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-reports/v1/reports/{report_id}/source",
       "operation_id": "studio_reports.get_report_source",
       "tag": "StudioReports",
@@ -3347,6 +3363,24 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-reports/v1/reports/{report_id}/schedule",
+      "operation_id": "studio_reports.update_report_schedule",
+      "tag": "StudioReports",
+      "summary": "Switch the report's own refresh on or off",
+      "authenticated": true,
+      "request": "ReportScheduleInputDto",
+      "responses": [
+        "ReportScheduleDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

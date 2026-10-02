@@ -101,10 +101,22 @@ impl RestApiCapability for StudioReportsGear {
                 "studio-reports: no GitHub connector -- plans can be uploaded, not read from a repository"
             );
         }
-        let service = Arc::new(ReportsService::new(build_store(ctx), catalog, reader));
-        crate::tasks::registry::register(Arc::new(refresh_task::RefreshTask::new(Arc::clone(
-            &service,
-        ))))?;
+        let schedules: service::SchedulesLink = {
+            let hub = Arc::clone(&hub);
+            Arc::new(move || {
+                hub.get::<dyn crate::scheduler::port::Schedules>()
+                    .map_err(|_| {
+                        anyhow::anyhow!("studio-scheduler is not running in this deployment")
+                    })
+            })
+        };
+        let service = Arc::new(
+            ReportsService::new(build_store(ctx), catalog, reader).with_schedules(schedules),
+        );
+        crate::tasks::registry::register(Arc::new(refresh_task::RefreshTask::new(
+            Arc::clone(&service),
+            Arc::clone(&hub),
+        )))?;
         let _ = self.service.set(Arc::clone(&service));
         Ok(rest::register_routes(router, openapi, service, hub))
     }

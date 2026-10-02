@@ -1,9 +1,7 @@
 // The reports a Studio draws, as `studio-reports` serves them
 // (`studio-backend/src/reports`), and the little logic the Reports screen
-// needs that is worth testing without a screen: what a save sends, which
-// schedule keeps a report current, and how a source's state reads.
-
-import type { TaskSchedule } from "./api";
+// needs that is worth testing without a screen: what a save sends, whether a
+// refresh can work, and how a source's state reads.
 
 export interface PlanSnapshot {
   /** `owner/repo:path@ref`, or `upload`. */
@@ -11,6 +9,23 @@ export interface PlanSnapshot {
   sha: string | null;
   read_at: string;
   size: number;
+}
+
+/** What a read plan holds: what People, the Gantt's lanes and the project
+ *  columns are drawn from. */
+export interface PlanSummary {
+  board: string | null;
+  people: number;
+  teams: number;
+  projects: number;
+}
+
+/** The schedule that refreshes a report on its own. */
+export interface ReportSchedule {
+  enabled: boolean;
+  cron: string | null;
+  next_run_at: string | null;
+  last_run: string | null;
 }
 
 export interface ReportRefresh {
@@ -28,6 +43,7 @@ export interface ReportSource {
   roots: string[];
   consumers: Record<string, string>;
   snapshot: PlanSnapshot | null;
+  plan: PlanSummary | null;
   last_refresh: ReportRefresh | null;
 }
 
@@ -101,51 +117,43 @@ export function inputOf(d: SourceDraft): ReportSourceInput {
   return input;
 }
 
-/** The task type a schedule targets to keep a report current. */
-export const REFRESH_TASK = "reports.refresh";
-
-/** Hourly, on the hour. */
-export const HOURLY = "0 * * * *";
-
-/** The schedule that refreshes this report, if there is one. */
-export function scheduleOf(schedules: TaskSchedule[], report: string): TaskSchedule | undefined {
-  return schedules.find(
-    (s) => s.task_type === REFRESH_TASK && (s.payload as { report?: unknown })?.report === report,
-  );
-}
-
-/** The body that creates one. */
-export function newSchedule(report: string) {
-  return {
-    name: `Refresh the ${report} report`,
-    task_type: REFRESH_TASK,
-    payload: { report },
-    expression_kind: "cron",
-    expression: HOURLY,
-    timezone: "UTC",
-    // A refresh still running when the next is due is let finish.
-    concurrency: "forbid",
-    missed_policy: "skip",
-    enabled: true,
-  };
+/** Whether a refresh can find a board: one in the form, a plan file that may
+ *  name one, a plan being uploaded that may, or the plan read last naming one. */
+export function canRefresh(d: SourceDraft, s: ReportSource): boolean {
+  return !!(d.board.trim() || d.planFile.trim() || (d.planYaml && d.planYaml.trim()) || s.plan?.board);
 }
 
 export type SourceState =
   | { kind: "empty" }
   | { kind: "unread"; what: string }
   | { kind: "failed"; error: string }
-  | { kind: "ready"; from: string; at: string };
+  /** The board is known, but there is no plan to draw people and teams from. */
+  | { kind: "no-plan" }
+  /** A plan was read, but it names nobody. */
+  | { kind: "no-people"; from: string }
+  | { kind: "ready"; from: string; at: string; plan: PlanSummary | null };
 
 /** Where a source stands, in one line's worth. */
 export function stateOf(s: ReportSource): SourceState {
   if (s.last_refresh?.error) return { kind: "failed", error: s.last_refresh.error };
-  if (s.snapshot) return { kind: "ready", from: s.snapshot.from, at: s.snapshot.read_at };
+  if (s.snapshot) {
+    if (s.plan && s.plan.people === 0) return { kind: "no-people", from: s.snapshot.from };
+    return { kind: "ready", from: s.snapshot.from, at: s.snapshot.read_at, plan: s.plan };
+  }
   if (s.plan_file) return { kind: "unread", what: s.plan_file };
-  if (s.board) return { kind: "unread", what: s.board };
+  if (s.board) return { kind: "no-plan" };
   return { kind: "empty" };
 }
 
+/** Whether the state is one a person has to act on. */
+export function needsAttention(st: SourceState): boolean {
+  return st.kind === "failed" || st.kind === "no-plan" || st.kind === "no-people";
+}
+
+const EMPTY_WITHOUT_PLAN = "People, the Gantt's team lanes and the project columns stay empty without one";
+
 export function stateText(st: SourceState): string {
+  const from = (f: string) => (f === "upload" ? "an uploaded file" : f);
   switch (st.kind) {
     case "empty":
       return "Not configured: name the plan file (it can name the board itself), or upload it.";
@@ -153,7 +161,15 @@ export function stateText(st: SourceState): string {
       return `${st.what} has not been read yet — refresh to read it and sync the board.`;
     case "failed":
       return `The last refresh failed: ${st.error}`;
-    case "ready":
-      return `Plan from ${st.from === "upload" ? "an uploaded file" : st.from}, read ${st.at.slice(0, 16).replace("T", " ")}.`;
+    case "no-plan":
+      return `No plan: load gears.yaml or name the plan file. ${EMPTY_WITHOUT_PLAN}.`;
+    case "no-people":
+      return `The plan from ${from(st.from)} names no people. ${EMPTY_WITHOUT_PLAN} of them.`;
+    case "ready": {
+      const what = st.plan
+        ? ` — ${st.plan.people} people, ${st.plan.teams} teams, ${st.plan.projects} projects`
+        : "";
+      return `Plan from ${from(st.from)}, read ${st.at.slice(0, 16).replace("T", " ")}${what}.`;
+    }
   }
 }

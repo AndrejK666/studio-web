@@ -1,7 +1,7 @@
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
-import type { Report, ReportSource, ReportSourceInput } from "./reports-model";
+import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -3704,18 +3704,6 @@ export const api = {
       { method: "POST" },
     ),
 
-  createSchedule: (token: string, body: Record<string, unknown>) =>
-    request<TaskSchedule>("/studio-scheduler/v1/schedules", token, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  patchSchedule: (token: string, scheduleId: string, body: Record<string, unknown>) =>
-    request<TaskSchedule>(`/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}`, token, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-
   /* ── studio-reports gear: report definitions, sources and drawing ── */
 
   /** Every report this deployment draws, with this organization's source. */
@@ -3736,6 +3724,18 @@ export const api = {
     request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source`, token, {
       method: "PUT",
       body: JSON.stringify(body),
+    }),
+
+  /** Whether the report refreshes on its own. */
+  reportSchedule: (token: string, report: string) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token),
+
+  /** Switch the report's own (hourly) refresh on or off. The server names the
+   *  organization in the schedule; the client never does. */
+  updateReportSchedule: (token: string, report: string, enabled: boolean) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
     }),
 
   /** Read the plan again and sync the board: a `reports.refresh` run. */

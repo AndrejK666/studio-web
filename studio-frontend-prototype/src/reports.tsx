@@ -6,19 +6,20 @@
  *  Refresh reads the plan again and syncs the board (`reports.refresh`); a
  *  schedule does the same every hour when switched on. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { api, type Connection, type TaskSchedule } from "./api";
+import { api, type Connection } from "./api";
 import { errText } from "./format";
 import { RoadmapReportBody, downloadReport } from "./roadmap-report-view";
 import {
+  canRefresh,
   draftOf,
   inputOf,
-  newSchedule,
-  scheduleOf,
+  needsAttention,
   stateOf,
   stateText,
   type Report,
+  type ReportSchedule,
   type SourceDraft,
 } from "./reports-model";
 
@@ -32,6 +33,15 @@ const CARD: CSSProperties = {
 };
 const ROW: CSSProperties = { display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" };
 const HINT: CSSProperties = { color: "var(--muted-foreground)", fontSize: 12, margin: 0 };
+const ATTENTION: CSSProperties = {
+  margin: 0,
+  padding: "8px 10px",
+  borderRadius: 6,
+  fontSize: 13,
+  border: "1px solid color-mix(in srgb, var(--destructive, #dc2626) 45%, transparent)",
+  background: "color-mix(in srgb, var(--destructive, #dc2626) 8%, transparent)",
+  color: "var(--destructive, #dc2626)",
+};
 
 /** Poll a run until it ends. */
 async function finished(token: string, runId: string): Promise<{ ok: boolean; message: string | null }> {
@@ -48,17 +58,12 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
   const [reports, setReports] = useState<Report[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [schedules, setSchedules] = useState<TaskSchedule[]>([]);
 
   const load = useCallback(() => {
     api
       .reports(token)
       .then((r) => setReports(r.items))
       .catch((e) => setErr(errText(e)));
-    api
-      .schedules(token)
-      .then((r) => setSchedules(r.items))
-      .catch(() => setSchedules([]));
   }, [token]);
 
   useEffect(load, [load]);
@@ -87,7 +92,6 @@ export function ReportsScreen({ token, tenantId }: { token: string; tenantId: st
           token={token}
           report={r}
           connections={connections}
-          schedule={scheduleOf(schedules, r.id)}
           onChanged={load}
         />
       ))}
@@ -99,15 +103,21 @@ function ReportCard({
   token,
   report,
   connections,
-  schedule,
   onChanged,
 }: {
   token: string;
   report: Report;
   connections: Connection[];
-  schedule: TaskSchedule | undefined;
   onChanged: () => void;
 }) {
+  const [schedule, setSchedule] = useState<ReportSchedule | null>(null);
+  const pick = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    api
+      .reportSchedule(token, report.id)
+      .then(setSchedule)
+      .catch(() => setSchedule(null));
+  }, [token, report.id]);
   const [draft, setDraft] = useState<SourceDraft>(() => draftOf(report.source));
   const [upload, setUpload] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -153,17 +163,22 @@ function ReportCard({
 
   const hourly = (on: boolean) =>
     act("schedule", async () => {
-      if (schedule) await api.patchSchedule(token, schedule.id, { enabled: on });
-      else if (on) await api.createSchedule(token, newSchedule(report.id));
-      onChanged();
+      setSchedule(await api.updateReportSchedule(token, report.id, on));
+      return on ? "Refreshes every hour." : "No longer refreshes on its own.";
     });
 
   const state = stateOf(report.source);
+  const refreshable = canRefresh(draft, report.source);
   return (
     <section style={CARD}>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
         <h2 style={{ margin: 0, fontSize: 16, flex: 1 }}>{report.title}</h2>
-        <button className="iconbtn" disabled={!!busy} onClick={refresh}>
+        <button
+          className="iconbtn"
+          disabled={!!busy || !refreshable}
+          title={refreshable ? "Read the plan again and sync the board" : "Name the board, a plan file, or upload the plan first"}
+          onClick={refresh}
+        >
           {busy === "refresh" ? "Refreshing…" : "Refresh"}
         </button>
         <button
@@ -180,7 +195,9 @@ function ReportCard({
         {report.sheets.length > 0 && ` — ${report.sheets.join(", ")}`}.
         {report.definition_error && <span className="gcat-err"> The plan&apos;s own definition does not read: {report.definition_error}</span>}
       </p>
-      <p style={{ ...HINT, color: state.kind === "failed" ? "var(--destructive, #dc2626)" : undefined }}>{stateText(state)}</p>
+      <p style={needsAttention(state) ? ATTENTION : HINT} role={needsAttention(state) ? "alert" : undefined}>
+        {stateText(state)}
+      </p>
 
       <div style={ROW}>
         <span>Connection</span>
@@ -200,9 +217,11 @@ function ReportCard({
         />
         <span>or upload</span>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label className="iconbtn" style={{ cursor: "pointer" }}>
+          <button className="iconbtn" type="button" onClick={() => pick.current?.click()}>
             {report.source.plan_uploaded || upload ? "Replace…" : "Load gears.yaml…"}
-            <input
+          </button>
+          <input
+              ref={pick}
               type="file"
               accept=".yaml,.yml,text/yaml"
               hidden
@@ -216,7 +235,6 @@ function ReportCard({
                 });
               }}
             />
-          </label>
           {upload && <code>{upload}</code>}
           {!upload && report.source.plan_uploaded && <span style={HINT}>an uploaded plan is in use</span>}
           {(upload || report.source.plan_uploaded) && (
@@ -258,6 +276,7 @@ function ReportCard({
             type="checkbox"
             disabled={!!busy}
             checked={!!schedule?.enabled}
+            title={schedule?.next_run_at ? `Next: ${schedule.next_run_at.slice(0, 16).replace("T", " ")} UTC` : undefined}
             onChange={(e) => hourly(e.target.checked)}
           />
           Refresh every hour

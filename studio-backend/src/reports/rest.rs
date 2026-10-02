@@ -100,7 +100,43 @@ pub struct ReportSourceDto {
     pub roots: Vec<String>,
     pub consumers: std::collections::BTreeMap<String, String>,
     pub snapshot: Option<PlanSnapshotDto>,
+    /// What the plan holds, so a screen can say what an empty one costs.
+    /// Absent until a plan has been read.
+    pub plan: Option<PlanSummaryDto>,
     pub last_refresh: Option<RefreshDto>,
+}
+
+/// What a read plan holds: what the People sheet, the Gantt's lanes and the
+/// project columns are drawn from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlanSummaryDto {
+    /// The board the plan names (`board:`), if it names one.
+    pub board: Option<String>,
+    pub people: u32,
+    pub teams: u32,
+    pub projects: u32,
+}
+
+/// The schedule that refreshes the report on its own.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReportScheduleDto {
+    pub enabled: bool,
+    /// A 5-field cron expression, in UTC.
+    pub cron: Option<String>,
+    /// RFC 3339.
+    pub next_run_at: Option<String>,
+    /// The run it produced last, a studio-tasks run.
+    pub last_run: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReportScheduleInputDto {
+    pub enabled: bool,
+    /// A 5-field cron expression in UTC; hourly when absent.
+    pub cron: Option<String>,
 }
 
 /// What a person saves as a report's source. Every field optional: the plan
@@ -177,6 +213,22 @@ fn refresh_dto(r: &Refresh) -> RefreshDto {
     }
 }
 
+fn plan_summary(s: &ReportSource) -> Option<PlanSummaryDto> {
+    s.snapshot.as_ref()?;
+    let (value, plan) = ReportsService::plan_of(s);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Some(PlanSummaryDto {
+        board: value
+            .as_ref()
+            .and_then(|v| s.effective(Some(v)).ok())
+            .filter(|_| value.as_ref().is_some_and(|v| v.get("board").is_some()))
+            .map(|e| format!("{}/{}", e.board.owner, e.board.number)),
+        people: count(plan.users.len()),
+        teams: count(plan.units.iter().map(|u| u.teams.len()).sum()),
+        projects: count(plan.projects.len()),
+    })
+}
+
 pub fn source_dto(s: &ReportSource) -> ReportSourceDto {
     ReportSourceDto {
         report: s.report.clone(),
@@ -187,6 +239,7 @@ pub fn source_dto(s: &ReportSource) -> ReportSourceDto {
         roots: s.roots.clone(),
         consumers: s.consumers.clone(),
         snapshot: s.snapshot.as_ref().map(snapshot_dto),
+        plan: plan_summary(s),
         last_refresh: s.last_refresh.as_ref().map(refresh_dto),
     }
 }
@@ -368,8 +421,10 @@ async fn sync_report(
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<ReportSyncEnqueued>> {
     let k = report(&id)?;
+    // Queued in the caller's own tenant: no organization to hand it to.
     let payload = serde_json::to_value(RefreshPayload {
         report: k.id.to_string(),
+        organization_id: None,
     })
     .map_err(internal)?;
     let run = reports
@@ -392,6 +447,61 @@ async fn sync_report(
         task_id: run.to_string(),
         status: "queued".into(),
     }))
+}
+
+fn schedule_dto(v: Option<crate::scheduler::port::ScheduleView>) -> ReportScheduleDto {
+    match v {
+        Some(v) => ReportScheduleDto {
+            enabled: v.enabled,
+            cron: Some(v.expression),
+            next_run_at: Some(v.next_run_at),
+            last_run: v.last_run_id.map(|u| u.to_string()),
+        },
+        None => ReportScheduleDto {
+            enabled: false,
+            cron: None,
+            next_run_at: None,
+            last_run: None,
+        },
+    }
+}
+
+async fn get_report_schedule(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<ReportScheduleDto>> {
+    let k = report(&id)?;
+    let v = reports
+        .service
+        .schedule(&ctx, k.id)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    Ok(Json(schedule_dto(v)))
+}
+
+async fn update_report_schedule(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<ReportScheduleInputDto>,
+) -> ApiResult<JsonBody<ReportScheduleDto>> {
+    let k = report(&id)?;
+    let cron = input
+        .cron
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    let v = reports
+        .service
+        .set_schedule(&ctx, k.id, input.enabled, cron)
+        .await
+        .map_err(|e| {
+            StudioReportsError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok(Json(schedule_dto(Some(v))))
 }
 
 // ── routes ──────────────────────────────────────────────────────────────────
@@ -556,6 +666,48 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/schedule")
+        .operation_id("studio_reports.get_report_schedule")
+        .summary("Whether the report refreshes on its own, and when next")
+        .description(
+            "The schedule that keeps this organization's report current: a `reports.refresh` \
+             schedule on studio-scheduler whose payload names the report and the organization. \
+             `enabled: false` with no `cron` when there is none yet.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_schedule)
+        .json_response_with_schema::<ReportScheduleDto>(openapi, StatusCode::OK, "The schedule")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/schedule")
+        .operation_id("studio_reports.update_report_schedule")
+        .summary("Switch the report's own refresh on or off")
+        .description(
+            "Creates the schedule the first time, then switches it and sets its expression (hourly \
+             unless `cron` says otherwise, in UTC). Schedules are platform-level and fire in the \
+             platform tenant, so this gear writes the caller's organization into the schedule's \
+             payload, and the run it fires hands itself to that organization -- a client never \
+             names a tenant.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_schedule)
+        .json_request::<ReportScheduleInputDto>(openapi, "On or off, and how often")
+        .json_response_with_schema::<ReportScheduleDto>(openapi, StatusCode::OK, "The schedule")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router.layer(Extension(Reports { service, hub }))
 }
 
@@ -661,6 +813,51 @@ mod tests {
         };
         let dto = report_dto(k, &bad);
         assert!(dto.definition_error.is_some_and(|e| e.contains("weekly")));
+    }
+
+    #[test]
+    fn the_source_says_what_its_plan_holds() {
+        let none = source_dto(&ReportSource {
+            report: "roadmap".into(),
+            ..ReportSource::default()
+        });
+        assert!(none.plan.is_none(), "no plan read: nothing to summarise");
+        let read = ReportSource {
+            report: "roadmap".into(),
+            snapshot: Some(PlanSnapshot {
+                text: "board: o/48\nunits:\n  U: { teams: [ { tag: a, name: A }, { tag: b, name: B } ] }\nusers:\n  x: { team: a }\n  y: { team: b }\ngear_projects:\n  web: { name: Web }\n".into(),
+                from: "upload".into(),
+                sha: None,
+                read_at: "t".into(),
+            }),
+            ..ReportSource::default()
+        };
+        let p = source_dto(&read).plan.expect("summary");
+        assert_eq!(p.board.as_deref(), Some("o/48"));
+        assert_eq!((p.people, p.teams, p.projects), (2, 2, 1));
+        // A plan that names no board says so, even when the source does.
+        let mut boardless = read.clone();
+        boardless.board = Some("o/7".into());
+        boardless.snapshot.as_mut().unwrap().text = "users:\n  x: {}\n".into();
+        let p = source_dto(&boardless).plan.expect("summary");
+        assert!(p.board.is_none());
+        assert_eq!(p.people, 1);
+    }
+
+    #[test]
+    fn no_schedule_reads_as_off() {
+        let off = schedule_dto(None);
+        assert!(!off.enabled && off.cron.is_none());
+        let on = schedule_dto(Some(crate::scheduler::port::ScheduleView {
+            id: Uuid::from_u128(1),
+            expression: "0 * * * *".into(),
+            enabled: true,
+            next_run_at: "2026-10-02T09:00:00Z".into(),
+            last_run_id: Some(Uuid::from_u128(2)),
+        }));
+        assert!(on.enabled);
+        assert_eq!(on.cron.as_deref(), Some("0 * * * *"));
+        assert_eq!(on.last_run, Some(Uuid::from_u128(2).to_string()));
     }
 
     #[test]

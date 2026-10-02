@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { TaskSchedule } from "./api";
 import {
-  HOURLY,
-  REFRESH_TASK,
+  canRefresh,
   draftOf,
   inputOf,
-  newSchedule,
+  needsAttention,
   parseConsumers,
-  scheduleOf,
   stateOf,
   stateText,
   type ReportSource,
@@ -22,6 +19,7 @@ const empty: ReportSource = {
   roots: [],
   consumers: {},
   snapshot: null,
+  plan: null,
   last_refresh: null,
 };
 
@@ -73,42 +71,60 @@ describe("the source form", () => {
   });
 });
 
-describe("the refresh schedule", () => {
-  const schedule = (task_type: string, payload: Record<string, unknown>): TaskSchedule =>
-    ({ id: `${task_type}:${JSON.stringify(payload)}`, task_type, payload }) as unknown as TaskSchedule;
-
-  it("is the reports.refresh schedule for this report", () => {
-    const all = [
-      schedule("catalog.sync", { report: "roadmap" }),
-      schedule(REFRESH_TASK, { report: "other" }),
-      schedule(REFRESH_TASK, { report: "roadmap" }),
-    ];
-    expect(scheduleOf(all, "roadmap")?.id).toBe(`${REFRESH_TASK}:{"report":"roadmap"}`);
-    expect(scheduleOf(all, "weekly")).toBeUndefined();
-  });
-
-  it("is created hourly, never overlapping itself", () => {
-    const s = newSchedule("roadmap");
-    expect(s).toMatchObject({ task_type: REFRESH_TASK, payload: { report: "roadmap" }, expression: HOURLY });
-    expect(s.concurrency).toBe("forbid");
-    expect(s.missed_policy).toBe("skip");
+describe("refresh", () => {
+  it("is possible once something can name the board", () => {
+    const d = draftOf(empty);
+    expect(canRefresh(d, empty)).toBe(false);
+    expect(canRefresh({ ...d, board: "o/48" }, empty)).toBe(true);
+    expect(canRefresh({ ...d, planFile: "o/r:gears.yaml" }, empty)).toBe(true);
+    expect(canRefresh({ ...d, planYaml: "board: o/48\n" }, empty)).toBe(true);
+    expect(canRefresh({ ...d, planYaml: "" }, empty)).toBe(false);
+    const planned = { ...empty, plan: { board: "o/48", people: 3, teams: 1, projects: 0 } };
+    expect(canRefresh(d, planned)).toBe(true);
   });
 });
 
 describe("a source's state", () => {
+  const snapshot = { from: "o/r:p.yaml@main", sha: "abc", read_at: "2026-10-01T09:30:00Z", size: 10 };
+  const plan = { board: null, people: 27, teams: 6, projects: 9 };
+
   it("says what is missing, what failed, or where the plan came from", () => {
     expect(stateOf(empty).kind).toBe("empty");
     expect(stateOf({ ...empty, plan_file: "o/r:p.yaml" })).toEqual({ kind: "unread", what: "o/r:p.yaml" });
-    expect(stateOf({ ...empty, board: "o/48" })).toEqual({ kind: "unread", what: "o/48" });
-    const read = { ...empty, snapshot: { from: "o/r:p.yaml@main", sha: "abc", read_at: "2026-10-01T09:30:00Z", size: 10 } };
-    expect(stateOf(read)).toEqual({ kind: "ready", from: "o/r:p.yaml@main", at: "2026-10-01T09:30:00Z" });
-    expect(stateText(stateOf(read))).toBe("Plan from o/r:p.yaml@main, read 2026-10-01 09:30.");
-    const up = { ...read, snapshot: { ...read.snapshot, from: "upload" } };
+    const read = { ...empty, snapshot, plan };
+    expect(stateOf(read)).toEqual({ kind: "ready", from: "o/r:p.yaml@main", at: "2026-10-01T09:30:00Z", plan });
+    expect(stateText(stateOf(read))).toBe(
+      "Plan from o/r:p.yaml@main, read 2026-10-01 09:30 — 27 people, 6 teams, 9 projects.",
+    );
+    const up = { ...read, snapshot: { ...snapshot, from: "upload" } };
     expect(stateText(stateOf(up))).toContain("an uploaded file");
     // A failure is said first: the plan read before it is still what is drawn.
     const failed = { ...read, last_refresh: { at: "t", sync_run: null, error: "not visible" } };
     expect(stateOf(failed)).toEqual({ kind: "failed", error: "not visible" });
     expect(stateText(stateOf(failed))).toContain("not visible");
     expect(stateText(stateOf(empty))).toContain("Not configured");
+  });
+
+  it("warns when the board is set but there is no plan to draw people from", () => {
+    // What dev showed: board, roots and consumers saved, refresh succeeded,
+    // and People and the Gantt empty because no plan was ever loaded.
+    const boardOnly = {
+      ...empty,
+      board: "constructorfabric/48",
+      last_refresh: { at: "t", sync_run: "r", error: null },
+    };
+    expect(stateOf(boardOnly)).toEqual({ kind: "no-plan" });
+    const text = stateText(stateOf(boardOnly));
+    expect(text).toContain("load gears.yaml");
+    expect(text).toContain("People");
+    expect(text).toContain("Gantt");
+    expect(needsAttention(stateOf(boardOnly))).toBe(true);
+  });
+
+  it("warns when the plan names nobody", () => {
+    const nobody = { ...empty, snapshot, plan: { board: "o/48", people: 0, teams: 0, projects: 2 } };
+    expect(stateOf(nobody)).toEqual({ kind: "no-people", from: "o/r:p.yaml@main" });
+    expect(stateText(stateOf(nobody))).toContain("names no people");
+    expect(needsAttention(stateOf({ ...empty, snapshot, plan }))).toBe(false);
   });
 });

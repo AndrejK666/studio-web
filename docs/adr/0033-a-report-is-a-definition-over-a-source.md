@@ -8,7 +8,7 @@ date: 2026-10-01
 
 **ID**: `cpt-studio-adr-a-report-is-a-definition-over-a-source`
 
-Status: accepted · 2026-10-01 · Builds on #509, #543 and #586 (the roadmap workbook)
+Status: accepted · 2026-10-01 · amended 2026-10-02 (§4, schedules) · Builds on #509, #543 and #586 (the roadmap workbook)
 
 ## Table of Contents
 
@@ -165,9 +165,28 @@ a key written twice keeps its first position and its last value.
 - queues a `catalog.sync` of the board the plan names.
 
 What it did, or why it failed, is recorded on the source, and the report keeps
-being drawn from the last plan that read. A `studio-scheduler` schedule with
-task type `reports.refresh` and payload `{"report": "roadmap"}` keeps a report
-current on its own. The Reports screen offers an hourly one.
+being drawn from the last plan that read. A refresh of an organization that
+saved no source fails and writes nothing.
+
+A schedule keeps a report current on its own, with one subtlety. Schedules are
+platform-level: they live in, and fire in, the platform tenant, while a source
+lives in its organization's. So:
+
+- the schedule is managed through this gear (`GET`/`PUT …/{report_id}/schedule`,
+  over a narrow in-process port, `scheduler::port::Schedules`);
+- the gear writes the caller's organization into the payload
+  (`{"report": "roadmap", "organization_id": "…"}`), so a client never names a
+  tenant;
+- a run that fires in another tenant hands itself on: it queues the same
+  refresh in the named organization's tenant, where the worker reads and
+  writes as that organization.
+
+The Reports screen switches an hourly one on and off.
+
+*Amended 2026-10-02.* As first written, this section said a schedule with
+payload `{"report": "roadmap"}` keeps a report current. Fired in the platform
+tenant, such a schedule refreshed the platform's (empty) source every hour and
+never the organization's, as dev showed.
 
 ### Consequences
 
