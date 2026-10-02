@@ -314,9 +314,10 @@ backend:
     prepull:
       enabled: false
       replicas: 3
+      # The namespace LimitRange refuses a container under 10m / 16Mi.
       resources:
-        requests: { cpu: 5m, memory: 8Mi }
-        limits: { cpu: 20m, memory: 16Mi }
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 20m, memory: 32Mi }
     # The session driver needs egress to the kube-apiserver, but that rule must
     # NOT ship as a chart CiliumNetworkPolicy: the constructorfabric Argo CD
     # project does not permit kind CiliumNetworkPolicy, so rendering it makes the

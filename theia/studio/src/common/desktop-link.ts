@@ -1,6 +1,13 @@
 // The link the portal opens a project in the desktop Studio with (ADR-0027 §6).
 //
 //   cfstudio://open?studio=<Studio address>&issuer=<OIDC issuer>&project=<id>&name=<name>
+//                  [&product=<path of a product.gdl>&branch=<branch it was saved on>]
+//
+// `product` is the portal's Components tab handing a composed product on:
+// once the project is cloned and open, the desktop opens that description in
+// the Gearbox perspective -- the same command a portal session runs for
+// `studio.openProduct` -- and `branch` is where the portal saved it when that
+// is not the branch a checkout opens.
 //
 // It names a Studio and a project and carries no token: whatever it asks for
 // is done with the member's own sign-in, the same way a click in the desktop's
@@ -23,6 +30,30 @@ export interface DesktopLink {
     readonly name?: string;
     readonly studioUrl?: string;
     readonly issuer?: string;
+    /** A product description to open once the project is: a path inside the
+     *  project's repository (`product.gdl`). */
+    readonly product?: string;
+    /** The branch `product` was saved on. */
+    readonly branch?: string;
+}
+
+/** A repository-relative path: no root, no `..`, nothing outside a
+ *  conservative alphabet -- the link comes from outside the app. */
+function repoPath(value: string | null): string | undefined {
+    const path = value?.trim().replace(/\\/g, '/');
+    if (!path || path.length > 256 || path.startsWith('/') || !/^[\w./-]+$/.test(path)) {
+        return undefined;
+    }
+    return path.split('/').some(segment => segment === '..' || segment === '') ? undefined : path;
+}
+
+/** A git branch name, by the same caution. */
+function branchName(value: string | null): string | undefined {
+    const branch = value?.trim();
+    if (!branch || branch.length > 200 || !/^[\w./-]+$/.test(branch) || branch.includes('..') || branch.startsWith('-')) {
+        return undefined;
+    }
+    return branch;
 }
 
 const trimSlash = (value: string | null | undefined): string | undefined => {
@@ -63,6 +94,8 @@ export function parseDesktopLink(raw: string): DesktopLink | undefined {
         name: url.searchParams.get('name')?.trim() || undefined,
         studioUrl: web(trimSlash(url.searchParams.get('studio'))),
         issuer: web(trimSlash(url.searchParams.get('issuer'))),
+        product: repoPath(url.searchParams.get('product')),
+        branch: branchName(url.searchParams.get('branch')),
     };
 }
 
@@ -78,6 +111,12 @@ export function desktopLink(link: DesktopLink): string {
     params.set('project', link.project);
     if (link.name) {
         params.set('name', link.name);
+    }
+    if (link.product) {
+        params.set('product', link.product);
+    }
+    if (link.branch) {
+        params.set('branch', link.branch);
     }
     return `${DESKTOP_LINK_SCHEME}://${DESKTOP_LINK_OPEN}?${params.toString()}`;
 }

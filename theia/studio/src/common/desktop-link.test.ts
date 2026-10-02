@@ -21,6 +21,22 @@ describe('the desktop link', () => {
         expect(parseDesktopLink(desktopLink(link))).toEqual(link);
     });
 
+    it('carries the product the portal composed, and the branch it saved it on', () => {
+        const link = { project: PROJECT, name: 'Studioweb', studioUrl: dev.studioUrl, issuer: dev.issuer, product: 'product.gdl', branch: 'product/studio-web-1a2b3c4d' };
+        expect(parseDesktopLink(desktopLink(link))).toEqual(link);
+    });
+
+    it('drops a product path that leaves the repository, and a branch that is not one', () => {
+        for (const product of ['/etc/passwd', '../product.gdl', 'a/../../b.gdl', 'a//b.gdl', 'C:\\x.gdl', 'p d.gdl']) {
+            const raw = `cfstudio://open?project=${PROJECT}&product=${encodeURIComponent(product)}`;
+            expect(parseDesktopLink(raw)?.product).toBeUndefined();
+        }
+        for (const branch of ['--upload-pack=x', 'a..b', 'with space']) {
+            const raw = `cfstudio://open?project=${PROJECT}&product=product.gdl&branch=${encodeURIComponent(branch)}`;
+            expect(parseDesktopLink(raw)).toMatchObject({ product: 'product.gdl', branch: undefined });
+        }
+    });
+
     it('takes the action as the host or as the path', () => {
         expect(parseDesktopLink(`cfstudio://open?project=${PROJECT}`)?.project).toBe(PROJECT);
         expect(parseDesktopLink(`cfstudio:open?project=${PROJECT}`)?.project).toBe(PROJECT);
