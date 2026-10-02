@@ -847,13 +847,14 @@ gears:
       # dev on 2026-10-01 the runtime was ~530MB of a 1.33Gi session.
       # STUDIO_ORCA_ENABLED=true brings it back.
       orca_enabled: ${STUDIO_ORCA_ENABLED:-false}
-      # 4Gi, not the gear's 2Gi default: on 2026-10-01 a studio-web session
-      # (two repositories, the Orca runtime, the assistants' plugin hosts)
-      # reached 2.03Gi within a minute of starting and was OOM-killed three
-      # times in a row. A killed session leaves the portal showing an IDE whose
-      # backend is gone. The request stays 512Mi, so this costs quota headroom
-      # (limits), not scheduling.
-      k8s_session_memory_limit: "${STUDIO_SESSION_MEMORY_LIMIT:-4Gi}"
+      # 2Gi. It was 4Gi for a day: on 2026-10-01 a studio-web session (two
+      # repositories, the Orca runtime, the Gearbox engine) reached 2.03Gi a
+      # minute after starting and was OOM-killed three times in a row. Since
+      # #605 a portal session runs none of those, and measured 676Mi with one
+      # window open. Each further window adds its own plugin host and Claude
+      # Code (~470MB), so 2Gi holds two or three people at once. Raise it with
+      # STUDIO_SESSION_MEMORY_LIMIT for a project that needs more.
+      k8s_session_memory_limit: "${STUDIO_SESSION_MEMORY_LIMIT:-2Gi}"
       # Keep /workspace on a per-workspace PersistentVolumeClaim instead of
       # an emptyDir. Off by default: it turns session scratch space into
       # cluster storage that outlives the session, and nothing reclaims a
