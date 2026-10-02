@@ -19,8 +19,12 @@ export const DESKTOP_DOWNLOAD_URL =
   "https://github.com/constructorfabric/studio-web/actions/workflows/desktop-windows.yml";
 
 /** The link the desktop app opens a project with. Mirrors
- *  `theia/studio/src/common/desktop-link.ts`, which reads it. */
-export function desktopLink(project: { id: string; name?: string }): string {
+ *  `theia/studio/src/common/desktop-link.ts`, which reads it.
+ *
+ *  `product`/`branch`: a product.gdl to open in the Gearbox perspective once
+ *  the project is cloned and open, and the branch it was saved on -- the
+ *  Components tab handing on what it composed. */
+export function desktopLink(project: { id: string; name?: string; product?: string; branch?: string }): string {
   const params = new URLSearchParams();
   params.set("studio", window.location.origin);
   // The issuer this portal actually signs in with -- its default included, which
@@ -28,6 +32,8 @@ export function desktopLink(project: { id: string; name?: string }): string {
   params.set("issuer", ISSUER.replace(/\/+$/, ""));
   params.set("project", project.id);
   if (project.name) params.set("name", project.name);
+  if (project.product) params.set("product", project.product);
+  if (project.branch) params.set("branch", project.branch);
   return `cfstudio://open?${params.toString()}`;
 }
 
@@ -86,26 +92,46 @@ function useDesktopSessions(token: string, projectId: string): DesktopSession[] 
   return sessions;
 }
 
-export function OpenInDesktop({ token, project }: { token: string; project: { id: string; name: string } }) {
-  const sessions = useDesktopSessions(token, project.id);
-  const presence = desktopPresence(sessions, tokenSubject(token));
+/** Hands a link to the desktop app, and notices when nothing took it: the
+ *  app taking the link takes the focus from the page. */
+export function useDesktopLauncher(): { launch: (link: string) => void; missing: boolean } {
   const [missing, setMissing] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  const open = () => {
+  const launch = (link: string) => {
     setMissing(false);
     window.clearTimeout(timer.current);
-    // The app taking the link takes the focus from the page.
     const taken = () => window.clearTimeout(timer.current);
     window.addEventListener("blur", taken, { once: true });
     timer.current = window.setTimeout(() => {
       window.removeEventListener("blur", taken);
       setMissing(true);
     }, NO_APP_AFTER_MS);
-    window.location.href = desktopLink(project);
+    window.location.href = link;
   };
+  return { launch, missing };
+}
+
+/** "Nothing opened? Install the desktop app" -- where the app comes from. */
+export function DesktopMissingHint() {
+  return (
+    <span className="hint" style={{ fontSize: 12 }}>
+      Nothing opened? Install the desktop app —{" "}
+      <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
+        get Constructor Studio for Windows
+      </a>
+      , then try again.
+    </span>
+  );
+}
+
+export function OpenInDesktop({ token, project }: { token: string; project: { id: string; name: string } }) {
+  const sessions = useDesktopSessions(token, project.id);
+  const presence = desktopPresence(sessions, tokenSubject(token));
+  const { launch, missing } = useDesktopLauncher();
+  const open = () => launch(desktopLink(project));
 
   return (
     <span style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
@@ -121,15 +147,7 @@ export function OpenInDesktop({ token, project }: { token: string; project: { id
           {presence}
         </span>
       )}
-      {missing && (
-        <span className="hint" style={{ fontSize: 12 }}>
-          Nothing opened? Install the desktop app —{" "}
-          <a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">
-            get Constructor Studio for Windows
-          </a>
-          , then try again.
-        </span>
-      )}
+      {missing && <DesktopMissingHint />}
     </span>
   );
 }

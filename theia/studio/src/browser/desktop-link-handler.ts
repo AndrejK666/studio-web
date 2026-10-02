@@ -17,6 +17,8 @@ import { MessageService } from '@theia/core/lib/common/message-service';
 import { OpenHandler } from '@theia/core/lib/browser/opener-service';
 import { ConfirmDialog } from '@theia/core/lib/browser/dialogs';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
+import { CommandService } from '@theia/core/lib/common/command';
+import { OpenerService, open as openUri } from '@theia/core/lib/browser/opener-service';
 import { openProjectInPlace } from './desktop-open-project';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -26,6 +28,10 @@ import { describeOpenProgress } from '../common/desktop-open-progress';
 import {
     DesktopStatus, announceDesktopChange, desktopStatus, openStudioProject, startSignIn, switchStudio,
 } from './desktop-studio-client';
+
+/** gearbox-studio's product command, by id -- the one `studio.openProduct`
+ *  runs (portal-bridge-contribution.ts), without depending on either package. */
+const GEARBOX_OPEN_PRODUCT_COMMAND_ID = 'gearbox.product.openAt';
 
 /** How long a link waits for the member to finish signing in, in the browser. */
 const SIGN_IN_BUDGET_MS = 5 * 60_000;
@@ -42,6 +48,12 @@ export class DesktopLinkHandler implements OpenHandler {
 
     @inject(WorkspaceService)
     protected readonly workspaces: WorkspaceService;
+
+    @inject(CommandService)
+    protected readonly commands: CommandService;
+
+    @inject(OpenerService)
+    protected readonly openers: OpenerService;
 
     canHandle(uri: URI): number {
         return uri.scheme === DESKTOP_LINK_SCHEME && uri.authority === DESKTOP_LINK_OPEN ? 500 : 0;
@@ -76,8 +88,9 @@ export class DesktopLinkHandler implements OpenHandler {
         }
         const title = link.name ?? link.project;
         const progress = await this.messages.showProgress({ text: `Opening ${title}…` });
+        let path: string;
         try {
-            const path = await openStudioProject(link.project, link.name, update => {
+            path = await openStudioProject(link.project, link.name, update => {
                 progress.report({ message: describeOpenProgress(update) });
             });
             // In place, not `open(…, { preserveWindow })`: that reloads the whole window.
@@ -85,6 +98,33 @@ export class DesktopLinkHandler implements OpenHandler {
             announceDesktopChange(this, 'opened');
         } finally {
             progress.cancel();
+        }
+        if (link.product) {
+            await this.openProduct(path, link.product, link.branch);
+        }
+    }
+
+    /**
+     * The product the portal composed, in the Gearbox perspective: the
+     * command a portal session runs for `studio.openProduct`, which finds the
+     * path under the project's checkouts and brings `branch` in beside the
+     * checkout when the description was saved there. Without Gearbox the
+     * description opens as a file -- under the project folder or one of its
+     * checkouts -- and failing that the person is told where it is.
+     */
+    protected async openProduct(projectPath: string, product: string, branch: string | undefined): Promise<void> {
+        try {
+            await this.commands.executeCommand(GEARBOX_OPEN_PRODUCT_COMMAND_ID, product, branch);
+            return;
+        } catch (error) {
+            console.warn('[studio] desktop link: Gearbox could not open the product', error);
+        }
+        try {
+            await openUri(this.openers, URI.fromFilePath(projectPath).resolve(product));
+        } catch {
+            this.messages.info(
+                `Studio: the project is open. Its product description is ${product}${branch ? ` on the branch ${branch}` : ''}.`,
+            );
         }
     }
 

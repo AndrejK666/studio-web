@@ -25,7 +25,7 @@ import {
   groupDiagnostics,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
-import { useStudioBridge } from "./studio-bridge";
+import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 
 export function ProjectKits({
   token,
@@ -1070,7 +1070,6 @@ function ProductCard({
   projectName: string;
   product: ProductState;
 }) {
-  const studio = useStudioBridge();
   const nav = usePortalNav();
   const { gearbox, picks, profile, record } = product;
   const [asPr, setAsPr] = useState(false);
@@ -1120,18 +1119,23 @@ function ProductCard({
     }
   };
 
-  /** The last step of the page: the product's description in its repository,
-   *  and the IDE open on it in the Gearbox perspective, where it is built. A
-   *  product already saved and unchanged is opened as it is. */
+  /** The last step of the page, and the first of the desktop's: the product's
+   *  description saved to the project's repository, then the desktop Studio
+   *  opened on the project -- it clones the sources and opens product.gdl in
+   *  the Gearbox perspective, bringing in the branch it was saved on. A web
+   *  session cannot take this on: Gearbox is the desktop's. A product already
+   *  saved and unchanged is opened as it is. */
+  const desktop = useDesktopLauncher();
+  const openOnDesktop = (branch: string | undefined) =>
+    desktop.launch(desktopLink({ id: projectId, name: projectName, product: "product.gdl", branch }));
   const buildInTheia = async () => {
-    if (!studio) return;
     let branch = record?.written?.branch;
     if (!branch || stale || !preview) {
       const saved = await run(true);
       if (!saved?.written) return;
       branch = saved.written.branch;
     }
-    void studio.openProduct({ id: projectId, name: projectName }, "product.gdl", branch);
+    openOnDesktop(branch);
   };
 
   // Completion replaced the picks: show at once what the engine makes of them.
@@ -1154,7 +1158,7 @@ function ProductCard({
           <p className="subtitle">
             The components this project ships as one product, composed and checked by the Gearbox
             engine. Make it resolve, then build it in Studio-ide: that saves <code>product.gdl</code> to
-            the repository and opens it in the IDE&apos;s Gearbox view.
+            the repository and opens the desktop Studio on it, in its Gearbox view.
           </p>
         </div>
         <span className="hint" style={{ fontSize: 11 }}>
@@ -1230,17 +1234,16 @@ function ProductCard({
         >
           Make it resolve
         </button>
-        {studio && (
-          <button
-            className="primary"
-            disabled={busy !== null || picks.length === 0 || studio.opening !== null}
-            title="Save product.gdl to the repository and open it in the IDE's Gearbox view"
-            onClick={() => void buildInTheia()}
-            style={{ marginLeft: "auto" }}
-          >
-            {busy === "save" ? "Saving…" : "Build it in Studio-ide →"}
-          </button>
-        )}
+        <button
+          className="primary"
+          disabled={busy !== null || picks.length === 0}
+          title="Save product.gdl to the repository and open the desktop Studio on it: it clones the project and opens the product in the Gearbox view"
+          onClick={() => void buildInTheia()}
+          style={{ marginLeft: "auto" }}
+        >
+          {busy === "save" ? "Saving…" : "Build it in Studio-ide →"}
+        </button>
+        {desktop.missing && <DesktopMissingHint />}
         {!preview && last && (
           <span style={{ fontSize: 12 }}>
             <span className={`badge ${last.ok ? "ok" : "failed"}`}>
@@ -1401,16 +1404,13 @@ function ProductCard({
               </label>
             </>
           )}
-          {studio && record?.written && (
+          {record?.written && (
             <button
               className="ghost"
-              disabled={studio.opening !== null}
-              title="Opens this project's IDE in the Gearbox perspective with the product open: resolution, graph, lock and conflicts, and the GDL language checking the file as you edit"
-              onClick={() =>
-                void studio.openProduct({ id: projectId, name: projectName }, "product.gdl", record.written?.branch)
-              }
+              title="Opens the desktop Studio on this project with the product in the Gearbox perspective: resolution, graph, lock and conflicts, and the GDL language checking the file as you edit"
+              onClick={() => openOnDesktop(record.written?.branch)}
             >
-              Open in IDE
+              Open in Studio-ide
             </button>
           )}
         </div>

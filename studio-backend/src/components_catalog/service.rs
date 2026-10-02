@@ -2499,32 +2499,7 @@ impl CatalogService {
         message: &str,
         pr_title: Option<&str>,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
-        let node = self
-            .get_project_repo(ctx, project_id)
-            .await?
-            .ok_or_else(|| anyhow!("no gear repository is connected to this project"))?;
-        let v = node.value;
-        let repo = v
-            .get("repo")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow!("connected gear repo has no 'repo'"))?
-            .to_string();
-        let base_branch = v
-            .get("branch")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("main")
-            .to_string();
-        let tenant: Uuid = v
-            .get("tenant")
-            .and_then(Value::as_str)
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| anyhow!("connected gear repo has no 'tenant'"))?;
-        let connection_id: Option<Uuid> = v
-            .get("connection_id")
-            .and_then(Value::as_str)
-            .and_then(|s| s.parse().ok());
+        let (tenant, connection_id, repo, base_branch) = self.write_target(ctx, project_id).await?;
 
         let connectors = self
             .connectors
@@ -2546,6 +2521,75 @@ impl CatalogService {
             pr_title,
         )
         .await
+    }
+
+    /// Where a write into "the project's repository" lands: `(tenant of the
+    /// connection, connection, owner/repo, base branch)`.
+    ///
+    /// The gear repository when one was connected on this tab; otherwise the
+    /// project's own repository, from `project.config` `sources[]` — the one
+    /// record of a project's repositories since #590. Only the first source
+    /// read through a connection counts: a write needs credentials, and the
+    /// first source is the project's own repository in every project the
+    /// portal creates. Reading already fell back the same way
+    /// (`source_dependencies`); writing did not, so a project whose
+    /// repository was connected as a source could compose a product and not
+    /// save it.
+    async fn write_target(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<(Uuid, Option<Uuid>, String, String)> {
+        if let Some(node) = self.get_project_repo(ctx, project_id).await? {
+            let v = node.value;
+            let repo = v
+                .get("repo")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("connected gear repo has no 'repo'"))?
+                .to_string();
+            let base_branch = v
+                .get("branch")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("main")
+                .to_string();
+            let tenant: Uuid = v
+                .get("tenant")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| anyhow!("connected gear repo has no 'tenant'"))?;
+            let connection_id: Option<Uuid> = v
+                .get("connection_id")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse().ok());
+            return Ok((tenant, connection_id, repo, base_branch));
+        }
+        let no_repo = || {
+            anyhow!(
+                "this project has no repository connected to write to — add one on its Sources tab"
+            )
+        };
+        let (Some(am), Some(connectors)) = (self.account_management.get(), &self.connectors) else {
+            return Err(no_repo());
+        };
+        let project = Uuid::parse_str(project_id).map_err(|_| no_repo())?;
+        for source in crate::project_sources::read(am.as_ref(), ctx, project)
+            .await
+            .unwrap_or_default()
+        {
+            let Some(connection_id) = source.connection_id else {
+                continue;
+            };
+            if let Some(tenant) = connectors.locate(ctx, project, connection_id).await {
+                let branch = source
+                    .branch
+                    .filter(|b| !b.trim().is_empty())
+                    .unwrap_or_else(|| "main".to_owned());
+                return Ok((tenant, Some(connection_id), source.full_path, branch));
+            }
+        }
+        Err(no_repo())
     }
 
     /// Create a new repository through the connector and record it as this

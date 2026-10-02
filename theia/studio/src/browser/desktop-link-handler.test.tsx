@@ -20,6 +20,7 @@ import { CommandRegistry, CommandService } from '@theia/core/lib/common/command'
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { StorageService } from '@theia/core/lib/browser/storage-service';
 import { WindowService } from '@theia/core/lib/browser/window/window-service';
+import { OpenerService } from '@theia/core/lib/browser/opener-service';
 import { PerspectiveService } from '@theia/core/lib/browser/perspective-service';
 import URI from '@theia/core/lib/common/uri';
 import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
@@ -48,7 +49,9 @@ describe('the desktop link handler', () => {
     let roots: { resource: URI }[];
     let changes: DesktopChange[];
     let disposeListener: () => void;
+    const commands = { executeCommand: jest.fn(async (..._args: unknown[]) => undefined as unknown), getCommand: () => undefined, isEnabled: () => true };
     const messages = {
+        info: jest.fn(),
         error: jest.fn(),
         showProgress: jest.fn(async () => ({ id: 'p', report: jest.fn(), cancel: jest.fn(), result: Promise.resolve('') })),
     };
@@ -86,6 +89,9 @@ describe('the desktop link handler', () => {
     beforeEach(async () => {
         fakeStudio.reset();
         messages.error.mockClear();
+        messages.info.mockClear();
+        commands.executeCommand.mockReset();
+        commands.executeCommand.mockImplementation(async () => undefined);
         messages.showProgress.mockClear();
         fakeStudio.status = {
             enabled: true, studioUrl: STUDIO, state: 'signed-in', user: { sub: 'u-1', name: 'ANDREI KUCHMA' },
@@ -110,12 +116,12 @@ describe('the desktop link handler', () => {
         const container = new Container();
         container.load(new ContainerModule(bind => {
             bind(WorkspaceService).toConstantValue(workspaces as never);
-            const commands = { executeCommand: jest.fn(async () => undefined), getCommand: () => undefined, isEnabled: () => true };
             bind(CommandService).toConstantValue(commands as never);
             bind(CommandRegistry).toConstantValue(commands as never);
             bind(MessageService).toConstantValue(messages as never);
             bind(StorageService).toConstantValue({ getData: async () => undefined, setData: async () => undefined } as never);
             bind(WindowService).toConstantValue({ openNewWindow: jest.fn(), focus: jest.fn() } as never);
+            bind(OpenerService).toConstantValue({ getOpener: async () => { throw new Error('no opener'); }, getOpeners: async () => [] } as never);
             bind(PerspectiveService).toConstantValue({
                 onDidChangePerspective: () => ({ dispose: () => undefined }),
                 getRegisteredPerspectives: () => [],
@@ -169,6 +175,33 @@ describe('the desktop link handler', () => {
         // The Studio view read the news, without its poll: the project is open here now.
         expect(panel.node.textContent).not.toContain('No Studio project is open here');
         expect(panel.node.textContent).toContain('Open in this window');
+    });
+
+    it('opens the product the portal composed, in Gearbox, once the project is open', async () => {
+        fakeStudio.open = async () => FOLDER;
+        const uri = new URI(desktopLink({
+            studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio`, project: PROJECT, name: 'Studio-web',
+            product: 'product.gdl', branch: 'product/studio-web-1a2b3c4d',
+        }));
+
+        await React.act(async () => { await handler.open(uri); });
+        await settle();
+
+        expect(messages.error).not.toHaveBeenCalled();
+        expect(roots.map(r => r.resource.path.toString())).toEqual([FOLDER]);
+        expect(commands.executeCommand).toHaveBeenCalledWith('gearbox.product.openAt', 'product.gdl', 'product/studio-web-1a2b3c4d');
+    });
+
+    it('says where the product is when nothing can open it', async () => {
+        fakeStudio.open = async () => FOLDER;
+        commands.executeCommand.mockImplementation(async () => { throw new Error('no Gearbox'); });
+        const uri = new URI(desktopLink({ studioUrl: STUDIO, issuer: `${STUDIO}/auth/realms/studio`, project: PROJECT, product: 'product.gdl' }));
+
+        await React.act(async () => { await handler.open(uri); });
+        await settle();
+
+        expect(messages.error).not.toHaveBeenCalled();
+        expect(messages.info).toHaveBeenCalledWith(expect.stringContaining('product.gdl'));
     });
 
     it('draws the open\'s progress in its notification', async () => {
