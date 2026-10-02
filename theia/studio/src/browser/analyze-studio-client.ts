@@ -199,6 +199,30 @@ export class AnalyzeStudioClient {
         return items;
     }
 
+    /**
+     * The bindings the project sees at any of `paths` -- what opening a file
+     * needs. Reading every binding to find one was five sequential pages and
+     * ~600 KB on a project of a thousand files, on every first open; the
+     * server answers this from an index.
+     */
+    async bindingsAt(workspaceId: string, projectId: string, paths: readonly string[]): Promise<DocumentBinding[]> {
+        if (paths.length === 0) {
+            return [];
+        }
+        const query = new URLSearchParams();
+        for (const path of paths) {
+            query.append('path', path);
+        }
+        const res = await StudioApi.fetch(
+            `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/document-bindings?${query.toString()}`,
+        );
+        const body = await readJson<{ items?: DocumentBinding[] }>(res);
+        // Filtered here too: a backend from before `path` answers with a page
+        // of everything, and a file must not match a binding it is not.
+        const wanted = new Set(paths);
+        return (body.items ?? []).filter(binding => wanted.has(binding.path));
+    }
+
     async studioDocument(workspaceId: string, documentId: string): Promise<StudioDocument | undefined> {
         const res = await StudioApi.fetch(
             `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}`,

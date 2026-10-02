@@ -308,6 +308,15 @@ backend:
       # empty tag follows backend.image.tag, preserving one immutable release.
       repository: harbor.constr.dev/proxy-ghcr.io/constructorfabric/studio-web/cf-studio-theia
       tag: ""
+    # One idle Pod of the session image per node, so a deploy pulls it
+    # everywhere and the first IDE after it does not wait for the pull
+    # (templates/backend/session-image-prepull.yaml). replicas = worker nodes.
+    prepull:
+      enabled: false
+      replicas: 3
+      resources:
+        requests: { cpu: 5m, memory: 8Mi }
+        limits: { cpu: 20m, memory: 16Mi }
     # The session driver needs egress to the kube-apiserver, but that rule must
     # NOT ship as a chart CiliumNetworkPolicy: the constructorfabric Argo CD
     # project does not permit kind CiliumNetworkPolicy, so rendering it makes the

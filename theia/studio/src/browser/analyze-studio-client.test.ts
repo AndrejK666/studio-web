@@ -127,6 +127,23 @@ describe('AnalyzeStudioClient', () => {
         expect(fetchMock).toHaveBeenCalledTimes(6);
     });
 
+    it('asks for the bindings at a file\'s paths, not for every binding', async () => {
+        const fetchMock = stubFetch(url => {
+            if (url.pathname !== '/studio-api/studio-documents/v1/workspaces/ws-1/projects/p-1/document-bindings') {
+                return undefined;
+            }
+            expect(url.searchParams.getAll('path')).toEqual(['api/docs/prd.md', 'docs/prd.md']);
+            // A backend that ignores `path` answers with everything.
+            return { body: { items: [binding('1', 'docs/prd.md'), binding('2', 'docs/adr.md')], total: 2 } };
+        });
+        const client = new AnalyzeStudioClient();
+        const items = await client.bindingsAt('ws-1', 'p-1', ['api/docs/prd.md', 'docs/prd.md']);
+        expect(items.map(b => b.id)).toEqual(['1']);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        await expect(client.bindingsAt('ws-1', 'p-1', [])).resolves.toEqual([]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('reads the findings of one subject out of the project\'s spec_finding nodes', async () => {
         stubFetch(url => {
             if (url.pathname !== '/studio-api/studio-artifact-ingest/v1/nodes') {

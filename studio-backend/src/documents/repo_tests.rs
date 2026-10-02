@@ -595,6 +595,62 @@ async fn a_project_sees_its_own_bindings_and_the_inherited_ones() {
     assert_eq!(ws_only[0].path, "docs/shared.md");
 }
 
+/// Asked by path, a project gets the bindings at those paths that it sees —
+/// its own and inherited ones — and no sibling's at the same path.
+#[tokio::test]
+async fn a_project_finds_its_bindings_by_path() {
+    let repo = repo().await;
+    let ws = tenant();
+    let (project, sibling) = (Uuid::new_v4(), Uuid::new_v4());
+    repo.upsert_bindings(&[
+        binding(
+            ws,
+            None,
+            "node-ws",
+            "docs/shared.md",
+            Some("prd"),
+            "detected",
+        ),
+        binding(ws, Some(project), "node-p", "docs/mine.md", None, "unknown"),
+        binding(
+            ws,
+            Some(project),
+            "node-q",
+            "docs/other.md",
+            None,
+            "unknown",
+        ),
+        binding(ws, Some(sibling), "node-s", "docs/mine.md", None, "unknown"),
+    ])
+    .await
+    .expect("insert");
+
+    let found = repo
+        .list_bindings_at(
+            ws,
+            DocScope::Effective(project),
+            &["docs/mine.md".to_owned(), "docs/shared.md".to_owned()],
+        )
+        .await
+        .expect("by path");
+    let got: Vec<(&str, Option<Uuid>)> = found
+        .iter()
+        .map(|r| (r.path.as_str(), r.project_id))
+        .collect();
+    assert_eq!(
+        got,
+        [("docs/mine.md", Some(project)), ("docs/shared.md", None)]
+    );
+
+    assert!(
+        repo.list_bindings_at(ws, DocScope::Effective(project), &[])
+            .await
+            .expect("no paths")
+            .is_empty(),
+        "no path asks for nothing, not for everything"
+    );
+}
+
 /// The same graph node bound at workspace and at project level is two rows, not
 /// a collision — the project id is part of the identity.
 #[tokio::test]
