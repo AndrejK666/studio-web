@@ -4,7 +4,7 @@ import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WOR
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, keepsMenu, ribbonAction, roleOf } from './studio-mode-bar';
+import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, keepsMenu, offersModeSwitch, ribbonAction, roleOf } from './studio-mode-bar';
 
 describe('Studio modes', () => {
     it('names the modes by the work, one perspective each', () => {
@@ -176,5 +176,12 @@ describe('ribbonAction', () => {
         expect(isEnabled).toHaveBeenCalledWith(action.command, 'composition');
         expect(disabledReason).toHaveBeenCalledWith('composition');
         expect(state?.title).toContain('no composition');
+    });
+});
+
+describe('offersModeSwitch', () => {
+    it('lets the desktop pick the mode, and leaves it to the portal in a web session', () => {
+        expect(offersModeSwitch(true)).toBe(true);
+        expect(offersModeSwitch(false)).toBe(false);
     });
 });

@@ -23,6 +23,22 @@ const SKIP = new Set(["node_modules", "target", ".git", ".gearbox", "dist", "lib
 /** Deep enough for `gears/system/authn-resolver/plugins/x/gear.gdl`. */
 const MAX_DEPTH = 7;
 
+/**
+ * Constructor Studio: whether this IDE runs Gearbox at all.
+ *
+ * Gearbox is the desktop's (theia/electron-app). A session the web portal
+ * opens is for documents and code with the assistants, and its image sets
+ * STUDIO_GEARBOX_ENABLED=0 (docker/entrypoint.sh): no engine, no corpus scan.
+ * Measured on dev, a session with the engine and the gears-rust checkout was
+ * the better part of a gigabyte heavier. Anything else — unset, empty, "1" —
+ * is the desktop's default, on.
+ */
+export const GEARBOX_DESKTOP_ONLY = "Gearbox runs in Constructor Studio Desktop; it is off in a session the web portal opens.";
+
+export function gearboxEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.STUDIO_GEARBOX_ENABLED?.trim() !== "0";
+}
+
 export function workspaceDir(env: NodeJS.ProcessEnv = process.env, opened?: string): string {
   const fromEnv = env.GEARBOX_WORKSPACE?.trim();
   if (fromEnv) return path.resolve(fromEnv);

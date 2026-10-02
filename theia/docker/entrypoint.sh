@@ -595,6 +595,12 @@ if [ "${STUDIO_ORCA_ENABLED:-0}" = "1" ]; then
   fi
 fi
 
+# Gearbox is Constructor Studio Desktop's. This image is the one the web portal
+# opens, for documents and code with the assistants, so the gearbox-studio
+# extension starts no engine here (gearbox-environment.ts, gearboxEnabled).
+# Set STUDIO_GEARBOX_ENABLED=1 to bring it back in a session.
+export STUDIO_GEARBOX_ENABLED="${STUDIO_GEARBOX_ENABLED:-0}"
+
 # Theia binds loopback-only behind the gate; the session manager publishes
 # the gate's port on the host.
 exec npm --prefix /app/browser-app run start -- \

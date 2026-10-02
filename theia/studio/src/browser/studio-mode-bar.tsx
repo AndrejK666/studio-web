@@ -15,6 +15,7 @@
 // per mode, since a deny-list loses to every package that adds a menu.
 
 import * as React from '@theia/core/shared/react';
+import { environment } from '@theia/core/shared/@theia/application-package/lib/environment';
 import { inject, injectable, optional, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { FrontendApplication, FrontendApplicationContribution } from '@theia/core/lib/browser';
@@ -169,7 +170,12 @@ const BY_WORK: readonly Mode[] = [
             // A spec is finished when it is committed: the way there stays in
             // the mode where it is written.
             { label: 'Git', actions: [{ ...CHANGES, title: 'What changed in the documents, and commit it' }, GIT_OPS] },
-            { label: 'Assist', actions: [{ ...AGENTS, title: 'Ask an agent about the specs' }] },
+            // The assistants beside the document -- Claude Code or Codex, picked
+            // by name (product-ext's `studio.assistants.pick`) -- not Orca's
+            // agents in worktrees, which is Agent development's. A portal
+            // session runs no Orca at all, so AGENTS here was a button onto a
+            // runtime that is not there.
+            { label: 'Assist', actions: [{ command: 'studio.assistants.pick', icon: 'sparkle', label: 'Agents', title: 'Ask Claude Code or Codex about the specs' }] },
         ],
     },
     {
@@ -662,6 +668,21 @@ interface TopPanel {
     insertWidget(index: number, widget: unknown): void;
 }
 
+/**
+ * Whether the person picks the mode, or something else picks it for them.
+ *
+ * On the desktop they pick it. In a session the web portal opens, the portal
+ * does: it opens the IDE to do one thing -- edit a document, which is Doc
+ * editing (`studio.openDocument` and `studio.openInEditor` already switch to
+ * it, portal-bridge-contribution.ts) -- and a picker beside that offered modes
+ * whose tools the session does not run (Building's Gearbox, Agent
+ * development's Orca). The ribbon stays: it is the mode's tools, not the
+ * choice of mode.
+ */
+export function offersModeSwitch(electron: boolean = environment.electron.is()): boolean {
+    return electron;
+}
+
 /** Mounts the tabs and the ribbon in the top panel, and keeps the menu to the
  *  mode's allow-list as the perspective changes and as plugins add menus. */
 @injectable()
@@ -691,7 +712,9 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
         document.head.appendChild(style);
         this.toDispose.push({ dispose: () => style.remove() });
         this.shell = app.shell;
-        app.shell.addWidget(this.switcher, { area: 'top' });
+        if (offersModeSwitch()) {
+            app.shell.addWidget(this.switcher, { area: 'top' });
+        }
         app.shell.addWidget(this.bar, { area: 'top' });
     }
 
@@ -758,7 +781,9 @@ export class StudioModeBarContribution implements FrontendApplicationContributio
             return;
         }
         const menuIndex = top.widgets.findIndex((w) => w.id === 'theia:menubar');
-        top.insertWidget(menuIndex >= 0 ? menuIndex + 1 : 0, this.switcher);
+        if (offersModeSwitch()) {
+            top.insertWidget(menuIndex >= 0 ? menuIndex + 1 : 0, this.switcher);
+        }
         top.insertWidget(top.widgets.length, this.bar);
     }
 
