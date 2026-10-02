@@ -69,12 +69,12 @@ impl TaskHandler for SessionReapTask {
 
         match self.service.reap_expired().await {
             Ok(outcome) => {
-                let summary = if outcome.expired == 0 {
-                    "nothing expired".to_owned()
+                let summary = if outcome.expired == 0 && outcome.idle == 0 {
+                    "nothing expired or idle".to_owned()
                 } else {
                     format!(
-                        "{} expired, {} stopped, {} refused",
-                        outcome.expired, outcome.stopped, outcome.failed
+                        "{} expired, {} idle, {} stopped, {} refused",
+                        outcome.expired, outcome.idle, outcome.stopped, outcome.failed
                     )
                 };
                 match serde_json::to_value(outcome) {
