@@ -100,7 +100,6 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
-import { withCorpusSource } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import {
   BookIcon,
@@ -1264,8 +1263,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         ),
       openFile: (target: StudioTarget, path: string) =>
         openInStudio(target, { type: "studio.openInEditor", path }),
-      openProduct: (target: StudioTarget, path: string, branch?: string) =>
-        openInStudio(target, { type: "studio.openProduct", path, ...(branch ? { branch } : {}) }),
+      // A product opens as its file: the Gearbox perspective it used to ask
+      // for is the desktop's, and a portal session has no engine behind it.
+      // The branch it was saved on is not brought in beside the checkout.
+      openProduct: (target: StudioTarget, path: string) =>
+        openInStudio(target, { type: "studio.openInEditor", path }),
       openGraph: (target: StudioTarget) => openInStudio(target, { type: "studio.openGraph" }),
       opening,
       isOpen: (targetId: string) => spacesRef.current.some((s) => s.wsId === targetId),
@@ -9451,32 +9453,17 @@ async function startStudioSession(
       // Settings unreachable — fall back to whatever the target carries.
     }
   }
-  // A product project's product.gdl names its gears from `../gears-rust`, so
-  // its session checks the gear corpus out beside the project's own sources —
-  // the same corpus the portal's preview resolved against. A gear project gets
-  // it too: a plugin's gear.gdl names its host's point by spec (`fills`), and
-  // the IDE joins that against the corpus. So does any project that HAS a
-  // product, whatever its kind: an `existing` project composes one on its
-  // Components tab. A checkout already named after the corpus is not doubled
-  // (`withCorpusSource`). Anything else, or a deployment
-  // without the engine, is unchanged.
+  // No gear corpus. A session the portal opens is for the project's own
+  // documents and code, with the assistants; Gearbox — and the gears-rust
+  // checkout it resolves a product against — is Constructor Studio Desktop's.
+  // It used to be cloned beside every project that had a product, which on dev
+  // was a second repository, a Gearbox engine and the better part of a gigabyte
+  // in a session nobody had asked to compose anything in.
   const kind = await api
     .projectConfig(token, target.id)
     .then((c) => c?.kind)
     .catch(() => undefined);
-  const hasProduct =
-    kind !== "product" &&
-    kind !== "new_gears" &&
-    (await api
-      .projectProduct(token, target.id)
-      .then((p) => p !== null)
-      .catch(() => false));
-  // Checked against the project's own too, so a project that IS the corpus
-  // does not get it twice.
-  let shown = [...own, ...repos];
-  if (kind === "product" || kind === "new_gears" || hasProduct) {
-    shown = withCorpusSource(shown, await api.gearboxStatus(token).catch(() => null));
-  }
+  const shown = [...own, ...repos];
   onResolved?.({ repos: shown, root, kind });
   const ownNames = new Set(own.map((r) => r.name));
   const usable = shown.filter(

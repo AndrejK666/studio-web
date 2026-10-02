@@ -53,6 +53,8 @@ import { fileOnBranch } from "./product-branch";
 import { cachedCorpora, corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
+  GEARBOX_DESKTOP_ONLY,
+  gearboxEnabled,
   folderOfWorkspaceUri,
   isDescribedCheckout,
   productFiles,
@@ -230,6 +232,12 @@ export class GearboxServiceImpl implements GearboxService {
   protected workspace = workspaceDir();
 
   async initialize(session?: StudioSession, keep?: boolean): Promise<StudioInitializeResult> {
+    // Constructor Studio: no engine where Gearbox is off. Refused here, where
+    // every load starts, so the panel shows why instead of spawning an engine
+    // over a corpus this session does not have.
+    if (!gearboxEnabled()) {
+      throw new Error(GEARBOX_DESKTOP_ONLY);
+    }
     // From the session when there is one. The fixed repository root is only a
     // default for the catalogue-only case.
     const workspace = session?.workspace ?? this.defaultWorkspace();
@@ -539,7 +547,7 @@ export class GearboxServiceImpl implements GearboxService {
    * (`source-prewarm.ts`), and remember a slow first read for `scanHint`.
    */
   protected async prewarm(roots: readonly string[]): Promise<void> {
-    if (!shouldPrewarm()) return;
+    if (!shouldPrewarm() || !gearboxEnabled()) return;
     for (const warmed of await prewarmer.prewarm(roots)) {
       this.logger.info(`gearbox: read ${warmed.files} source files of ${warmed.root} ahead of the engine in ${warmed.ms} ms`);
       if (warmed.ms >= SLOW_SCAN_MS && (slowScan === undefined || warmed.ms / 1000 > slowScan.seconds)) {

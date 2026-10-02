@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { productFiles } from "./gearbox-environment";
+import { gearboxEnabled, productFiles } from "./gearbox-environment";
 
 function tree(files: readonly string[]): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gbx-products-"));
@@ -59,5 +59,16 @@ describe("productFiles", () => {
 
   it("answers nothing for a folder that is not there", () => {
     expect(productFiles(path.join(os.tmpdir(), "gbx-no-such-folder-here"))).toEqual([]);
+  });
+});
+
+describe("gearboxEnabled", () => {
+  it("is off only where the session image turned it off", () => {
+    expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: "0" })).toBe(false);
+    expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: " 0 " })).toBe(false);
+    // The desktop sets nothing: on.
+    expect(gearboxEnabled({})).toBe(true);
+    expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: "1" })).toBe(true);
+    expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: "" })).toBe(true);
   });
 });

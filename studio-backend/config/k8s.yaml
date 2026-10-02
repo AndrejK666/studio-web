@@ -840,14 +840,13 @@ gears:
       image: "${STUDIO_SESSION_IMAGE}"
       gateway_url: "${STUDIO_SESSION_GATEWAY_URL}"
       theia_control_enabled: true
-      # Orca runtime for the IDE's Agents panel. On by default now that the
-      # session image carries it: with this false the entrypoint never starts
-      # `orca serve`, and the panel reports an unreachable runtime beside a
-      # binary that is right there. The runtime is an Electron process, which
-      # is why the entrypoint runs it with the Chromium sandbox off and under
-      # xvfb — see theia/README.md. Set STUDIO_ORCA_ENABLED=false for a
-      # deployment that would rather not spend the memory.
-      orca_enabled: ${STUDIO_ORCA_ENABLED:-true}
+      # Orca runtime for Agent development's panel: OFF in a session the web
+      # portal opens. That session is for documents and code with the
+      # assistants (Claude Code, Codex), which Doc editing reaches without
+      # Orca; Orca and Gearbox are Constructor Studio Desktop's. Measured on
+      # dev on 2026-10-01 the runtime was ~530MB of a 1.33Gi session.
+      # STUDIO_ORCA_ENABLED=true brings it back.
+      orca_enabled: ${STUDIO_ORCA_ENABLED:-false}
       # 4Gi, not the gear's 2Gi default: on 2026-10-01 a studio-web session
       # (two repositories, the Orca runtime, the assistants' plugin hosts)
       # reached 2.03Gi within a minute of starting and was OOM-killed three
