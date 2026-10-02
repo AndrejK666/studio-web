@@ -22,6 +22,7 @@ use super::roadmap::workbook;
 use super::source::{Effective, PlanSnapshot, Refresh, ReportSource};
 use super::store::ReportStore;
 use crate::components_catalog::port::{BoardSource, RoadmapCatalog, RoadmapFields};
+use crate::scheduler::port::{ScheduleSpec, ScheduleView, Schedules};
 
 /// A report this deployment can draw.
 #[derive(Clone, Copy, Debug)]
@@ -50,10 +51,17 @@ pub fn kind(id: &str) -> Option<&'static ReportKind> {
 /// care which gear initialized first.
 pub type CatalogLink = Arc<dyn Fn() -> Result<Arc<dyn RoadmapCatalog>> + Send + Sync>;
 
+/// Where the scheduler is reached, likewise.
+pub type SchedulesLink = Arc<dyn Fn() -> Result<Arc<dyn Schedules>> + Send + Sync>;
+
+/// Hourly, on the hour.
+pub const HOURLY: &str = "0 * * * *";
+
 pub struct ReportsService {
     store: Arc<dyn ReportStore>,
     catalog: CatalogLink,
     reader: Option<Arc<dyn PlanReader>>,
+    schedules: Option<SchedulesLink>,
 }
 
 fn now() -> String {
@@ -72,6 +80,7 @@ impl ReportsService {
             store,
             catalog,
             reader,
+            schedules: None,
         }
     }
 
@@ -148,8 +157,72 @@ impl ReportsService {
 
     /// Read the plan again and queue a sync of the board: what keeps a
     /// report current. Records what it did on the source either way.
+    /// Where the scheduler is: a deployment without it has no schedules.
+    pub fn with_schedules(mut self, link: SchedulesLink) -> Self {
+        self.schedules = Some(link);
+        self
+    }
+
+    /// The payload of the schedule that keeps this organization's report
+    /// current: the organization is the caller's, written by this gear.
+    pub fn schedule_payload(ctx: &SecurityContext, report: &str) -> serde_json::Value {
+        serde_json::json!({ "report": report, "organization_id": ctx.subject_tenant_id() })
+    }
+
+    fn schedules(&self) -> Result<Arc<dyn Schedules>> {
+        let link = self.schedules.as_ref().ok_or_else(|| {
+            anyhow!("this deployment schedules nothing (studio-scheduler has no database)")
+        })?;
+        link()
+    }
+
+    /// The schedule that keeps the report current, if there is one.
+    pub async fn schedule(
+        &self,
+        ctx: &SecurityContext,
+        report: &str,
+    ) -> Result<Option<ScheduleView>> {
+        let Ok(s) = self.schedules() else {
+            return Ok(None);
+        };
+        s.find(
+            super::refresh_task::TASK_TYPE,
+            &Self::schedule_payload(ctx, report),
+        )
+        .await
+    }
+
+    /// Switch it on or off, creating it the first time.
+    pub async fn set_schedule(
+        &self,
+        ctx: &SecurityContext,
+        report: &str,
+        enabled: bool,
+        cron: Option<&str>,
+    ) -> Result<ScheduleView> {
+        let tenant = ctx.subject_tenant_id();
+        self.schedules()?
+            .ensure(
+                ctx,
+                ScheduleSpec {
+                    // Names are unique per tenant, and every one of these
+                    // lives in the platform's: the organization makes it one.
+                    name: format!("Refresh the {report} report of {tenant}"),
+                    task_type: super::refresh_task::TASK_TYPE,
+                    payload: Self::schedule_payload(ctx, report),
+                    cron: cron.unwrap_or(HOURLY).to_string(),
+                    enabled,
+                },
+            )
+            .await
+    }
+
     pub async fn refresh(&self, ctx: &SecurityContext, report: &str) -> Result<Refresh> {
-        let mut source = self.source(ctx, report).await?;
+        // Nothing saved: nothing to refresh, and nothing to write -- a
+        // refresh never makes a source up.
+        let Some(mut source) = self.store.get(ctx, report).await? else {
+            anyhow::bail!("this organization has not set up the {report} report yet");
+        };
         let outcome = self.refresh_inner(ctx, &mut source).await;
         let record = match &outcome {
             Ok(run) => Refresh {

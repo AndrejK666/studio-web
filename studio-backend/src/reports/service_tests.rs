@@ -8,6 +8,7 @@ use crate::components_catalog::port::ComponentValues as Component;
 use crate::reports::github::FileText;
 use crate::reports::source::PlanFile;
 use crate::reports::store::MemoryStore;
+use crate::scheduler::port::{ScheduleSpec, ScheduleView, Schedules};
 
 /// A catalogue that remembers what it was asked to sync.
 #[derive(Default)]
@@ -436,4 +437,122 @@ async fn an_upload_is_kept_until_it_is_taken_back_or_a_file_replaces_it() {
         read.snapshot.map(|x| x.from),
         Some("o/r:gears.yaml".to_string())
     );
+}
+
+#[tokio::test]
+async fn a_refresh_of_an_unsaved_source_writes_nothing() {
+    let s = service(Arc::default(), None);
+    let err = s.refresh(&ctx(), "roadmap").await.unwrap_err();
+    assert!(format!("{err:#}").contains("not set up"), "{err:#}");
+    // A schedule that fires for an organization that set nothing up must
+    // not leave a source behind.
+    assert!(s.store.get(&ctx(), "roadmap").await.unwrap().is_none());
+}
+
+/// A scheduler that keeps schedules in a list.
+#[derive(Default)]
+struct FakeSchedules {
+    all: Mutex<Vec<(ScheduleSpec, ScheduleView)>>,
+}
+
+#[async_trait]
+impl Schedules for FakeSchedules {
+    async fn find(&self, task_type: &str, matching: &Value) -> Result<Option<ScheduleView>> {
+        Ok(self
+            .all
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(s, _)| {
+                s.task_type == task_type
+                    && crate::scheduler::port::payload_matches(&s.payload, matching)
+            })
+            .map(|(_, v)| v.clone()))
+    }
+    async fn ensure(&self, _ctx: &SecurityContext, spec: ScheduleSpec) -> Result<ScheduleView> {
+        let mut all = self.all.lock().unwrap();
+        let view = ScheduleView {
+            id: Uuid::from_u128(all.len() as u128 + 1),
+            expression: spec.cron.clone(),
+            enabled: spec.enabled,
+            next_run_at: "2026-10-02T09:00:00Z".into(),
+            last_run_id: None,
+        };
+        match all
+            .iter_mut()
+            .find(|(s, _)| s.task_type == spec.task_type && s.payload == spec.payload)
+        {
+            Some((s, v)) => {
+                v.enabled = spec.enabled;
+                v.expression = spec.cron.clone();
+                *s = spec;
+                Ok(v.clone())
+            }
+            None => {
+                all.push((spec, view.clone()));
+                Ok(view)
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_schedule_names_the_organization_and_is_one_per_organization() {
+    let sched = Arc::new(FakeSchedules::default());
+    let link: SchedulesLink = {
+        let sched = Arc::clone(&sched);
+        Arc::new(move || Ok(Arc::clone(&sched) as Arc<dyn Schedules>))
+    };
+    let s = service(Arc::default(), None).with_schedules(link);
+    assert!(s.schedule(&ctx(), "roadmap").await.unwrap().is_none());
+    let on = s.set_schedule(&ctx(), "roadmap", true, None).await.unwrap();
+    assert!(on.enabled);
+    assert_eq!(on.expression, HOURLY);
+    let (spec, _) = sched.all.lock().unwrap()[0].clone();
+    assert_eq!(spec.task_type, crate::reports::refresh_task::TASK_TYPE);
+    assert_eq!(spec.payload["report"], "roadmap");
+    assert_eq!(
+        spec.payload["organization_id"],
+        ctx().subject_tenant_id().to_string()
+    );
+    assert!(spec.name.contains(&ctx().subject_tenant_id().to_string()));
+    // Switched off: the same schedule, not a second one.
+    let off = s
+        .set_schedule(&ctx(), "roadmap", false, None)
+        .await
+        .unwrap();
+    assert!(!off.enabled);
+    assert_eq!(sched.all.lock().unwrap().len(), 1);
+    // Another organization has its own.
+    let other = crate::reports::test_ctx(0xbeef);
+    assert!(s.schedule(&other, "roadmap").await.unwrap().is_none());
+    s.set_schedule(&other, "roadmap", true, Some("*/30 * * * *"))
+        .await
+        .unwrap();
+    assert_eq!(sched.all.lock().unwrap().len(), 2);
+    assert_eq!(
+        s.schedule(&other, "roadmap")
+            .await
+            .unwrap()
+            .map(|v| v.expression),
+        Some("*/30 * * * *".into())
+    );
+    assert_eq!(
+        s.schedule(&ctx(), "roadmap")
+            .await
+            .unwrap()
+            .map(|v| v.enabled),
+        Some(false)
+    );
+}
+
+#[tokio::test]
+async fn without_a_scheduler_there_is_no_schedule_and_switching_one_on_says_why() {
+    let s = service(Arc::default(), None);
+    assert!(s.schedule(&ctx(), "roadmap").await.unwrap().is_none());
+    let err = s
+        .set_schedule(&ctx(), "roadmap", true, None)
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("schedules nothing"), "{err:#}");
 }
