@@ -1,5 +1,7 @@
-import { inject, injectable } from '@theia/core/shared/inversify';
-import { DisposableCollection, Emitter, Event } from '@theia/core';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { CommandService, Disposable, DisposableCollection, Emitter, Event } from '@theia/core';
+import { FileService } from '@theia/filesystem/lib/browser/file-service';
+import { FileResourceVersion } from '@theia/filesystem/lib/browser/file-resource';
 import { Saveable, SaveOptions } from '@theia/core/lib/browser/saveable';
 import URI from '@theia/core/lib/common/uri';
 import { BinaryBuffer } from '@theia/core/lib/common/buffer';
@@ -10,8 +12,21 @@ import {
     restoreMarkdownFromEditorWithTokens
 } from './markdown-editor-shared';
 import { Resource, ResourceError, ResourceProvider, ResourceVersion } from '@theia/core/lib/common/resource';
+import { preserveUnchangedBlocks } from './markdown-preserve';
 
 export type MarkdownUpdateOrigin = 'initial' | 'user' | 'external-sync' | 'revert';
+
+/**
+ * How often the file is stat'ed behind the file watcher — the Documents
+ * editor's EXTERNAL_POLL_MS, for the same reason: a watcher can be silent. On a
+ * workspace bind-mounted from Windows (9p/drvfs inside the container) it is
+ * silent always, and without this the editor never learned that a colleague
+ * saved, so it neither took their save nor raised a conflict against it.
+ */
+export const EXTERNAL_POLL_MS = 2000;
+
+/** product-ext's co-editing claim (product-frontend-module.js). */
+export const CLAIM_WRITE_COMMAND = 'studio.collab.claimWrite';
 
 export interface MarkdownModifiedExternalChangeState {
     readonly kind: 'modified';
@@ -31,6 +46,18 @@ export type MarkdownExternalChangeState = MarkdownModifiedExternalChangeState | 
 export class MarkdownEditorModel implements Saveable {
     @inject(ResourceProvider)
     protected readonly resourceProvider: ResourceProvider;
+
+    // Optional: the poll is a safety net, and a model without a file service
+    // (a test harness) works from the watcher alone.
+    @inject(FileService) @optional()
+    protected readonly fileService: FileService | undefined;
+
+    protected polling = false;
+
+    // Optional for the same reason: the claim is a courtesy to the Documents
+    // editor, and a model without commands (a test harness) saves without one.
+    @inject(CommandService) @optional()
+    protected readonly commands: CommandService | undefined;
 
     protected readonly toDispose = new DisposableCollection();
     protected readonly onDirtyChangedEmitter = new Emitter<void>();
@@ -93,6 +120,7 @@ export class MarkdownEditorModel implements Saveable {
         if (resource.onDidChangeContents) {
             this.toDispose.push(resource.onDidChangeContents(() => this.scheduleExternalSync()));
         }
+        this.startExternalPoll(uri);
         const request = ++this.externalReadGeneration;
         const rawMarkdown = await resource.readContents();
         if (this.disposed || request !== this.externalReadGeneration) {
@@ -168,14 +196,22 @@ export class MarkdownEditorModel implements Saveable {
                 throw new Error('Markdown editor resource is not saveable.');
             }
             const savedMarkdown = this.currentMarkdown;
+            // What goes to disk: the edited blocks as the editor serialised
+            // them, every other block as the file already spelled it
+            // (markdown-preserve.ts) — so a save does not reformat what nobody
+            // touched. The editor's own form stays the baseline it compares with.
+            const savedRaw = preserveUnchangedBlocks(this.baselineRawMarkdown, savedMarkdown);
             const savedGeneration = this.userEditGeneration;
             const wasDirty = this.dirty;
             this.activeSaveOperations += 1;
             try {
-                await resource.saveContents(savedMarkdown, {
+                if (this.commands) {
+                    await this.claimWrite(savedRaw);
+                }
+                await resource.saveContents(savedRaw, {
                     version: resource.version
                 });
-                this.baselineRawMarkdown = savedMarkdown;
+                this.baselineRawMarkdown = savedRaw;
                 this.baselineMarkdown = savedMarkdown;
                 if (savedGeneration === this.userEditGeneration) {
                     this.currentMarkdown = savedMarkdown;
@@ -274,6 +310,61 @@ export class MarkdownEditorModel implements Saveable {
 
     async serialize(): Promise<BinaryBuffer> {
         return BinaryBuffer.fromString(this.dirty ? this.currentMarkdown : this.baselineRawMarkdown);
+    }
+
+    /**
+     * Tell co-editing these bytes are this person's (product-ext's
+     * studio.collab.claimWrite), so a colleague's Documents editor applies the
+     * save as theirs instead of holding it for review like an assistant's write.
+     */
+    protected async claimWrite(raw: string): Promise<void> {
+        if (!this.commands || !this.resourceUri) {
+            return;
+        }
+        try {
+            await this.commands.executeCommand(CLAIM_WRITE_COMMAND, this.resourceUri.toString(), raw);
+        } catch {
+            // No co-editing here (the desktop, a build without product-ext): nobody to tell.
+        }
+    }
+
+    protected startExternalPoll(uri: URI): void {
+        if (!this.fileService || uri.scheme !== 'file') {
+            return;
+        }
+        const timer = setInterval(() => void this.pollExternalChange(), EXTERNAL_POLL_MS);
+        this.toDispose.push(Disposable.create(() => clearInterval(timer)));
+    }
+
+    /**
+     * Read again when the file on disk is newer than the version this model
+     * last read or wrote — what the watcher would have said. Skipped while a
+     * save is in flight (its own write is not news) and while the page is
+     * hidden (nobody is looking, and the next visible tick catches up).
+     */
+    protected async pollExternalChange(): Promise<void> {
+        if (this.disposed || this.polling || this.activeSaveOperations > 0 || !this.fileService || !this.resourceUri) {
+            return;
+        }
+        if (typeof document !== 'undefined' && document.hidden) {
+            return;
+        }
+        const version = this.resource?.version;
+        if (!FileResourceVersion.is(version)) {
+            return;
+        }
+        this.polling = true;
+        try {
+            const stat = await this.fileService.resolve(this.resourceUri, { resolveMetadata: true });
+            if (!this.disposed && stat.mtime > version.mtime && stat.etag !== version.etag) {
+                this.scheduleExternalSync();
+            }
+        } catch {
+            // Gone or unreadable: the watcher or the next save reports it, and
+            // re-reading a missing file every two seconds would not.
+        } finally {
+            this.polling = false;
+        }
     }
 
     protected scheduleExternalSync(): void {

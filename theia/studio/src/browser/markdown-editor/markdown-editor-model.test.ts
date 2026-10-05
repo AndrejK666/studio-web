@@ -8,7 +8,7 @@ import {
     ResourceSaveOptions,
     ResourceVersion
 } from '@theia/core/lib/common/resource';
-import { MarkdownEditorModel } from './markdown-editor-model';
+import { CLAIM_WRITE_COMMAND, EXTERNAL_POLL_MS, MarkdownEditorModel } from './markdown-editor-model';
 import { canonicalizeMarkdown, representativeRoundTripFixtures } from './markdown-editor-shared';
 
 describe('MarkdownEditorModel', () => {
@@ -28,8 +28,12 @@ describe('MarkdownEditorModel', () => {
         expect(model.createSnapshot()).toEqual({ value: '# Title\n\nChanged\n' });
 
         await model.save();
-        expect(resource.saveContents).toHaveBeenCalledWith('# Title\n\nChanged\n', { version: initialVersion });
+        // The heading nobody touched keeps the file's own bytes — its trailing
+        // spaces and CRLF — and only the edited paragraph is as the editor
+        // writes it (markdown-preserve.ts).
+        expect(resource.saveContents).toHaveBeenCalledWith('# Title  \r\n\r\nChanged\r\n', { version: initialVersion });
         expect(model.dirty).toBe(false);
+        expect(model.markdown).toBe('# Title\n\nChanged\n');
 
         resource.setContents('# Disk\n');
         model.updateMarkdown('# Local\n');
@@ -643,6 +647,83 @@ describe('MarkdownEditorModel', () => {
             markdown: '# Local\n',
             version: resource.version
         });
+    });
+
+    it('notices a newer file on disk by polling when the watcher stays silent', async () => {
+        jest.useFakeTimers();
+        try {
+            const uri = new URI('file:///workspace/poll.md');
+            const resource = new MockMarkdownResource(uri, '# Base\n');
+            const model = createModel(resource);
+            const stat = { mtime: 0, etag: 'e0' };
+            const fileService = { resolve: jest.fn(async () => stat) };
+            Object.defineProperty(model, 'fileService', { value: fileService });
+            const sync = jest.spyOn(model as unknown as { scheduleExternalSync(): void }, 'scheduleExternalSync');
+
+            await model.init(uri);
+            // What the model last read, as a FileResource reports it.
+            Object.defineProperty(resource, 'version', { value: { encoding: 'utf8', mtime: 100, etag: 'e1' }, writable: true });
+
+            stat.mtime = 100;
+            stat.etag = 'e1';
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS);
+            await flushMicrotasks();
+            expect(sync).not.toHaveBeenCalled();
+
+            // A colleague saved; no file event came.
+            stat.mtime = 200;
+            stat.etag = 'e2';
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS);
+            await flushMicrotasks();
+            expect(sync).toHaveBeenCalledTimes(1);
+
+            model.dispose();
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS * 3);
+            await flushMicrotasks();
+            expect(fileService.resolve).toHaveBeenCalledTimes(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('claims its write for co-editing before it writes, with the bytes it writes', async () => {
+        const uri = new URI('file:///workspace/claim.md');
+        const resource = new MockMarkdownResource(uri, '# Title\n\nText\n');
+        const model = createModel(resource);
+        const order: string[] = [];
+        const commands = { executeCommand: jest.fn(async (id: string, ...args: unknown[]) => { order.push(`${id} ${JSON.stringify(args)}`); }) };
+        Object.defineProperty(model, 'commands', { value: commands });
+        const save = resource.saveContents.getMockImplementation()!;
+        resource.saveContents.mockImplementation(async (content, options) => {
+            order.push(`write ${JSON.stringify(content)}`);
+            return save(content, options);
+        });
+
+        await model.init(uri);
+        model.updateMarkdown('# Title\n\nChanged');
+        await model.save();
+
+        expect(order).toEqual([
+            `${CLAIM_WRITE_COMMAND} ${JSON.stringify(['file:///workspace/claim.md', '# Title\n\nChanged\n'])}`,
+            `write ${JSON.stringify('# Title\n\nChanged\n')}`,
+        ]);
+    });
+
+    it('does not poll a resource that is not a file', async () => {
+        jest.useFakeTimers();
+        try {
+            const uri = new URI('studio-doc:/doc/1.md');
+            const resource = new MockMarkdownResource(uri, '# Base\n');
+            const model = createModel(resource);
+            const fileService = { resolve: jest.fn() };
+            Object.defineProperty(model, 'fileService', { value: fileService });
+            await model.init(uri);
+            jest.advanceTimersByTime(EXTERNAL_POLL_MS * 2);
+            expect(fileService.resolve).not.toHaveBeenCalled();
+            model.dispose();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it('disposes the resource and external-change listener when the model is disposed', async () => {

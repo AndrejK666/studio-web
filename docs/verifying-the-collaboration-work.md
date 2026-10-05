@@ -185,6 +185,115 @@ A types and saves. Watch B.
 Attribution here is content-keyed, not time-keyed, on purpose: it is what stops
 an agent's write from being applied as a person's.
 
+### 5a. What the colleague changed
+
+Right after step 5, on B's side.
+
+- **Expect**: the status line reads `A edited this` and is clickable; clicking
+  opens a tab `<doc> (A's changes)` with the version B had before A started on
+  the left and A's on the right, A's words marked
+  ([rendered-markdown-diff.md](rendered-markdown-diff.md)). Two saves A made a
+  second apart are **one** change there, not the last of them.
+- After the status line has gone back to the save state, open History.
+  **Expect**: A's entry has a *What changed* button that opens the same kind of
+  comparison against the last different version.
+- **Fails as**: "No changes" on A's entry — the history of a shared checkout
+  records A's save twice (A's own entry and B's record of it), and the second
+  must be compared past the first.
+
+### 5b. Two people, one paragraph, the same moment
+
+A types; a quarter of a second later B types in the same document, before A's
+autosave lands.
+
+- **Expect**: B's banner reads `A changed this on disk.` — the writer named,
+  not just "Changed on disk." *Compare* heads the rail with
+  `A's version (on disk) → your unsaved version`, and *Side by side* opens the
+  two versions rendered with the same labels.
+- With B in the Workbench (the WYSIWYG editor) instead: the conflict banner
+  appears with *Side by side* beside *Compare*. Its columns say `On disk` — that
+  editor has no co-editing client to ask who wrote it.
+- **On a Windows bind mount** a workspace mounted from `C:\` is `9p` (drvfs)
+  inside the container and delivers no file events. Both editors still notice,
+  each through its own two-second poll — the WYSIWYG one since it got one; the
+  banner then comes up to two seconds late. A Docker volume is what a portal
+  session has, and the closer stand.
+
+### 5c. Reading a proposal, and a colleague's suggestions, whole
+
+- An unclaimed write (an agent's) lands while A has the document open.
+  **Expect**: the proposal header has *Side by side*; it opens `Before ↔
+  Proposed by assistant`, the edited words marked, rewrapped paragraphs counted
+  as formatting, not edits.
+- B switches to *Suggesting* and types. **Expect** on A's side, in the
+  Suggestions section: *Side by side: B*, opening `Document ↔ B's suggestions`
+  with only B's change. **Known**: A may need to reopen the document before B's
+  suggestion is listed at all.
+
+### 5d. What changed since you last looked
+
+A opens the document and leaves (closes it, or the page). Something changes it.
+A opens it again.
+
+- **Expect**: a banner `Changed since you last looked (<when>)` with *See
+  changes* and *Dismiss*. *See changes* opens the remembered version beside the
+  current one. Either answer makes the current version the remembered one; no
+  answer keeps the offer for next time.
+- Another person, another browser: their own memory. Nothing of this is in
+  `.studio/`.
+
+### 5e. The discussions a change touches
+
+With open threads in the document, open any comparison from the Documents
+editor — *Last commit* is the simplest.
+
+- **Expect**: a badge on each passage a thread quotes, in both columns; a
+  **warning** badge on the left where the change removed a quoted passage (its
+  tooltip: the discussion will lose its place); the summary counts them, e.g.
+  `1 changed · 1 discussion on changed text · 1 would lose its place`.
+
+### 5f. A colleague's branch
+
+B's branch exists in the repository (pushed, or local in the shared checkout).
+
+- *Compare with Branch or Tag... (Rendered)* on the document. **Expect**: the
+  refs newest first with their author, then two questions. *Mine ↔ B's branch*
+  shows how the document differs; *What B's branch changed* shows only B's
+  edits since it branched off, not what happened on yours meanwhile.
+
+### 5g. A pull while the document is open
+
+A has the document open in Documents. B pushes an edit to it from elsewhere;
+the shared checkout pulls (or A presses *Share with the team*).
+
+- **Expect**: A's editor takes B's version as *B edited this document* (status
+  line, history), `git status` shows nothing to commit, and no proposal.
+- **Fails as**: the pulled paragraph vanishing from the file and a proposal
+  waiting — the old behaviour, where the next share committed the file back.
+- **Control**: write to the file by hand (`printf ... >>`). That is still held
+  as a proposal and the file is put back.
+
+### 5h. Two editors, one line
+
+A edits a sentence in Documents and saves; B edits the same document in the
+WYSIWYG editor (Workbench) and saves.
+
+- **Expect**: `git diff --numstat` shows `1 1` after each save — tables, wrapped
+  paragraphs and list bullets nobody touched stay as they were — and A's editor
+  applies B's save as B's, with no proposal.
+
+### 5i. Share with the team
+
+A, who knows no git, edits two documents in Doc editing.
+
+- **Expect**: the status bar says *2 documents not shared*; *Share with the
+  team* (Team group) lists them, takes a sentence, and afterwards the commit is
+  A's, carries only those documents and their `.studio` companions, and is on
+  the remote; the tree is clean. On a protected branch it lands on
+  `studio/<person>/<time>` with a link to open a pull request.
+- **Fails as**: files A never opened appearing in the commit, or an editor of
+  the pulled documents showing a proposal (see 5g).
+
 ### 6. Commenting on something that was rendered
 
 In rich view:

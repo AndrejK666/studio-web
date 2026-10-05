@@ -58,6 +58,14 @@ const { ChangesStore, resolveFile, resolveGroup } = require('./changes-store');
 const { diffHunks, applyHunks, countPending, splitLines } = require('./diff');
 const { preserveWrapping } = require('./md-rewrap');
 const { reviewHunkHtml, comparisonHtml, escapeHtml } = require('./diff-view');
+// theia/studio's rendered markdown comparison (markdown-diff-contribution.ts),
+// and what this editor hands it — see rendered-compare.js.
+const {
+    RENDERED_COMPARE_COMMAND, RENDERED_HEAD_COMMAND, coalesceRemoteChange, remoteChangeRequest,
+    entryChangeRequest, entryHasChange, historyPairRequest, diskLabel, conflictRequest,
+    proposalRequest, suggestionRequest, suggestionAuthors,
+    lastSeenKey, readLastSeen, writeLastSeen, changedSinceLastSeen, sinceLastSeenRequest, threadNotes
+} = require('./rendered-compare');
 const { trackedHtml, suggestedMarkdown, changeCardHtml, changeSummaryText, orderEntries, AUTHOR_SLOTS } = require('./tracked-changes');
 const { suggestionHunks, isMine, hunkKey } = require('./change-log');
 const { suggestMode, suggestSwitchHtml } = require('./suggest-mode');
@@ -807,6 +815,8 @@ const EXTERNAL_POLL_MS = 2000;
 // to the save state. Long enough to be read after glancing away, short enough
 // that it is never the answer to "is my work saved".
 const REMOTE_NOTICE_MS = 5000;
+/** studio's answer to "did git write this?" (markdown-diff-contribution.ts). */
+const COMMITTED_VERSION_COMMAND = 'studio.git.committedVersion';
 /* Below this a drag is a click. A hand that moves three pixels on the way down
  * means "this block", not "this eight-pixel corner of it". */
 const AREA_MIN_DRAG = 8;
@@ -1628,6 +1638,9 @@ class MarkdownEditorWidget extends Widget {
     }
 
     onCloseRequest(msg) {
+        // An unanswered "changed since you last looked" keeps the old version
+        // remembered, so the offer is made again next time rather than lost.
+        if (!this.sinceLastSeen && this.editor) { this.rememberSeen(); }
         openEditors.delete(this.uri.toString());
         if (this.selectionChangeHandler) { document.removeEventListener('selectionchange', this.selectionChangeHandler); }
         if (this.keyHandler) { document.removeEventListener('keydown', this.keyHandler, true); }
@@ -2009,10 +2022,53 @@ class MarkdownEditorWidget extends Widget {
         // The save path is armed only after load-time normalisation and the
         // re-anchor transaction have settled. Opening a file must never write
         // to it.
-        this.lastSavedBody = docToMarkdown(this.editor.getJSON());
+        // Clean is what the file already says: an unchanged block keeps its
+        // own spelling (see currentBody), so opening a document writes nothing.
+        this.lastSavedBody = this.currentBody();
         setTimeout(() => { this.armed = true; }, 0);
         this.setSaveState(this.readOnly ? 'read-only' : 'clean');
         this.applyReviewLock();
+        this.offerSinceLastSeen();
+    }
+
+    // -- since I last looked (rendered-compare.js) ---------------------------
+
+    lastSeenStorageKey() {
+        return lastSeenKey(document.baseURI, this.uri.toString());
+    }
+
+    /*
+     * Offered, never opened by itself: a document that moved on is the common
+     * case in a shared project, and a tab that opens on its own every time is
+     * a tab people learn to close unread. Once offered, what is on screen now
+     * is what they have seen.
+     */
+    offerSinceLastSeen() {
+        let storage;
+        try { storage = globalThis.localStorage; } catch (e) { storage = undefined; }
+        const stored = readLastSeen(storage, this.lastSeenStorageKey());
+        this.sinceLastSeen = this.renderedCompareAvailable() ? changedSinceLastSeen(stored, this.lastSavedBody) : undefined;
+        if (this.sinceLastSeen) { this.renderBanners(); } else { this.rememberSeen(); }
+    }
+
+    /** Remember the body on screen as what I have seen. */
+    rememberSeen(body) {
+        let storage;
+        try { storage = globalThis.localStorage; } catch (e) { storage = undefined; }
+        const seen = body !== undefined ? body : (this.editor ? this.currentBody() : this.lastSavedBody);
+        writeLastSeen(storage, this.lastSeenStorageKey(), seen, Date.now());
+    }
+
+    openSinceLastSeen() {
+        const request = sinceLastSeenRequest(this.sinceLastSeen, this.currentBody(), this.uri.path.base);
+        this.dismissSinceLastSeen();
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    dismissSinceLastSeen() {
+        this.sinceLastSeen = undefined;
+        this.rememberSeen();
+        this.renderBanners();
     }
 
     // -- modes ---------------------------------------------------------------
@@ -2246,7 +2302,20 @@ class MarkdownEditorWidget extends Widget {
          * body and restores the original line breaks for every block whose
          * content is unchanged, so a save rewraps only what was edited.
          */
-        return preserveWrapping(this.reviewedBody(), docToMarkdown(this.editor.getJSON()));
+        return preserveWrapping(this.diskBody(), docToMarkdown(this.editor.getJSON()));
+    }
+
+    /*
+     * The body as the file on disk spells it — what this editor last read or
+     * wrote. What currentBody restores unchanged blocks from: restoring against
+     * reviewedBody(), which is already this editor's own serialisation of the
+     * file, gave nothing back, so the first save of a hand-wrapped document
+     * unwrapped every paragraph and re-padded every table in it.
+     */
+    diskBody() {
+        return this.lastWrittenFull !== undefined
+            ? splitFrontmatter(this.lastWrittenFull).body
+            : this.reviewedBody();
     }
 
     /*
@@ -2452,6 +2521,7 @@ class MarkdownEditorWidget extends Widget {
             }
             const written = await this.writeBody(body);
             this.lastSavedBody = body;
+            if (!this.sinceLastSeen) { this.rememberSeen(body); }
             this.setSaveState('saved', timeLabel(new Date(written.mtime).toISOString()));
             /* The reviewed body just moved, which is what editBaseline is
                anchored to and what stood the marks down while this edit was
@@ -2562,13 +2632,36 @@ class MarkdownEditorWidget extends Widget {
         this.setSaveState('conflict');
         this.renderBanners();
         this.messageService.warn(this.uri.path.base + ' changed on disk — your version was not saved.');
+        void this.nameConflictWriter(this.conflict);
+    }
+
+    /*
+     * Whose version is on disk, when co-editing knows: a colleague who claimed
+     * those bytes (collab.lastWriter, the same claim applyRemoteEdit trusts).
+     * Asked after the conflict is entered rather than before, so a slow or
+     * absent co-editing backend never delays the guarantee that neither version
+     * is lost; it only names one of them a moment later, or never.
+     */
+    async nameConflictWriter(conflict) {
+        let writer;
+        try { writer = await collab.lastWriter(this.uri, conflict.diskFull); }
+        catch (e) { return; }
+        if (!writer || !writer.author || isSelf(writer.author) || this.conflict !== conflict) { return; }
+        conflict.writer = writer;
+        if (this.comparing && this.comparing.conflict === conflict) {
+            this.comparing.diskLabel = diskLabel(writer);
+            this.comparing.heading = diskLabel(writer) + ' \u2192 your unsaved version';
+            this.renderRail();
+        }
+        this.renderBanners();
     }
 
     async resolveConflict(choice) {
         if (!this.conflict) { return; }
         const { diskBody, myBody } = this.conflict;
         if (choice === 'compare') {
-            this.comparing = { heading: 'On disk → your unsaved version', a: diskBody, b: myBody };
+            const label = diskLabel(this.conflict.writer);
+            this.comparing = { heading: label + ' → your unsaved version', a: diskBody, b: myBody, diskLabel: label, conflict: this.conflict };
             this.openSlot('changes');
             return;
         }
@@ -2718,8 +2811,26 @@ class MarkdownEditorWidget extends Widget {
          * somebody else.
          */
         const writer = await collab.lastWriter(this.uri, content.value);
+        if (this.typedWhileAsking(diskBody, content.value)) { return; }
         if (writer && writer.author && !isSelf(writer.author)) {
             await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value, writer.author);
+            return;
+        }
+
+        /*
+         * Nobody claimed it, but git may have written it: a pull, a checkout,
+         * Share with the team bringing a colleague's commit. Held as a
+         * proposal, the file was put back to what I had, and my next share
+         * then committed that — undoing the colleague's work without anybody
+         * seeing it happen. Content equal to a commit is the repository's
+         * version and is taken as the commit's author's edit; an agent's write
+         * or a hand edit is equal to no commit and is still held for review.
+         */
+        const committed = await this.committedVersion(content.value);
+        if (this.typedWhileAsking(diskBody, content.value)) { return; }
+        if (committed) {
+            await this.applyRemoteEdit(diskBody, split.frontmatter, stat, content.value,
+                { name: committed.author, key: 'git:' + committed.commit });
             return;
         }
 
@@ -2744,6 +2855,8 @@ class MarkdownEditorWidget extends Widget {
      * than patching it, and is not noticeable at the size these edits arrive in.
      */
     async applyRemoteEdit(diskBody, frontmatter, stat, diskFull, author) {
+        // What I had, before their save replaces it: the left of "what they changed".
+        const before = this.currentBody();
         const caret = this.editor && this.editor.state
             ? this.editor.state.selection.from
             : undefined;
@@ -2768,6 +2881,7 @@ class MarkdownEditorWidget extends Widget {
         this.historyEntries = await this.historyStore.record(this.uri, {
             kind: 'remote-edit',
             author: name,
+            authorKey: author && author.key,
             title: name + ' edited this document',
             body: diskBody
         });
@@ -2779,7 +2893,11 @@ class MarkdownEditorWidget extends Widget {
          * states it while it is news and then goes back to the save state; the
          * history entry above is what keeps it afterwards.
          */
-        statusLine.setDocumentState(this.uri, 'clean', name + ' edited this');
+        this.remoteChange = coalesceRemoteChange(this.remoteChange, { author: name, before, after: diskBody, at: Date.now() });
+        statusLine.setDocumentState(this.uri, 'clean', name + ' edited this',
+            this.renderedCompareAvailable()
+                ? { tooltip: 'See what ' + name + ' changed, rendered side by side', run: () => this.openRemoteChangeRendered() }
+                : undefined);
         clearTimeout(this.remoteNoticeTimer);
         this.remoteNoticeTimer = setTimeout(() => this.setSaveState(this.saveState), REMOTE_NOTICE_MS);
 
@@ -3842,10 +3960,20 @@ class MarkdownEditorWidget extends Widget {
         if (this.conflict) {
             banners.push({
                 tone: 'block',
-                html: '<b>Changed on disk.</b> Autosave is paused so neither version is lost. ' +
+                html: (this.conflict.writer && this.conflict.writer.author && this.conflict.writer.author.name
+                    ? '<b>' + escapeHtml(this.conflict.writer.author.name) + ' changed this on disk.</b>'
+                    : '<b>Changed on disk.</b>') + ' Autosave is paused so neither version is lost. ' +
                     '<button class="studio-btn" data-act="conflict-compare">Compare</button>' +
                     ' <button class="studio-btn" data-act="conflict-mine">Keep mine</button>' +
                     ' <button class="studio-btn" data-act="conflict-theirs">Take theirs</button>'
+            });
+        }
+        if (this.sinceLastSeen) {
+            banners.push({
+                tone: 'info',
+                html: '<b>Changed since you last looked</b> (' + escapeHtml(new Date(this.sinceLastSeen.at).toLocaleString()) + '). ' +
+                    '<button class="studio-btn" data-act="since-last-seen">See changes</button>' +
+                    ' <button class="studio-btn ghost" data-act="since-last-seen-dismiss">Dismiss</button>'
             });
         }
         const proposal = this.openProposal();
@@ -5168,6 +5296,9 @@ class MarkdownEditorWidget extends Widget {
             '<div class="studio-rail-toolbar">' +
             '<button class="studio-btn" data-act="accept-all">Accept all ' + (pending ? '(' + pending + ')' : '') + '</button>' +
             '<button class="studio-btn" data-act="reject-all">Reject all</button>' +
+            (this.renderedCompareAvailable()
+                ? '<button class="studio-btn ghost" data-act="proposal-rendered" title="The document before, beside the document as proposed">Side by side</button>'
+                : '') +
             '<span class="studio-doc-spacer"></span>' +
             '<button class="studio-icon-btn" data-act="hunk-prev" title="Previous change" aria-label="Previous change">' + ICONS.chevronLeft + '</button>' +
             '<button class="studio-icon-btn" data-act="hunk-next" title="Next change" aria-label="Next change">' + ICONS.chevronRight + '</button>' +
@@ -5188,7 +5319,11 @@ class MarkdownEditorWidget extends Widget {
         // decisions attached, so it renders and returns before the review UI.
         if (this.comparing) {
             this.listEl.innerHTML =
-                '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="close-compare">Close comparison</button></div>' +
+                '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="close-compare">Close comparison</button>' +
+                (this.renderedCompareAvailable()
+                    ? '<button class="studio-btn ghost" data-act="compare-rendered" title="Both versions rendered, side by side, in a tab">Side by side</button>'
+                    : '') +
+                '</div>' +
                 comparisonHtml(diffHunks(this.comparing.a, this.comparing.b).hunks, { heading: this.comparing.heading });
             this.footEl.textContent = '';
             return;
@@ -5324,7 +5459,17 @@ class MarkdownEditorWidget extends Widget {
      */
     suggestionsSectionHtml() {
         const cards = this.changeCardsHtml(entry => entry.proposal && entry.proposal.kind === 'suggestion');
-        return cards ? '<div class="studio-rail-section">Suggestions</div>' + cards : '';
+        if (!cards) { return ''; }
+        // One "side by side" per person: their suggestions applied to the
+        // document, read whole — the cards below are where each is decided.
+        const people = this.renderedCompareAvailable() ? suggestionAuthors(this.suggestions) : [];
+        const readWhole = people.length
+            ? '<div class="studio-rail-toolbar">' + people.map(person =>
+                '<button class="studio-btn ghost" data-act="suggestion-rendered" data-id="' + escapeHtml(person.ids.join(',')) + '" ' +
+                'title="The document with ' + escapeHtml(person.name) + '\u2019s suggestions applied, beside the document">' +
+                'Side by side: ' + escapeHtml(person.name) + '</button>').join('') + '</div>'
+            : '';
+        return '<div class="studio-rail-section">Suggestions</div>' + readWhole + cards;
     }
 
     /** Requirement 7's sequential review: step through the undecided hunks. */
@@ -5383,6 +5528,9 @@ class MarkdownEditorWidget extends Widget {
     renderHistory() {
         this.railHeadEl.innerHTML =
             '<span class="studio-rail-title">History</span>' +
+            (this.renderedCompareAvailable() && this.uri.scheme === 'file'
+                ? '<button class="studio-btn ghost" data-act="compare-head-rendered" title="The saved file against its last commit, rendered side by side">Last commit</button>'
+                : '') +
             (this.compareSelection.length === 2
                 ? '<button class="studio-btn ghost" data-act="clear-compare">Clear</button>'
                 : '');
@@ -5401,6 +5549,10 @@ class MarkdownEditorWidget extends Widget {
             if (a && b) {
                 const [older, newer] = Date.parse(a.at) <= Date.parse(b.at) ? [a, b] : [b, a];
                 comparison = '<div class="studio-compare">' +
+                    (this.renderedCompareAvailable()
+                        ? '<div class="studio-rail-toolbar"><button class="studio-btn ghost" data-act="history-compare-rendered" ' +
+                          'title="These two versions rendered, side by side, in a tab">Side by side</button></div>'
+                        : '') +
                     comparisonHtml(diffHunks(older.snapshot, newer.snapshot).hunks, {
                         heading: older.title + ' (' + older.author + ', ' + new Date(older.at).toLocaleString() + ')' +
                             '  →  ' + newer.title + ' (' + newer.author + ', ' + new Date(newer.at).toLocaleString() + ')'
@@ -5415,6 +5567,10 @@ class MarkdownEditorWidget extends Widget {
                 '<div class="studio-history-head">' +
                 '<span class="studio-history-kind kind-' + entry.kind + '">' + escapeHtml(entry.label || entry.kind) + '</span>' +
                 '<span class="studio-doc-spacer"></span>' +
+                (this.renderedCompareAvailable() && entryHasChange(this.historyEntries, entry.id)
+                    ? '<button class="studio-icon-btn" data-act="history-entry-rendered" data-id="' + entry.id + '" ' +
+                      'title="What this changed, rendered side by side" aria-label="What this changed">' + ICONS.changes + '</button>'
+                    : '') +
                 (selectable
                     ? '<button class="studio-icon-btn' + (selected ? ' resolved' : '') + '" data-act="history-compare" data-id="' + entry.id + '" ' +
                       'title="Select for comparison" aria-label="Select for comparison">' + (selected ? ICONS.checkCircle : ICONS.circle) + '</button>' +
@@ -5432,6 +5588,93 @@ class MarkdownEditorWidget extends Widget {
         this.footEl.textContent = this.compareSelection.length === 1
             ? 'Select a second version to compare.'
             : withSnapshots.length + ' restorable version' + (withSnapshots.length === 1 ? '' : 's');
+    }
+
+    /*
+     * The rendered, side-by-side comparison (theia/studio's markdown-diff,
+     * by command so this package does not depend on that one). The line
+     * hunks above stay the place to decide on a change; this is for reading
+     * two versions as documents — a long rewrite, a moved section, a table.
+     * Where that extension is absent the buttons are simply not drawn.
+     */
+    /**
+     * Who wrote the file is asked over the wire (the claim, the commit), and a
+     * keystroke can land meanwhile. Applying the disk version then would drop
+     * it without a word, so a document that went dirty while asking becomes
+     * the conflict it now is — the check above, made again.
+     */
+    typedWhileAsking(diskBody, diskFull) {
+        if (this.saveState !== 'dirty' && this.saveState !== 'conflict') { return false; }
+        this.enterConflict(diskBody, this.currentBody(), diskFull);
+        return true;
+    }
+
+    /** `{ commit, author }` when `full` is a commit's version of this file (studio's git, by command). */
+    async committedVersion(full) {
+        if (!this.commandRegistry || !this.commandRegistry.getCommand(COMMITTED_VERSION_COMMAND)) { return undefined; }
+        try {
+            const answer = await this.commandRegistry.executeCommand(COMMITTED_VERSION_COMMAND, this.uri.toString(), full);
+            return answer && answer.commit ? answer : undefined;
+        } catch (error) {
+            return undefined;
+        }
+    }
+
+    renderedCompareAvailable() {
+        return !!(this.commandRegistry && this.commandRegistry.getCommand(RENDERED_COMPARE_COMMAND));
+    }
+
+    openRenderedCompare(request) {
+        if (!this.renderedCompareAvailable()) { return; }
+        void this.commandRegistry.executeCommand(RENDERED_COMPARE_COMMAND, Object.assign({
+            base: this.uri.scheme === 'file' ? this.uri.toString() : undefined,
+            // The document's open threads, marked where their passage is.
+            notes: threadNotes(this.threads)
+        }, request));
+    }
+
+    openConflictRendered() {
+        if (!this.comparing) { return; }
+        this.openRenderedCompare(conflictRequest(this.comparing, this.uri.path.base));
+    }
+
+    openHistoryRendered() {
+        const [a, b] = this.compareSelection.map(id => this.historyEntries.find(e => e.id === id)).filter(Boolean);
+        if (!a || !b) { return; }
+        this.openRenderedCompare(historyPairRequest(a, b, this.uri.path.base));
+    }
+
+    /** What one history entry changed, against the version recorded before it. */
+    openEntryRendered(entryId) {
+        const request = entryChangeRequest(this.historyEntries, entryId, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** The assistant's open proposal, before beside proposed. */
+    openProposalRendered() {
+        const request = proposalRequest(this.openProposal(), this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** One person's open suggestions (`ids`, comma-separated), applied to the document. */
+    openSuggestionsRendered(ids) {
+        const wanted = new Set(String(ids || '').split(',').filter(Boolean));
+        const mine = this.trackedEntries().filter(entry => wanted.has(entry.proposalId));
+        if (!mine.length) { return; }
+        const body = this.reviewedBody();
+        const request = suggestionRequest(body, suggestedMarkdown(body, mine), mine[0].proposal.by, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    /** The colleague's latest run of saves, from what I had before it began. */
+    openRemoteChangeRendered() {
+        const request = remoteChangeRequest(this.remoteChange, this.uri.path.base);
+        if (request) { this.openRenderedCompare(request); }
+    }
+
+    openHeadRendered() {
+        if (!this.commandRegistry) { return; }
+        void this.commandRegistry.executeCommand(RENDERED_HEAD_COMMAND, this.uri, { notes: threadNotes(this.threads) });
     }
 
     toggleCompare(entryId) {
@@ -7545,6 +7788,14 @@ class MarkdownEditorWidget extends Widget {
                 case 'open-changed-file': this.openChangedFile(act.getAttribute('data-path')); break;
                 case 'rail-changes': this.openSlot('changes'); break;
                 case 'close-compare': this.comparing = undefined; this.renderRail(); break;
+                case 'compare-rendered': this.openConflictRendered(); break;
+                case 'history-compare-rendered': this.openHistoryRendered(); break;
+                case 'history-entry-rendered': this.openEntryRendered(id); break;
+                case 'proposal-rendered': this.openProposalRendered(); break;
+                case 'since-last-seen': this.openSinceLastSeen(); break;
+                case 'since-last-seen-dismiss': this.dismissSinceLastSeen(); break;
+                case 'suggestion-rendered': this.openSuggestionsRendered(id); break;
+                case 'compare-head-rendered': this.openHeadRendered(); break;
                 case 'clear-compare': this.compareSelection = []; this.renderRail(); break;
                 case 'history-compare': this.toggleCompare(id); break;
                 case 'history-restore': this.restoreVersion(id); break;
@@ -7637,8 +7888,30 @@ function attachSlashKeys(widget) {
 
 const EDITOR_CSS = require('./editor-css').EDITOR_CSS;
 
+/**
+ * Write every open document's pending edits to disk now, rather than when its
+ * autosave next fires. theia/studio's Share with the team calls this (as the
+ * command studio.documents.saveAll) before it reads what is not shared, so what
+ * a person sees in the editor is what goes to the team.
+ *
+ * @returns how many editors had something to write and could not (a conflict,
+ *          a document held for review): their disk state is what is shared.
+ */
+async function saveAllOpenDocuments() {
+    let unsaved = 0;
+    for (const editor of openEditors.values()) {
+        try {
+            const saved = await editor.save();
+            if (saved === false) { unsaved++; }
+        } catch (e) {
+            unsaved++;
+        }
+    }
+    return unsaved;
+}
+
 module.exports = {
-    MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, buildExtensions,
+    MarkdownEditorWidget, attachSlashKeys, EDITOR_CSS, buildExtensions, saveAllOpenDocuments,
     // Pure markup builders, exported for blocks-toolbar.test.js — see the
     // comment above bubbleButtonsHtml for why these are free functions
     // rather than only reachable through a live widget instance.
