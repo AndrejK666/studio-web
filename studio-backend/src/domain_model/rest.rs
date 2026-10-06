@@ -8,6 +8,8 @@
 //!   * **Objects and relations** (`/objects…`, `/relations`) — create and list
 //!     objects of a domain type, relate two of them, read the relation catalog
 //!     and the instance graph.
+//!   * **Query** (`/query`, experimental) — one request reads a type's objects
+//!     filtered, ordered, projected and with relations followed (`query.rs`).
 //!   * **The model as a whole** (`/model/…`) — sync it into Graph Storage, read
 //!     that graph back, import an uploaded model as the active ontology.
 //!   * **History** (`/model/versions`, `/model/revert`) — list the model's
@@ -1038,6 +1040,131 @@ async fn revert_model(
     }))
 }
 
+/// One query over a type's objects. Experimental: the shape may still change.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct QueryObjectsRequest {
+    /// The type to read: an ontology id (`project`), a node type id or its leaf.
+    #[serde(rename = "type")]
+    pub type_ref: String,
+    /// The workspace/project scope the objects were created in, as on
+    /// `GET /objects`. Applies to the queried type, not to included relations.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// A boolean expression over the type's fields:
+    /// `{"status": {"_eq": "active"}}`, combined with `_and`, `_or`, `_not`.
+    /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _is_null`.
+    /// `id` is the object's own id. A field the type does not declare is a 400.
+    #[serde(default, rename = "where")]
+    #[schema(value_type = Option<Object>)]
+    pub filter: Option<Value>,
+    /// Sort keys, first one first; rows without the field come last. Ties
+    /// are broken by id, so pages are stable.
+    #[serde(default)]
+    pub order_by: Vec<QueryOrderByDto>,
+    /// The payload fields to return; omitted returns the whole payload.
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+    /// Relations to follow, by declared name (`has_members` or
+    /// `team.has_members`), each with its own `where`, `order_by`, `fields`,
+    /// `limit` (per parent) and `include`, at most three levels deep.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    pub include: Option<Value>,
+    /// Zero-based index of the first row.
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// Rows to return, 1..=200, default 50.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct QueryOrderByDto {
+    pub field: String,
+    /// `asc` (the default) or `desc`.
+    #[serde(default)]
+    pub direction: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct QueryObjectsResponse {
+    /// `{id, entity, value, relations}` per object; `relations` maps each
+    /// included name to `{items, total, complete}` of the same shape.
+    #[schema(value_type = Vec<Object>)]
+    pub items: Vec<Value>,
+    /// Rows matching `where` across every page.
+    pub total: u32,
+    /// False when the type had more objects than one query reads (5 000), so
+    /// `total` and the page are over the first 5 000 only.
+    pub complete: bool,
+    /// Where the answer may be wrong, said rather than hidden — e.g. two
+    /// relations stored as one edge type.
+    pub warnings: Vec<String>,
+}
+
+async fn query_objects(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<QueryObjectsRequest>,
+) -> ApiResult<JsonBody<QueryObjectsResponse>> {
+    use super::query::{Direction, OrderBy, Query, QueryError, Selection};
+
+    let bad = |m: String| {
+        StudioDomainModelError::invalid_argument()
+            .with_constraint(m)
+            .create()
+    };
+    let include = match req.include {
+        None | Some(Value::Null) => Default::default(),
+        Some(v) => serde_json::from_value(v).map_err(|e| bad(format!("`include`: {e}")))?,
+    };
+    let order_by = req
+        .order_by
+        .into_iter()
+        .map(|o| {
+            let direction = match o.direction.as_deref().map(str::trim) {
+                None | Some("") | Some("asc") => Direction::Asc,
+                Some("desc") => Direction::Desc,
+                Some(other) => {
+                    return Err(bad(format!(
+                        "`direction` on `{}` is `asc` or `desc`, not `{other}`",
+                        o.field
+                    )));
+                }
+            };
+            Ok(OrderBy {
+                field: o.field,
+                direction,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let query = Query {
+        type_ref: req.type_ref,
+        scope: req.scope,
+        offset: req.offset,
+        selection: Selection {
+            filter: req.filter,
+            order_by,
+            fields: req.fields,
+            include,
+            limit: req.limit,
+        },
+    };
+    let outcome = handle.0.query(&ctx, &query).await.map_err(|e| match e {
+        QueryError::Invalid(m) => bad(m),
+        QueryError::Failed(e) => CanonicalError::internal(format!("{e:#}")).create(),
+    })?;
+    Ok(Json(QueryObjectsResponse {
+        items: outcome.rows.items.iter().map(|r| r.to_json()).collect(),
+        total: u32::try_from(outcome.rows.total).unwrap_or(u32::MAX),
+        complete: outcome.rows.complete,
+        warnings: outcome.warnings,
+    }))
+}
+
 // ── Route registration ────────────────────────────────────────────────────
 
 pub fn register_routes(
@@ -1125,6 +1252,36 @@ pub fn register_routes(
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_objects)
         .json_response_with_schema::<ObjectListResponse>(openapi, StatusCode::OK, "Stored objects")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/query")
+        .operation_id("studio_domain_model.query_objects")
+        .summary("Query domain objects (experimental)")
+        .description(
+            "Experimental, beside `GET /objects` and `GET /objects/graph`, which keep \
+             working unchanged. One request reads a type's objects filtered (`where`, \
+             Hasura-style operators), ordered, projected to `fields`, and with declared \
+             relations followed through `include`, nested up to three levels. Every \
+             field and relation named is checked against the model and a wrong one is \
+             a 400 that lists what the type has. Filtering runs in the gear over at \
+             most 5 000 objects of the type; `complete` says whether that saw them all. \
+             A relation is followed from its declaring side only, and `warnings` names \
+             relations that share an edge type, since their edges come back together. \
+             A read: answers 200.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<QueryObjectsRequest>(openapi, "Type, filter, order, fields and relations")
+        .handler(query_objects)
+        .json_response_with_schema::<QueryObjectsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Matching objects with their relations",
+        )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

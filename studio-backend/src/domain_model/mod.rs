@@ -29,6 +29,7 @@
 
 pub(crate) mod gts;
 pub(crate) mod ontology;
+mod query;
 mod rest;
 mod service;
 mod store;

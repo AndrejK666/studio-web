@@ -2563,6 +2563,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-domain-model/v1/query",
+      "operation_id": "studio_domain_model.query_objects",
+      "tag": "StudioDomainModel",
+      "summary": "Query domain objects (experimental)",
+      "authenticated": true,
+      "request": "QueryObjectsRequest",
+      "responses": [
+        "QueryObjectsResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-domain-model/v1/relations",
       "operation_id": "studio_domain_model.create_relation",
       "tag": "StudioDomainModel",

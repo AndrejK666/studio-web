@@ -1127,6 +1127,19 @@ impl DomainModelService {
         self.store.list_objects(ctx, &type_ids, scope, None).await
     }
 
+    /// Answer a query (see [`super::query`]): a type's objects filtered,
+    /// ordered, projected, with declared relations followed. Experimental,
+    /// beside `list_objects` and `objects_graph` rather than in place of them.
+    pub async fn query(
+        &self,
+        ctx: &SecurityContext,
+        q: &super::query::Query,
+    ) -> Result<super::query::Outcome, super::query::QueryError> {
+        let ontology = self.model(ctx).await?;
+        self.ensure_types(ctx).await?;
+        super::query::run(self.store.as_ref(), &ontology, ctx, q).await
+    }
+
     /// Sync the model *as a graph*: materialize one object-type node per entity
     /// and the `inherits` / `declares` edges among them, so the domain model —
     /// with its relations — is itself queryable in the graph. Idempotent: node

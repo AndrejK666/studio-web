@@ -66,6 +66,19 @@ pub struct EdgeView {
     pub to: String,
 }
 
+/// The objects one hop out of a set of seeds along one edge type, with the
+/// edges that reach them — what [`DomainStore::neighbours`] answers.
+#[derive(Debug, Clone, Default)]
+pub struct Neighbourhood {
+    /// Edges leaving a seed, of the asked type, deduplicated.
+    pub edges: Vec<EdgeView>,
+    /// The objects those edges reach, of the asked node types only.
+    pub nodes: Vec<ObjectNode>,
+    /// The graph stopped early (a traversal budget), so some neighbours are
+    /// missing.
+    pub truncated: bool,
+}
+
 /// The marker an upsert refused by its compare-and-set carries, so a caller
 /// can tell "another writer got there first" from a real failure without
 /// matching on the storage gear's own wording.
@@ -187,6 +200,46 @@ pub trait DomainStore: Send + Sync {
         ctx: &SecurityContext,
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>>;
+
+    /// The objects of `node_type_ids` reached from `seeds` by one outgoing
+    /// edge of `edge_type_id` (our ids), with those edges. One call per
+    /// relation and nesting level of a query, for every row at once, rather
+    /// than one read per row.
+    ///
+    /// The default reads the edges and then each endpoint. The graph backend
+    /// answers it with one typed traversal, which returns the payloads too.
+    async fn neighbours(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+        edge_type_id: &str,
+        node_type_ids: &[String],
+    ) -> anyhow::Result<Neighbourhood> {
+        let from: std::collections::HashSet<&str> = seeds.iter().map(String::as_str).collect();
+        let edges: Vec<EdgeView> = self
+            .read_edges(ctx, seeds)
+            .await?
+            .into_iter()
+            .filter(|e| e.type_id == edge_type_id && from.contains(e.from.as_str()))
+            .collect();
+        let mut nodes: Vec<ObjectNode> = Vec::new();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for e in &edges {
+            if !seen.insert(e.to.as_str()) {
+                continue;
+            }
+            if let Some(n) = self.get_object(ctx, &e.to).await?
+                && node_type_ids.contains(&n.type_id)
+            {
+                nodes.push(n);
+            }
+        }
+        Ok(Neighbourhood {
+            edges,
+            nodes,
+            truncated: false,
+        })
+    }
 }
 
 // ── In-memory fallback ────────────────────────────────────────────────────
@@ -375,7 +428,7 @@ mod graph_backend {
 
     use super::super::gts;
     use super::super::ontology::{EdgeType, NodeType};
-    use super::{DomainStore, EdgeUpsert, EdgeView, NodeUpsert, ObjectNode};
+    use super::{DomainStore, EdgeUpsert, EdgeView, Neighbourhood, NodeUpsert, ObjectNode};
 
     /// Nodes/edges per ingest batch, well under the gear's ceiling.
     const LIST_PAGE: u32 = 200;
@@ -747,6 +800,82 @@ mod graph_backend {
                     if seen.insert((view.type_id.clone(), view.from.clone(), view.to.clone())) {
                         out.push(view);
                     }
+                }
+            }
+            Ok(out)
+        }
+
+        /// One traversal per chunk of seeds, restricted to the edge type and
+        /// the target node types, so the graph walks only the relation asked
+        /// for and hands the payloads back with it.
+        async fn neighbours(
+            &self,
+            ctx: &SecurityContext,
+            seeds: &[String],
+            edge_type_id: &str,
+            node_type_ids: &[String],
+        ) -> anyhow::Result<Neighbourhood> {
+            let edge_pattern = gts::graph_type_id(edge_type_id);
+            let node_patterns: Vec<String> = node_type_ids
+                .iter()
+                .map(|t| gts::graph_type_id(t))
+                .collect();
+            let mut out = Neighbourhood::default();
+            let mut seen_edges: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            let mut seen_nodes: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for chunk in seeds.chunks(TRAVERSE_SEEDS) {
+                let from: std::collections::HashSet<&str> =
+                    chunk.iter().map(String::as_str).collect();
+                let res = self
+                    .client
+                    .traverse(
+                        ctx,
+                        TraverseRequest {
+                            seeds: chunk.to_vec(),
+                            depth: 1,
+                            edge_type_patterns: vec![edge_pattern.clone()],
+                            node_type_patterns: node_patterns.clone(),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+                out.truncated |= res.truncated.is_some();
+                // The walk follows an edge either way; a relation is read from
+                // its source, so only edges leaving a seed count.
+                let mut reached: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for e in res.edges {
+                    if gts::our_type_from_graph(&e.edge_type_id) != edge_type_id
+                        || !from.contains(e.src.as_str())
+                    {
+                        continue;
+                    }
+                    reached.insert(e.dst.clone());
+                    if seen_edges.insert((e.src.clone(), e.dst.clone())) {
+                        out.edges.push(EdgeView {
+                            type_id: edge_type_id.to_string(),
+                            from: e.src,
+                            to: e.dst,
+                        });
+                    }
+                }
+                // Seeds survive the node-type filter, so a node is kept only
+                // when an edge reached it and its type is one that was asked.
+                for n in res.nodes {
+                    if !reached.contains(&n.node_key)
+                        || !node_type_ids.contains(&gts::our_type_from_graph(&n.type_id))
+                        || !seen_nodes.insert(n.node_key.clone())
+                    {
+                        continue;
+                    }
+                    out.nodes.push(ObjectNode {
+                        type_id: gts::our_type_from_graph(&n.type_id),
+                        instance_id: n.node_key,
+                        value: n.payload.unwrap_or_else(|| serde_json::json!({})),
+                    });
                 }
             }
             Ok(out)

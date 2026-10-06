@@ -287,6 +287,45 @@ error.
 
 - `cpt-studio-component-graph-storage` — rewrites nodes in
 
+#### Query (experimental)
+
+- [ ] `p3` - **ID**: `cpt-studio-component-domain-model-query`
+
+##### Why this component exists
+
+A screen on `GET /objects` lists a type, filters it in the browser and reads
+the graph again for every relation it shows, so each change to the screen is
+a change to how it reads the backend. A query lets the screen say what it
+shows — the shape of a Hasura request over the model's own types — and the
+gear answers it. It sits beside `GET /objects` and `GET /objects/graph`, which
+keep working unchanged; screens move to it one at a time, and it stops being
+experimental when the first of them has.
+
+##### Responsibility scope
+
+`query.rs`. `POST /query` takes a type, a `where` (`_eq _neq _gt _gte _lt _lte
+_in _nin _contains _is_null`, combined with `_and _or _not`), `order_by`,
+`fields`, `offset`/`limit`, and `include`: relations by their declared name,
+each with the same options, nested up to three levels. Every field and
+relation is checked against the model first, and a wrong one is a 400 naming
+what the type has. Each included relation costs one typed traversal per
+level, for all parent rows together, which returns the payloads with it.
+
+##### Responsibility boundaries
+
+Filtering runs in the gear over at most 5,000 objects of the type, because
+domain types declare no payload indexes: graph-storage fixes a type's indexes
+at first registration and a domain type has to stay open to new fields.
+`complete` says whether the read saw every object. A relation is followed from
+its declaring side only. An edge does not say which declared relation it is,
+so two relations of one verb between overlapping types come back together;
+the answer's `warnings` names them. No authorization beyond the tenant, as for
+the rest of the gear.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-graph-storage` — reads nodes and traverses edges in
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-domain-model-rest`
@@ -306,6 +345,7 @@ error.
 | `GET` | `/types/{id}/conformance` | How stored objects measure up against the type | unstable |
 | `POST` `GET` | `/objects` | Create or upsert an object (`validate`, `if_absent`); list by `type` | unstable |
 | `GET` | `/objects/graph` | Objects and their relations, `limit` 500 by default and at most 5,000, with `truncated` | unstable |
+| `POST` | `/query` | One type's objects filtered, ordered, projected, with declared relations followed (see the query component) | experimental |
 | `GET` `POST` | `/relations` | The relation catalogue with endpoint typing and `unresolved`; relate two objects | unstable |
 | `POST` | `/model/sync` | Store the model's structure as a graph; reports `version` and `pinned_types` | unstable |
 | `POST` | `/model/import` | Replace the active ontology with an uploaded document and register its types | unstable |
