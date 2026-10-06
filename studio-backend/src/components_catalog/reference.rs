@@ -850,6 +850,7 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
             path: dir.as_deref(),
             gear_toml: scanned_as == Some("gears"),
             gear_toml_plugin: yes_no(&values, "is_plugin"),
+            manifest: brief(&values, "manifest"),
             engine_roles: roles,
             engine_category,
             stored_kind: text(v, "kind"),
@@ -886,7 +887,9 @@ pub fn build(inputs: &ReferenceInputs<'_>) -> Vec<ComponentReferenceDto> {
                 reason: None,
             }
         } else {
-            taxonomy::categorise(engine_category, scan_category, host, &registry)
+            let scanned =
+                scan_category.map(|c| (c, brief(&values, "manifest").unwrap_or("gear.toml")));
+            taxonomy::categorise(engine_category, scanned, host, &registry)
         };
         let mut source_categories: Vec<String> = registry.iter().map(|s| s.to_string()).collect();
         if let Some(c) = scan_category
