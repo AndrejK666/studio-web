@@ -275,8 +275,8 @@ The wire contract is [`docs/theia-bridge-contract-v1.md`](../theia-bridge-contra
 [`docs/theia-bridge-architecture.md`](../../docs/theia-bridge-architecture.md)
 explains the trust model and how to inspect the surface, and
 [`docs/theia-bridge-local-docker.md`](../../docs/theia-bridge-local-docker.md)
-how to run it locally. Code comments still call the bridge ADR-0010; it is
-ADR-0022.
+how to run it locally. The bridge is ADR-0022 (ADR-0010 before the two ADR
+trees were unified; see docs/adr/README.md).
 
 `s2s_token_env` names a single shared ingress token from before per-session
 tokens; it is kept for config compatibility and checked nowhere.

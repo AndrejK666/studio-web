@@ -1546,6 +1546,18 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return body as T;
 }
 
+/**
+ * Headers for a call that starts background work (`202` + `run_id`).
+ *
+ * `Idempotency-Key` makes a retry of that request answer the run it already
+ * started instead of starting a second one (docs/api-conventions.md). One key per
+ * user action: the default is fresh on every call, and a caller retrying the
+ * same action passes the key it used the first time.
+ */
+export function idempotent(key: string = crypto.randomUUID()): Record<string, string> {
+  return { "Idempotency-Key": key };
+}
+
 /** A file the server writes, as a blob: the same auth and errors as `request`. */
 async function requestBlob(path: string, token: string): Promise<Blob> {
   if (!token) {
@@ -2410,7 +2422,7 @@ export const api = {
     ),
 
   removeMembership: (token: string, userId: string, orgId: string) =>
-    request<{ connections_removed: number }>(
+    request<void>(
       `/studio-user/v1/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(orgId)}`,
       token,
       { method: "DELETE" },
@@ -2613,12 +2625,14 @@ export const api = {
       text: string;
       link?: string;
       topic?: string;
-      idempotency_key?: string;
       tenant_id?: string;
     },
+    /** The `Idempotency-Key`: pass the first attempt's key when retrying it. */
+    idempotencyKey?: string,
   ) =>
     request<{ run_id: string; poll: string }>("/studio-notify/v1/messages", token, {
       method: "POST",
+      headers: idempotent(idempotencyKey),
       body: JSON.stringify(body),
     }),
 
@@ -2686,7 +2700,11 @@ export const api = {
         projectId,
       )}/quality/${encodeURIComponent(detector)}`,
       token,
-      { method: "POST", body: JSON.stringify({ binding_ids: bindingIds, document_ids: documentIds }) },
+      {
+        method: "POST",
+        headers: idempotent(),
+        body: JSON.stringify({ binding_ids: bindingIds, document_ids: documentIds }),
+      },
     ),
 
   /** Every capability the project's documents declare -- the ones Studio holds
@@ -2888,7 +2906,7 @@ export const api = {
   /** A deliberate exit, so the list does not hold somebody for the whole
    *  timeout after they closed the tab. */
   presenceLeave: (token: string) =>
-    request<unknown>("/studio-presence/v1/me", token, { method: "DELETE" }),
+    request<void>("/studio-presence/v1/me", token, { method: "DELETE" }),
 
   presenceOnline: (token: string) =>
     request<{ items: PresenceEntry[]; total: number; online_ttl_ms: number; heartbeat_ms: number }>(
@@ -3087,10 +3105,10 @@ export const api = {
       repo_dir?: string;
     },
   ) =>
-    request<{ task_id: string; status: string }>(
+    request<{ run_id: string; status: string }>(
       "/studio-artifact-ingest/v1/sync",
       token,
-      { method: "POST", body: JSON.stringify(body) },
+      { method: "POST", headers: idempotent(), body: JSON.stringify(body) },
     ),
 
   /** Remove from the graph every repository synced into this scope that is
@@ -3283,8 +3301,9 @@ export const api = {
       }[];
     },
   ) =>
-    request<{ task_id: string; status: string }>("/studio-components-catalog/v1/sync", token, {
+    request<{ run_id: string; status: string }>("/studio-components-catalog/v1/sync", token, {
       method: "POST",
+      headers: idempotent(),
       ...(body ? { body: JSON.stringify(body) } : {}),
     }),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
@@ -3753,7 +3772,7 @@ export const api = {
     request<{ run_id: string }>(
       `/studio-scheduler/v1/schedules/${encodeURIComponent(scheduleId)}/run-now`,
       token,
-      { method: "POST" },
+      { method: "POST", headers: idempotent() },
     ),
 
   /* ── studio-reports gear: report definitions, sources and drawing ── */
@@ -3792,9 +3811,9 @@ export const api = {
 
   /** Read the plan again and sync the board: a `reports.refresh` run. */
   syncReport: (token: string, report: string) =>
-    request<{ task_id: string; status: string }>(
+    request<{ run_id: string; status: string }>(
       `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync`,
       token,
-      { method: "POST" },
+      { method: "POST", headers: idempotent() },
     ),
 };

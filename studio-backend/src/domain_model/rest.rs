@@ -1,11 +1,17 @@
 //! REST surface for the domain model.
 //!
-//! Five operations cover the three goals:
-//!   * `GET  /types`               — the stored ontology (frontend regen source).
-//!   * `POST /objects`             — create an object of a domain type.
-//!   * `GET  /objects`             — read objects back.
-//!   * `POST /relations`           — relate two objects.
-//!   * `POST /types/{id}/fields`   — extend a type with a new field.
+//! The routes fall into four groups, all under `/studio-domain-model/v1`
+//! (`register_routes` below is the full list):
+//!   * **Types** (`/types…`) — read the stored ontology, the frontend
+//!     regeneration source, and one type with what it inherits; add, change
+//!     and drop a type's fields; check stored objects against a type.
+//!   * **Objects and relations** (`/objects…`, `/relations`) — create and list
+//!     objects of a domain type, relate two of them, read the relation catalog
+//!     and the instance graph.
+//!   * **The model as a whole** (`/model/…`) — sync it into Graph Storage, read
+//!     that graph back, import an uploaded model as the active ontology.
+//!   * **History** (`/model/versions`, `/model/revert`) — list the model's
+//!     versions and restore an earlier one.
 
 use std::sync::Arc;
 
@@ -596,7 +602,7 @@ async fn create_object(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateObjectRequest>,
-) -> ApiResult<JsonBody<CreateObjectResponse>> {
+) -> ApiResult<(StatusCode, JsonBody<CreateObjectResponse>)> {
     let validate = ValidateMode::parse(req.validate.as_deref().unwrap_or("")).map_err(|e| {
         StudioDomainModelError::invalid_argument()
             .with_constraint(e)
@@ -621,7 +627,7 @@ async fn create_object(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok(Json(CreateObjectResponse {
+    let created = CreateObjectResponse {
         type_id: created.type_id,
         instance_id: created.instance_id,
         if_absent: req.if_absent,
@@ -637,7 +643,8 @@ async fn create_object(
             })
             .collect(),
         undeclared: created.report.undeclared,
-    }))
+    };
+    Ok((StatusCode::CREATED, Json(created)))
 }
 
 async fn list_objects(
@@ -713,7 +720,7 @@ async fn create_relation(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateRelationRequest>,
-) -> ApiResult<JsonBody<CreateRelationResponse>> {
+) -> ApiResult<(StatusCode, JsonBody<CreateRelationResponse>)> {
     let created = handle
         .0
         .create_relation(&ctx, req.relation.trim(), req.from.trim(), req.to.trim())
@@ -723,15 +730,18 @@ async fn create_relation(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok(Json(CreateRelationResponse {
-        type_id: created.type_id,
-        verb: created.verb,
-        name: created.name,
-        label: created.label,
-        cardinality: created.cardinality,
-        from: req.from,
-        to: req.to,
-    }))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateRelationResponse {
+            type_id: created.type_id,
+            verb: created.verb,
+            name: created.name,
+            label: created.label,
+            cardinality: created.cardinality,
+            from: req.from,
+            to: req.to,
+        }),
+    ))
 }
 
 async fn sync_model(
@@ -917,8 +927,11 @@ async fn remove_field(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
     Path((id, name)): Path<(String, String)>,
-) -> ApiResult<JsonBody<EditFieldResponse>> {
-    let edited = handle
+) -> ApiResult<StatusCode> {
+    // The edited type is not echoed: `GET /types/{id}` reads it back, the
+    // `head` of `GET /model/versions` is the version it produced, and a DELETE
+    // answers 204 (docs/api-conventions.md).
+    handle
         .0
         .remove_field(&ctx, id.trim(), name.trim())
         .await
@@ -927,11 +940,7 @@ async fn remove_field(
                 .with_constraint(format!("{e:#}"))
                 .create()
         })?;
-    Ok(Json(EditFieldResponse {
-        entity: edited.entity,
-        version: edited.version,
-        migrated: None,
-    }))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn conformance(
@@ -1084,7 +1093,9 @@ pub fn register_routes(
         .description(
             "Upserts one object of a domain type into the graph, keyed on a \
              caller-chosen stable key. The registered graph type is open, so the \
-             payload may carry fields the ontology has not (yet) declared.",
+             payload may carry fields the ontology has not (yet) declared. Answers 201; \
+             `GET /objects` reads it back. The key makes a repeat converge on the same \
+             object, so a retried request answers 201 again rather than duplicating it.",
         )
         .tag("StudioDomainModel")
         .authenticated()
@@ -1093,7 +1104,7 @@ pub fn register_routes(
         .handler(create_object)
         .json_response_with_schema::<CreateObjectResponse>(
             openapi,
-            StatusCode::OK,
+            StatusCode::CREATED,
             "Created object ids",
         )
         .error_400(openapi)
@@ -1145,7 +1156,8 @@ pub fn register_routes(
         .summary("Relate two domain objects")
         .description(
             "Upserts a relation (member/owns/references/composes) between two \
-             existing objects, addressed by their instance ids.",
+             existing objects, addressed by their instance ids. Answers 201; the edge \
+             reads back through `GET /objects/graph`.",
         )
         .tag("StudioDomainModel")
         .authenticated()
@@ -1154,7 +1166,7 @@ pub fn register_routes(
         .handler(create_relation)
         .json_response_with_schema::<CreateRelationResponse>(
             openapi,
-            StatusCode::OK,
+            StatusCode::CREATED,
             "Created relation",
         )
         .error_400(openapi)
@@ -1309,7 +1321,10 @@ pub fn register_routes(
             "Removes the field from the type definition. The stored objects \
              keep whatever they hold under that key — a model edit is not \
              permission to delete data — so it starts being reported as \
-             undeclared by `GET /types/{id}/conformance` instead.",
+             undeclared by `GET /types/{id}/conformance` instead. Answers 204 with \
+             no body; `GET /types/{id}` reads the updated type, and the \
+             version the edit produced is the `head` of \
+             `GET /model/versions`.",
         )
         .tag("StudioDomainModel")
         .authenticated()
@@ -1317,11 +1332,7 @@ pub fn register_routes(
         .path_param("id", "Domain type id (ontology id or node type id)")
         .path_param("name", "The field to remove")
         .handler(remove_field)
-        .json_response_with_schema::<EditFieldResponse>(
-            openapi,
-            StatusCode::OK,
-            "The updated type and the version",
-        )
+        .no_content_response(StatusCode::NO_CONTENT, "Field removed")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

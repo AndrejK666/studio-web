@@ -17,6 +17,7 @@ mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-
 mod graph_error; // a gear refusal said in full: CanonicalError plus its field violations
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
+mod idempotency; // the Idempotency-Key request header every 202 operation takes, parsed once
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
@@ -36,11 +37,11 @@ mod reports; // studio-reports: report definitions, sources and drawing (ADR-003
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
-mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0006)
+mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0009)
 mod studio_events; // studio-events: the assembly's one push channel to the portal (SSE + replay)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
 #[cfg(feature = "theia-bridge")]
-mod studio_theia; // ADR-0010: backend-to-backend bridge to the Theia node backend (opt-in)
+mod studio_theia; // ADR-0022: backend-to-backend bridge to the Theia node backend (opt-in)
 mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 #[cfg(test)]
 mod test_env; // one lock for the process environment, shared by every test that sets a variable

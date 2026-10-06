@@ -66,22 +66,9 @@ export interface SyncBody {
   project_id?: string;
 }
 
+/** `202` from `POST /sync`: the studio-tasks run doing it. */
 export interface SyncEnqueuedDto {
-  task_id: string;
+  run_id: string;
   status: string;
 }
 
-export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed';
-
-export interface TaskStatusDto {
-  task_id: string;
-  status: TaskStatus;
-  repo_full_path: string;
-  message?: string | null;
-  issues: number;
-  pull_requests: number;
-  files: number;
-  comments: number;
-  commits: number;
-  stored: number;
-}
