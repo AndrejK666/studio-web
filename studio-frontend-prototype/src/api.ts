@@ -1837,7 +1837,8 @@ export interface ProjectProduct {
     gears: string[];
     corpus_commit?: string | null;
   };
-  written?: { branch: string; commit_sha: string; pr_url?: string | null };
+  /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
+  written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
 }
 
 /** What the Gearbox engine made of a set of picked gears. */
