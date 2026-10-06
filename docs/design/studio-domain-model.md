@@ -320,7 +320,8 @@ at first registration and a domain type has to stay open to new fields.
 its declaring side only. An edge does not say which declared relation it is,
 so two relations of one verb between overlapping types come back together;
 the answer's `warnings` names them. No authorization beyond the tenant, as for
-the rest of the gear.
+the rest of the gear. What lifts each of these, and in what order screens move
+onto the query, is [the migration plan](../domain-query-migration.md).
 
 ##### Related components (by ID)
 

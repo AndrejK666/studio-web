@@ -13,6 +13,13 @@ remove them.
 from building the model. It is the most expensive of the five at runtime; it is
 last because renumbering the others would break every reference to them.*
 
+*Re-checked 2026-10-07 against `cf-gears-graph-storage` 0.1.4 and its SDK
+0.1.1 from crates.io, which is what we run now. Items 2, 3 and 5 gained a
+status line. Items 8–11 come from the experimental domain-model query
+(`POST /studio-domain-model/v1/query`, studio-web#637): the first read in
+Studio that wants the graph to answer a screen's question rather than hand
+back a region for us to sift.*
+
 Nothing here is a bug report. Each item is a capability that is *almost* there:
 the mechanism exists, and something small keeps us from using it.
 
@@ -88,6 +95,11 @@ one step further back.
 with the version that came out of the read: it succeeds. Do the same from two
 readers on one version: exactly one succeeds.
 
+**Status, 0.1.4.** Still open: `ElementEnvelope` carries `graph_revision`, the
+revision the read observed, and not the element's own version. The domain
+query's write path (step 5 of the migration plan in
+[`../domain-query-migration.md`](../domain-query-migration.md)) waits on this.
+
 ---
 
 ## 3. Let a published schema change
@@ -149,6 +161,18 @@ contract being designed now is cheaper than adding one to a shipped one.
 
 **How we would know it works.** Register a type, change its schema in the
 registry, read it back through `get_type`: graph-storage serves the new one.
+
+**Status, 0.1.4: landed over REST, not on the client.** A registered type can
+now change in place. `options.on_existing: "update"` admits a change the
+schemas prove backward compatible. `revalidate` admits one the stored rows
+satisfy. `migrations` (rename, default, drop) rewrites the rows first.
+`TypeRecord.revision` counts the updates, and a dry run reports every verdict
+with its schema locations and trait changes. That is everything this item
+asked for except reading the platform registry, and we no longer need that.
+It is reachable only through `POST /graph-storage/v1/types`, though: the
+in-process `GraphStorageClientV1::register_types` takes no options, and the
+local client passes the defaults (`Reject`). Studio links the gear in-process,
+so for us the update does not exist yet. That is item 8.
 
 ---
 
@@ -352,6 +376,10 @@ one changes a stored schema, which the in-process client cannot update
 `scripts/graph-storage-update-edge-types.sh` for the same problem on edges).
 Every environment would need a REST update of 18 types before the first ingest.
 
+**Status, 0.1.4.** Unchanged from 0.1.1 for this item: the payload `$filter`
+and `$orderby` are there, with the GIN behind equality, and there is still no
+count and no offset. The deployment blocker is now item 8.
+
 **So: keep the index.** Delete it when the projection has a count (or the
 screens stop needing one), a payload ordering can use an index, and the client
 can update a stored type. The migration then is: declare `index` on the listed
@@ -423,6 +451,127 @@ through the per-item report — or normalize it, and say which in the contract.
 
 ---
 
+## 8. Let the in-process client update a type
+
+**Today.** 0.1.4 updates a registered type in place (item 3's status), and the
+domain service already exposes it as `register_types_with(ctx, batch,
+TypeRegistrationOptions)`. The client trait does not. `GraphStorageClientV1::
+register_types(ctx, batch)` has no options parameter, and
+`GraphStorageLocalClient` calls the service with `TypeRegistrationOptions::
+default()`, which is `OnExisting::Reject`. Every Studio gear reaches graph-storage
+through that client, so for Studio a registered type is still immutable.
+
+**Why that matters now.** The domain query filters in our process over at most
+5,000 objects of a type. Domain types declare no `index`, because adding one
+later was impossible. The model knows which fields screens filter and sort on.
+Declaring them in `index` would let `project_nodes` do the filtering with the
+GIN behind it. That is an update: a trait change plus a typed property per path
+(an `index` path needs a typed property at that path, or registration refuses
+it). A typed property narrows the valid set, so it is not
+schema-proved and needs `revalidate`. The same wall stands in front of the
+artifact types (item 5's deployment blocker) and the edge types
+(`scripts/graph-storage-update-edge-types.sh` exists only because of it).
+
+**What we need.** `register_types_with(ctx, batch, options) ->
+Vec<RegisteredType>` on `GraphStorageClientV1`, forwarding to the service method
+that is already there. Returning `RegisteredType` rather than `TypeRecord`
+gives the caller the outcome and the verdict, which is also item 1's per-item
+report for free.
+
+**How we would know it works.** In process, register a node type with no
+`index`. Register it again with `index: ["/payload/status"]`, a string property
+at that path, `on_existing: Update` and `revalidate: true`. The outcome is
+`Updated` with basis `DataBacked`, and `$filter=payload/status eq 'active'` is
+admitted on `project_nodes`.
+
+---
+
+## 9. Let a traversal go one way
+
+**Today.** `TraverseRequest` has seeds, depth, edge and node type patterns and
+`max_nodes`. The walk always expands `Direction::Either` (`domain/traversal.rs`:
+*"Edges are treated as undirected for reachability"*), although the engine's
+`ExpandRequest` takes a direction and both directed scans exist.
+
+**Why that matters.** A relation is read from one side. "The projects this team
+delivers" is `delivers` outgoing from the team; "the team that delivers this
+project" is the same edges incoming. With `Either` the walk returns both halves
+and we throw one away by checking `src` against our seeds. Worse, both halves
+draw on one budget, so on the hubs item 6 is about, half of `traversal_max_nodes`
+is spent on edges the caller already said it does not want. And the reverse read
+("which teams deliver this project") cannot be asked at all without receiving the
+forward edges too.
+
+**What we need.** `direction: Option<Direction>` on `TraverseRequest`, applied
+to every hop. `None` keeps `Either`, so no existing caller changes.
+
+**How we would know it works.** Edge A → B. Traverse from B with `Outgoing`:
+no edge. With `Incoming`: A. With `None`: A, as today.
+
+---
+
+## 10. Say which relation a traversed edge is
+
+**Today.** `EdgeSpec` and `EdgeView` carry `discriminator`, the value that keeps
+parallel edges of one type between one pair apart. `EdgeRef`, which `traverse`,
+`neighborhood` and the topology page return, carries key, type and endpoints
+only. The edge key is derived from the discriminator, but it is opaque. The
+only way to learn it is `GET /edges/{edge_key}`, one call per edge.
+
+**Why that matters.** The Studio model declares 339 relations, and they are
+stored as edges of 5 types: the edge type is the relation's verb (`owns`,
+`references`, …), and *which* relation an edge is lives only in the
+discriminator. Counted against the model on 2026-10-07: **50 of the 300
+relations whose target resolves share a verb with another relation of the same
+source, between overlapping types.** Examples:
+- `project.uses` (→ repository) and `project.includes_3` (→ managed-object), both
+  `references`. A repository is a managed-object, so asking for `includes_3`
+  returns every repository the project `uses`.
+- `tenant.contains_7` (→ project) and `tenant.owns_shared` (→ managed-object),
+  both `owns`.
+
+The query answers these with a warning that says the result may include the
+other relation's edges. It cannot do better.
+
+**What we need.** `discriminator: Option<String>` on `EdgeRef`. Better still, a
+discriminator filter on `TraverseRequest`, next to `edge_type_patterns`, so the
+walk carries only the relation that was asked for.
+
+**How we would know it works.** Two edges of one type from A to B with
+discriminators `x` and `y`. A traversal from A returns both, each with its
+discriminator. With the filter `x`, only one comes back.
+
+---
+
+## 11. Narrow and bound a traversal per seed
+
+*Lower priority than 8–10. Each of those removes a wrong answer, and this one
+removes wasted work.*
+
+**Today.** A traversal is bounded by `max_nodes` for the whole request, and
+`node_type_patterns` is the only filter on what it reaches.
+
+**Why that matters.** The query batches each relation across all parent rows,
+the way a federated engine batches a join: one traversal per relation and
+level. A screen wants "the first 5 active projects of each team, with how many
+there are". Today the walk returns every neighbour of every seed, with full
+payloads. We filter, sort, count and cut per parent in our process, and one
+team with a thousand projects consumes the budget the other seeds needed.
+
+**What we need**, either of:
+- a `$filter` over the reached nodes' declared `index` paths, the same binding
+  `project_nodes` has, plus a per-seed limit and a per-seed count; or
+- a projection keyed by edge: `project_nodes` restricted to the nodes adjacent
+  to a seed set through an edge type, in one direction. That is the
+  "objects related to these" read, and it would page, count and filter like any
+  other projection. It would also answer item 6.
+
+**How we would know it works.** Two seeds, one with 1,000 neighbours and one
+with 3. Per-seed limit 5 and a filter on an indexed path: each seed gets at most
+5 filtered neighbours and its own count, and neither starves the other.
+
+---
+
 ## What we are not asking for
 
 **GTS major versions of a type** (`requirement.v2~` alongside `v1~`). We looked
@@ -441,18 +590,27 @@ sooner.
 | | Ask | Have now | Costing us |
 |---|---|---|---|
 | 1 | Per-item outcomes on `register_types` | all-or-nothing batch | 145 fallback calls; one bad type stops every write |
-| 2 | Node version on the read path | write-only `expected_version` | every update is last-writer-wins |
-| 3 | A published schema can change | one immutable column, registry not read | indexing cannot follow the model |
+| 2 | Node version on the read path | write-only `expected_version` (still in 0.1.4) | every update is last-writer-wins |
+| 3 | A published schema can change | landed in 0.1.4 over REST (update, revalidate, migrations, revision) | nothing in itself; the in-process half is item 8 |
 | 4 | Removing is possible and reversible | tombstones are permanent, scope replacement is inert, adjacency unpaged | the graph only grows |
 | 5 | `$filter`/`$orderby` on payload attributes | landed in weftgraph 0.1.1 for `index`-declared paths, without a count or an indexed payload ordering | nothing at runtime now (`studio_artifact_index` serves it); the mirror itself, until the gaps in item 5's status close |
 | 6 | A cursor over edges | adjacency capped at 1,000, traversal at 10,000, neither pages | the relation graph comes back incomplete and says it is complete — 5,944 of 79,184 relations unreachable |
 | 7 | A NUL in a payload is a validation error | landed in weftgraph 0.1.1 (refused at admission with the JSON path; G-3) | nothing |
+| 8 | Type update on the in-process client | REST only; `register_types` takes no options | domain query filters in-process over ≤5,000 objects; artifact and edge types cannot gain an `index` |
+| 9 | `direction` on `traverse` | always `Either` | half of every budget spent on edges thrown away; reverse relations unreadable |
+| 10 | `discriminator` on traversed edges | on `EdgeSpec`/`EdgeView`, not on `EdgeRef` | 50 of 300 domain relations come back mixed with another, with a warning |
+| 11 | Per-seed filter, limit and count on a traversal | one `max_nodes` for the request | every neighbour fetched to show five per parent |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is
 three separate small ones that happen to share a consequence. Items 5 and 6 are
 the same shape from two directions: the node side pages and cannot be narrowed,
 the edge side can be narrowed and does not page.
+
+Items 8–10 are small, and each is a parameter or a field over something that
+already exists: a service method, an engine direction, a column. Item 8 is
+the one that changes the most for us. Item 11 is the shape we would like the
+read to reach eventually, and it is worth deciding alongside item 6.
 
 Happy to open these as individual issues, provide reproductions against a
 stand, or test a branch. The Studio domain-model gear

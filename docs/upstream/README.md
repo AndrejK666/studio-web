@@ -8,7 +8,7 @@ the workaround it names is removed from the code.
 
 | Document | Asks of | What it holds |
 |---|---|---|
-| [graph-storage-requests.md](graph-storage-requests.md) | graph-storage | What the gear cannot express — payload filters, counts, offsets, typed updates — and the workarounds, among them `studio_artifact_index` (item 5) |
+| [graph-storage-requests.md](graph-storage-requests.md) | graph-storage | What the gear cannot express — payload filters, counts, offsets, typed updates, one-way and relation-exact traversal — and the workarounds, among them `studio_artifact_index` (item 5) and the domain query's in-process filtering (items 8–11) |
 | [account-management-requests.md](account-management-requests.md) | account-management | What Studio needs from tenants, memberships and roles (cited by ADR-0019) |
 | [gears-rust-issues.md](gears-rust-issues.md) | gears-rust | Issue drafts found while building the backend, with their status after the gears team's replies |
 | [spec-quality-issues.md](spec-quality-issues.md) | the spec-quality service | Issue drafts found while wiring the detectors into Studio |
