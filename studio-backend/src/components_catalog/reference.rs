@@ -345,7 +345,8 @@ struct RawGear {
     gdl_path: Option<String>,
     #[serde(default)]
     package: RawPackage,
-    #[serde(default)]
+    /// `implements` since gearbox#2; see `EngineGear::fills`.
+    #[serde(default, alias = "implements")]
     fills: Option<RawFills>,
     #[serde(default)]
     extension_points: Vec<RawPoint>,
@@ -1280,6 +1281,17 @@ fn related_crates(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_engine_plugin_is_read_under_implements_too() {
+        let gear: RawGear = serde_json::from_value(json!({
+            "id": "static-authn-plugin",
+            "package": {"crate_name": "cf-gears-static-authn-plugin"},
+            "implements": {"spec": "cf.core.authn_resolver.plugin.v1~"}
+        }))
+        .expect("an engine gear with `implements` deserializes");
+        assert_eq!(gear.fills_spec(), Some("cf.core.authn_resolver.plugin.v1~"));
+    }
 
     fn node(type_id: &'static str, value: Value) -> CatalogNodeView {
         CatalogNodeView {
