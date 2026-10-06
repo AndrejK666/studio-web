@@ -116,7 +116,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
       <h1 className={styles.title}>{t('title')}</h1>
       <p className={styles.description}>{t('description')}</p>
-      <Empty>
+      <Empty className={styles.empty}>
         <EmptyDescription>{t('coming_soon')}</EmptyDescription>
       </Empty>
     </div>

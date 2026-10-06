@@ -45,7 +45,7 @@ export const OverviewScreen: React.FC = () => {
         <h1 className={styles.title}>{t('title')}</h1>
         <p className={styles.subtitle}>{org.name}</p>
       </header>
-      <Empty>
+      <Empty className={styles.empty}>
         <EmptyDescription>{t('tile_attention_owed')}</EmptyDescription>
       </Empty>
     </div>

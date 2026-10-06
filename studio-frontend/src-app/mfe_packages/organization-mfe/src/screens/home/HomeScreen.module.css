@@ -46,7 +46,13 @@
 
 /* The kit's theme.css paints `body, [data-theme]`, and this root carries
  * data-theme so its palette applies — which would repaint the shell's screen.
- * Two classes deep to outrank that rule wherever the sheets land. */
+ * A class and an attribute (0,2,0) outrank that rule wherever the sheets land. */
 .screen[data-theme] {
   background: transparent;
+}
+
+/* ui-kit 0.4.0-alpha.6 caps Empty at 32rem with no auto margins; centring it is
+ * the placing screen's job. */
+.empty {
+  margin-inline: auto;
 }

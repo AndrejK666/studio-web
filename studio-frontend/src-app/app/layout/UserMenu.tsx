@@ -4,11 +4,6 @@
  * The signed-in identity, now in the top bar's right-hand cluster rather than at
  * the foot of the menu: the menu became a drawer that is closed most of the
  * time, and sign-out cannot live behind a hidden panel.
- *
- * The avatar keeps the product's deterministic colour-by-name rather than the
- * flat brand fill the mockup happens to draw — the hue is a contract shared with
- * people-mfe's copy of the avatar (see components/ui/avatar.tsx), and one person
- * must not read as two different colours on two screens.
  */
 
 import React, { useCallback } from 'react';
@@ -21,16 +16,20 @@ import {
   DropdownMenuSeparator,
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { Icon } from '@iconify/react';
-import { Avatar, AvatarImage, AvatarFallback } from '@/app/components/ui/avatar';
+import { Avatar, AvatarImage, AvatarFallback } from '@gears-frontx/ui-kit/avatar';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
 
-/**
- * The name an avatar resolves its colour and initials from. Falls back to the
- * email so a user without a display name still gets a stable colour rather than
- * the uncoloured state.
- */
-function avatarNameOf(user: { displayName?: string; email?: string } | null | undefined): string {
-  return user?.displayName?.trim() || user?.email || '';
+/** First letters of the first two words of the name, or of the email. */
+function initialsOf(user: { displayName?: string; email?: string } | null | undefined): string {
+  const name = user?.displayName?.trim() || user?.email || '';
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]!.toUpperCase())
+      .join('') || '?'
+  );
 }
 
 export const UserMenu: React.FC = () => {
@@ -49,7 +48,7 @@ export const UserMenu: React.FC = () => {
   }, [auth, dispatch]);
 
   if (loading) {
-    return <Skeleton className="size-9 rounded-full" />;
+    return <Skeleton className="size-8 rounded-full" />;
   }
 
   const label = user?.displayName || user?.email || 'User';
@@ -60,9 +59,9 @@ export const UserMenu: React.FC = () => {
         aria-label={label}
         className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <Avatar className="size-9">
+        <Avatar>
           {user?.avatarUrl && <AvatarImage src={user.avatarUrl} alt={label} />}
-          <AvatarFallback name={avatarNameOf(user)} className="text-[14px] leading-5" />
+          <AvatarFallback>{initialsOf(user)}</AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={6} className="min-w-56 rounded-lg">

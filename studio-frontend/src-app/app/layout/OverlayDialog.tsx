@@ -78,7 +78,7 @@ export const OverlayDialog: React.FC = () => {
         tabIndex={-1}
         aria-hidden="true"
         onClick={() => void close()}
-        className="absolute inset-0 cursor-default bg-[rgb(15_18_24_/_0.48)]"
+        className="absolute inset-0 cursor-default bg-[color:var(--overlay-modal)]"
       />
       <div
         role="dialog"

@@ -189,8 +189,16 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
       >
         <DropdownMenuRadioGroup value={slot.current.id} onValueChange={onPick}>
           {slot.options.map((option) => (
-            <DropdownMenuRadioItem key={option.id} value={option.id} closeOnClick>
-              <ItemMedia variant="icon" className="text-muted-foreground">
+            <DropdownMenuRadioItem
+              key={option.id}
+              value={option.id}
+              closeOnClick
+              className="group"
+            >
+              <ItemMedia
+                variant="icon"
+                className="text-muted-foreground group-focus:text-current group-data-[highlighted]:text-current"
+              >
                 <slot.Icon strokeWidth={1.5} aria-hidden="true" />
               </ItemMedia>
               {/* The popup's --space-1 remap inherits down to this gap. */}
@@ -199,7 +207,9 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
                     never truncates; block + auto width makes its own rule apply. */}
                 <ItemTitle className="!block !w-auto text-label">{option.name}</ItemTitle>
                 {slot.countNoun !== undefined && option.count !== undefined && (
-                  <ItemDescription>{pluralize(option.count, slot.countNoun)}</ItemDescription>
+                  <ItemDescription className="group-focus:text-current group-data-[highlighted]:text-current">
+                    {pluralize(option.count, slot.countNoun)}
+                  </ItemDescription>
                 )}
               </ItemContent>
             </DropdownMenuRadioItem>

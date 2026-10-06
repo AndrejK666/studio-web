@@ -61,6 +61,17 @@ describe('UserMenu', () => {
     expect(screen.getByLabelText('alex@studio')).toBeTruthy();
   });
 
+  it.each([
+    ['two words of the display name', { displayName: 'alexander johanson', email: 'a@studio' }, 'AJ'],
+    ['a one-word display name', { displayName: 'alexander' }, 'A'],
+    ['the email when the display name is blank', { displayName: '  ', email: 'alex@studio' }, 'A'],
+    ['a question mark when nothing is known', {}, '?'],
+  ])('shows initials from %s', (_case, user, initials) => {
+    headerState.user = user;
+    render(<UserMenu />);
+    expect(screen.getByText(initials)).toBeTruthy();
+  });
+
   it('shows a placeholder rather than an identity while the user is loading', () => {
     headerState.user = null;
     headerState.loading = true;

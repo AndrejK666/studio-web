@@ -17,7 +17,8 @@ const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
 
 const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
 
-function toKitTheme(hostTheme: string): 'dark' | 'light' {
+/** The kit palette a host theme id maps to; the shell's themes must declare the same `appearance`. */
+export function toKitTheme(hostTheme: string): 'dark' | 'light' {
   return DARK_HOST_THEMES.includes(hostTheme) ? 'dark' : 'light';
 }
 

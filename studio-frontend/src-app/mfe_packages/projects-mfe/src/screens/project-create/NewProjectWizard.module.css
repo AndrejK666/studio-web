@@ -15,6 +15,13 @@
   color: var(--foreground);
 }
 
+/* The kit's theme.css paints `body, [data-theme]` with --background, and this
+ * root carries data-theme. A class and an attribute (0,2,0) keep the card
+ * surface wherever the sheets land. */
+.wizard[data-theme] {
+  background: var(--card);
+}
+
 .title {
   margin: 0 0 var(--space-5);
   font-size: 1.6rem;
@@ -72,15 +79,22 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: var(--border-width) solid var(--border);
-  border-radius: 0.625rem;
+  border-radius: var(--radius-lg);
+  background: var(--muted);
   cursor: pointer;
 }
 
+/* The mockup's picked card: primary border and a faint primary halo, not a
+   second solid ring. */
 .modeCard[data-selected] {
   border-color: var(--primary);
-  box-shadow: 0 0 0 var(--border-width) var(--primary);
+  box-shadow: 0 0 0 var(--border-width) color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+.modeCard[data-selected] .modeHead svg {
+  color: var(--primary);
 }
 
 .modeInput {
@@ -312,7 +326,6 @@ input.repoSearch {
 }
 
 .owner {
-  --owner-avatar-size: 1.875rem;
   display: flex;
   align-items: center;
   gap: 0.625rem;
@@ -322,27 +335,12 @@ input.repoSearch {
   background: var(--surface-elevated);
 }
 
-/* will be fixed after using avatar from ui kit */
-.ownerAvatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: var(--owner-avatar-size);
-  height: var(--owner-avatar-size);
-  border-radius: 50%;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
+/* Same footprint as the kit's default Avatar. */
 .ownerAvatarSkeleton {
   flex: none;
-  width: var(--owner-avatar-size);
-  height: var(--owner-avatar-size);
-  border-radius: 50%;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-full);
 }
 
 .ownerNameSkeleton {

@@ -46,6 +46,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0031](0031-the-portal-is-developed-against-a-shared-stand.md) | The portal is developed against a shared stand, and the stack on the machine is one switch away | accepted | 2026-09-25 |
 | [0032](0032-the-desktop-gets-its-tools-as-extensions.md) | The desktop gets its tools as extensions, from the Extensions view, and Theia is extended rather than patched | accepted | 2026-09-29 |
 | [0033](0033-a-report-is-a-definition-over-a-source.md) | A report is a definition over a source, and reports are their own gear | accepted | 2026-10-01 |
+| [0034](0034-the-shell-takes-its-tokens-from-the-kit.md) | The shell takes its tokens from the kit | proposed | 2026-10-05 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

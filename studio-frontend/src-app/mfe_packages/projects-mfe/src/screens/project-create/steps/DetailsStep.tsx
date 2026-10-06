@@ -5,6 +5,8 @@ import { User } from '@constructor-studio/mfe-shared';
 import React, { useId } from 'react';
 import { FileText, Files } from 'lucide-react';
 import {
+  Avatar,
+  AvatarFallback,
   Field,
   FieldLabel,
   Input,
@@ -29,9 +31,9 @@ function initials(user: User): string {
 
 const UserRow: React.FC<{ user: User }> = ({ user }) => (
   <>
-    <span className={styles.ownerAvatar} aria-hidden="true">
-      {initials(user)}
-    </span>
+    <Avatar aria-hidden="true">
+      <AvatarFallback>{initials(user)}</AvatarFallback>
+    </Avatar>
     <span className={styles.ownerText}>
       <span className={styles.ownerName}>{displayName(user)}</span>
       {user.email ? <span className={styles.ownerEmail}>{user.email}</span> : null}

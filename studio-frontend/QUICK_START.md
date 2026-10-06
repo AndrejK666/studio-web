@@ -38,8 +38,8 @@ src-app/
 │   ├── components/ui/        # App-owned UI primitives (shadcn)
 │   ├── layout/               # CoreLayout: Menu, header, footer, screen container
 │   ├── mfe/                  # bootstrap.ts + generated-mfe-manifests.json
-│   ├── themes/               # Theme tokens and registries
-│   └── globals.css           # Tailwind entry + theme CSS variables
+│   ├── themes/               # Themes: appearance, --font-sans, Dracula overrides
+│   └── globals.css           # Tailwind entry; imports ui-kit theme.css
 └── mfe_packages/             # Microfrontends (from `frontx-template-mfe`; empty in a shell-only seed)
     ├── demo-mfe/             # Hello World, Profile, Theme, UIKit, Widgets Host
     ├── _blank-mfe/           # Minimal MFE — copy this to start a new one
@@ -161,8 +161,9 @@ Hooks such as `useMountedExtensions`, `useTheme`, `useTranslation`, and
 
 ## Styling
 
-Tailwind CSS with CSS-variable theme tokens (defined in
-`src-app/app/globals.css`):
+Tailwind CSS with CSS-variable theme tokens. Their values come from
+`@gears-frontx/ui-kit/theme.css`; a theme's `appearance` picks the light or
+dark palette (see [ADR-0034](../docs/adr/0034-the-shell-takes-its-tokens-from-the-kit.md)):
 
 ```tsx
 <div className="bg-background text-foreground">

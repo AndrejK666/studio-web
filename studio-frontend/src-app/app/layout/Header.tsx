@@ -91,7 +91,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
         Constructor Studio
       </span>
 
-      <div className="ml-xl flex min-w-0 items-center">
+      <div className="ml-8 flex min-w-0 items-center">
         <ContextChain />
       </div>
 

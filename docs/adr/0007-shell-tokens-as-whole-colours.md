@@ -12,6 +12,11 @@ Date: 2026-08-18
 Status: accepted
 Branch: `frontend-adjust-shell-to-mocup`
 
+Amended by ADR-0034 (2026-10-05): the shell imports `ui-kit/theme.css` (§4 is
+withdrawn), the `mainMenu` family and its `color-mix` binding (§3) go with the
+tokens nothing reads, and the radius exception is withdrawn — see
+[ADR-0034](0034-the-shell-takes-its-tokens-from-the-kit.md).
+
 ## Table of Contents
 
 <!-- toc -->

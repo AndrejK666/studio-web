@@ -3,7 +3,7 @@
  * split inside is an implementation detail — MFEs import from here.
  */
 
-export { useHostChrome, type HostChrome } from './host/useHostChrome';
+export { useHostChrome, toKitTheme, type HostChrome } from './host/useHostChrome';
 export {
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,

@@ -180,8 +180,8 @@ my-app/
 │   │   ├── components/ui/   # App-owned UI primitives (shadcn)
 │   │   ├── layout/          # CoreLayout: menu, header, footer, screen slot
 │   │   ├── mfe/             # MFE bootstrap + generated manifests
-│   │   ├── themes/          # Theme tokens and registries
-│   │   └── globals.css      # Tailwind entry + theme CSS variables
+│   │   ├── themes/          # Themes: appearance, --font-sans, Dracula overrides
+│   │   └── globals.css      # Tailwind entry; imports ui-kit theme.css
 │   └── mfe_packages/        # Microfrontends (empty until `frontx add frontx-template-mfe`)
 ├── src/                     # Shared solution lib (api, build, gts)
 ├── packages/                # Solution packages: react, framework, state, i18n, studio, auth

@@ -12,6 +12,10 @@ Date: 2026-08-18
 Status: accepted
 Branch: `frontend-adjust-shell-to-mocup`
 
+Amended by ADR-0034 (2026-10-05): the shell's avatar is replaced by the kit's
+`Avatar`, which has no colour-by-name — see
+[Consequences](0034-the-shell-takes-its-tokens-from-the-kit.md#consequences).
+
 ## Table of Contents
 
 <!-- toc -->

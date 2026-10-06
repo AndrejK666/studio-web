@@ -33,8 +33,8 @@ const dracula = {
 export const draculaTheme: ThemeConfig = {
   id: DRACULA_THEME_ID,
   name: 'Dracula',
+  appearance: 'dark',
   variables: {
-    // Shadcn color variables
     '--background': dracula.background,
     '--foreground': dracula.foreground,
     '--card': dracula.background,
@@ -54,78 +54,24 @@ export const draculaTheme: ThemeConfig = {
     '--border': dracula.currentLine,
     '--input': dracula.currentLine,
     '--ring': dracula.purple,
-
-    // State colors
-    '--error': dracula.red,
     '--warning': dracula.yellow,
     '--success': dracula.green,
     '--info': dracula.cyan,
-
-    // Chart colors (OKLCH format, Dracula-inspired palette)
     '--chart-1': 'oklch(0.714 0.203 313.26)',
     '--chart-2': 'oklch(0.799 0.194 145.19)',
     '--chart-3': 'oklch(0.821 0.173 85.29)',
     '--chart-4': 'oklch(0.71 0.191 349.76)',
     '--chart-5': 'oklch(0.822 0.131 194.77)',
 
-    // Left menu colors
-    '--left-menu': dracula.backgroundDark,
-    '--left-menu-foreground': dracula.comment,
-    '--left-menu-hover': dracula.currentLine,
-    '--left-menu-active': dracula.currentLine,
-    '--left-menu-active-foreground': dracula.foreground,
-    '--left-menu-border': dracula.currentLine,
+    // The kit's dark block sets these as literals (blue/slate); derive them from Dracula's palette.
+    '--primary-hover': 'color-mix(in oklab, var(--primary) 88%, black)',
+    '--primary-ring': 'var(--ring)',
+    '--destructive-ring': 'var(--destructive)',
+    '--link-foreground': 'var(--primary)',
+    '--border-strong': 'var(--input)',
+    '--surface-elevated': 'var(--card)',
 
-    '--avatar-yellow': 'hsl(40 100% 42.4%)',
-    '--avatar-orange': 'hsl(24.6 99.1% 55.1%)',
-    '--avatar-blue': 'hsl(223.6 90.4% 71.4%)',
-    '--avatar-mint': 'hsl(160 85.3% 40%)',
-    '--avatar-brown': 'hsl(21.6 39.3% 62.5%)',
-    '--avatar-grey': 'hsl(0 0% 60.8%)',
-    '--avatar-pink': 'hsl(338.8 100% 71.2%)',
-    '--avatar-turquoise': 'hsl(186.1 85.4% 40.4%)',
-    '--avatar-purple': 'hsl(278.8 100% 73.9%)',
-    '--avatar-magenta': 'hsl(260.5 90.2% 72%)',
-    '--avatar-red': 'hsl(4.3 100% 69.8%)',
-    '--avatar-green': 'hsl(119 53.2% 46.1%)',
-    '--avatar-foreground': 'hsl(0 0% 6.7%)',
-
-    // Typography — see default.ts for why the token mirrors ui-kit's name.
+    // 'Inter Variable' is the registered family; the kit's token says 'Inter'.
     '--font-sans': "'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif",
-    '--text-body-size': '0.9375rem',
-    '--text-body-line-height': '1.25rem',
-    '--text-heading-1-size': '1.25rem',
-    '--text-heading-1-line-height': '1.75rem',
-    '--text-label-size': '0.8125rem',
-    '--text-label-line-height': '1rem',
-
-    // Spacing
-    '--spacing-xs': '0.25rem',
-    '--spacing-sm': '0.5rem',
-    '--spacing-md': '1rem',
-    '--spacing-lg': '1.5rem',
-    '--spacing-xl': '2rem',
-    '--spacing-2xl': '3rem',
-    '--spacing-3xl': '4rem',
-
-    // Border radius
-    '--radius-none': '0',
-    '--radius-sm': '0.125rem',
-    '--radius-md': '0.25rem',
-    '--radius-lg': '0.5rem',
-    '--radius-xl': '1rem',
-    '--radius-full': '9999px',
-
-    // Shadows
-    '--shadow-sm': '0 1px 2px 0 rgba(0, 0, 0, 0.4)',
-    '--shadow-md': '0 4px 6px -1px rgba(0, 0, 0, 0.5)',
-    '--shadow-lg': '0 10px 15px -3px rgba(0, 0, 0, 0.6)',
-    '--shadow-xl': '0 20px 25px -5px rgba(0, 0, 0, 0.7)',
-
-    // Transitions
-    '--transition-fast': '150ms',
-    '--transition-base': '200ms',
-    '--transition-slow': '300ms',
-    '--transition-slower': '500ms',
   },
 };

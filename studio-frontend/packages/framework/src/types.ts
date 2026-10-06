@@ -314,6 +314,13 @@ export interface ThemeConfig {
   variables: Record<string, string>;
   /** Whether this is the default theme */
   default?: boolean;
+  /**
+   * Base appearance of the theme: written to `data-theme` on <html>, it picks
+   * the kit palette the theme's own tokens sit on. Defaults to 'light' so a
+   * theme that defines only some token names never mixes with the kit's
+   * OS-driven dark defaults.
+   */
+  appearance?: 'light' | 'dark';
 }
 
 /**

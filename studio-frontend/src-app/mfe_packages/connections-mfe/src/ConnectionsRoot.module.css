@@ -11,7 +11,7 @@
 
 /* The kit's theme.css paints `body, [data-theme]`, and this root carries
  * data-theme so its palette applies — which would repaint the shell's screen.
- * Two classes deep to outrank that rule wherever the sheets land. */
+ * A class and an attribute (0,2,0) outrank that rule wherever the sheets land. */
 .root[data-theme] {
   background: transparent;
 }
