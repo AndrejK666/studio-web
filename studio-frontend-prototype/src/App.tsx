@@ -12,6 +12,7 @@ import {
   DocumentTypesTab,
   DocumentsTab,
   DomainModelGraph,
+  ViewsScreen,
   GtsEntitiesTable,
   IdentityDirectory,
   LazyScreens,
@@ -492,6 +493,7 @@ type View =
   | "gears"
   | "reports"
   | "objects"
+  | "views"
   | "tasks"
   | "system"
   | "profile";
@@ -654,6 +656,9 @@ const NAV_SECTIONS: {
       // components is a judgement this organization makes here, not a constant
       // in a gear — so the two surfaces sit next to each other.
       { id: "objects", icon: "grid", label: "Objects" },
+      // Lists of the domain model's objects that people define and save as
+      // data (views.tsx): a new one is not a release.
+      { id: "views", icon: "grid", label: "Views" },
       // What the deployment is doing in the background, and what fires on its
       // own: studio-tasks runs plus studio-scheduler schedules.
       { id: "tasks", icon: "scan", label: "Background work" },
@@ -2544,6 +2549,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
+        {view === "views" && <ViewsScreen token={token} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />

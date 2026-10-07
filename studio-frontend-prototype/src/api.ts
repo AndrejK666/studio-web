@@ -3095,6 +3095,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(query),
     }),
+  /** Create or replace one domain object: the same `type` + `key` (+ project)
+   *  is the same object, so saving again updates it. */
+  saveDomainObject: (
+    token: string,
+    body: {
+      type: string;
+      key: string;
+      project_id?: string;
+      validate?: "off" | "warn" | "strict";
+      value: Record<string, unknown>;
+    },
+  ) =>
+    request<{
+      type_id: string;
+      instance_id: string;
+      violations: { field: string; kind: string; detail: string }[];
+      undeclared: string[];
+    }>("/studio-domain-model/v1/objects", token, { method: "POST", body: JSON.stringify(body) }),
   /** The instance graph: created objects and the relations between them. */
   domainObjectsGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),

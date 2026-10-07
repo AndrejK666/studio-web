@@ -62,7 +62,7 @@ data transition is where it gets tested:
 | 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) (proposed); **built**, stand-checked 2026-10-07 | a query for a type the caller may not read is refused |
 | 4 | Filters pushed down to indexes | graph-storage **item 8** | an indexed filter answers `complete: true` past 5,000 objects |
 | 5 | Exact and reverse relations | graph-storage **items 9, 10** | `warnings` is empty for the model's 50 colliding relations; `include` can go incoming |
-| 6 | First feature built on the model | 1–3 | a new screen ships with no backend change of its own |
+| 6 | First feature built on the model | 1–3 | **done** 2026-10-07: saved views (`views.tsx`); no backend change |
 | 7 | Safe updates | graph-storage **item 2** | a write with a stale version is refused |
 | 8 | Retire `GET /objects` | 2, G1 removal date | `GET /objects` removed from the contract |
 
@@ -154,12 +154,37 @@ only be read from the side that declares it. When both land:
 ### 6. The first feature on the model
 
 Moving existing data comes last. The better first proof is a feature that has
-no store yet, built straight on the model: a risk register or a work-item board
-for a project, say. Both are already entities in the model.
+no store yet, built straight on the model.
 
-The frontend adds the screen, and the model gains whatever fields the screen
-needs. The backend gains nothing. If that holds, the approach works; if the
-screen needs backend code, that code is the next thing to make generic.
+*Done 2026-10-07: **saved views**.* A risk register was considered and set
+aside: nothing in the PRD or the roadmap asks for one, so it would have proved
+the approach and given the product nothing. Views are a gap the portal already
+names ("saved views — future" in [domain-alignment.md](domain-alignment.md)).
+They are also the strongest form of the claim, because a view is a screen
+stored as data.
+
+- **The model already had the entity.** `view` carries `name`, `view_kind`,
+  `query` and `presentation`. A view's `query` is exactly the body of
+  `POST /query`, so anything that reads the model can run it.
+- **The screen is the Views section in the prototype.** It picks a type,
+  columns, conditions (ANDed), related objects and an order. It saves through
+  `POST /objects` and renders through `/query`, paged, sorted and searched by
+  the backend.
+- **A view is retired, not deleted.** Retiring sets the model's own
+  `valid_to`, so a graph key is never tombstoned (graph-storage item 4).
+- **The generator also emits the fields and relations at runtime**
+  (`DOMAIN_FIELDS`, `DOMAIN_RELATION_TARGETS`), so the editor offers exactly
+  what the query accepts.
+
+**What it showed.**
+- **No backend change was needed.** The whole path ran on a stand with real
+  graph-storage: save, list, run with relations, search, retire. The screen
+  rendered there in headless Chrome.
+- **The relation ambiguity is not hypothetical.** The very first view
+  (projects with `uses` → repository) came back with three warnings:
+  `uses` shares the `references` edge type with `represented_as`,
+  `includes_3` and `advances`. The screen folds them into one line, and
+  gears-rust#5240 is what removes them.
 
 Moving an existing relational store onto the model is a separate decision per
 entity, against the line above, with its own data migration and a period of

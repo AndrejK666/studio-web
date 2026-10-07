@@ -187,6 +187,35 @@ for (const id of ids) {
 }
 out += "}\n\n";
 
+/** A field's kind at runtime, for a screen that builds a query: what to offer
+ *  as a value and which operators make sense. */
+function fieldKind(expr) {
+  const ts = tsType(expr);
+  if (ts.endsWith("[]")) return { kind: "list" };
+  if (ts.includes('"')) return { kind: "enum", values: ts.split(" | ").map((v) => JSON.parse(v)) };
+  if (ts === "string" || ts === "number" || ts === "boolean") return { kind: ts };
+  return { kind: "unknown" };
+}
+
+out += "/** A field's kind, for building a query at runtime. */\n";
+out += "export type DomainFieldKind =\n";
+out += '  | { kind: "string" | "number" | "boolean" | "list" | "unknown" }\n';
+out += '  | { kind: "enum"; values: readonly string[] };\n\n';
+out += "/** Per entity, every field and its kind: what `DomainEntities` says, readable at runtime. */\n";
+out += "export const DOMAIN_FIELDS: { readonly [E in DomainEntity]: { readonly [field: string]: DomainFieldKind } } = {\n";
+for (const id of ids) {
+  const fields = effectiveProperties(id).map((p) => `${prop(p.name)}: ${JSON.stringify(fieldKind(p.type))}`);
+  out += `  ${prop(id)}: { ${fields.join(", ")} },\n`;
+}
+out += "};\n\n";
+out += "/** Per entity, the relations `include` follows and the entity each reaches, at runtime. */\n";
+out += "export const DOMAIN_RELATION_TARGETS: { readonly [E in DomainEntity]: { readonly [relation: string]: DomainEntity } } = {\n";
+for (const id of ids) {
+  const rels = relationsOf(id).map(([name, r]) => `${prop(name)}: ${JSON.stringify(r.target)}`);
+  out += `  ${prop(id)}: { ${rels.join(", ")} },\n`;
+}
+out += "};\n\n";
+
 out += "/** The entity ids, in the model's order. */\n";
 out += `export const DOMAIN_ENTITIES = ${JSON.stringify(ids, null, 2).replace(/\n/g, "\n")} as const satisfies readonly DomainEntity[];\n`;
 
