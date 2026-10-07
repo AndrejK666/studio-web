@@ -1,5 +1,10 @@
 //! `/studio-reports/v1/reports` -- every report this deployment draws, its
 //! source in the caller's organization, and the report itself.
+//!
+//! Every route takes `?organization_id=`: the organization on the caller's
+//! screen, which need not be their home tenant (a platform administrator's
+//! home is the platform root). Absent, the home tenant is meant. Handlers
+//! take [`OrgCtx`], which checks the caller reaches it (`crate::org_scope`).
 
 use std::sync::Arc;
 
@@ -19,6 +24,10 @@ use super::refresh_task::{RefreshPayload, TASK_TYPE};
 use super::roadmap::summary::RoadmapReportDto;
 use super::service::{REPORTS, ReportKind, ReportsService, kind};
 use super::source::{PlanSnapshot, Refresh, ReportSource};
+use crate::components_catalog::port::unread_boards;
+use crate::org_scope::{OrgAccess, OrgCtx};
+use crate::studio_session::access::WorkspaceAccess;
+use crate::tasks::{RunState, RunView};
 
 #[resource_error(gts_id!("cf.studio._.reports.v1~"))]
 pub struct StudioReportsError;
@@ -38,6 +47,26 @@ pub struct Reports {
 }
 
 impl Reports {
+    /// Why the board the last refresh asked for was not read, once that sync
+    /// has finished. The refresh only queues the sync, so it cannot know; the
+    /// catalogue's run says so in its result.
+    async fn board_error(&self, ctx: &SecurityContext, s: &ReportSource) -> Option<String> {
+        let run = s.last_refresh.as_ref()?.sync_run?;
+        let view = self
+            .queue()
+            .ok()?
+            .run(ctx.subject_tenant_id(), run)
+            .await
+            .ok()??;
+        board_error_of(&view)
+    }
+
+    async fn source_dto(&self, ctx: &SecurityContext, s: &ReportSource) -> ReportSourceDto {
+        let mut dto = source_dto(s);
+        dto.board_error = self.board_error(ctx, s).await;
+        dto
+    }
+
     fn queue(&self) -> ApiResult<Arc<dyn crate::tasks::TaskQueue>> {
         self.hub
             .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(crate::tasks::TASK_QUEUE_INSTANCE_ID))
@@ -105,6 +134,10 @@ pub struct ReportSourceDto {
     /// Absent until a plan has been read.
     pub plan: Option<PlanSummaryDto>,
     pub last_refresh: Option<RefreshDto>,
+    /// Why the board the last refresh synced was not read, once that sync
+    /// finished. The refresh itself only queues the sync, so `last_refresh`
+    /// can say nothing about it.
+    pub board_error: Option<String>,
 }
 
 /// What a read plan holds: what the People sheet, the Gantt's lanes and the
@@ -242,6 +275,29 @@ pub fn source_dto(s: &ReportSource) -> ReportSourceDto {
         snapshot: s.snapshot.as_ref().map(snapshot_dto),
         plan: plan_summary(s),
         last_refresh: s.last_refresh.as_ref().map(refresh_dto),
+        board_error: None,
+    }
+}
+
+/// What a finished board sync says about the board: why it was not read, or
+/// nothing when it was (or when the sync has not finished yet).
+pub fn board_error_of(view: &RunView) -> Option<String> {
+    match view.state {
+        RunState::Failed => Some(format!(
+            "the board sync failed: {}",
+            view.last_error.as_deref().unwrap_or("no reason recorded")
+        )),
+        RunState::Succeeded => {
+            let unread = view.result.as_ref().map(unread_boards).unwrap_or_default();
+            (!unread.is_empty()).then(|| {
+                unread
+                    .iter()
+                    .map(|u| format!("board {} was not read: {}", u.board, u.error))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+        }
+        RunState::Queued | RunState::Running | RunState::Cancelled => None,
     }
 }
 
@@ -268,7 +324,7 @@ pub fn apply(prev: &ReportSource, input: ReportSourceInputDto) -> ReportSource {
     }
 }
 
-fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
+fn report_dto(k: &ReportKind, source: &ReportSource, source_dto: ReportSourceDto) -> ReportDto {
     let (plan, _) = ReportsService::plan_of(source);
     let (definition, sheets, definition_error) =
         match ReportsService::definition_of(k, plan.as_ref()) {
@@ -299,20 +355,21 @@ fn report_dto(k: &ReportKind, source: &ReportSource) -> ReportDto {
         definition,
         sheets,
         definition_error,
-        source: source_dto(source),
+        source: source_dto,
     }
 }
 
 // ── handlers ────────────────────────────────────────────────────────────────
 
 async fn list_reports(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
 ) -> ApiResult<JsonBody<ReportListDto>> {
     let mut items = Vec::new();
     for k in &REPORTS {
         let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-        items.push(report_dto(k, &source));
+        let dto = reports.source_dto(&ctx, &source).await;
+        items.push(report_dto(k, &source, dto));
     }
     Ok(Json(ReportListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
@@ -321,17 +378,18 @@ async fn list_reports(
 }
 
 async fn get_report(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<ReportDto>> {
     let k = report(&id)?;
     let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-    Ok(Json(report_dto(k, &source)))
+    let dto = reports.source_dto(&ctx, &source).await;
+    Ok(Json(report_dto(k, &source, dto)))
 }
 
 async fn get_report_summary(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<RoadmapReportDto>> {
@@ -346,7 +404,7 @@ async fn get_report_summary(
 }
 
 async fn export_report(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
     Query(query): Query<WorkbookQuery>,
@@ -387,17 +445,17 @@ async fn export_report(
 }
 
 async fn get_report_source(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<ReportSourceDto>> {
     let k = report(&id)?;
     let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
-    Ok(Json(source_dto(&source)))
+    Ok(Json(reports.source_dto(&ctx, &source).await))
 }
 
 async fn update_report_source(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
     Json(input): Json<ReportSourceInputDto>,
@@ -413,18 +471,18 @@ async fn update_report_source(
                 .with_constraint(e)
                 .create()
         })?;
-    Ok(Json(source_dto(&saved)))
+    Ok(Json(reports.source_dto(&ctx, &saved).await))
 }
 
 async fn sync_report(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> ApiResult<(StatusCode, JsonBody<ReportSyncEnqueued>)> {
     let idempotency_key = crate::idempotency::key(&headers)?;
     let k = report(&id)?;
-    // Queued in the caller's own tenant: no organization to hand it to.
+    // Queued in the organization's own tenant: nothing to hand it on to.
     let payload = serde_json::to_value(RefreshPayload {
         report: k.id.to_string(),
         organization_id: None,
@@ -473,7 +531,7 @@ fn schedule_dto(v: Option<crate::scheduler::port::ScheduleView>) -> ReportSchedu
 }
 
 async fn get_report_schedule(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<ReportScheduleDto>> {
@@ -487,7 +545,7 @@ async fn get_report_schedule(
 }
 
 async fn update_report_schedule(
-    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(reports): Extension<Reports>,
     Path(id): Path<String>,
     Json(input): Json<ReportScheduleInputDto>,
@@ -517,6 +575,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Arc<ReportsService>,
     hub: Arc<ClientHub>,
+    access: Arc<dyn WorkspaceAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-reports/v1/reports")
         .operation_id("studio_reports.list_reports")
@@ -530,9 +589,11 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_reports)
         .json_response_with_schema::<ReportListDto>(openapi, StatusCode::OK, "The reports")
         .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -547,6 +608,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report)
         .json_response_with_schema::<ReportDto>(openapi, StatusCode::OK, "The report")
@@ -570,6 +632,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_summary)
         .json_response_with_schema::<RoadmapReportDto>(openapi, StatusCode::OK, "The report's data")
@@ -593,6 +656,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(export_report)
         .text_response(
@@ -618,6 +682,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_source)
         .json_response_with_schema::<ReportSourceDto>(openapi, StatusCode::OK, "The source")
@@ -641,6 +706,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(update_report_source)
         .json_request::<ReportSourceInputDto>(openapi, "The source")
@@ -669,6 +735,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .param(crate::idempotency::param())
         .handler(sync_report)
@@ -693,6 +760,7 @@ pub fn register_routes(
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(get_report_schedule)
         .json_response_with_schema::<ReportScheduleDto>(openapi, StatusCode::OK, "The schedule")
@@ -707,13 +775,14 @@ pub fn register_routes(
         .description(
             "Creates the schedule the first time, then switches it and sets its expression (hourly \
              unless `cron` says otherwise, in UTC). Schedules are platform-level and fire in the \
-             platform tenant, so this gear writes the caller's organization into the schedule's \
-             payload, and the run it fires hands itself to that organization -- a client never \
-             names a tenant.",
+             platform tenant, so this gear writes the organization (`organization_id`, checked \
+             against the caller's reach) into the schedule's payload, and the run it fires hands \
+             itself to that organization -- a client never writes the payload itself.",
         )
         .tag("StudioReports")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .path_param("report_id", "The report (`roadmap`)")
         .handler(update_report_schedule)
         .json_request::<ReportScheduleInputDto>(openapi, "On or off, and how often")
@@ -724,7 +793,9 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Reports { service, hub }))
+    router
+        .layer(Extension(Reports { service, hub }))
+        .layer(Extension(OrgAccess(access)))
 }
 
 #[cfg(test)]
@@ -798,13 +869,11 @@ mod tests {
     #[test]
     fn a_report_lists_its_sheets_and_says_when_the_plans_definition_does_not_read() {
         let k = kind("roadmap").unwrap();
-        let dto = report_dto(
-            k,
-            &ReportSource {
-                report: "roadmap".into(),
-                ..ReportSource::default()
-            },
-        );
+        let empty = ReportSource {
+            report: "roadmap".into(),
+            ..ReportSource::default()
+        };
+        let dto = report_dto(k, &empty, source_dto(&empty));
         assert_eq!(dto.definition, "back_roadmap");
         assert_eq!(
             dto.sheets,
@@ -827,7 +896,7 @@ mod tests {
             }),
             ..ReportSource::default()
         };
-        let dto = report_dto(k, &bad);
+        let dto = report_dto(k, &bad, source_dto(&bad));
         assert!(dto.definition_error.is_some_and(|e| e.contains("weekly")));
     }
 
@@ -880,5 +949,33 @@ mod tests {
     fn an_unknown_report_is_not_found() {
         assert!(report("roadmap").is_ok());
         assert!(report("weekly").is_err());
+    }
+
+    fn view(state: RunState, result: Option<serde_json::Value>, err: Option<&str>) -> RunView {
+        RunView {
+            state,
+            result,
+            last_error: err.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_finished_sync_says_which_board_it_did_not_read() {
+        let unread = serde_json::json!({
+            "gears": 0, "versions": 0, "stored": 54,
+            "boards_unread": [{ "board": "constructorfabric/48", "error": "connection ddff5557 not found" }],
+        });
+        let e = board_error_of(&view(RunState::Succeeded, Some(unread), None)).expect("said");
+        assert!(
+            e.contains("constructorfabric/48") && e.contains("not found"),
+            "{e}"
+        );
+        // Read, or not finished: nothing to say.
+        let read = serde_json::json!({ "gears": 0, "versions": 0, "stored": 54 });
+        assert!(board_error_of(&view(RunState::Succeeded, Some(read), None)).is_none());
+        assert!(board_error_of(&view(RunState::Running, None, None)).is_none());
+        assert!(board_error_of(&view(RunState::Queued, None, None)).is_none());
+        let failed = board_error_of(&view(RunState::Failed, None, Some("graph-storage down")));
+        assert!(failed.is_some_and(|e| e.contains("graph-storage down")));
     }
 }

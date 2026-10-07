@@ -1513,6 +1513,29 @@ export function apiUrl(path: string): string {
   return `/cf${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** The organization on screen, as App resolves it. */
+let currentOrganization: string | undefined;
+
+/** Called by App whenever the organization on screen changes. */
+export function setCurrentOrganization(id: string | undefined): void {
+  currentOrganization = id;
+}
+
+/** Gears that keep their data per organization and take `?organization_id=`. */
+const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/"];
+
+/**
+ * `path` with the organization on screen named, for a gear that keeps its
+ * data per organization. Without it the server takes the caller's home
+ * tenant, and a platform administrator's home is the platform root -- their
+ * catalogue and reports were the root's while the screen showed an
+ * organization's connections. A path that already names one keeps it.
+ */
+export function orgScoped(path: string, org: string | undefined = currentOrganization): string {
+  if (!org || !ORG_SCOPED.some((p) => path.startsWith(p)) || /[?&]organization_id=/.test(path)) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}organization_id=${encodeURIComponent(org)}`;
+}
+
 /** Fired on any 401 so the app can drop a dead session instead of looping. */
 export const UNAUTHENTICATED_EVENT = "studio:unauthenticated";
 
@@ -1535,7 +1558,7 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
       `[api] ${init?.method ?? "GET"} ${path} · auth=${headers.Authorization ? "yes" : "NO"} · token=${token.length}ch ${token.slice(0, 6)}…`,
     );
   }
-  const res = await fetch(apiUrl(path), { ...init, headers });
+  const res = await fetch(apiUrl(orgScoped(path)), { ...init, headers });
   const body = res.status === 204 ? undefined : await res.json().catch(() => undefined);
   if (!res.ok) {
     // 401 = the session is over (SSO access tokens expire; we hold no refresh
@@ -1564,7 +1587,7 @@ async function requestBlob(path: string, token: string): Promise<Blob> {
     window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
   }
-  const res = await fetch(apiUrl(path), { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(apiUrl(orgScoped(path)), { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(res.status, await res.json().catch(() => undefined));
@@ -1985,6 +2008,11 @@ export interface SpecQualityVerdict {
   recognised?: boolean | null;
   /** What the detector found, each placed in the text. */
   findings?: SpecFindingItem[];
+}
+
+/** `?organization_id=` for a reports call, or nothing when no organization is known. */
+export function orgQuery(org: string | undefined, sep: "?" | "&" = "?"): string {
+  return org ? `${sep}organization_id=${encodeURIComponent(org)}` : "";
 }
 
 export const api = {
@@ -3744,8 +3772,13 @@ export const api = {
     );
   },
 
-  taskRun: (token: string, runId: string) =>
-    request<TaskRun>(`/studio-tasks/v1/runs/${encodeURIComponent(runId)}`, token),
+  /** One run. `tenant` names where it was queued when that is not the
+   *  caller's home tenant (a report's runs live in its organization). */
+  taskRun: (token: string, runId: string, tenant?: string) =>
+    request<TaskRun>(
+      `/studio-tasks/v1/runs/${encodeURIComponent(runId)}${tenant ? `?tenant=${encodeURIComponent(tenant)}` : ""}`,
+      token,
+    ),
 
   /** What kinds of work this deployment can run at all. */
   taskTypes: (token: string) =>
@@ -3777,42 +3810,48 @@ export const api = {
 
   /* ── studio-reports gear: report definitions, sources and drawing ── */
 
+  /* Every reports call names the organization on screen (`org`): a caller's
+   * home tenant need not be it -- a platform administrator's is the platform
+   * root, where the organization's connection does not exist. Absent, the
+   * server takes the home tenant. */
+
   /** Every report this deployment draws, with this organization's source. */
-  reports: (token: string) => request<{ items: Report[]; total: number }>("/studio-reports/v1/reports", token),
+  reports: (token: string, org?: string) =>
+    request<{ items: Report[]; total: number }>(`/studio-reports/v1/reports${orgQuery(org)}`, token),
 
   /** A report's data as typed JSON (for `roadmap`: one row per planned gear). */
-  reportSummary: (token: string, report: string) =>
-    request<RoadmapReport>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/summary`, token),
+  reportSummary: (token: string, report: string, org?: string) =>
+    request<RoadmapReport>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/summary${orgQuery(org)}`, token),
 
   /** The report as of `date` (`YYYY-MM-DD`), as the `.xlsx` the server draws. */
-  exportReport: (token: string, report: string, date: string) =>
+  exportReport: (token: string, report: string, date: string, org?: string) =>
     requestBlob(
-      `/studio-reports/v1/reports/${encodeURIComponent(report)}/workbook?date=${encodeURIComponent(date)}`,
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/workbook?date=${encodeURIComponent(date)}${orgQuery(org, "&")}`,
       token,
     ),
 
-  updateReportSource: (token: string, report: string, body: ReportSourceInput) =>
-    request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source`, token, {
+  updateReportSource: (token: string, report: string, body: ReportSourceInput, org?: string) =>
+    request<ReportSource>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/source${orgQuery(org)}`, token, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
 
   /** Whether the report refreshes on its own. */
-  reportSchedule: (token: string, report: string) =>
-    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token),
+  reportSchedule: (token: string, report: string, org?: string) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule${orgQuery(org)}`, token),
 
-  /** Switch the report's own (hourly) refresh on or off. The server names the
-   *  organization in the schedule; the client never does. */
-  updateReportSchedule: (token: string, report: string, enabled: boolean) =>
-    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule`, token, {
+  /** Switch the report's own (hourly) refresh on or off. The server writes the
+   *  organization into the schedule's payload; the client never does. */
+  updateReportSchedule: (token: string, report: string, enabled: boolean, org?: string) =>
+    request<ReportSchedule>(`/studio-reports/v1/reports/${encodeURIComponent(report)}/schedule${orgQuery(org)}`, token, {
       method: "PUT",
       body: JSON.stringify({ enabled }),
     }),
 
   /** Read the plan again and sync the board: a `reports.refresh` run. */
-  syncReport: (token: string, report: string) =>
+  syncReport: (token: string, report: string, org?: string) =>
     request<{ run_id: string; status: string }>(
-      `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync`,
+      `/studio-reports/v1/reports/${encodeURIComponent(report)}/sync${orgQuery(org)}`,
       token,
       { method: "POST", headers: idempotent() },
     ),
