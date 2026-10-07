@@ -138,6 +138,11 @@ pub fn builtin_stages() -> Vec<Stage> {
 /// computes embeddings, and matching should end up there -- but a term list is
 /// explainable ("matched because the component mentions `keycloak`"), which a
 /// vector score is not, and the two can coexist.
+///
+/// `contracts` comes before `terms` in matching (`cpt-studio-fr-spec-gear-mapping`).
+/// A gear that the engine reports as providing one of them is a contract match.
+/// The terms only find evidence in a gear's prose, which is ranked below every
+/// contract match.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capability {
     /// Slug, as written in a question's `capability` field (`auth`, `storage`).
@@ -147,6 +152,17 @@ pub struct Capability {
     /// itself", which is what the prototype fell back to.
     #[serde(default)]
     pub terms: Vec<String>,
+    /// What the Gearbox engine can report a gear as providing, any of which
+    /// satisfies this capability. Each entry is one of:
+    /// - a contract id without its version (`authz-resolver/AuthZResolverApi`);
+    /// - a contract id with its version (`authz-resolver/AuthZResolverApi@v1`);
+    /// - a GTS extension-point segment (`cf.core.authn_resolver.plugin.v1~`).
+    #[serde(default)]
+    pub contracts: Vec<String>,
+    /// Answered by where and how the product runs, not by what it is made
+    /// of: the composer offers it no gears (`cpt-studio-fr-nfr-to-profile`).
+    #[serde(default)]
+    pub nonfunctional: bool,
     pub owner: Owner,
     #[serde(default)]
     pub hidden: bool,
@@ -282,10 +298,38 @@ pub fn builtin_capabilities() -> Vec<Capability> {
         key: key.to_string(),
         label: label.to_string(),
         terms: terms.iter().map(|t| (*t).to_string()).collect(),
+        contracts: builtin_contracts(key)
+            .iter()
+            .map(|c| (*c).to_string())
+            .collect(),
+        nonfunctional: key == "deploy",
         owner: Owner::Builtin,
         hidden: false,
     })
     .collect()
+}
+
+/// The contracts the platform's own extension points give a built-in key.
+///
+/// These are the `cf.core` and `cf.bss` plugin points of the platform's
+/// toolkit, not the gears of any one product. A key with no engine-checked
+/// contract gets none here, so its matches come from search. An organization
+/// or workspace overrides these like any other field of the entry.
+fn builtin_contracts(key: &str) -> &'static [&'static str] {
+    match key {
+        "tenancy" => &["cf.core.tenant_resolver.plugin.v1~"],
+        "auth" => &[
+            "cf.core.authn_resolver.plugin.v1~",
+            "cf.core.idp.plugin.v1~",
+        ],
+        "authz" => &[
+            "cf.core.authz_resolver.plugin.v1~",
+            "authz-resolver/AuthZResolverApi",
+        ],
+        "billing" => &["cf.core.uc.plugin.v1~", "cf.bss.rate_provider.plugin.v1~"],
+        "compliance" => &["cf.core.credstore.plugin.v1~"],
+        _ => &[],
+    }
 }
 
 /// One expected section of a document, as a checklist item.
@@ -605,6 +649,14 @@ pub struct Document {
     /// questionnaire seeds them; a hand-edited document re-declares them.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The non-functional statements its NFR, operational and deployment
+    /// sections make ([`crate::spec_mapping::reading::declared_requirements`]).
+    #[serde(default)]
+    pub requirements: Vec<String>,
+    /// What its functional requirements imply when its front matter declares
+    /// no capability ([`crate::spec_mapping::reading::inferred_capabilities`]).
+    #[serde(default)]
+    pub inferred_capabilities: Vec<crate::spec_mapping::reading::InferredCapability>,
     /// Subject id of the creator (as a string principal).
     pub created_by: String,
     /// RFC 3339 UTC timestamps.
@@ -758,6 +810,12 @@ pub struct DocumentBinding {
     /// Composer for a bound file the same way it reads an authored document's.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The file's non-functional statements, as for a document.
+    #[serde(default)]
+    pub requirements: Vec<String>,
+    /// What the file's functional requirements imply, as for a document.
+    #[serde(default)]
+    pub inferred_capabilities: Vec<crate::spec_mapping::reading::InferredCapability>,
     /// Digest of the content last classified/validated, so the caller can tell
     /// a stale verdict from a current one after a re-sync.
     pub content_sha: String,

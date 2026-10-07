@@ -253,8 +253,79 @@ export interface Conformance {
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
   key: string;
-  sources: { kind: "document" | "file"; id: string; label: string }[];
+  sources: {
+    kind: "document" | "file";
+    id: string;
+    label: string;
+    /** What the document is now: a Studio document's `updated_at`, a file's
+     *  `content_sha`. A decision taken against another one needs review. */
+    revision?: string;
+    /** The artifact node of a bound file. */
+    node_id?: string | null;
+    /** Implied by the document's functional requirements, not declared in
+     *  its front matter. */
+    inferred?: boolean;
+    /** For an inferred capability, the requirements that imply it. */
+    because?: string[];
+    /** `false` for a repository file nobody has confirmed on the Specs tab. */
+    confirmed?: boolean;
+  }[];
 }
+
+/** One non-functional statement a project's document makes. */
+export interface DeclaredRequirement {
+  text: string;
+  source: DeclaredCapability["sources"][number];
+}
+
+/** The deployment profile the project's non-functional statements point to. */
+export interface ProfileAdvice {
+  /** `dev`, `local` or `prod`, as Studio's `product.gdl` names them. */
+  profile: string;
+  /** `embedded`, `self_hosted` or `kubernetes`. */
+  kind: string;
+  because: string[];
+}
+
+/** A member's decision on one mapping of a capability to a gear. */
+export interface MappingDecision {
+  id: string;
+  document: string;
+  document_revision: string;
+  section: string;
+  capability: string;
+  gear: string;
+  gear_version?: string | null;
+  step: string;
+  decision: "confirmed" | "rejected";
+  decided_by: string;
+  decided_at: string;
+  workspace_id?: string | null;
+  project_id?: string | null;
+}
+
+export interface MappingDecisionInput {
+  /** The project the deciding document belongs to; the server finds its workspace. */
+  project_id: string;
+  document: string;
+  document_node?: string | null;
+  document_revision: string;
+  capability: string;
+  gear: string;
+  gear_version?: string | null;
+  step: "contract" | "evidence" | "gap";
+  decision: "confirmed" | "rejected";
+}
+
+/** An earlier decision as the composer takes it. */
+export interface PastDecision {
+  capability: string;
+  gear: string;
+  decision: string;
+  gear_version?: string | null;
+  document_changed: boolean;
+}
+
 
 /** What the project is for, chosen at creation:
  *  - `new_gears`  — build new gears (repo: create new, or an existing gear store);
@@ -328,6 +399,21 @@ export type Composability = "runs" | "blocked" | "undescribed";
 export interface Candidate {
   name: string;
   kind: string;
+  /** Which step proposed it: `contract` (the engine reports the gear provides
+   *  one of the capability's contracts) or `evidence` (its words were found in
+   *  what the gear says about itself). Every `contract` comes first. */
+  step?: "contract" | "evidence";
+  /** The provided contracts that satisfy the capability (`contract` only). */
+  contracts?: string[];
+  /** The text around the first term found (`evidence` only). */
+  passage?: string | null;
+  /** The document the passage is quoted from, when it came from the gear's
+   *  own documentation rather than the catalogue's text. */
+  cites?: string | null;
+  /** The version the catalogue knows the component at, recorded with a decision. */
+  version?: string | null;
+  /** A member's earlier decision on this gear for this capability. */
+  decision?: { decision: "confirmed" | "rejected"; needs_review: boolean } | null;
   /** The gear declares this capability itself (gear.toml, or its catalogue
    *  page) -- a statement, not a match on the words it uses. */
   declared?: boolean;
@@ -341,6 +427,14 @@ export interface Candidate {
   composable_why?: string | null;
 }
 
+/** Why a candidate was offered, in the words of the step that offered it. */
+export function matchReason(c: Candidate): string {
+  if (c.step === "contract") return `provides ${(c.contracts ?? []).join(", ")}`;
+  const how = c.declared ? "the gear declares this capability" : `matched by words: ${c.why.join(", ")}`;
+  const quoted = c.passage ? `${how} — “${c.passage}”` : how;
+  return c.cites ? `${quoted} (${c.cites})` : quoted;
+}
+
 /** One capability, and what could fill it. */
 export interface PlanRow {
   capability: string;
@@ -349,6 +443,10 @@ export interface PlanRow {
   gap: boolean;
   /** Candidates exist, but none of them has been built. */
   unbuilt: boolean;
+  /** Answered by the deployment profile, not by gears: no candidates, not a gap. */
+  nonfunctional?: boolean;
+  /** The documents that need it, when the plan was read for a project. */
+  sources?: DeclaredCapability["sources"];
 }
 
 /** One weekly bar of a gear's churn. */
@@ -534,6 +632,11 @@ export interface Capability {
   label: string;
   /** Empty means "match the key itself". */
   terms: string[];
+  /** What the Gearbox engine can report a gear as providing, any of which
+   *  satisfies the capability. Matched before `terms`. */
+  contracts?: string[];
+  /** Answered by where and how the product runs, not by gears. */
+  nonfunctional?: boolean;
   owner: string;
   owner_tenant_id?: string | null;
 }
@@ -1413,6 +1516,14 @@ export function sessionOrigin(url: string): string {
   }
 }
 
+/** The vocabulary's contracts as the composer takes them: capability key to
+ *  contracts. A capability without any is left out, and is found by its terms. */
+function contractsOf(vocabulary: readonly Capability[]): Record<string, string[]> {
+  const contracts: Record<string, string[]> = {};
+  for (const cap of vocabulary) if (cap.contracts?.length) contracts[cap.key] = cap.contracts;
+  return contracts;
+}
+
 const withAlignedHost = (s: StudioSession): StudioSession => ({
   ...s,
   url: alignSessionHost(s.url),
@@ -1524,7 +1635,7 @@ export function setCurrentOrganization(id: string | undefined): void {
 }
 
 /** Gears that keep their data per organization and take `?organization_id=`. */
-const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/"];
+const ORG_SCOPED = ["/studio-components-catalog/", "/studio-reports/", "/studio-spec-mapping/"];
 
 /**
  * `path` with the organization on screen named, for a gear that keeps its
@@ -2095,7 +2206,7 @@ export const api = {
   upsertCapability: (
     token: string,
     workspaceId: string,
-    body: { key: string; label: string; terms?: string[]; hidden?: boolean },
+    body: { key: string; label: string; terms?: string[]; contracts?: string[]; nonfunctional?: boolean; hidden?: boolean },
   ) =>
     request<Capability>(`/studio-documents/v1/workspaces/${workspaceId}/capabilities`, token, {
       method: "POST",
@@ -2741,7 +2852,14 @@ export const api = {
    *  and the repository files bound to a type -- with what declares each. */
   declaredCapabilities: (token: string, projectId: string) =>
     request<{ items: DeclaredCapability[]; total: number }>(
-      `/studio-documents/v1/declared-capabilities?project_id=${encodeURIComponent(projectId)}`,
+      `/studio-spec-mapping/v1/capabilities?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** The non-functional statements the project's documents make: what the
+   *  composer reads for the deployment profile, never for gears. */
+  declaredRequirements: (token: string, projectId: string) =>
+    request<{ items: DeclaredRequirement[]; total: number }>(
+      `/studio-spec-mapping/v1/requirements?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
 
@@ -3406,23 +3524,63 @@ export const api = {
   conformance: (token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
-    return request<Conformance>("/studio-components-catalog/v1/conformance", token, {
+    const contracts = contractsOf(vocabulary);
+    return request<Conformance>("/studio-spec-mapping/v1/conformance", token, {
       method: "POST",
-      body: JSON.stringify({ project_id: projectId, capabilities, terms }),
+      body: JSON.stringify({ project_id: projectId, capabilities, terms, contracts }),
     });
   },
-  composePlan: (token: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+  composePlan: (
+    token: string,
+    capabilities: string[],
+    vocabulary: readonly Capability[],
+    decisions: readonly PastDecision[] = [],
+    requirements: readonly string[] = [],
+  ) => {
     // A capability with no terms is matched against its own name, which is what
     // it meant before vocabularies existed — so it is left out of the map
     // rather than sent as an empty list.
     const terms: Record<string, string[]> = {};
     for (const cap of vocabulary) if (cap.terms?.length) terms[cap.key] = cap.terms;
-    return request<{ items: PlanRow[]; total: number }>(
-      "/studio-components-catalog/v1/compose",
+    const contracts = contractsOf(vocabulary);
+    const nonfunctional = vocabulary.filter((c) => c.nonfunctional).map((c) => c.key);
+    // Each optional part travels only when it says something, so a plain
+    // question stays the plain request it always was.
+    const body = {
+      capabilities,
+      terms,
+      contracts,
+      ...(decisions.length ? { decisions } : {}),
+      ...(nonfunctional.length ? { nonfunctional } : {}),
+      ...(requirements.length ? { requirements } : {}),
+    };
+    return request<{ items: PlanRow[]; total: number; profile?: ProfileAdvice | null }>(
+      "/studio-spec-mapping/v1/plan",
       token,
-      { method: "POST", body: JSON.stringify({ capabilities, terms }) },
+      { method: "POST", body: JSON.stringify(body) },
     );
   },
+  /** A project's plan, read on the server: what its specifications need,
+   *  the gears that cover it, ranked by the decisions members recorded, and
+   *  the deployment profile its non-functional statements point to. */
+  projectPlan: (token: string, projectId: string) =>
+    request<{ items: PlanRow[]; total: number; profile?: ProfileAdvice | null }>(
+      `/studio-spec-mapping/v1/plan?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** The mapping decisions recorded in a project, newest first. */
+  mappingDecisions: (token: string, projectId: string) =>
+    request<{ items: MappingDecision[]; total: number }>(
+      `/studio-spec-mapping/v1/decisions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Confirm or reject one proposed mapping. Deciding the same document,
+   *  capability and gear again replaces the decision. */
+  decideMapping: (token: string, body: MappingDecisionInput) =>
+    request<MappingDecision>("/studio-spec-mapping/v1/decisions", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /** What moved in each catalogued gear, over a window of days.
    *
    *  The catalogue is read by the server, and so are the rules that turn it

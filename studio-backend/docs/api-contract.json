@@ -672,23 +672,6 @@
     },
     {
       "method": "GET",
-      "path": "/studio-documents/v1/declared-capabilities",
-      "operation_id": "studio_documents.list_declared_capabilities",
-      "tag": "StudioDocuments",
-      "summary": "The capabilities a project's documents declare",
-      "authenticated": true,
-      "responses": [
-        "DeclaredCapabilityListDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "404",
-        "500"
-      ]
-    },
-    {
-      "method": "GET",
       "path": "/studio-documents/v1/document-bindings/{id}/text",
       "operation_id": "studio_documents.get_binding_text",
       "tag": "StudioDocuments",
@@ -1535,6 +1518,70 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-mapping/v1/capabilities",
+      "operation_id": "studio_spec_mapping.list_project_capabilities",
+      "tag": "StudioSpecMapping",
+      "summary": "The capabilities a project's documents need",
+      "authenticated": true,
+      "responses": [
+        "DeclaredCapabilityListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-mapping/v1/decisions",
+      "operation_id": "studio_spec_mapping.list_decisions",
+      "tag": "StudioSpecMapping",
+      "summary": "List the mapping decisions recorded in a project",
+      "authenticated": true,
+      "responses": [
+        "MappingDecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-mapping/v1/plan",
+      "operation_id": "studio_spec_mapping.get_project_plan",
+      "tag": "StudioSpecMapping",
+      "summary": "What a project's specifications need, and the gears that cover it",
+      "authenticated": true,
+      "responses": [
+        "PlanDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-mapping/v1/requirements",
+      "operation_id": "studio_spec_mapping.list_project_requirements",
+      "tag": "StudioSpecMapping",
+      "summary": "The non-functional statements a project's documents make",
+      "authenticated": true,
+      "responses": [
+        "DeclaredRequirementListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-quality/v1/capabilities",
       "operation_id": "studio_spec_quality.get_capabilities",
       "tag": "SpecQuality",
@@ -2023,40 +2070,6 @@
       "request": "SaveGearProfileRequest",
       "responses": [
         "CatalogNodeDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/compose",
-      "operation_id": "studio_components_catalog.create_compose_plan",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Match what a product needs against the components that exist",
-      "authenticated": true,
-      "request": "ComposeRequest",
-      "responses": [
-        "ComposePlanDto"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-components-catalog/v1/conformance",
-      "operation_id": "studio_components_catalog.create_conformance_report",
-      "tag": "StudioComponentsCatalog",
-      "summary": "Compare what a project's specs ask for with what its code is made of",
-      "authenticated": true,
-      "request": "ConformanceRequest",
-      "responses": [
-        "ConformanceDto"
       ],
       "errors": [
         "400",
@@ -3024,6 +3037,57 @@
       "request": "CreateSessionRequest",
       "responses": [
         "SessionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-mapping/v1/conformance",
+      "operation_id": "studio_spec_mapping.create_conformance_report",
+      "tag": "StudioSpecMapping",
+      "summary": "Compare what a project's specs ask for with what its code is made of",
+      "authenticated": true,
+      "request": "ConformanceRequest",
+      "responses": [
+        "ConformanceDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-mapping/v1/decisions",
+      "operation_id": "studio_spec_mapping.create_decision",
+      "tag": "StudioSpecMapping",
+      "summary": "Record a member's decision on a capability-to-gear mapping",
+      "authenticated": true,
+      "request": "MappingDecisionRequest",
+      "responses": [
+        "MappingDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-mapping/v1/plan",
+      "operation_id": "studio_spec_mapping.create_plan",
+      "tag": "StudioSpecMapping",
+      "summary": "Match capabilities sent by value against the components that exist",
+      "authenticated": true,
+      "request": "PlanRequest",
+      "responses": [
+        "PlanDto"
       ],
       "errors": [
         "400",

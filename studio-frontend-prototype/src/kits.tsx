@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  matchReason,
+  type Candidate,
   type DeclaredCapability,
   type GearConfig,
   type GearboxStatus,
   type KitInstallation,
   type PlanRow,
+  type ProfileAdvice,
   type KitMaterialization,
   type ProductChange,
   type ProductPreview,
@@ -246,7 +249,6 @@ export function ProjectKits({
       <SuggestedComponents
         token={token}
         projectId={projectId}
-        workspaceId={workspaceId}
         product={product}
         onCapabilities={setCapCount}
       />
@@ -521,17 +523,17 @@ function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; pro
 function SuggestedComponents({
   token,
   projectId,
-  workspaceId,
   product,
   onCapabilities,
 }: {
   token: string;
   projectId: string;
-  workspaceId: string;
   product: ProductState;
   onCapabilities?: (count: number) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
+  /** Where the documents say the product runs: the profile to default to. */
+  const [advice, setAdvice] = useState<ProfileAdvice | null>(null);
   /** Which documents declare each capability, to say where a row comes from. */
   const [sources, setSources] = useState<Record<string, DeclaredCapability["sources"]>>({});
   const [docCount, setDocCount] = useState(0);
@@ -543,22 +545,16 @@ function SuggestedComponents({
     setBusy(true);
     setError(null);
     try {
-      // The catalogue and the profiles are read by the server now, which is
-      // also where the matching rules live. What still travels from here is the
-      // workspace's own capability vocabulary.
-      const [declared, vocab] = await Promise.all([
-        api.declaredCapabilities(token, projectId),
-        api.capabilities(token, workspaceId),
-      ]);
-      // Every capability the project's documents declare, in the order first
-      // met -- Studio's own documents and the repository files bound to a type
-      // alike. The server indexes these from front matter, so this is a read.
-      const caps = declared.items.map((c) => c.key);
-      setSources(Object.fromEntries(declared.items.map((c) => [c.key, c.sources])));
-      onCapabilities?.(caps.length);
-      setDocCount(new Set(declared.items.flatMap((c) => c.sources.map((s) => s.id))).size);
-      const next = (await api.composePlan(token, caps, vocab.items ?? [])).items;
+      // One read: the spec-mapping gear assembles what the specifications
+      // need, the vocabulary, the recorded decisions and the catalogue on
+      // the server, where the rules live.
+      const answer = await api.projectPlan(token, projectId);
+      const next = answer.items;
+      setSources(Object.fromEntries(next.map((r) => [r.capability, r.sources ?? []])));
+      onCapabilities?.(next.length);
+      setDocCount(new Set(next.flatMap((r) => (r.sources ?? []).map((s) => s.id))).size);
       setPlan(next);
+      setAdvice(answer.profile ?? null);
       // A product nobody has picked for yet starts from the best built gear
       // per capability. One that has picks keeps them: suggestions are a
       // source of candidates, not the product.
@@ -570,6 +566,33 @@ function SuggestedComponents({
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Record a member's decision on one proposal, against the first document
+   *  that needs the capability, then read the plan again so the ranking shows it. */
+  const decide = async (capability: string, c: Candidate, decision: "confirmed" | "rejected") => {
+    const source = (sources[capability] ?? [])[0];
+    if (!source) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideMapping(token, {
+        project_id: projectId,
+        document: source.id,
+        document_node: source.node_id ?? null,
+        document_revision: source.revision ?? "",
+        capability,
+        gear: c.name,
+        gear_version: c.version ?? null,
+        step: c.step ?? "evidence",
+        decision,
+      });
+    } catch (cause) {
+      setError(errText(cause));
+      setBusy(false);
+      return;
+    }
+    await suggest();
   };
 
   // Read on arrival: the documents are the question this page answers, so it
@@ -619,7 +642,7 @@ function SuggestedComponents({
         (plan.length === 0 ? (
           <p className="empty" style={{ fontSize: 13 }}>
             {docCount === 0
-              ? "No document in this project declares a capability yet. Fill a PRD's questionnaire, or put `capabilities: auth, storage` in the front matter of a PRD in the repository and confirm it on the Specs tab — this reads them from there."
+              ? "No specification in this project says what it needs yet. This reads the functional requirements of the project's PRDs, as they are written, and of the documents Studio holds; sync the repository if its specs are not on the Specs tab yet."
               : "The documents declare no capabilities to match."}
           </p>
         ) : (
@@ -629,6 +652,22 @@ function SuggestedComponents({
               {docCount === 1 ? "" : "s"} · {built} built candidate{built === 1 ? "" : "s"} ·{" "}
               {unbuilt} with nothing built yet · {gaps} with nothing at all.
             </p>
+            {advice && (
+              <p
+                style={{ fontSize: 12, margin: "0 0 12px", display: "flex", gap: 8, alignItems: "center" }}
+                title={advice.because.join("\n")}
+              >
+                <span>
+                  The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
+                  {advice.because[0]}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
+                </span>
+                {composing && product.profile !== advice.profile && (
+                  <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
+                    Use {advice.profile}
+                  </button>
+                )}
+              </p>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {plan.map((row) => (
                 <div
@@ -642,8 +681,18 @@ function SuggestedComponents({
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
                     {(sources[row.capability] ?? []).length > 0 && (
-                      <span style={{ fontSize: 11, opacity: 0.65 }} title="The documents that declare it">
+                      <span
+                        style={{ fontSize: 11, opacity: 0.65 }}
+                        title={(sources[row.capability] ?? [])
+                          .map(
+                            (src) =>
+                              `${src.label}: ${src.inferred ? `implied by ${src.because?.join("; ") || "its requirements"}` : "declared in its front matter"}${src.confirmed === false ? " (not confirmed on the Specs tab)" : ""}`,
+                          )
+                          .join("\n")}
+                      >
                         from {(sources[row.capability] ?? []).map((src) => src.label).join(", ")}
+                        {(sources[row.capability] ?? []).every((src) => src.inferred) && " · read from the requirements"}
+                        {(sources[row.capability] ?? []).every((src) => src.confirmed === false) && " · unconfirmed"}
                       </span>
                     )}
                     {row.gap && (
@@ -654,6 +703,11 @@ function SuggestedComponents({
                     {row.unbuilt && (
                       <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
                         NOTHING BUILT YET
+                      </span>
+                    )}
+                    {row.nonfunctional && (
+                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }} title="Answered by the deployment profile, not by a gear">
+                        WHERE IT RUNS — THE PROFILE, NOT A GEAR
                       </span>
                     )}
                   </div>
@@ -668,9 +722,7 @@ function SuggestedComponents({
                           <span
                             key={c.name}
                             title={
-                              (c.declared
-                                ? "the gear declares this capability"
-                                : `matched by words: ${c.why.join(", ")}`) +
+                              matchReason(c) +
                               (c.built === "docs-only"
                                 ? " · the catalogue found no crate under this component — docs and a manifest only"
                                 : "")
@@ -693,12 +745,16 @@ function SuggestedComponents({
                             )}
                             <ComponentLink nav={nav} name={c.name} />
                             <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                            {c.declared ? (
+                            {c.step === "contract" ? (
+                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
+                                CONTRACT
+                              </span>
+                            ) : c.declared ? (
                               <span title="The gear declares this capability itself" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>
                                 DECLARED
                               </span>
                             ) : (
-                              <span title={`Found by the words in its name and description: ${c.why.join(", ")}`} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
+                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
                                 by words
                               </span>
                             )}
@@ -714,6 +770,41 @@ function SuggestedComponents({
                             )}
                             {c.built === "docs-only" && (
                               <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
+                            )}
+                            {c.decision && (
+                              <span
+                                title={
+                                  c.decision.needs_review
+                                    ? "The document or the gear changed since this was decided — decide again"
+                                    : `A member ${c.decision.decision} this mapping`
+                                }
+                                style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: c.decision.needs_review ? 0.6 : 1 }}
+                              >
+                                {c.decision.decision === "confirmed" ? "CONFIRMED" : "REJECTED"}
+                                {c.decision.needs_review && " · REVIEW"}
+                              </span>
+                            )}
+                            {(sources[row.capability] ?? []).length > 0 && (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Confirm: this gear covers the capability"
+                                  disabled={busy}
+                                  onClick={() => void decide(row.capability, c, "confirmed")}
+                                  style={{ ...chipToggleStyle, marginLeft: 6 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Reject: this gear does not cover the capability"
+                                  disabled={busy}
+                                  onClick={() => void decide(row.capability, c, "rejected")}
+                                  style={chipToggleStyle}
+                                >
+                                  ✗
+                                </button>
+                              </>
                             )}
                           </span>
                         );

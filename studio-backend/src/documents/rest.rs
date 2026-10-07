@@ -113,6 +113,13 @@ pub struct CapabilityDto {
     pub label: String,
     /// Words that make a component a candidate. Empty means "match the key".
     pub terms: Vec<String>,
+    /// What the Gearbox engine can report a gear as providing, any of which
+    /// satisfies the capability: a contract id with or without its version, or a
+    /// GTS extension-point segment. Matched before `terms`.
+    pub contracts: Vec<String>,
+    /// Answered by where and how the product runs, not by gears: the composer
+    /// offers it none.
+    pub nonfunctional: bool,
     /// "builtin", "organization" or "workspace".
     pub owner: String,
     pub owner_tenant_id: Option<Uuid>,
@@ -132,6 +139,8 @@ pub struct UpsertCapabilityDto {
     pub key: String,
     pub label: String,
     pub terms: Option<Vec<String>>,
+    pub contracts: Option<Vec<String>>,
+    pub nonfunctional: Option<bool>,
     pub hidden: Option<bool>,
 }
 
@@ -567,6 +576,8 @@ impl From<Capability> for CapabilityDto {
             key: c.key,
             label: c.label,
             terms: c.terms,
+            contracts: c.contracts,
+            nonfunctional: c.nonfunctional,
             owner,
             owner_tenant_id,
             hidden: c.hidden,
@@ -1146,6 +1157,8 @@ async fn upsert_capability_at(
         key: body.key,
         label: body.label,
         terms: body.terms.unwrap_or_default(),
+        contracts: body.contracts.unwrap_or_default(),
+        nonfunctional: body.nonfunctional.unwrap_or(false),
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };
@@ -1306,62 +1319,6 @@ async fn list_workspace_documents(
         items: items.into_iter().map(|d| document_dto(d, false)).collect(),
         total,
     }))
-}
-
-/// A document that declares a capability.
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct CapabilitySourceDto {
-    /// `document` (held by Studio) or `file` (a bound repository file).
-    pub kind: String,
-    pub id: Uuid,
-    /// The document's title, or the file's repository path.
-    pub label: String,
-}
-
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct DeclaredCapabilityDto {
-    /// The capability key, as the vocabulary names it (`auth`, `storage`, …).
-    pub key: String,
-    pub sources: Vec<CapabilitySourceDto>,
-}
-
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct DeclaredCapabilityListDto {
-    pub items: Vec<DeclaredCapabilityDto>,
-    /// Every capability is in `items`: the set is small and read whole.
-    pub total: u32,
-}
-
-async fn list_declared_capabilities(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(service): Extension<Arc<DocumentsService>>,
-    Query(query): Query<SpecScopeQuery>,
-) -> ApiResult<JsonBody<DeclaredCapabilityListDto>> {
-    let project_id = parse_project_id(&query.project_id)?;
-    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
-    let items: Vec<DeclaredCapabilityDto> = service
-        .declared_capabilities(workspace_id, project_id)
-        .await
-        .map_err(internal)?
-        .into_iter()
-        .map(|c| DeclaredCapabilityDto {
-            key: c.key,
-            sources: c
-                .sources
-                .into_iter()
-                .map(|s| CapabilitySourceDto {
-                    kind: s.kind,
-                    id: s.id,
-                    label: s.label,
-                })
-                .collect(),
-        })
-        .collect();
-    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    Ok(Json(DeclaredCapabilityListDto { items, total }))
 }
 
 async fn list_project_documents(
@@ -3261,31 +3218,6 @@ pub fn register_routes(
         .json_response_with_schema::<DocumentListDto>(openapi, StatusCode::OK, "Documents")
         .error_401(openapi)
         .error_403(openapi)
-        .error_500(openapi)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/studio-documents/v1/declared-capabilities")
-        .operation_id("studio_documents.list_declared_capabilities")
-        .summary("The capabilities a project's documents declare")
-        .description(
-            "Every capability key declared in the front matter of the project's \
-             documents -- the ones Studio holds and the repository files bound to a \
-             type -- with the documents declaring each. What the Composer composes \
-             from. A repository file still awaiting review does not count.",
-        )
-        .tag("StudioDocuments")
-        .authenticated()
-        .require_license_features::<License>([])
-        .query_param("project_id", true, "The project whose capabilities to read")
-        .handler(list_declared_capabilities)
-        .json_response_with_schema::<DeclaredCapabilityListDto>(
-            openapi,
-            StatusCode::OK,
-            "Declared capabilities",
-        )
-        .error_400(openapi)
-        .error_401(openapi)
-        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

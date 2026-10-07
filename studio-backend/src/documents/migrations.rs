@@ -30,6 +30,9 @@ impl MigratorTrait for Migrator {
             Box::new(m0009::Migration),
             Box::new(m0010::Migration),
             Box::new(m0011::Migration),
+            Box::new(m0012::Migration),
+            Box::new(m0013::Migration),
+            Box::new(m0014::Migration),
         ]
     }
 }
@@ -748,6 +751,171 @@ mod m0011 {
                 .get_connection()
                 .execute_unprepared(
                     "ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS capabilities;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A capability names the contracts that satisfy it.
+///
+/// The composer matches these against what the Gearbox engine reports each
+/// gear as providing, before it searches gear prose with `terms`
+/// (`cpt-studio-fr-spec-gear-mapping`). An empty array leaves the entry
+/// matched by search alone, as it was before.
+mod m0012 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0012_capability_contracts"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_process_capabilities
+    ADD COLUMN IF NOT EXISTS contracts TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_process_capabilities DROP COLUMN IF EXISTS contracts;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A document, and a bound file, record the non-functional statements they make.
+///
+/// The same index `capabilities` is, and for the same reason: the composer
+/// asks what a project needs of every document it has, and reading every body
+/// for it would be the walk the index exists to avoid. What these statements
+/// shape is the product's deployment profile, never its gears
+/// (`cpt-studio-fr-nfr-to-profile`).
+mod m0013 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0013_document_requirements"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_documents
+    ADD COLUMN IF NOT EXISTS requirements TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE studio_document_bindings
+    ADD COLUMN IF NOT EXISTS requirements TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE studio_process_capabilities
+    ADD COLUMN IF NOT EXISTS nonfunctional BOOLEAN NOT NULL DEFAULT FALSE;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_documents DROP COLUMN IF EXISTS requirements;
+ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS requirements;
+ALTER TABLE studio_process_capabilities DROP COLUMN IF EXISTS nonfunctional;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A document, and a bound file, record the capabilities their functional
+/// requirements imply when their front matter declares none.
+///
+/// Most specs in a real repository carry no `capabilities:` line, so without
+/// this the composer had nothing to ask about a project whose PRDs were plain
+/// markdown (constructorfabric/insight on Dev, 2026-10-07: 11 PRDs, 0
+/// capabilities). Kept apart from `capabilities` because it is a proposal, and
+/// the screens say so.
+mod m0014 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0014_inferred_capabilities"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"ALTER TABLE studio_documents
+    ADD COLUMN IF NOT EXISTS inferred_capabilities TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE studio_document_bindings
+    ADD COLUMN IF NOT EXISTS inferred_capabilities TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_documents DROP COLUMN IF EXISTS inferred_capabilities;
+ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS inferred_capabilities;",
                 )
                 .await?;
             Ok(())

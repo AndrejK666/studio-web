@@ -118,7 +118,7 @@ These terms are used with exactly this meaning in every document under `docs/`.
 | Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
 | Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
 | Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
-| Contract | A GTS id a gear declares with `provide(...)` in its `gear.gdl`: what the gear does for others, stated so the engine can check it. |
+| Contract | What the Gearbox engine reports a gear doing for others, so it is checked rather than read from prose: a contract the gear provides (`<gear>/<Trait>@v<N>`, projected from `#[toolkit::provides]`), the GTS spec of an extension point it hosts, or the spec of the point it implements as a plugin. |
 | Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
 | Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
 | Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
@@ -521,13 +521,15 @@ The system **MUST** compose a `product.gdl` from picked gears, resolve it with t
 - [ ] `p1` - **ID**: `cpt-studio-fr-spec-gear-mapping`
 
 The system **MUST** map every capability a product's specification requires to gears in this order, and **MUST** say for each proposal which step produced it:
-1. **Contract.** A gear that declares the capability's contract with `provide(...)` in its `gear.gdl` is matched. The organization's capability vocabulary translates a capability key into the contracts that satisfy it.
+1. **Contract.** A gear the Gearbox engine reports as providing one of the capability's contracts is matched: a provided contract, a hosted extension point or an implemented one. The organization's capability vocabulary translates a capability key into the contracts that satisfy it.
 2. **Evidence.** A capability no declared contract satisfies is searched for in the gears' documentation. A proposal from search cites the passage that supports it, and ranks below every contract match.
 3. **Gap.** A capability neither step covers is a gap, offered as the starting point of a new gear.
 
 The same rules **MUST** apply to every project; nothing in them may name a particular product, repository or corpus.
 
-- **Rationale**: Keyword matching over gear prose (`/compose` today) cannot tell a gear that provides a capability from one that mentions it. Different products bring different specifications, so the mapping must be data-driven (#205, #199).
+The system **MUST** read the capabilities a specification requires from the specification as it is written, and **MUST NOT** require it to be changed for the mapping: a `capabilities:` line in its front matter is used when present, and otherwise the capabilities are inferred from its functional requirements, each citing the requirements behind it. A repository document the classifier proposed and nobody has confirmed counts too, marked as unconfirmed.
+
+- **Rationale**: Keyword matching over gear prose alone cannot tell a gear that provides a capability from one that mentions it. Different products bring different specifications, so the mapping must be data-driven (#205, #199).
 - **Actors**: `cpt-studio-actor-member`, `cpt-studio-actor-agent`
 
 #### A mapping is a decision on record
@@ -945,9 +947,9 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
 | `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
-| `cpt-studio-fr-spec-gear-mapping` | planned: `studio-backend/src/components_catalog/compose.rs` (today keyword matching only); #205, #199 |
-| `cpt-studio-fr-mapping-decisions` | planned: #205, #206 |
-| `cpt-studio-fr-nfr-to-profile` | planned: #205 |
+| `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/spec_mapping/` (`reading.rs`: a specification read as written; `plan.rs`: contract, then evidence with a cited passage, then gap); `/studio-spec-mapping/v1/{plan,capabilities}`; facts from `components_catalog/gearbox.rs` (`gdl_contracts`) and `repo_enrich.rs` (`doc_text`); vocabulary `documents/model.rs` (`Capability::contracts`); prototype project tab `components`; #205, #199 |
+| `cpt-studio-fr-mapping-decisions` | `studio-backend/src/spec_mapping/` (`/studio-spec-mapping/v1/decisions`, ranking in `plan.rs`); stored as `mapping_decision` nodes with `decision_on` edges by `artifact_ingest` (`port::MappingDecisionStore`); prototype project tab `components` (✓/✗ on a candidate); planned: decisions shared across an organization; #205, #206 |
+| `cpt-studio-fr-nfr-to-profile` | `studio-backend/src/spec_mapping/` (`reading::declared_requirements`, `plan::deployment_profile`, `nonfunctional` capabilities offer no gear); `/studio-spec-mapping/v1/requirements`; indexed by `documents` (`m0013`); prototype project tab `components` ("Use <profile>"); planned: `config` from requirements; #205 |
 | `cpt-studio-fr-ide-session` | `studio-backend/src/studio_session/`; `/studio-session/v1`; `theia/Dockerfile`, `theia/browser-app/`; prototype "Open Studio" launcher and `home` (live sessions) |
 | `cpt-studio-fr-theia-bridge` | `studio-backend/src/studio_theia/`; `/studio-theia/v1`; `theia/studio/src/node/studio-control-api.ts` |
 | `cpt-studio-fr-ide-product-surface` | `theia/studio/`, `theia/product-ext/`, `theia/drawio-editor/` |
@@ -961,7 +963,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
 | `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,types,field-schemas,profiles,activity}`; prototype `gears` |
 | `cpt-studio-fr-gear-scaffold` | `studio-backend/src/components_catalog/{scaffold,skeleton}.rs`; `/studio-components-catalog/v1/projects/{project_id}/{gear-repo,create-repo,scaffold}` |
-| `cpt-studio-fr-gearbox-product` | `studio-backend/src/components_catalog/gearbox.rs`; `/studio-components-catalog/v1/{gearbox,compose}`, `…/projects/{project_id}/product`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
+| `cpt-studio-fr-gearbox-product` | `studio-backend/src/components_catalog/gearbox.rs`; `/studio-components-catalog/v1/gearbox`, `/studio-spec-mapping/v1/plan`, `…/projects/{project_id}/product`; `theia/gearbox-studio/`, `theia/gdl-language/`; prototype project tab `components` |
 | `cpt-studio-fr-delivery-insight` | `studio-backend/src/insight/`; `/studio-insight/v1`; prototype `gears` component page |
 | `cpt-studio-fr-kits` | `studio-backend/src/kit_registry/`; `/studio-kits/v1`; `theia/studio/src/node/kit-installer.ts`; prototype project tab `components` |
 | `cpt-studio-fr-background-runs` | `studio-backend/src/tasks/`; `/studio-tasks/v1`; prototype `tasks` |
@@ -993,4 +995,4 @@ Platform gears that serve every requirement rather than one — `gear_orchestrat
 | AC8 | `studio-backend/src/documents/classify.rs`, `studio-backend/src/documents/validate.rs`; `cpt-studio-fr-repository-documents` |
 | AC9 | `studio-backend/src/studio_events/`, `studio-backend/src/tasks/`; `cpt-studio-fr-push-channel` |
 | AC10 | `studio-backend/src/api_contract.rs`; `cpt-studio-fr-api-contract` |
-| AC11 | planned: `studio-backend/src/components_catalog/compose.rs`; `cpt-studio-fr-spec-gear-mapping`, `cpt-studio-fr-mapping-decisions` |
+| AC11 | `studio-backend/src/spec_mapping/` (`GET /studio-spec-mapping/v1/plan`); `cpt-studio-fr-spec-gear-mapping`, `cpt-studio-fr-mapping-decisions` |
