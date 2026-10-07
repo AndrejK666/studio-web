@@ -453,6 +453,8 @@ through the per-item report — or normalize it, and say which in the contract.
 
 ## 8. Let the in-process client update a type
 
+*Filed: already tracked as constructorfabric/gears-rust#5021 (registration options on the contract, planned for Q1); our use case is [a comment there](https://github.com/constructorfabric/gears-rust/issues/5021#issuecomment-6032587024).*
+
 **Today.** 0.1.4 updates a registered type in place (item 3's status), and the
 domain service already exposes it as `register_types_with(ctx, batch,
 TypeRegistrationOptions)`. The client trait does not. `GraphStorageClientV1::
@@ -488,6 +490,8 @@ admitted on `project_nodes`.
 
 ## 9. Let a traversal go one way
 
+*Filed: constructorfabric/gears-rust#5239, spun out of the `direction` line in #5012.*
+
 **Today.** `TraverseRequest` has seeds, depth, edge and node type patterns and
 `max_nodes`. The walk always expands `Direction::Either` (`domain/traversal.rs`:
 *"Edges are treated as undirected for reachability"*), although the engine's
@@ -511,6 +515,8 @@ no edge. With `Incoming`: A. With `None`: A, as today.
 ---
 
 ## 10. Say which relation a traversed edge is
+
+*Filed: constructorfabric/gears-rust#5240.*
 
 **Today.** `EdgeSpec` and `EdgeView` carry `discriminator`, the value that keeps
 parallel edges of one type between one pair apart. `EdgeRef`, which `traverse`,
@@ -544,6 +550,8 @@ discriminator. With the filter `x`, only one comes back.
 ---
 
 ## 11. Narrow and bound a traversal per seed
+
+*Filed: constructorfabric/gears-rust#5241.*
 
 *Lower priority than 8–10. Each of those removes a wrong answer, and this one
 removes wasted work.*
