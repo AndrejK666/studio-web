@@ -12,6 +12,7 @@ import {
   DocumentTypesTab,
   DocumentsTab,
   DomainModelGraph,
+  ViewsScreen,
   GtsEntitiesTable,
   IdentityDirectory,
   LazyScreens,
@@ -493,6 +494,7 @@ type View =
   | "gears"
   | "reports"
   | "objects"
+  | "views"
   | "tasks"
   | "system"
   | "profile";
@@ -655,6 +657,9 @@ const NAV_SECTIONS: {
       // components is a judgement this organization makes here, not a constant
       // in a gear — so the two surfaces sit next to each other.
       { id: "objects", icon: "grid", label: "Objects" },
+      // Lists of the domain model's objects that people define and save as
+      // data (views.tsx): a new one is not a release.
+      { id: "views", icon: "grid", label: "Views" },
       // What the deployment is doing in the background, and what fires on its
       // own: studio-tasks runs plus studio-scheduler schedules.
       { id: "tasks", icon: "scan", label: "Background work" },
@@ -2549,6 +2554,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
+        {view === "views" && <ViewsScreen token={token} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
@@ -6004,6 +6010,31 @@ function SystemView({
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
+  // Objects whose scope names no project: authorization treats them as
+  // organization-wide (ADR-0035), so whoever owns the data should see them.
+  const [legacy, setLegacy] = useState<Awaited<ReturnType<typeof api.domainLegacyScopes>> | null>(null);
+  const onLegacyScopes = async () => {
+    setModelErr(null);
+    try {
+      setLegacy(await api.domainLegacyScopes(token));
+    } catch (e) {
+      setModelErr(errText(e));
+    }
+  };
+  // Changing the model needs `domain.model` (ADR-0035): an owner or a platform
+  // administrator on the tenant model. The server refuses everyone else, so the
+  // controls say so instead of failing. `null` until the answer arrives.
+  const [canEditModel, setCanEditModel] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .domainModelTypes(token)
+      .then((r) => alive && setCanEditModel(r.can_edit_model))
+      .catch(() => alive && setCanEditModel(false));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
 
   const onModelFile = async (file: File) => {
     setModelErr(null);
@@ -6172,22 +6203,57 @@ function SystemView({
           <input
             type="file"
             accept=".json,application/json"
-            disabled={modelBusy}
+            disabled={modelBusy || canEditModel !== true}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) void onModelFile(f);
             }}
           />
-          <button disabled={modelBusy || !modelImport} onClick={() => void onModelSync()}>
+          <button
+            disabled={modelBusy || !modelImport || canEditModel !== true}
+            onClick={() => void onModelSync()}
+          >
             Sync to graph
           </button>
           <button disabled={modelBusy} onClick={() => void onRegenerate()}>
             Regenerate frontend
           </button>
+          <button onClick={() => void onLegacyScopes()}>Check scopes</button>
           <button onClick={() => setShowGraph((v) => !v)}>
             {showGraph ? "Hide graph" : "View graph"}
           </button>
         </div>
+        {canEditModel === false && (
+          <p className="hint" style={{ marginTop: 10 }}>
+            Only the organization's owner (or whoever holds <code>domain.model</code>) can load or
+            sync a model. Viewing and regenerating stay open.
+          </p>
+        )}
+        {legacy && (
+          <div style={{ marginTop: 10 }}>
+            {legacy.total === 0 ? (
+              <p className="hint">
+                Every scoped object names a project ({legacy.scanned} objects read
+                {legacy.complete ? "" : ", not all of them"}).
+              </p>
+            ) : (
+              <>
+                <p className="hint">
+                  <b>{legacy.total}</b> objects carry a scope that is not a project, so no project
+                  grant reaches them; they are organization-wide
+                  {legacy.complete ? "" : ` (of the first ${legacy.scanned} read)`}.
+                </p>
+                <ul style={{ margin: 0, fontSize: 12 }}>
+                  {legacy.items.slice(0, 50).map((o) => (
+                    <li key={o.instance_id}>
+                      <code>{o.scope}</code> · {o.entity} · {o.name ?? o.instance_id}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
         {modelErr && (
           <p className="error" style={{ marginTop: 10 }}>
             {modelErr}

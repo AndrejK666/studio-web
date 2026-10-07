@@ -2,6 +2,8 @@ import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
+import type { DomainEntity } from "./domain-model.gen";
+import type { DomainQuery, DomainQueryResult } from "./domain-query";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -3099,7 +3101,11 @@ export const api = {
     }),
   /** The stored ontology (frontend-regen source). */
   domainModelTypes: (token: string) =>
-    request<{ ontology: { entities: unknown[]; buckets?: unknown[] } }>(
+    request<{
+      ontology: { entities: unknown[]; buckets?: unknown[] };
+      /** Whether this caller may change the model (`domain.model`, ADR-0035). */
+      can_edit_model: boolean;
+    }>(
       "/studio-domain-model/v1/types",
       token,
     ),
@@ -3109,6 +3115,42 @@ export const api = {
   /** Read the model graph back out of Graph Storage. */
   domainModelGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/model/graph", token),
+  /** Experimental: one type's objects filtered, ordered, projected, with
+   *  declared relations followed. Typed from the model (`domain-query.ts`), so
+   *  a field or relation the model lacks is a compile error, not a 400. */
+  queryDomain: <T extends DomainEntity>(token: string, query: DomainQuery<T>) =>
+    request<DomainQueryResult<T>>("/studio-domain-model/v1/query", token, {
+      method: "POST",
+      body: JSON.stringify(query),
+    }),
+  /** Create or replace one domain object: the same `type` + `key` (+ project)
+   *  is the same object, so saving again updates it. */
+  saveDomainObject: (
+    token: string,
+    body: {
+      type: string;
+      key: string;
+      project_id?: string;
+      validate?: "off" | "warn" | "strict";
+      value: Record<string, unknown>;
+    },
+  ) =>
+    request<{
+      type_id: string;
+      instance_id: string;
+      violations: { field: string; kind: string; detail: string }[];
+      undeclared: string[];
+    }>("/studio-domain-model/v1/objects", token, { method: "POST", body: JSON.stringify(body) }),
+  /** Objects written with a free-form scope rather than a project: no project
+   *  grant reaches them (ADR-0035). One bounded read; `complete` says whether
+   *  it saw everything. */
+  domainLegacyScopes: (token: string) =>
+    request<{
+      items: { instance_id: string; entity: string; name: string | null; scope: string }[];
+      total: number;
+      complete: boolean;
+      scanned: number;
+    }>("/studio-domain-model/v1/objects/legacy-scopes?limit=200", token),
   /** The instance graph: created objects and the relations between them. */
   domainObjectsGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),

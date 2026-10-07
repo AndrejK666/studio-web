@@ -351,6 +351,10 @@ jobs:
       # costs more than the second this takes, and a docs-only PR selects no
       # component job that could carry it.
       - run: node scripts/check-docs.mjs
+      # The prototype's domain-query types are generated from the domain
+      # model's seed. A model edit without the regenerated file would let the
+      # prototype compile queries the backend refuses.
+      - run: node scripts/gen-domain-client.mjs --check
 
   test-infra:
     needs: test-changes

@@ -46,7 +46,7 @@ pub const ROLE_OWNER: &str = "owner";
 /// purpose: projects are account-management tenants (ADR-0010), so reaching one
 /// is membership rather than a privilege, and an entry that must be granted to
 /// everybody in order not to break them is worse than no entry.
-pub const PRIVILEGES: [&str; 11] = [
+pub const PRIVILEGES: [&str; 14] = [
     "people.view",
     "people.invite",
     "people.manage",
@@ -58,6 +58,11 @@ pub const PRIVILEGES: [&str; 11] = [
     "document.view",
     "document.edit",
     "session.open",
+    // The domain model (ADR-0035): reading and writing its objects are row
+    // questions the PDP answers; changing the model is administration.
+    "domain.view",
+    "domain.edit",
+    "domain.model",
 ];
 
 /// The role ladder a fresh organization is seeded with (ADR-0019 §2).
@@ -83,6 +88,7 @@ pub(crate) fn default_roles() -> serde_json::Value {
         { "key": "editor", "name": "Editor", "system": true, "privileges": [
             "people.view", "document.view", "document.edit",
             "connector.view", "secret.view", "session.open",
+            "domain.view", "domain.edit",
         ] },
         { "key": "viewer", "name": "Viewer", "system": true, "privileges":
             PRIVILEGES.iter().filter(|p| p.ends_with(".view")).collect::<Vec<_>>() },

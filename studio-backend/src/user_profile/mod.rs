@@ -375,6 +375,41 @@ pub trait OrganizationReader: Send + Sync + 'static {
     fn membership_generation(&self) -> u64;
 }
 
+/// May the caller administer an organization: is one privilege theirs to use?
+///
+/// The administrative half of ADR-0019 §3, published so a gear other than this
+/// one asks the same question the same way, rather than re-deriving it from
+/// the access config and drifting from it. The answer is the platform
+/// administrator arm plus [`IdentityService::may_administer`]: ownership on any
+/// model, and the privilege on the roles model.
+///
+/// Never the PDP's to answer. On the `tenant` model its clamp admits every
+/// member, which is the widening this exists to prevent.
+#[async_trait]
+pub trait OrgAuthority: Send + Sync + 'static {
+    async fn may_administer(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+        privilege: &str,
+    ) -> bool;
+}
+
+#[async_trait]
+impl OrgAuthority for IdentityService {
+    async fn may_administer(
+        &self,
+        ctx: &SecurityContext,
+        org_id: uuid::Uuid,
+        privilege: &str,
+    ) -> bool {
+        IdentityService::is_platform_admin(self, &ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false)
+            || IdentityService::may_administer(self, ctx, org_id, privilege).await
+    }
+}
+
 #[async_trait]
 impl OrganizationReader for IdentityService {
     async fn organizations_of(&self, subject: &str) -> anyhow::Result<Vec<uuid::Uuid>> {
@@ -530,6 +565,11 @@ impl Gear for StudioUserGear {
             ctx.client_hub().register_scoped::<dyn OrganizationReader>(
                 ClientScope::gts_id(IDENTITY_INSTANCE_ID),
                 organizations,
+            );
+            let authority: Arc<dyn OrgAuthority> = svc.clone();
+            ctx.client_hub().register_scoped::<dyn OrgAuthority>(
+                ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                authority,
             );
             let roster: Arc<dyn OrganizationRoster> = svc;
             ctx.client_hub().register_scoped::<dyn OrganizationRoster>(

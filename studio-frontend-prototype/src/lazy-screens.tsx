@@ -45,6 +45,8 @@ export const SpecQuality = lazy(() =>
 
 /* ── Admin and object screens ────────────────────────────────────────────── */
 
+/** Saved views over the domain model (views.tsx). */
+export const ViewsScreen = lazy(() => import("./views").then((m) => ({ default: m.ViewsScreen })));
 export const DomainModelGraph = lazy(() =>
   import("./domain-model-graph").then((m) => ({ default: m.DomainModelGraph })),
 );

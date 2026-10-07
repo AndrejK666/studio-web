@@ -41,6 +41,7 @@ export const VIEW_PATHS = {
   gears: "components",
   reports: "reports",
   objects: "objects",
+  views: "views",
   tasks: "background-work",
   system: "system",
   profile: "profile",

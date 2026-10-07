@@ -54,6 +54,7 @@ repository.
 - [frontend-handover-hardcode.md](frontend-handover-hardcode.md) — what the prototype knows that the contract does not tell it.
 - [concept-v2-project-is-the-unit.md](concept-v2-project-is-the-unit.md) — an exploration, not accepted.
 - [domain-alignment.md](domain-alignment.md) — the portal against the Studio product domain model.
+- [domain-query-migration.md](domain-query-migration.md) — moving the portal onto the domain-model query, step by step, and what each step waits on in graph-storage.
 - [roadmap-alignment.md](roadmap-alignment.md) — the Q3 roadmap against what the prototype has de-risked.
 - [gear-intelligence-sync.md](gear-intelligence-sync.md) — importing delivery evidence for the gear catalogue.
 - [kit-registry-prototype.md](kit-registry-prototype.md) — the kit registry's prototype slice.

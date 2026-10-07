@@ -34,19 +34,26 @@ interface GNode {
 interface GLink { s: GNode; t: GNode; k: "i" | "d"; type: string; payload: Record<string, unknown>; }
 
 interface RawNode { key: string; name: string; payload: Record<string, unknown>; }
-interface RawEdge { type_id: string; from: string; to: string; payload?: Record<string, unknown>; }
-interface RawObj { instance_id: string; entity: string; bucket: string; name: string; value: Record<string, unknown>; }
+export interface RawEdge { type_id: string; from: string; to: string; payload?: Record<string, unknown>; }
+export interface RawObj { instance_id: string; entity: string; bucket: string; name: string; value: Record<string, unknown>; }
 
 interface Ctrl { select: (key: string | null) => void; clearEdge: () => void; }
 
-export function DomainModelGraph({ token }: { token: string }) {
+/** Objects to draw instead of the stored instance graph: what a saved view
+ *  returns (views.tsx). `key` changes when the objects would. */
+export interface GraphSource {
+  key: string;
+  load: () => Promise<{ nodes: RawObj[]; edges: RawEdge[] }>;
+}
+
+export function DomainModelGraph({ token, source }: { token: string; source?: GraphSource }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctrlRef = useRef<Ctrl | null>(null);
   const nodesRef = useRef<Map<string, GNode>>(new Map());
   const filterRef = useRef({ i: true, d: true, off: new Set<string>(), q: "", focus: false });
 
-  const [mode, setMode] = useState<"types" | "instances">("types");
+  const [mode, setMode] = useState<"types" | "instances">(source ? "instances" : "types");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState({ n: 0, i: 0, d: 0 });
@@ -67,7 +74,9 @@ export function DomainModelGraph({ token }: { token: string }) {
       let rawLinks: { from: string; to: string; k: "i" | "d"; type: string; payload: Record<string, unknown> }[];
       try {
         if (mode === "instances") {
-          const raw = (await api.domainObjectsGraph(token)) as unknown as { nodes: RawObj[]; edges: RawEdge[] };
+          const raw = source
+            ? await source.load()
+            : ((await api.domainObjectsGraph(token)) as unknown as { nodes: RawObj[]; edges: RawEdge[] });
           nodes = raw.nodes.map((n) => ({
             key: n.instance_id, id: n.entity, name: n.name || n.instance_id, bucket: n.bucket,
             ext: null, abstract: false, fields: 0, rels: 0, props: n.value ?? {},
@@ -342,7 +351,8 @@ export function DomainModelGraph({ token }: { token: string }) {
     })();
 
     return () => { disposed = true; cancelAnimationFrame(raf); cleanup.forEach((f) => f()); };
-  }, [token, mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `source.key` stands for `source`
+  }, [token, mode, source?.key]);
 
   const repaint = () => force((x) => x + 1);
   const setFilter = (patch: Partial<typeof filterRef.current>) => { Object.assign(filterRef.current, patch); repaint(); };
@@ -357,10 +367,12 @@ export function DomainModelGraph({ token }: { token: string }) {
       <style>{DMG_CSS}</style>
       <canvas ref={canvasRef} className="dmg-canvas" />
       <div className="dmg-bar">
-        <span className="dmg-mode">
-          <button className={mode === "types" ? "on" : ""} onClick={() => setMode("types")}>Types</button>
-          <button className={mode === "instances" ? "on" : ""} onClick={() => setMode("instances")}>Instances</button>
-        </span>
+        {!source && (
+          <span className="dmg-mode">
+            <button className={mode === "types" ? "on" : ""} onClick={() => setMode("types")}>Types</button>
+            <button className={mode === "instances" ? "on" : ""} onClick={() => setMode("instances")}>Instances</button>
+          </span>
+        )}
         <span className="dmg-counts">
           {mode === "instances"
             ? <><b>{counts.n}</b> objects · <b>{counts.d}</b> relations</>
@@ -376,7 +388,9 @@ export function DomainModelGraph({ token }: { token: string }) {
       {error && <div className="dmg-msg dmg-err">{error}</div>}
       {!loading && !error && counts.n === 0 && (
         <div className="dmg-msg">
-          {mode === "instances"
+          {source
+            ? "Nothing matches this view."
+            : mode === "instances"
             ? "No objects yet — create some in the panel above, then relate them."
             : "Model is empty — run Sync to graph first."}
         </div>

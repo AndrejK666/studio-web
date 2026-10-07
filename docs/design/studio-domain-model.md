@@ -222,7 +222,7 @@ version.
 
 ##### Responsibility boundaries
 
-Does not authorize; the gateway and the graph's tenant scope do.
+Does not decide who may read or write an object; the access component asks the PDP (ADR-0035).
 
 ##### Related components (by ID)
 
@@ -256,6 +256,51 @@ Targets naming an entity outside the loaded buckets are reported by `GET
 
 - `cpt-studio-component-graph-storage` — writes edges to
 
+#### Access
+
+- [x] `p2` - **ID**: `cpt-studio-component-domain-model-access`
+
+##### Why this component exists
+
+Every member of an organization could read and write every object and rewrite
+the model. That is acceptable for the model's own types. It is not acceptable
+for the first screen that keeps somebody's data in the model (ADR-0035).
+
+##### Responsibility scope
+
+`access.rs`, and the two gates in `rest.rs`.
+
+- **Objects.** The gear is a policy enforcement point for
+  `gts.cf.studio.domain.object.v1~`. `read` maps to `domain.view` and `write`
+  to `domain.edit`, with tenant hierarchy declared. It asks once per action per
+  request and evaluates the constraints per object. An object's owner is its
+  project tenant (`_scope` holding a tenant id), or the organization when it has
+  none.
+  - A query applies the answer at the root, at every `include` level, and before
+    `total`.
+  - Relating needs `write` on the source and `read` on the target.
+  - A refusal is a 403 (`DOMAIN_OBJECT_ACCESS_DENIED`), an authorization outage
+    a 503.
+- **The model.** Field edits, import, sync and revert need `domain.model` through
+  studio-user's `OrgAuthority`: a platform administrator, the owner, or, on the
+  roles model, the privilege. A refusal is `DOMAIN_MODEL_ADMIN_REQUIRED`.
+  `GET /types` reports `can_edit_model`.
+
+##### Responsibility boundaries
+
+Evaluation fails closed:
+- a filter on a property other than `owner_tenant_id` excludes;
+- so does a subtree arm with a status narrowing;
+- so does a project whose parent cannot be read.
+
+Graph-storage keeps fencing the tenant, since its node resource carries nothing
+else.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-authz-plugin` — asks
+- `cpt-studio-component-access-config` — reads, through studio-user
+
 #### Field migration and conformance
 
 - [x] `p2` - **ID**: `cpt-studio-component-domain-model-migration`
@@ -287,6 +332,47 @@ error.
 
 - `cpt-studio-component-graph-storage` — rewrites nodes in
 
+#### Query (experimental)
+
+- [ ] `p3` - **ID**: `cpt-studio-component-domain-model-query`
+
+##### Why this component exists
+
+A screen on `GET /objects` lists a type, filters it in the browser and reads
+the graph again for every relation it shows, so each change to the screen is
+a change to how it reads the backend. A query lets the screen say what it
+shows — the shape of a Hasura request over the model's own types — and the
+gear answers it. It sits beside `GET /objects` and `GET /objects/graph`, which
+keep working unchanged; screens move to it one at a time, and it stops being
+experimental when the first of them has.
+
+##### Responsibility scope
+
+`query.rs`. `POST /query` takes a type, a `where` (`_eq _neq _gt _gte _lt _lte
+_in _nin _contains _is_null`, combined with `_and _or _not`), `order_by`,
+`fields`, `offset`/`limit`, and `include`: relations by their declared name,
+each with the same options, nested up to three levels. Every field and
+relation is checked against the model first, and a wrong one is a 400 naming
+what the type has. Each included relation costs one typed traversal per
+level, for all parent rows together, which returns the payloads with it.
+
+##### Responsibility boundaries
+
+Filtering runs in the gear over at most 5,000 objects of the type, because
+domain types declare no payload indexes: graph-storage fixes a type's indexes
+at first registration and a domain type has to stay open to new fields.
+`complete` says whether the read saw every object. A relation is followed from
+its declaring side only. An edge does not say which declared relation it is,
+so two relations of one verb between overlapping types come back together;
+the answer's `warnings` names them. What the caller may read is applied at the
+root, at every `include` level and before `total` (the access component). What
+lifts each of these, and in what order screens move
+onto the query, is [the migration plan](../domain-query-migration.md).
+
+##### Related components (by ID)
+
+- `cpt-studio-component-graph-storage` — reads nodes and traverses edges in
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-domain-model-rest`
@@ -303,9 +389,11 @@ error.
 | `GET` | `/types/{id}` | One type with everything it inherits, and its relations | unstable |
 | `POST` | `/types/{id}/fields` | Add a field | unstable |
 | `PATCH` `DELETE` | `/types/{id}/fields/{name}` | Rename (with migration), retype, require; drop | unstable |
-| `GET` | `/types/{id}/conformance` | How stored objects measure up against the type | unstable |
+| `GET` | `/types/{id}/conformance` | How stored objects measure up against the type, over the objects the caller may read | unstable |
+| `GET` | `/objects/legacy-scopes` | Objects whose scope names no project, so no project grant reaches them (ADR-0035) | unstable |
 | `POST` `GET` | `/objects` | Create or upsert an object (`validate`, `if_absent`); list by `type` | unstable |
 | `GET` | `/objects/graph` | Objects and their relations, `limit` 500 by default and at most 5,000, with `truncated` | unstable |
+| `POST` | `/query` | One type's objects filtered, ordered, projected, with declared relations followed (see the query component) | experimental |
 | `GET` `POST` | `/relations` | The relation catalogue with endpoint typing and `unresolved`; relate two objects | unstable |
 | `POST` | `/model/sync` | Store the model's structure as a graph; reports `version` and `pinned_types` | unstable |
 | `POST` | `/model/import` | Replace the active ontology with an uploaded document and register its types | unstable |
