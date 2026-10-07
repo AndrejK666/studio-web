@@ -20,9 +20,12 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::mirror::MirrorSummaryDto;
+use super::people_links::{self, PlanPeopleDto};
+use super::plan_edit::{self, LanesDto, NeedDto, PersonDto, ProjectDto, Section, UnitDto};
 use super::refresh_task::{RefreshPayload, TASK_TYPE};
 use super::roadmap::summary::RoadmapReportDto;
-use super::service::{REPORTS, ReportKind, ReportsService, kind};
+use super::service::{PlanEditError, REPORTS, ReportKind, ReportsService, kind};
 use super::source::{PlanSnapshot, Refresh, ReportSource};
 use crate::components_catalog::port::unread_boards;
 use crate::org_scope::{OrgAccess, OrgCtx};
@@ -462,6 +465,10 @@ async fn update_report_source(
 ) -> ApiResult<JsonBody<ReportSourceDto>> {
     let k = report(&id)?;
     let prev = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    let imported = input
+        .plan_yaml
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty());
     let saved = reports
         .service
         .save_source(&ctx, apply(&prev, input))
@@ -471,6 +478,9 @@ async fn update_report_source(
                 .with_constraint(e)
                 .create()
         })?;
+    if imported {
+        mirror_in_background(&reports, &ctx, k.id);
+    }
     Ok(Json(reports.source_dto(&ctx, &saved).await))
 }
 
@@ -566,6 +576,328 @@ async fn update_report_schedule(
                 .create()
         })?;
     Ok(Json(schedule_dto(Some(v))))
+}
+
+// ── the plan, edited here ───────────────────────────────────────────────────
+
+/// The report's plan, in the sections the screen edits.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlanDto {
+    /// What a save is made against: a save at another revision is a 409.
+    /// 0 for a source with no plan yet.
+    pub revision: u64,
+    /// Where it came from: `studio` once edited here, `upload`, or the file.
+    pub from: Option<String>,
+    /// RFC 3339: read, uploaded or last edited.
+    pub changed_at: Option<String>,
+    /// The subject id of whoever changed it last here.
+    pub changed_by: Option<String>,
+    /// The file it is read from, while it is; the first save here lets it go.
+    pub file: Option<String>,
+    pub lanes: LanesDto,
+    pub units: Vec<UnitDto>,
+    /// The colour of a person in no unit.
+    pub no_unit_color: Option<String>,
+    pub people: Vec<PersonDto>,
+    pub projects: Vec<ProjectDto>,
+    pub needs: Vec<NeedDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PlanLanesInputDto {
+    pub revision: u64,
+    pub lanes: LanesDto,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PlanUnitsInputDto {
+    pub revision: u64,
+    pub units: Vec<UnitDto>,
+    pub no_unit_color: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PlanPeopleInputDto {
+    pub revision: u64,
+    pub people: Vec<PersonDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PlanProjectsInputDto {
+    pub revision: u64,
+    pub projects: Vec<ProjectDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PlanNeedsInputDto {
+    pub revision: u64,
+    pub needs: Vec<NeedDto>,
+}
+
+pub fn plan_dto(source: &ReportSource, doc: &serde_yaml::Value) -> PlanDto {
+    let s = plan_edit::read(doc);
+    let snap = source.snapshot.as_ref();
+    PlanDto {
+        revision: snap.map_or(0, |s| s.revision),
+        from: snap.map(|s| s.from.clone()),
+        changed_at: snap.map(|s| s.read_at.clone()),
+        changed_by: snap.and_then(|s| s.edited_by.clone()),
+        file: source.plan_file.clone().filter(|f| !f.trim().is_empty()),
+        lanes: s.lanes,
+        units: s.units,
+        no_unit_color: s.no_unit_color,
+        people: s.people,
+        projects: s.projects,
+        needs: s.needs,
+    }
+}
+
+async fn get_report_plan(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    let k = report(&id)?;
+    let (source, doc) = reports
+        .service
+        .plan_document(&ctx, k.id)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    Ok(Json(plan_dto(&source, &doc)))
+}
+
+async fn save_section(
+    ctx: &SecurityContext,
+    reports: &Reports,
+    id: &str,
+    revision: u64,
+    section: Section,
+) -> ApiResult<JsonBody<PlanDto>> {
+    let k = report(id)?;
+    // Only these two sections are mirrored into the domain model.
+    let mirrored = matches!(section, Section::Units { .. } | Section::People(_));
+    let saved = reports
+        .service
+        .edit_plan(ctx, k.id, revision, section)
+        .await
+        .map_err(|e| match e {
+            PlanEditError::Stale { current } => StudioReportsError::aborted(format!(
+                "the plan changed since revision {revision}; it is at {current} -- read it again"
+            ))
+            .with_reason("PLAN_REVISION_STALE")
+            .create(),
+            PlanEditError::Invalid(m) => StudioReportsError::invalid_argument()
+                .with_constraint(m)
+                .create(),
+            PlanEditError::Other(e) => internal(format!("{e:#}")),
+        })?;
+    let (_, doc) = reports
+        .service
+        .plan_document(ctx, k.id)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    if mirrored {
+        mirror_in_background(reports, ctx, k.id);
+    }
+    Ok(Json(plan_dto(&saved, &doc)))
+}
+
+/// Mirror the plan's teams into the domain model after a save, without making
+/// the save wait for it: a failure is logged, and `POST …/plan/sync` says why.
+fn mirror_in_background(reports: &Reports, ctx: &SecurityContext, report: &'static str) {
+    let service = Arc::clone(&reports.service);
+    let ctx = ctx.clone();
+    tokio::spawn(async move {
+        match service.mirror(&ctx, report).await {
+            Ok(s) => tracing::info!(
+                report,
+                written = s.written,
+                unchanged = s.unchanged,
+                retired = s.retired,
+                skipped = s.skipped.len(),
+                "studio-reports: plan mirrored into the domain model"
+            ),
+            Err(e) => tracing::warn!(
+                report,
+                error = %format!("{e:#}"),
+                "studio-reports: plan not mirrored into the domain model"
+            ),
+        }
+    });
+}
+
+/// Mirror the plan's teams into the domain model now, and say what it did.
+async fn sync_report_plan(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<MirrorSummaryDto>> {
+    let k = report(&id)?;
+    reports
+        .service
+        .mirror(&ctx, k.id)
+        .await
+        .map(Json)
+        .map_err(|e| internal(format!("{e:#}")))
+}
+
+async fn update_report_plan_lanes(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<PlanLanesInputDto>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    save_section(
+        &ctx,
+        &reports,
+        &id,
+        input.revision,
+        Section::Lanes(input.lanes),
+    )
+    .await
+}
+
+async fn update_report_plan_units(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<PlanUnitsInputDto>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    let section = Section::Units {
+        units: input.units,
+        no_unit_color: input.no_unit_color,
+    };
+    save_section(&ctx, &reports, &id, input.revision, section).await
+}
+
+async fn update_report_plan_people(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<PlanPeopleInputDto>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    save_section(
+        &ctx,
+        &reports,
+        &id,
+        input.revision,
+        Section::People(input.people),
+    )
+    .await
+}
+
+async fn update_report_plan_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<PlanProjectsInputDto>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    save_section(
+        &ctx,
+        &reports,
+        &id,
+        input.revision,
+        Section::Projects(input.projects),
+    )
+    .await
+}
+
+async fn update_report_plan_needs(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+    Json(input): Json<PlanNeedsInputDto>,
+) -> ApiResult<JsonBody<PlanDto>> {
+    save_section(
+        &ctx,
+        &reports,
+        &id,
+        input.revision,
+        Section::Needs(input.needs),
+    )
+    .await
+}
+
+/// The plan's people matched to Studio's, and the members the plan misses.
+async fn get_report_plan_people(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<JsonBody<PlanPeopleDto>> {
+    let k = report(&id)?;
+    let (_, doc) = reports
+        .service
+        .plan_document(&ctx, k.id)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    let people = plan_edit::read(&doc).people;
+    let scope = ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID);
+    let resolver = reports
+        .hub
+        .get_scoped::<dyn crate::user_profile::AliasResolver>(&scope);
+    let roster = reports
+        .hub
+        .get_scoped::<dyn crate::user_profile::OrganizationRoster>(&scope);
+    let (Ok(resolver), Ok(roster)) = (resolver, roster) else {
+        // Without studio-user nobody can be matched; say so rather than
+        // answer every person as unknown.
+        let mut out = people_links::link(
+            &people,
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        );
+        out.identities_available = false;
+        return Ok(Json(out));
+    };
+    let logins: Vec<String> = people.iter().map(|p| people_links::key(&p.login)).collect();
+    let owners = resolver
+        .confirmed_owners("github", &logins)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    let members: std::collections::BTreeSet<String> = roster
+        .active_members(ctx.subject_tenant_id())
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?
+        .into_iter()
+        .map(|m| m.person)
+        .collect();
+    let member_ids: Vec<String> = members.iter().cloned().collect();
+    let held = resolver
+        .confirmed_identities("github", &member_ids)
+        .await
+        .map_err(|e| internal(format!("{e:#}")))?;
+    Ok(Json(people_links::link(&people, &owners, &members, &held)))
+}
+
+/// The plan as `gears.yaml`, for the planning script or a backup.
+async fn export_report_plan(
+    OrgCtx(ctx): OrgCtx,
+    Extension(reports): Extension<Reports>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let k = report(&id)?;
+    let source = reports.service.source(&ctx, k.id).await.map_err(internal)?;
+    let snap = source.snapshot.ok_or_else(|| {
+        StudioReportsError::not_found(format!("the {} report has no plan yet", k.id))
+            .with_resource(k.id)
+            .create()
+    })?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/yaml")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            "attachment; filename=\"gears.yaml\"",
+        )
+        .body(axum::body::Body::from(snap.text))
+        .map_err(internal)
 }
 
 // ── routes ──────────────────────────────────────────────────────────────────
@@ -793,6 +1125,231 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/plan")
+        .operation_id("studio_reports.get_report_plan")
+        .summary("The report's plan, in the sections the Reports screen edits")
+        .description(
+            "The planning team's `gears.yaml` as this organization keeps it: the group lanes, \
+             the units and their teams, the people (GitHub login, alias, team, power, email), \
+             the consumer projects and, per gear, when each project needs it -- each in the \
+             document's order, which is the order the workbook draws. `revision` is what a save \
+             is made against; a source with no plan yet answers an empty one at revision 0.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_plan)
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The plan")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/plan/lanes")
+        .operation_id("studio_reports.update_report_plan_lanes")
+        .summary("Save the plan's group lanes: their order and names")
+        .description(
+            "When the order or the names of the Roadmap sheet's group lanes change. Replaces this one section of the plan and keeps every other key of \
+             the document, in its place, and the fields of an entry this section does not name. \
+             The whole plan has to hold together afterwards -- a person's team is a team, a \
+             need's project is a project, a team tag is in one unit -- or nothing is saved and \
+             the 400 lists every reason. Made against `revision`: a plan saved since is a 409 \
+             (`aborted`). The first save here makes Studio the plan's home: the file it was \
+             read from is let go, and a refresh no longer reads it.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_plan_lanes)
+        .json_request::<PlanLanesInputDto>(openapi, "The lanes, and the revision they were read at")
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The saved plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/plan/units")
+        .operation_id("studio_reports.update_report_plan_units")
+        .summary("Save the plan's units and their teams")
+        .description(
+            "When a unit or a team is added, renamed, recoloured or resized. Replaces this one section of the plan and keeps every other key of \
+             the document, in its place, and the fields of an entry this section does not name. \
+             The whole plan has to hold together afterwards -- a person's team is a team, a \
+             need's project is a project, a team tag is in one unit -- or nothing is saved and \
+             the 400 lists every reason. Made against `revision`: a plan saved since is a 409 \
+             (`aborted`). The first save here makes Studio the plan's home: the file it was \
+             read from is let go, and a refresh no longer reads it.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_plan_units)
+        .json_request::<PlanUnitsInputDto>(openapi, "The units, and the revision they were read at")
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The saved plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/plan/people")
+        .operation_id("studio_reports.update_report_plan_people")
+        .summary("Save the plan's people: login, alias, team, power and email")
+        .description(
+            "When someone joins, leaves, moves team or changes how much of their time the plan counts on. Replaces this one section of the plan and keeps every other key of \
+             the document, in its place, and the fields of an entry this section does not name. \
+             The whole plan has to hold together afterwards -- a person's team is a team, a \
+             need's project is a project, a team tag is in one unit -- or nothing is saved and \
+             the 400 lists every reason. Made against `revision`: a plan saved since is a 409 \
+             (`aborted`). The first save here makes Studio the plan's home: the file it was \
+             read from is let go, and a refresh no longer reads it.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_plan_people)
+        .json_request::<PlanPeopleInputDto>(
+            openapi,
+            "The people, and the revision they were read at",
+        )
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The saved plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/plan/projects")
+        .operation_id("studio_reports.update_report_plan_projects")
+        .summary("Save the plan's consumer projects: the needs' columns")
+        .description(
+            "When a consumer project is added, renamed or reordered: the needs' columns. Replaces this one section of the plan and keeps every other key of \
+             the document, in its place, and the fields of an entry this section does not name. \
+             The whole plan has to hold together afterwards -- a person's team is a team, a \
+             need's project is a project, a team tag is in one unit -- or nothing is saved and \
+             the 400 lists every reason. Made against `revision`: a plan saved since is a 409 \
+             (`aborted`). The first save here makes Studio the plan's home: the file it was \
+             read from is let go, and a refresh no longer reads it.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_plan_projects)
+        .json_request::<PlanProjectsInputDto>(
+            openapi,
+            "The projects, and the revision they were read at",
+        )
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The saved plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-reports/v1/reports/{report_id}/plan/needs")
+        .operation_id("studio_reports.update_report_plan_needs")
+        .summary("Save the plan's needs: per gear, when each project needs it")
+        .description(
+            "When a project's date for a gear changes, or a gear is added to the needs. Replaces this one section of the plan and keeps every other key of \
+             the document, in its place, and the fields of an entry this section does not name. \
+             The whole plan has to hold together afterwards -- a person's team is a team, a \
+             need's project is a project, a team tag is in one unit -- or nothing is saved and \
+             the 400 lists every reason. Made against `revision`: a plan saved since is a 409 \
+             (`aborted`). The first save here makes Studio the plan's home: the file it was \
+             read from is let go, and a refresh no longer reads it.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(update_report_plan_needs)
+        .json_request::<PlanNeedsInputDto>(openapi, "The needs, and the revision they were read at")
+        .json_response_with_schema::<PlanDto>(openapi, StatusCode::OK, "The saved plan")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/plan/people")
+        .operation_id("studio_reports.get_report_plan_people")
+        .summary("The plan's people matched to Studio's, and the members it misses")
+        .description(
+            "When planning who works on what: each person in the plan with the Studio person \
+             whose confirmed GitHub account their login is, and whether that person is an \
+             active member of this organization; then the members with a confirmed GitHub \
+             account the plan does not list, and how many members have none. Only confirmed \
+             accounts link anybody (ADR-0012), and nothing is stored: a person who confirms \
+             their account is linked from then on. `identities_available` is false when \
+             studio-user is not running, and nobody can be matched.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(get_report_plan_people)
+        .json_response_with_schema::<PlanPeopleDto>(openapi, StatusCode::OK, "The plan's people")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-reports/v1/reports/{report_id}/plan/sync")
+        .operation_id("studio_reports.sync_report_plan")
+        .summary("Mirror the plan's units, teams, people and memberships into the domain model")
+        .description(
+            "When the domain model should show what the plan says now -- after an outage, or \n             to see what a publish does. A save of the units or the people does the same in \n             the background. Units become `org-unit`s, teams `team`s, people `person`s keyed \n             by GitHub login, and a person in a team a `membership` whose `allocation` is \n             their power, all `mirrored`, as the caller (`domain.edit`, ADR-0035). Only what \n             changed is written; what left the plan is retired with `valid_to`, never \n             deleted. Answers what it wrote, left, retired and skipped.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(sync_report_plan)
+        .json_response_with_schema::<MirrorSummaryDto>(openapi, StatusCode::OK, "What the publish did")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-reports/v1/reports/{report_id}/plan/yaml")
+        .operation_id("studio_reports.export_report_plan")
+        .summary("The plan as gears.yaml")
+        .description(
+            "The plan's text as the source keeps it: what the planning script reads, and the \
+             backup of what is edited here. Uploading it as the source's plan brings it back. \
+             404 when the report has no plan yet.",
+        )
+        .tag("StudioReports")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .path_param("report_id", "The report (`roadmap`)")
+        .handler(export_report_plan)
+        .text_response(StatusCode::OK, "The plan", "application/yaml")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router
         .layer(Extension(Reports { service, hub }))
         .layer(Extension(OrgAccess(access)))
@@ -855,6 +1412,7 @@ mod tests {
             from: "upload".into(),
             sha: None,
             read_at: "t".into(),
+            ..PlanSnapshot::default()
         });
         let dto = source_dto(&s);
         assert!(dto.plan_uploaded);
@@ -893,6 +1451,7 @@ mod tests {
                 from: "upload".into(),
                 sha: None,
                 read_at: "t".into(),
+                ..PlanSnapshot::default()
             }),
             ..ReportSource::default()
         };
@@ -914,6 +1473,7 @@ mod tests {
                 from: "upload".into(),
                 sha: None,
                 read_at: "t".into(),
+                ..PlanSnapshot::default()
             }),
             ..ReportSource::default()
         };

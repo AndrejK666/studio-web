@@ -16,12 +16,27 @@ use uuid::Uuid;
 
 use super::definition::Definition;
 use super::github::PlanReader;
+use super::mirror::{self, MirrorSummaryDto};
+use super::plan_edit::{self, Section};
 use super::roadmap::plan::{Plan, parse as parse_plan};
 use super::roadmap::summary::{ComponentValues, RoadmapReportDto, build as build_summary};
 use super::roadmap::workbook;
-use super::source::{Effective, PlanSnapshot, Refresh, ReportSource};
+use super::source::{Effective, FROM_STUDIO, PlanSnapshot, Refresh, ReportSource};
+
+/// Why a plan edit was not saved.
+#[derive(Debug)]
+pub enum PlanEditError {
+    /// Somebody saved since the caller read it.
+    Stale {
+        current: u64,
+    },
+    /// The plan would not hold together, with every reason.
+    Invalid(String),
+    Other(anyhow::Error),
+}
 use super::store::ReportStore;
 use crate::components_catalog::port::{BoardSource, RoadmapCatalog, RoadmapFields};
+use crate::domain_model::port::DomainObjects;
 use crate::scheduler::port::{ScheduleSpec, ScheduleView, Schedules};
 
 /// A report this deployment can draw.
@@ -54,6 +69,10 @@ pub type CatalogLink = Arc<dyn Fn() -> Result<Arc<dyn RoadmapCatalog>> + Send + 
 /// Where the scheduler is reached, likewise.
 pub type SchedulesLink = Arc<dyn Fn() -> Result<Arc<dyn Schedules>> + Send + Sync>;
 
+/// Where the domain model is reached, likewise: the plan's teams are mirrored
+/// into it (`mirror.rs`).
+pub type DomainLink = Arc<dyn Fn() -> Result<Arc<dyn DomainObjects>> + Send + Sync>;
+
 /// Hourly, on the hour.
 pub const HOURLY: &str = "0 * * * *";
 
@@ -62,6 +81,7 @@ pub struct ReportsService {
     catalog: CatalogLink,
     reader: Option<Arc<dyn PlanReader>>,
     schedules: Option<SchedulesLink>,
+    domain: Option<DomainLink>,
 }
 
 fn now() -> String {
@@ -81,6 +101,7 @@ impl ReportsService {
             catalog,
             reader,
             schedules: None,
+            domain: None,
         }
     }
 
@@ -111,13 +132,20 @@ impl ReportsService {
             .await
             .map_err(|e| format!("{e:#}"))?;
         next.last_refresh = prev.last_refresh.clone();
-        let uploaded = |s: &Option<PlanSnapshot>| s.as_ref().is_some_and(|s| s.from == "upload");
+        // Uploaded or edited here: a plan no file stands behind.
+        let uploaded = |s: &Option<PlanSnapshot>| {
+            s.as_ref()
+                .is_some_and(|s| s.from == "upload" || s.from == FROM_STUDIO)
+        };
+        let revision = prev.snapshot.as_ref().map_or(0, |s| s.revision) + 1;
         next.snapshot = match next.plan_yaml.take() {
             Some(text) if !text.trim().is_empty() => Some(PlanSnapshot {
                 text: text.trim().to_string(),
                 from: "upload".into(),
                 sha: None,
                 read_at: now(),
+                revision,
+                edited_by: Some(ctx.subject_id().to_string()),
             }),
             // Taken back: what was uploaded is no longer the plan.
             Some(_) if uploaded(&prev.snapshot) => None,
@@ -130,6 +158,60 @@ impl ReportsService {
             .await
             .map_err(|e| format!("{e:#}"))?;
         Ok(next)
+    }
+
+    /// The plan as a document, and the source it is on. A source with no plan
+    /// yet answers an empty one at revision 0, which a first save starts.
+    pub async fn plan_document(
+        &self,
+        ctx: &SecurityContext,
+        report: &str,
+    ) -> Result<(ReportSource, Yaml)> {
+        let source = self.source(ctx, report).await?;
+        let doc = match &source.snapshot {
+            Some(s) => parse_plan(&s.text).map_err(|e| anyhow!("the plan is not YAML: {e}"))?,
+            None => Yaml::Mapping(serde_yaml::Mapping::new()),
+        };
+        Ok((source, doc))
+    }
+
+    /// Save one section of the plan, made against `revision`.
+    ///
+    /// The plan's home is Studio from here on: the file it was read from is
+    /// let go, so the next refresh does not read it over this edit.
+    pub async fn edit_plan(
+        &self,
+        ctx: &SecurityContext,
+        report: &str,
+        revision: u64,
+        section: Section,
+    ) -> Result<ReportSource, PlanEditError> {
+        let (mut source, mut doc) = self
+            .plan_document(ctx, report)
+            .await
+            .map_err(PlanEditError::Other)?;
+        let current = source.snapshot.as_ref().map_or(0, |s| s.revision);
+        if revision != current {
+            return Err(PlanEditError::Stale { current });
+        }
+        plan_edit::apply(&mut doc, section).map_err(PlanEditError::Invalid)?;
+        plan_edit::validate(&doc).map_err(PlanEditError::Invalid)?;
+        let text = plan_edit::to_text(&doc).map_err(PlanEditError::Invalid)?;
+        source.report = report.to_string();
+        source.plan_file = None;
+        source.snapshot = Some(PlanSnapshot {
+            text,
+            from: FROM_STUDIO.into(),
+            sha: None,
+            read_at: now(),
+            revision: current + 1,
+            edited_by: Some(ctx.subject_id().to_string()),
+        });
+        self.store
+            .put(ctx, &source)
+            .await
+            .map_err(PlanEditError::Other)?;
+        Ok(source)
     }
 
     /// The plan the report is drawn with: the last one read.
@@ -158,6 +240,31 @@ impl ReportsService {
     /// Read the plan again and queue a sync of the board: what keeps a
     /// report current. Records what it did on the source either way.
     /// Where the scheduler is: a deployment without it has no schedules.
+    /// Where the domain model is: a deployment without it mirrors nothing.
+    pub fn with_domain(mut self, link: DomainLink) -> Self {
+        self.domain = Some(link);
+        self
+    }
+
+    /// Mirror the report's plan into the domain model: its units, teams,
+    /// people and memberships, as the caller.
+    pub async fn mirror(&self, ctx: &SecurityContext, report: &str) -> Result<MirrorSummaryDto> {
+        let link = self
+            .domain
+            .as_ref()
+            .ok_or_else(|| anyhow!("the domain model is not part of this deployment"))?;
+        let objects = link()?;
+        let (_, doc) = self.plan_document(ctx, report).await?;
+        mirror::publish(
+            objects.as_ref(),
+            ctx,
+            report,
+            &plan_edit::read(&doc),
+            &now(),
+        )
+        .await
+    }
+
     pub fn with_schedules(mut self, link: SchedulesLink) -> Self {
         self.schedules = Some(link);
         self
@@ -266,11 +373,14 @@ impl ReportsService {
                     file.display()
                 ));
             }
+            let revision = source.snapshot.as_ref().map_or(0, |s| s.revision) + 1;
             source.snapshot = Some(PlanSnapshot {
                 text: read.text,
                 from: file.display(),
                 sha: read.sha,
                 read_at: now(),
+                revision,
+                edited_by: None,
             });
         }
         let (plan, _) = Self::plan_of(source);
