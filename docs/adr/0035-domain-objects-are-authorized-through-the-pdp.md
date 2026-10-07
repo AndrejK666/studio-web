@@ -133,16 +133,16 @@ Each request carries two properties:
   organization otherwise. A project-scoped grant then narrows exactly the way
   it already does for every other Studio resource, and an organization-wide
   object is reachable only through an organization-wide grant.
-- **`entity`**: the object's entity id. No policy reads it today (§4). It is
-  sent from the start so a later policy needs no change in the gear.
+- **`entity`**: the entity the request is about: a query's root type, or the
+  entity of the object being written. No policy reads it today (§4). It is sent
+  from the start so a later policy needs no change in the gear.
 
 For the first property to mean anything, **an object's scope is a project id**.
-The query already speaks the API conventions' spelling (rule C2): it takes
-`project_id`, not `scope`. `POST /objects` takes `project_id` too, and keeps
-accepting `scope` as a deprecated alias that must parse as a tenant id under
-the organization. Objects stored with a free-form scope that is not a project
-are organization-wide for authorization. They lose nothing they have today and
-gain no project narrowing.
+The query and `POST /objects` take `project_id`, the API conventions'
+spelling (rule C2), and refuse one that is not a tenant id. `POST /objects`
+keeps `scope` as a deprecated alias that takes anything, as it always did. An
+object whose scope is not a tenant id is organization-wide for authorization:
+it loses nothing it has today and gains no project narrowing.
 
 ### 4. Per entity is data, not catalogue
 
@@ -186,10 +186,12 @@ pass `may_administer`.
 ### 7. Fail closed, cached
 
 Under the roles model, a PDP or access-config failure denies (ADR-0019 §4), and
-the gear answers `503`, not an empty result. The decision is cached per request,
-across its stages, as graph-storage already does: one enforcer call per action
-per request, not one per relation. The access-config read is cached by
-generation (ADR-0019 §8).
+the gear answers `503`, not an empty result. The decision is made once per
+action per request and reused across its stages, as graph-storage already does,
+not once per relation. The PDP caches the access-config read the role path now
+makes (ADR-0019 §8). An entry lasts 10 seconds, the bound memberships already
+have, and any access-config write the PDP allows moves a generation that drops
+every entry at once.
 
 ### Consequences
 
@@ -201,8 +203,11 @@ generation (ADR-0019 §8).
   `POST /objects` and `POST /query` (the latter is experimental, so its field is
   renamed outright). The generated client follows.
 - Objects stored with a non-project `scope` are organization-wide for
-  authorization. A conformance-style report lists them, so whoever owns the data
-  can re-home them.
+  authorization. Nothing lists them yet; a report that does is a follow-up.
+- Stored role ladders do not gain the three privileges by themselves. A new
+  organization is seeded with them. An organization already on the roles model,
+  which today means none, adds them in its access settings, and its owner holds
+  them by definition meanwhile.
 - The catalogue grows by three in both files (`access_config.rs`, `access.ts`),
   and `access.test.ts` keeps them equal.
 - One more resource type through the PDP. It is the first, so it is also the
@@ -211,7 +216,7 @@ generation (ADR-0019 §8).
 
 ## More Information
 
-### Implementation, in order
+### Implementation, in order (built 2026-10-07)
 
 1. Catalogue and ladder: the three privileges in `access_config.rs` and
    `access.ts`, with the seeded roles.
@@ -224,7 +229,9 @@ generation (ADR-0019 §8).
    `total`.
 4. `project_id` on `POST /objects` and `POST /query`, `scope` as the alias, and
    the report of objects whose scope is not a project.
-5. Stand checks, on a `roles`-model organization:
+5. Stand checks: 30 cases on a stand with real graph-storage and the Studio PDP,
+   all as specified (`POST /types/{id}/fields` answers 200, as it did before).
+   On a `roles`-model organization:
    - a viewer reads but cannot write;
    - an editor writes but cannot change the model;
    - a project-scoped editor sees only their project's objects, root and

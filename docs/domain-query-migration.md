@@ -59,7 +59,7 @@ data transition is where it gets tested:
 | 0 | Query beside the existing reads | — | #637 merged (in review) |
 | 1 | Typed client generated from the model | — | **done** in the PR after #637: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI |
 | 2 | Deprecate `GET /objects`; keep `GET /objects/graph` | — | **done** with step 1: removal after 2026-12-01 |
-| 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) (proposed) | a query for a type the caller may not read is refused |
+| 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) (proposed); **built**, stand-checked 2026-10-07 | a query for a type the caller may not read is refused |
 | 4 | Filters pushed down to indexes | graph-storage **item 8** | an indexed filter answers `complete: true` past 5,000 objects |
 | 5 | Exact and reverse relations | graph-storage **items 9, 10** | `warnings` is empty for the model's 50 colliding relations; `include` can go incoming |
 | 6 | First feature built on the model | 1–3 | a new screen ships with no backend change of its own |

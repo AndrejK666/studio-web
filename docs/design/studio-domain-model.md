@@ -222,7 +222,7 @@ version.
 
 ##### Responsibility boundaries
 
-Does not authorize; the gateway and the graph's tenant scope do.
+Does not decide who may read or write an object; the access component asks the PDP (ADR-0035).
 
 ##### Related components (by ID)
 
@@ -255,6 +255,51 @@ Targets naming an entity outside the loaded buckets are reported by `GET
 ##### Related components (by ID)
 
 - `cpt-studio-component-graph-storage` — writes edges to
+
+#### Access
+
+- [x] `p2` - **ID**: `cpt-studio-component-domain-model-access`
+
+##### Why this component exists
+
+Every member of an organization could read and write every object and rewrite
+the model. That is acceptable for the model's own types. It is not acceptable
+for the first screen that keeps somebody's data in the model (ADR-0035).
+
+##### Responsibility scope
+
+`access.rs`, and the two gates in `rest.rs`.
+
+- **Objects.** The gear is a policy enforcement point for
+  `gts.cf.studio.domain.object.v1~`. `read` maps to `domain.view` and `write`
+  to `domain.edit`, with tenant hierarchy declared. It asks once per action per
+  request and evaluates the constraints per object. An object's owner is its
+  project tenant (`_scope` holding a tenant id), or the organization when it has
+  none.
+  - A query applies the answer at the root, at every `include` level, and before
+    `total`.
+  - Relating needs `write` on the source and `read` on the target.
+  - A refusal is a 403 (`DOMAIN_OBJECT_ACCESS_DENIED`), an authorization outage
+    a 503.
+- **The model.** Field edits, import, sync and revert need `domain.model` through
+  studio-user's `OrgAuthority`: a platform administrator, the owner, or, on the
+  roles model, the privilege. A refusal is `DOMAIN_MODEL_ADMIN_REQUIRED`.
+  `GET /types` reports `can_edit_model`.
+
+##### Responsibility boundaries
+
+Evaluation fails closed:
+- a filter on a property other than `owner_tenant_id` excludes;
+- so does a subtree arm with a status narrowing;
+- so does a project whose parent cannot be read.
+
+Graph-storage keeps fencing the tenant, since its node resource carries nothing
+else.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-authz-plugin` — asks
+- `cpt-studio-component-access-config` — reads, through studio-user
 
 #### Field migration and conformance
 
@@ -319,8 +364,9 @@ at first registration and a domain type has to stay open to new fields.
 `complete` says whether the read saw every object. A relation is followed from
 its declaring side only. An edge does not say which declared relation it is,
 so two relations of one verb between overlapping types come back together;
-the answer's `warnings` names them. No authorization beyond the tenant, as for
-the rest of the gear. What lifts each of these, and in what order screens move
+the answer's `warnings` names them. What the caller may read is applied at the
+root, at every `include` level and before `total` (the access component). What
+lifts each of these, and in what order screens move
 onto the query, is [the migration plan](../domain-query-migration.md).
 
 ##### Related components (by ID)
