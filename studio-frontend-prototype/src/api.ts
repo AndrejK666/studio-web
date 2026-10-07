@@ -3073,7 +3073,11 @@ export const api = {
     }),
   /** The stored ontology (frontend-regen source). */
   domainModelTypes: (token: string) =>
-    request<{ ontology: { entities: unknown[]; buckets?: unknown[] } }>(
+    request<{
+      ontology: { entities: unknown[]; buckets?: unknown[] };
+      /** Whether this caller may change the model (`domain.model`, ADR-0035). */
+      can_edit_model: boolean;
+    }>(
       "/studio-domain-model/v1/types",
       token,
     ),

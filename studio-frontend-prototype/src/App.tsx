@@ -5999,6 +5999,20 @@ function SystemView({
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
+  // Changing the model needs `domain.model` (ADR-0035): an owner or a platform
+  // administrator on the tenant model. The server refuses everyone else, so the
+  // controls say so instead of failing. `null` until the answer arrives.
+  const [canEditModel, setCanEditModel] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .domainModelTypes(token)
+      .then((r) => alive && setCanEditModel(r.can_edit_model))
+      .catch(() => alive && setCanEditModel(false));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
 
   const onModelFile = async (file: File) => {
     setModelErr(null);
@@ -6167,13 +6181,16 @@ function SystemView({
           <input
             type="file"
             accept=".json,application/json"
-            disabled={modelBusy}
+            disabled={modelBusy || canEditModel !== true}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) void onModelFile(f);
             }}
           />
-          <button disabled={modelBusy || !modelImport} onClick={() => void onModelSync()}>
+          <button
+            disabled={modelBusy || !modelImport || canEditModel !== true}
+            onClick={() => void onModelSync()}
+          >
             Sync to graph
           </button>
           <button disabled={modelBusy} onClick={() => void onRegenerate()}>
@@ -6183,6 +6200,12 @@ function SystemView({
             {showGraph ? "Hide graph" : "View graph"}
           </button>
         </div>
+        {canEditModel === false && (
+          <p className="hint" style={{ marginTop: 10 }}>
+            Only the organization's owner (or whoever holds <code>domain.model</code>) can load or
+            sync a model. Viewing and regenerating stay open.
+          </p>
+        )}
         {modelErr && (
           <p className="error" style={{ marginTop: 10 }}>
             {modelErr}

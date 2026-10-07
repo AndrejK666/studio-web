@@ -62,8 +62,9 @@ export interface DomainSelection<T extends DomainEntity> {
 
 export interface DomainQuery<T extends DomainEntity> extends DomainSelection<T> {
   type: T;
-  /** The workspace/project scope objects were created in. Root type only. */
-  scope?: string;
+  /** The project (tenant id) the objects belong to. Root type only; included
+   *  relations are narrowed by what the caller may read (ADR-0035). */
+  project_id?: string;
   offset?: number;
 }
 

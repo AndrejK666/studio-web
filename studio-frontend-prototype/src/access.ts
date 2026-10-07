@@ -76,6 +76,10 @@ const PRIVILEGE_LABELS: Record<string, { group: string; label: string }> = {
   "document.edit": { group: "Documents", label: "Edit documents" },
 
   "session.open": { group: "Sessions", label: "Open a workspace in the IDE" },
+
+  "domain.view": { group: "Domain model", label: "View domain objects" },
+  "domain.edit": { group: "Domain model", label: "Create and edit domain objects" },
+  "domain.model": { group: "Domain model", label: "Change the domain model" },
 };
 
 /** Name one privilege id for the screen.

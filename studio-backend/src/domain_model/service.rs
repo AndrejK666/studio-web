@@ -15,6 +15,7 @@ use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::access::{self, AccessError, ObjectPolicy, TenantOnly};
 use super::gts;
 use super::ontology::{
     DeclaredRelation, EffectiveProperty, FieldChange, FieldEdit, FieldSpec, ModelEdgeKind, Ontology,
@@ -297,6 +298,9 @@ struct TenantModel {
 
 pub struct DomainModelService {
     store: Arc<dyn DomainStore>,
+    /// Who may read and write objects (ADR-0035). Tenant-only unless a PDP is
+    /// wired in, which is what the in-memory build and the tests run.
+    policy: Arc<dyn ObjectPolicy>,
     /// Per tenant, because the model is per tenant: the graph is tenant-scoped,
     /// so two tenants can run different models. A single process-wide ontology
     /// could not represent that.
@@ -307,8 +311,16 @@ impl DomainModelService {
     pub fn new(store: Arc<dyn DomainStore>) -> Self {
         Self {
             store,
+            policy: Arc::new(TenantOnly),
             tenants: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The same service, asking `policy` who may touch which objects.
+    #[must_use]
+    pub fn with_policy(mut self, policy: Arc<dyn ObjectPolicy>) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// This tenant's ontology, loaded from the graph on first touch.
@@ -838,6 +850,13 @@ impl DomainModelService {
                     .join("; ")
             ));
         }
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
+            return Err(AccessError::Denied.into());
+        }
         let type_id = gts::node_type_id(&entity_id);
         // Types are tenant/platform-shared; an object is scoped by an optional
         // workspace/project key, so the same `key` in two scopes is two objects
@@ -957,8 +976,16 @@ impl DomainModelService {
         // The endpoints' own types are what the pair is checked against, so
         // both objects have to exist. They would have to anyway — an edge
         // endpoint that is not there is a caller relating before creating.
-        let src = self.endpoint_entity(ctx, &ontology, from, "from").await?;
-        let dst = self.endpoint_entity(ctx, &ontology, to, "to").await?;
+        let (src, src_node) = self.endpoint_entity(ctx, &ontology, from, "from").await?;
+        let (dst, dst_node) = self.endpoint_entity(ctx, &ontology, to, "to").await?;
+        // Relating is writing the source; it also reveals the target, so the
+        // caller must be able to read it. Otherwise relating a person to a
+        // project you cannot see would test whether it exists (ADR-0035 §5).
+        let write = self.policy.access(ctx, access::WRITE, Some(&src)).await?;
+        let read = self.policy.access(ctx, access::READ, Some(&dst)).await?;
+        if !write.admits(ctx, &src_node).await || !read.admits(ctx, &dst_node).await {
+            return Err(AccessError::Denied.into());
+        }
 
         let src_chain = ontology.ancestors(&src);
         let dst_chain = ontology.ancestors(&dst);
@@ -1066,18 +1093,19 @@ impl DomainModelService {
         ontology: &Ontology,
         instance_id: &str,
         which: &str,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<(String, ObjectNode)> {
         let node = self
             .store
             .get_object(ctx, instance_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("no such object: {which}={instance_id}"))?;
-        ontology.resolve_entity_id(&node.type_id).ok_or_else(|| {
+        let entity = ontology.resolve_entity_id(&node.type_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "the {which} object is a `{}`, which this model has no entity for",
                 node.type_id
             )
-        })
+        })?;
+        Ok((entity, node))
     }
 
     /// A short list of what the model does allow from these types, for the
@@ -1124,7 +1152,9 @@ impl DomainModelService {
         }
         self.ensure_types(ctx).await?;
         let scope = scope.map(str::trim).filter(|s| !s.is_empty());
-        self.store.list_objects(ctx, &type_ids, scope, None).await
+        let read = self.policy.access(ctx, access::READ, type_ref).await?;
+        let found = self.store.list_objects(ctx, &type_ids, scope, None).await?;
+        Ok(read.retain(ctx, found).await)
     }
 
     /// Answer a query (see [`super::query`]): a type's objects filtered,
@@ -1137,7 +1167,12 @@ impl DomainModelService {
     ) -> Result<super::query::Outcome, super::query::QueryError> {
         let ontology = self.model(ctx).await?;
         self.ensure_types(ctx).await?;
-        super::query::run(self.store.as_ref(), &ontology, ctx, q).await
+        let read = self
+            .policy
+            .access(ctx, access::READ, Some(&q.type_ref))
+            .await
+            .map_err(|e| super::query::QueryError::Failed(e.into()))?;
+        super::query::run(self.store.as_ref(), &ontology, ctx, q, &read).await
     }
 
     /// Sync the model *as a graph*: materialize one object-type node per entity
@@ -1330,6 +1365,8 @@ impl DomainModelService {
             .store
             .list_objects(ctx, &type_ids, scope, Some(limit + 1))
             .await?;
+        let read = self.policy.access(ctx, access::READ, type_ref).await?;
+        let mut objs = read.retain(ctx, std::mem::take(&mut objs)).await;
         let truncated = objs.len() > limit;
         objs.truncate(limit);
         let nodes = objs

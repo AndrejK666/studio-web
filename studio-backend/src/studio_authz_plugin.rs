@@ -221,6 +221,42 @@ pub struct Service {
     hub: Arc<ClientHub>,
     organizations: OnceLock<Option<Arc<dyn crate::user_profile::OrganizationReader>>>,
     cache: Mutex<MembershipCache>,
+    /// Organization access configs the role path read, by organization.
+    configs: Mutex<HashMap<Uuid, CachedConfig>>,
+}
+
+/// How long an organization's access config is reused by the role path.
+///
+/// The same bound memberships have, for the same reason: the role path runs on
+/// every request to a mapped resource, and a config read is a call into
+/// account-management. A write this PDP authorizes moves
+/// [`ACCESS_CONFIG_GENERATION`], so a change made through Studio is seen at
+/// once; this bounds one made around it.
+const ACCESS_CONFIG_TTL: Duration = Duration::from_secs(10);
+
+/// Moved by every access-config write this PDP allows (ADR-0019 §8).
+///
+/// Moved when the write is authorized, which is just before it commits: a read
+/// in between can cache the old document, and [`ACCESS_CONFIG_TTL`] bounds
+/// how long that lasts.
+static ACCESS_CONFIG_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn access_config_generation() -> u64 {
+    ACCESS_CONFIG_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+struct CachedConfig {
+    read_at: Instant,
+    generation: u64,
+    read: ConfigRead,
+}
+
+impl CachedConfig {
+    /// Still the answer: young enough, and no allowed write since.
+    fn is_fresh(&self, now: Instant, generation: u64) -> bool {
+        self.generation == generation && now.duration_since(self.read_at) < ACCESS_CONFIG_TTL
+    }
 }
 
 impl Service {
@@ -231,6 +267,7 @@ impl Service {
             hub,
             organizations: OnceLock::new(),
             cache: Mutex::new(HashMap::new()),
+            configs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -425,6 +462,7 @@ impl Service {
         };
 
         if allowed {
+            ACCESS_CONFIG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             let tids = self.reachable_tenants(request, tid).await;
             tenant_clamp(request, &tids)
         } else {
@@ -435,6 +473,33 @@ impl Service {
             );
             deny()
         }
+    }
+
+    /// [`Self::read_access_config`] through the cache. An unreadable answer is
+    /// never kept: it means "ask again", and keeping it would deny for the
+    /// whole window after account-management recovered.
+    async fn access_config_cached(&self, sec: &SecurityContext, tid: Uuid) -> ConfigRead {
+        let generation = access_config_generation();
+        if let Ok(configs) = self.configs.lock()
+            && let Some(hit) = configs.get(&tid)
+            && hit.is_fresh(Instant::now(), generation)
+        {
+            return hit.read.clone();
+        }
+        let read = self.read_access_config(sec, tid).await;
+        if !matches!(read, ConfigRead::Unreadable)
+            && let Ok(mut configs) = self.configs.lock()
+        {
+            configs.insert(
+                tid,
+                CachedConfig {
+                    read_at: Instant::now(),
+                    generation,
+                    read: read.clone(),
+                },
+            );
+        }
+        read
     }
 
     async fn read_access_config(&self, sec: &SecurityContext, tid: Uuid) -> ConfigRead {
@@ -472,6 +537,7 @@ impl Service {
 /// The second is an outage — and answering it with tenant behaviour hands
 /// `access.manage` to anybody who merely reaches the organization, for as long
 /// as account-management is unwell.
+#[derive(Clone)]
 enum ConfigRead {
     /// The document exists and parsed.
     Found(AccessConfig),
@@ -757,7 +823,7 @@ impl AuthZResolverPluginClient for Service {
         // a pure function so it can be tested without an account-management
         // double — the reason the role path had no tests of its own.
         let sec = Service::read_ctx(&request, tid);
-        let read = self.read_access_config(&sec, tid).await;
+        let read = self.access_config_cached(&sec, tid).await;
         let subject_id = request.subject.id.to_string();
         let subjects = self.subjects_of_caller(&subject_id).await;
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
@@ -881,8 +947,8 @@ fn deny() -> EvaluationResponse {
 /// The privilege a resource type and action need, when this deployment
 /// role-gates them.
 ///
-/// **Returns `None` for everything today**, which is worth knowing before
-/// reading further: `studio-project` (the portal's "Work") has been retired —
+/// **Maps only the domain object resource (ADR-0035).** Everything else is
+/// answered by the tenant clamp, for the reason that held before it: `studio-project` (the portal's "Work") has been retired —
 /// projects are AM tenants now, and their access is governed by tenant
 /// membership rather than by a Studio privilege grant. Nothing is role-mapped,
 /// so every request is answered by the tenant clamp and the grant evaluation in
@@ -892,8 +958,15 @@ fn deny() -> EvaluationResponse {
 /// the model the access config already carries. Mapping the first resource type
 /// here is what turns it on — and, through [`Plan`], what makes the config
 /// worth reading.
-fn privilege_for(_resource_type: &str, _action: &str) -> Option<&'static str> {
-    None
+fn privilege_for(resource_type: &str, action: &str) -> Option<&'static str> {
+    match (resource_type, action) {
+        // Domain objects (ADR-0035): which rows a person may read or write is
+        // a row question, so it is this PDP's. Changing the model is not here:
+        // that is administration, answered in the gear (ADR-0019 §3).
+        (crate::domain_model::DOMAIN_OBJECT_RESOURCE, "read") => Some("domain.view"),
+        (crate::domain_model::DOMAIN_OBJECT_RESOURCE, "write") => Some("domain.edit"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1399,15 +1472,11 @@ mod tests {
         );
     }
 
-    /// The property this restructure exists for. `privilege_for` maps nothing
-    /// today, so no request can reach the role path — and therefore none pays
-    /// for the config read that only the role path consumes.
-    ///
-    /// When the first resource type is mapped this test fails, which is the
-    /// point: it is the reminder that the config read has just become live,
-    /// and that a cache in front of it is then worth having.
+    /// Only what is mapped reaches the role path, so only it pays for the
+    /// config read. This replaced the tripwire that said nothing was mapped:
+    /// the first mapping (ADR-0035) came with the cache in front of that read.
     #[test]
-    fn nothing_is_role_gated_yet_so_no_request_reaches_the_config() {
+    fn only_mapped_resources_reach_the_config() {
         for resource_type in STUDIO_RESOURCES {
             for action in ["list", "get", "create", "update", "delete"] {
                 let mut req = request(resource_type);
@@ -1415,11 +1484,42 @@ mod tests {
                 assert_eq!(
                     Plan::for_request(&req),
                     Plan::Clamp(TENANT),
-                    "{action} on {resource_type} reached the role path — `privilege_for` now \
-                     maps something, so revisit the config read in `evaluate` (it happens on \
-                     every one of these requests) before deleting this test"
+                    "{action} on {resource_type} reached the role path without a mapping"
                 );
             }
         }
+        for (action, privilege) in [("read", "domain.view"), ("write", "domain.edit")] {
+            let mut req = request(crate::domain_model::DOMAIN_OBJECT_RESOURCE);
+            req.action.name = action.to_string();
+            assert_eq!(
+                Plan::for_request(&req),
+                Plan::Roles {
+                    tid: TENANT,
+                    privilege
+                },
+                "{action} on a domain object is a row question for the role path"
+            );
+        }
+        // Changing the model is administration, never the PDP's (ADR-0019 §3).
+        let mut req = request(crate::domain_model::DOMAIN_OBJECT_RESOURCE);
+        req.action.name = "admin".to_string();
+        assert_eq!(Plan::for_request(&req), Plan::Clamp(TENANT));
+    }
+
+    /// A cached config is the answer until it ages out or a write is allowed.
+    #[test]
+    fn a_cached_config_lasts_until_it_ages_or_a_write_moves_the_generation() {
+        let t0 = Instant::now();
+        let cached = CachedConfig {
+            read_at: t0,
+            generation: 7,
+            read: ConfigRead::Absent,
+        };
+        assert!(cached.is_fresh(t0 + Duration::from_secs(1), 7));
+        assert!(!cached.is_fresh(t0 + ACCESS_CONFIG_TTL, 7), "aged out");
+        assert!(
+            !cached.is_fresh(t0, 8),
+            "an allowed write moved the generation"
+        );
     }
 }

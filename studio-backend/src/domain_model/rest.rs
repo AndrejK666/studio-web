@@ -30,14 +30,62 @@ use super::ontology::{FieldEdit, FieldSpec};
 use super::service::{CONFORMANCE_LIMIT, DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
 use crate::pagination::{PageQuery, page_of};
+use crate::user_profile::OrgAuthority;
 
 /// Errors attributable to a domain-model resource (e.g. an unknown type).
 #[resource_error(gts_id!("cf.studio._.domain_model.v1~"))]
 pub struct StudioDomainModelError;
 
-/// Service handle carried in the router.
+/// Service handle carried in the router, with who may change the model.
 #[derive(Clone)]
-pub struct Handle(pub Arc<DomainModelService>);
+pub struct Handle(
+    pub Arc<DomainModelService>,
+    pub Option<Arc<dyn OrgAuthority>>,
+);
+
+/// The privilege that changes the model (ADR-0035 §1).
+///
+/// Changing the model is administration: one answer per organization, no rows
+/// filtered. So it is answered here, from the access config through
+/// studio-user, and never by the PDP, whose clamp would admit every member.
+const MODEL_PRIVILEGE: &str = "domain.model";
+
+/// May the caller change this organization's model? An owner or a platform
+/// administrator may; on the roles model, so may whoever holds `domain.model`.
+/// Without studio-user nobody can be shown to hold it, so nobody does.
+async fn may_edit_model(ctx: &SecurityContext, handle: &Handle) -> bool {
+    match &handle.1 {
+        Some(authority) => {
+            authority
+                .may_administer(ctx, ctx.subject_tenant_id(), MODEL_PRIVILEGE)
+                .await
+        }
+        None => false,
+    }
+}
+
+/// What an object route answers when the policy refused, or could not be
+/// asked (ADR-0035 §7): 403 and 503, never the 500 or 400 other failures get.
+fn access_problem(e: &anyhow::Error) -> Option<CanonicalError> {
+    Some(match super::access::access_error(e)? {
+        super::access::AccessError::Denied => StudioDomainModelError::permission_denied()
+            .with_reason("DOMAIN_OBJECT_ACCESS_DENIED")
+            .create(),
+        super::access::AccessError::Unavailable(m) => CanonicalError::service_unavailable()
+            .with_detail(m.clone())
+            .create(),
+    })
+}
+
+async fn require_model_authority(ctx: &SecurityContext, handle: &Handle) -> ApiResult<()> {
+    if may_edit_model(ctx, handle).await {
+        Ok(())
+    } else {
+        Err(StudioDomainModelError::permission_denied()
+            .with_reason("DOMAIN_MODEL_ADMIN_REQUIRED")
+            .create())
+    }
+}
 
 struct License;
 impl AsRef<str> for License {
@@ -56,6 +104,9 @@ pub struct TypesResponse {
     /// The domain-entity document, the shape the model UI renders from.
     #[schema(value_type = Object)]
     pub ontology: Value,
+    /// Whether the caller may change the model (`domain.model`, ADR-0035), so a
+    /// portal can hide the controls it would be refused.
+    pub can_edit_model: bool,
 }
 
 #[derive(Debug)]
@@ -65,10 +116,16 @@ pub struct CreateObjectRequest {
     /// id (`gts.cf.studio.domain.role_assignment.v1~`) or its leaf.
     #[serde(rename = "type")]
     pub type_ref: String,
-    /// A caller-chosen stable key; the same `(type, key, scope)` upserts.
+    /// A caller-chosen stable key; the same `(type, key, project_id)` upserts.
     pub key: String,
-    /// Optional workspace/project scope. The same key in different scopes is
-    /// different objects; omitted = unscoped (tenant-wide).
+    /// The project the object belongs to, as its tenant id (API rule C2). The
+    /// same key in two projects is two objects; omitted = organization-wide.
+    /// Project-scoped grants reach an object through this (ADR-0035 §3).
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Deprecated alias of `project_id`, kept for callers written before it.
+    /// A value that is not a tenant id is stored as before and is
+    /// organization-wide for authorization.
     #[serde(default)]
     pub scope: Option<String>,
     /// How hard to check the payload against the type: `off`, `warn` (the
@@ -550,7 +607,11 @@ async fn list_types(
         .ontology_document(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    Ok(Json(TypesResponse { ontology }))
+    let can_edit_model = may_edit_model(&ctx, &handle).await;
+    Ok(Json(TypesResponse {
+        ontology,
+        can_edit_model,
+    }))
 }
 
 async fn get_type(
@@ -610,6 +671,20 @@ async fn create_object(
             .with_constraint(e)
             .create()
     })?;
+    // `project_id` must name a tenant: it is what a project-scoped grant is
+    // matched against. The deprecated `scope` keeps taking anything, as it did.
+    let project = match (req.project_id, req.scope) {
+        (Some(p), _) => {
+            let p = p.trim().to_string();
+            if uuid::Uuid::parse_str(&p).is_err() {
+                return Err(StudioDomainModelError::invalid_argument()
+                    .with_constraint(format!("`project_id` is a project's tenant id, not `{p}`"))
+                    .create());
+            }
+            Some(p)
+        }
+        (None, scope) => scope,
+    };
     let created = handle
         .0
         .create_object(
@@ -617,7 +692,7 @@ async fn create_object(
             req.type_ref.trim(),
             req.key.trim(),
             WriteOptions {
-                scope: req.scope.as_deref(),
+                scope: project.as_deref(),
                 if_absent: req.if_absent,
                 validate,
             },
@@ -625,9 +700,11 @@ async fn create_object(
         )
         .await
         .map_err(|e| {
-            StudioDomainModelError::invalid_argument()
-                .with_constraint(format!("{e:#}"))
-                .create()
+            access_problem(&e).unwrap_or_else(|| {
+                StudioDomainModelError::invalid_argument()
+                    .with_constraint(format!("{e:#}"))
+                    .create()
+            })
         })?;
     let created = CreateObjectResponse {
         type_id: created.type_id,
@@ -660,7 +737,10 @@ async fn list_objects(
         .0
         .list_objects(&ctx, filter, scope)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        .map_err(|e| {
+            access_problem(&e)
+                .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
+        })?;
     let mut objects: Vec<ObjectDto> = objects
         .into_iter()
         .map(|n| ObjectDto {
@@ -728,9 +808,11 @@ async fn create_relation(
         .create_relation(&ctx, req.relation.trim(), req.from.trim(), req.to.trim())
         .await
         .map_err(|e| {
-            StudioDomainModelError::invalid_argument()
-                .with_constraint(format!("{e:#}"))
-                .create()
+            access_problem(&e).unwrap_or_else(|| {
+                StudioDomainModelError::invalid_argument()
+                    .with_constraint(format!("{e:#}"))
+                    .create()
+            })
         })?;
     Ok((
         StatusCode::CREATED,
@@ -750,6 +832,7 @@ async fn sync_model(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<ModelSyncResponse>> {
+    require_model_authority(&ctx, &handle).await?;
     let r = handle
         .0
         .sync_model(&ctx)
@@ -770,6 +853,7 @@ async fn import_model(
     Extension(handle): Extension<Handle>,
     Json(req): Json<ImportModelRequest>,
 ) -> ApiResult<JsonBody<ImportModelResponse>> {
+    require_model_authority(&ctx, &handle).await?;
     let s = handle
         .0
         .import_model(&ctx, req.ontology)
@@ -837,7 +921,10 @@ async fn objects_graph(
         .0
         .objects_graph(&ctx, limit, type_ref, scope)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        .map_err(|e| {
+            access_problem(&e)
+                .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
+        })?;
     let total = nodes.len() as u32;
     Ok(Json(ObjectsGraphResponse {
         total,
@@ -870,6 +957,7 @@ async fn add_field(
     Path(id): Path<String>,
     Json(req): Json<AddFieldRequest>,
 ) -> ApiResult<JsonBody<AddFieldResponse>> {
+    require_model_authority(&ctx, &handle).await?;
     let entity = handle
         .0
         .add_field(
@@ -898,6 +986,7 @@ async fn edit_field(
     Path((id, name)): Path<(String, String)>,
     Json(req): Json<EditFieldRequest>,
 ) -> ApiResult<JsonBody<EditFieldResponse>> {
+    require_model_authority(&ctx, &handle).await?;
     let edited = handle
         .0
         .edit_field(
@@ -930,6 +1019,7 @@ async fn remove_field(
     Extension(handle): Extension<Handle>,
     Path((id, name)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
+    require_model_authority(&ctx, &handle).await?;
     // The edited type is not echoed: `GET /types/{id}` reads it back, the
     // `head` of `GET /model/versions` is the version it produced, and a DELETE
     // answers 204 (docs/api-conventions.md).
@@ -1029,6 +1119,7 @@ async fn revert_model(
     Extension(handle): Extension<Handle>,
     Json(req): Json<RevertRequest>,
 ) -> ApiResult<JsonBody<RevertResponse>> {
+    require_model_authority(&ctx, &handle).await?;
     let r = handle.0.revert(&ctx, req.to).await.map_err(|e| {
         StudioDomainModelError::invalid_argument()
             .with_constraint(format!("{e:#}"))
@@ -1047,10 +1138,11 @@ pub struct QueryObjectsRequest {
     /// The type to read: an ontology id (`project`), a node type id or its leaf.
     #[serde(rename = "type")]
     pub type_ref: String,
-    /// The workspace/project scope the objects were created in, as on
-    /// `GET /objects`. Applies to the queried type, not to included relations.
+    /// The project the objects belong to (its tenant id), as `POST /objects`
+    /// took it. Applies to the queried type; included relations are narrowed by
+    /// what the caller may read, not by this.
     #[serde(default)]
-    pub scope: Option<String>,
+    pub project_id: Option<String>,
     /// A boolean expression over the type's fields:
     /// `{"status": {"_eq": "active"}}`, combined with `_and`, `_or`, `_not`.
     /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _is_null`.
@@ -1143,7 +1235,7 @@ async fn query_objects(
         .collect::<Result<Vec<_>, _>>()?;
     let query = Query {
         type_ref: req.type_ref,
-        scope: req.scope,
+        scope: req.project_id,
         offset: req.offset,
         selection: Selection {
             filter: req.filter,
@@ -1155,7 +1247,8 @@ async fn query_objects(
     };
     let outcome = handle.0.query(&ctx, &query).await.map_err(|e| match e {
         QueryError::Invalid(m) => bad(m),
-        QueryError::Failed(e) => CanonicalError::internal(format!("{e:#}")).create(),
+        QueryError::Failed(e) => access_problem(&e)
+            .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create()),
     })?;
     Ok(Json(QueryObjectsResponse {
         items: outcome.rows.items.iter().map(|r| r.to_json()).collect(),
@@ -1171,6 +1264,7 @@ pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<DomainModelService>,
+    authority: Option<Arc<dyn OrgAuthority>>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-domain-model/v1/types")
         .operation_id("studio_domain_model.list_types")
@@ -1235,6 +1329,7 @@ pub fn register_routes(
             "Created object ids",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1261,6 +1356,7 @@ pub fn register_routes(
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_objects)
         .json_response_with_schema::<ObjectListResponse>(openapi, StatusCode::OK, "Stored objects")
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1291,6 +1387,7 @@ pub fn register_routes(
             "Matching objects with their relations",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1336,6 +1433,7 @@ pub fn register_routes(
             "Created relation",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1358,6 +1456,7 @@ pub fn register_routes(
             StatusCode::OK,
             "Model sync counts",
         )
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1382,6 +1481,7 @@ pub fn register_routes(
             "What was loaded",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1421,6 +1521,7 @@ pub fn register_routes(
             StatusCode::OK,
             "The instance graph",
         )
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1446,6 +1547,7 @@ pub fn register_routes(
             "The updated type definition",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1476,6 +1578,7 @@ pub fn register_routes(
             "The updated type, the version, and how many objects moved",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1500,6 +1603,7 @@ pub fn register_routes(
         .handler(remove_field)
         .no_content_response(StatusCode::NO_CONTENT, "Field removed")
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1573,9 +1677,10 @@ pub fn register_routes(
             "The new head and what it undid",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Handle(service)))
+    router.layer(Extension(Handle(service, authority)))
 }

@@ -36,6 +36,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use toolkit_security::SecurityContext;
 
+use super::access::Access;
 use super::gts;
 use super::ontology::Ontology;
 use super::store::{DomainStore, ObjectNode};
@@ -609,6 +610,7 @@ fn expand<'a>(
     store: &'a dyn DomainStore,
     ctx: &'a SecurityContext,
     ontology: &'a Ontology,
+    access: &'a Access,
     rows: &'a mut [Row],
     includes: &'a [IncludePlan],
 ) -> Step<'a> {
@@ -626,8 +628,10 @@ fn expand<'a>(
             let hood = store
                 .neighbours(ctx, &seeds, &inc.edge_type_id, &inc.node_type_ids)
                 .await?;
-            let nodes: HashMap<&str, &ObjectNode> = hood
-                .nodes
+            // Every level, not only the root: a relation must not carry a
+            // caller into rows they may not read (ADR-0035 §5).
+            let reachable = access.retain(ctx, hood.nodes).await;
+            let nodes: HashMap<&str, &ObjectNode> = reachable
                 .iter()
                 .map(|n| (n.instance_id.as_str(), n))
                 .collect();
@@ -658,7 +662,15 @@ fn expand<'a>(
                 );
                 spans.push((children.len() - before, total));
             }
-            expand(store, ctx, ontology, &mut children, &inc.plan.include).await?;
+            expand(
+                store,
+                ctx,
+                ontology,
+                access,
+                &mut children,
+                &inc.plan.include,
+            )
+            .await?;
             let mut it = children.into_iter();
             for (r, (count, total)) in rows.iter_mut().zip(spans) {
                 r.relations.insert(
@@ -681,6 +693,7 @@ pub(super) async fn run(
     ontology: &Ontology,
     ctx: &SecurityContext,
     q: &Query,
+    access: &Access,
 ) -> Result<Outcome, QueryError> {
     let entity = ontology
         .resolve_entity_id(&q.type_ref)
@@ -707,6 +720,9 @@ pub(super) async fn run(
         .await?;
     let complete = found.len() <= SCAN_LIMIT;
     found.truncate(SCAN_LIMIT);
+    // Before `where` and `total`: a count that included rows the caller cannot
+    // see would say they exist (ADR-0035 §5).
+    let found = access.retain(ctx, found).await;
 
     let matched = select(found, &plan);
     let total = matched.len();
@@ -716,7 +732,7 @@ pub(super) async fn run(
         .take(plan.limit)
         .map(|n| row(ontology, n, &plan))
         .collect();
-    expand(store, ctx, ontology, &mut rows, &plan.include).await?;
+    expand(store, ctx, ontology, access, &mut rows, &plan.include).await?;
     Ok(Outcome {
         rows: RowSet {
             items: rows,
@@ -991,6 +1007,153 @@ mod tests {
         }}}}});
         let m = refusal(&s, "team", deep).await;
         assert!(m.contains("at most 3"), "{m}");
+    }
+
+    // ── ADR-0035: what a project-scoped grant lets through ─────────────────
+
+    use crate::domain_model::access::{Access, AccessError, ObjectPolicy, TenantParents};
+    use toolkit_security::{AccessScope, ScopeConstraint, ScopeFilter, pep_properties};
+
+    const ORG: Uuid = Uuid::from_u128(1);
+    const MINE: Uuid = Uuid::from_u128(0x0a);
+    const THEIRS: Uuid = Uuid::from_u128(0x0b);
+
+    /// Both projects sit in the organization.
+    struct Tree;
+    #[async_trait::async_trait]
+    impl TenantParents for Tree {
+        async fn parent_of(&self, _ctx: &SecurityContext, t: Uuid) -> Option<Uuid> {
+            (t == MINE || t == THEIRS).then_some(ORG)
+        }
+    }
+
+    /// What the PDP answers a member with a grant on `MINE` only: every branch
+    /// of the clamp ANDed with that project.
+    struct OneProject;
+    #[async_trait::async_trait]
+    impl ObjectPolicy for OneProject {
+        async fn access(
+            &self,
+            ctx: &SecurityContext,
+            _action: &str,
+            _entity: Option<&str>,
+        ) -> Result<Access, AccessError> {
+            let only = ScopeFilter::in_uuids(pep_properties::OWNER_TENANT_ID, vec![MINE]);
+            let subtree =
+                ScopeFilter::InTenantSubtree(toolkit_security::InTenantSubtreeScopeFilter::new(
+                    pep_properties::OWNER_TENANT_ID,
+                    toolkit_security::ScopeValue::Uuid(ORG),
+                ));
+            Ok(Access::new(
+                ctx,
+                AccessScope::from_constraints(vec![ScopeConstraint::new(vec![subtree, only])]),
+                Some(Arc::new(Tree)),
+            ))
+        }
+    }
+
+    async fn in_project(s: &DomainModelService, ty: &str, key: &str, project: Uuid) -> String {
+        s.create_object(
+            &ctx(),
+            ty,
+            key,
+            WriteOptions {
+                validate: ValidateMode::Off,
+                scope: Some(&project.to_string()),
+                ..Default::default()
+            },
+            json!({ "name": key }),
+        )
+        .await
+        .unwrap()
+        .instance_id
+    }
+
+    /// The same store, seen first with every grant and then through `OneProject`.
+    async fn two_projects() -> (Arc<InMemoryDomainStore>, String, String) {
+        let store = Arc::new(InMemoryDomainStore::default());
+        let open = DomainModelService::new(store.clone());
+        let team = in_project(&open, "team", "core", MINE).await;
+        let mine = in_project(&open, "project", "apollo", MINE).await;
+        let theirs = in_project(&open, "project", "gemini", THEIRS).await;
+        for p in [&mine, &theirs] {
+            open.create_relation(&ctx(), "team.delivers", &team, p)
+                .await
+                .unwrap();
+        }
+        (store, team, theirs)
+    }
+
+    #[tokio::test]
+    async fn a_project_grant_narrows_the_root_and_its_total() {
+        let (store, _, _) = two_projects().await;
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        let out = s.query(&ctx(), &query("project", json!({}))).await.unwrap();
+        assert_eq!(names(&out.rows), ["apollo"]);
+        assert_eq!(out.rows.total, 1, "a hidden row is not counted either");
+    }
+
+    #[tokio::test]
+    async fn a_relation_does_not_carry_the_caller_into_another_project() {
+        let (store, _, _) = two_projects().await;
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        let out = s
+            .query(
+                &ctx(),
+                &query("team", json!({ "include": { "delivers": {} } })),
+            )
+            .await
+            .unwrap();
+        let delivers = &out.rows.items[0].relations["delivers"];
+        assert_eq!(names(delivers), ["apollo"]);
+        assert_eq!(delivers.total, 1);
+    }
+
+    #[tokio::test]
+    async fn writing_into_another_project_or_relating_to_it_is_refused() {
+        let (store, team, theirs) = two_projects().await;
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        let e = s
+            .create_object(
+                &ctx(),
+                "project",
+                "mercury",
+                WriteOptions {
+                    validate: ValidateMode::Off,
+                    scope: Some(&THEIRS.to_string()),
+                    ..Default::default()
+                },
+                json!({ "name": "mercury" }),
+            )
+            .await
+            .expect_err("another project");
+        assert!(matches!(
+            crate::domain_model::access::access_error(&e),
+            Some(AccessError::Denied)
+        ));
+        let e = s
+            .create_relation(&ctx(), "team.delivers", &team, &theirs)
+            .await
+            .expect_err("an unreadable target");
+        assert!(matches!(
+            crate::domain_model::access::access_error(&e),
+            Some(AccessError::Denied)
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_organization_wide_object_needs_an_organization_grant() {
+        let store = Arc::new(InMemoryDomainStore::default());
+        object(
+            &DomainModelService::new(store.clone()),
+            "project",
+            "shared",
+            json!({ "name": "shared" }),
+        )
+        .await;
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        let out = s.query(&ctx(), &query("project", json!({}))).await.unwrap();
+        assert!(out.rows.items.is_empty());
     }
 
     #[test]

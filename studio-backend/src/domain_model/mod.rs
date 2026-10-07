@@ -27,6 +27,7 @@
 //! open, which is what makes goal #2 — extending a type with a new field —
 //! a pure ontology edit rather than a schema migration.
 
+mod access;
 pub(crate) mod gts;
 pub(crate) mod ontology;
 mod query;
@@ -40,13 +41,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
+use toolkit::client_hub::ClientScope;
 use toolkit::contracts::RestApiCapability;
 use toolkit::{Gear, GearCtx};
-use tracing::info;
-#[cfg(feature = "graph")]
-use tracing::warn;
+use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
+pub(crate) use access::DOMAIN_OBJECT_RESOURCE;
 use ontology::Ontology;
 use service::DomainModelService;
 use store::{DomainStore, InMemoryDomainStore};
@@ -120,6 +121,80 @@ fn build_store(ctx: &GearCtx) -> Arc<dyn DomainStore> {
     Arc::new(InMemoryDomainStore::default())
 }
 
+/// Who may read and write objects (ADR-0035): the PDP, through the platform
+/// enforcer, with tenant hierarchy declared so a project-scoped grant can name
+/// a project inside the organization. Without an authz resolver there is no
+/// policy to ask, and the gear keeps the tenant-only behaviour it had.
+fn build_policy(ctx: &GearCtx) -> Arc<dyn access::ObjectPolicy> {
+    let authz = match ctx
+        .client_hub()
+        .get::<dyn authz_resolver_sdk::AuthZResolverApi>()
+    {
+        Ok(authz) => authz,
+        Err(e) => {
+            warn!(error = %e, "studio-domain-model: no authz resolver — objects are tenant-scoped only");
+            return Arc::new(access::TenantOnly);
+        }
+    };
+    let am = match ctx
+        .client_hub()
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+    {
+        Ok(am) => am,
+        Err(e) => {
+            // The tree cannot be read, so no project can be shown to sit in the
+            // organization: project-scoped grants then admit nothing, which
+            // fails closed rather than open.
+            warn!(error = %e, "studio-domain-model: no account-management client — project grants admit nothing");
+            return Arc::new(access::PdpPolicy::new(enforcer(authz), Arc::new(NoTree)));
+        }
+    };
+    Arc::new(access::PdpPolicy::new(
+        enforcer(authz),
+        Arc::new(AmTenants(am)),
+    ))
+}
+
+fn enforcer(
+    authz: Arc<dyn authz_resolver_sdk::AuthZResolverApi>,
+) -> authz_resolver_sdk::PolicyEnforcer {
+    authz_resolver_sdk::PolicyEnforcer::new(authz)
+        .with_capabilities(vec![authz_resolver_sdk::Capability::TenantHierarchy])
+}
+
+/// A tenant's parent, from account-management. A tenant the caller cannot
+/// read has no parent here, which can only exclude.
+struct AmTenants(Arc<dyn account_management_sdk::AccountManagementClient>);
+
+#[async_trait]
+impl access::TenantParents for AmTenants {
+    async fn parent_of(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        tenant: uuid::Uuid,
+    ) -> Option<uuid::Uuid> {
+        self.0
+            .get_tenant(ctx, tenant)
+            .await
+            .ok()
+            .and_then(|t| t.parent_id)
+            .map(|p| p.0)
+    }
+}
+
+struct NoTree;
+
+#[async_trait]
+impl access::TenantParents for NoTree {
+    async fn parent_of(
+        &self,
+        _ctx: &toolkit_security::SecurityContext,
+        _tenant: uuid::Uuid,
+    ) -> Option<uuid::Uuid> {
+        None
+    }
+}
+
 #[async_trait]
 impl RestApiCapability for StudioDomainModelGear {
     fn register_rest(
@@ -129,8 +204,23 @@ impl RestApiCapability for StudioDomainModelGear {
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
         let store = build_store(ctx);
-        let service = Arc::new(DomainModelService::new(store));
+        let service = Arc::new(DomainModelService::new(store).with_policy(build_policy(ctx)));
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(router, openapi, service))
+        // Who may change the model (ADR-0035 §1). studio-user publishes it in
+        // its `init`, which runs before any gear's REST phase. Absent, nobody
+        // can be shown to hold the authority, and model edits are refused.
+        let authority = ctx
+            .client_hub()
+            .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .inspect_err(|e| {
+                warn!(
+                    error = %e,
+                    "studio-domain-model: studio-user is not available — changing the model is refused"
+                );
+            })
+            .ok();
+        Ok(rest::register_routes(router, openapi, service, authority))
     }
 }
