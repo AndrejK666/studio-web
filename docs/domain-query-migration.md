@@ -57,22 +57,31 @@ data transition is where it gets tested:
 | # | Step | Waits on | Done when |
 |---|---|---|---|
 | 0 | Query beside the existing reads | — | #637 merged (in review) |
-| 1 | Typed client generated from the model | — | the prototype compiles against generated types |
-| 2 | First consumer: the instance graph view | 1 | `GET /objects/graph` has no caller and is deprecated |
+| 1 | Typed client generated from the model | — | **done** in the PR after #637: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI |
+| 2 | Deprecate `GET /objects`; keep `GET /objects/graph` | — | **done** with step 1: removal after 2026-12-01 |
 | 3 | Authorization per type | ADR-0019 follow-up (`privilege_for`) | a query for a type the caller may not read is refused |
 | 4 | Filters pushed down to indexes | graph-storage **item 8** | an indexed filter answers `complete: true` past 5,000 objects |
 | 5 | Exact and reverse relations | graph-storage **items 9, 10** | `warnings` is empty for the model's 50 colliding relations; `include` can go incoming |
 | 6 | First feature built on the model | 1–3 | a new screen ships with no backend change of its own |
 | 7 | Safe updates | graph-storage **item 2** | a write with a stale version is refused |
-| 8 | Retire the old reads | 2, G1 removal date | `GET /objects` and `GET /objects/graph` removed from the contract |
+| 8 | Retire `GET /objects` | 2, G1 removal date | `GET /objects` removed from the contract |
 
 ### 1. A typed client generated from the model
 
-`GET /types` already returns every entity with its fields. A script in
-`scripts/` (beside `regen-domain-frontend.mjs`) writes one TypeScript type per
-entity, the relation names per entity, and a `query()` helper typed over both
-into the prototype. CI regenerates the file and fails if it differs, the way
-`api-contract.json` is held to the code.
+`scripts/gen-domain-client.mjs` reads the seed model
+(`studio-backend/src/domain_model/ontology.core.json`, the same document
+`GET /types` serves a tenant that has not edited its model). It writes
+`studio-frontend-prototype/src/domain-model.gen.ts`, which holds:
+- one interface per entity, with its own and inherited fields;
+- per entity, the relations `include` accepts and the entity each one reaches.
+
+Inheritance and relation resolution mirror `ontology.rs` and `query.rs`.
+`domain-query.ts` types the request and the answer over those types, and
+`api.queryDomain` sends it. CI runs the script with `--check` next to
+`check-docs` and fails when the file is stale, the way `api-contract.json` is
+held to the code. A test keeps four wrong queries as `@ts-expect-error`: an
+unknown field, a value outside an enum, an unknown relation, and a field of the
+wrong relation target.
 
 The reason: when the model changes, the frontend learns it at compile time, not
 from a 400 in a browser. This is what makes "the backend follows the frontend"
@@ -82,16 +91,22 @@ The seed model is what the file is generated from. A tenant whose model has
 diverged from the seed gets the 400s the query already gives; the typed client
 covers the shared model, not every tenant's edits.
 
-### 2. The first consumer
+### 2. Deprecate the list, keep the graph
 
-The instance graph in the prototype (`GET /objects/graph`) moves to the query.
-It is the only read of domain objects today, so after it moves nothing calls
-the old route. That route then gets `deprecated` and a removal date in its
-description, per API rule G1.
+*Revised 2026-10-07.* The plan said the instance graph in the prototype would be
+the query's first consumer. It should not be. That screen draws objects of
+every type and every edge between them, which is a graph-shaped read:
+`GET /objects/graph` answers it in one call and the query does not. The query
+is one type at a time, with named relations. Moving the screen would mean one
+query per type plus every relation by name, which is a worse read for that
+screen and no step forward. So `GET /objects/graph` stays, as the graph read.
 
-The move is also the measurement: once the screen is on the query, the
-query's p95 on Dev comes from VictoriaMetrics, alongside how often
-`complete: false` and `warnings` appear.
+`GET /objects` has no caller in either portal, and the query does everything it
+does. It gets `deprecated` and a removal date in its description now (rule G1).
+
+The query's first consumer is therefore step 6, a screen that reads a type and
+its relations. That is the shape the query was built for, and its p95,
+`complete: false` rate and `warnings` rate on Dev are measured from there.
 
 ### 3. Authorization per type
 
@@ -160,9 +175,10 @@ No screen that lets two people edit the same object should ship before this.
 
 ### 8. Retiring the old reads
 
-After step 2 and the removal date: `GET /objects` and `GET /objects/graph` go,
-together with their lines in `api-contract-baseline.txt` (rule G2). The
-`/model/*` and `/types/*` routes stay; they are how the model itself is edited.
+After the removal date: `GET /objects` goes, together with its lines in
+`api-contract-baseline.txt` (rule G2). `GET /objects/graph` stays as the graph
+read (step 2), and the `/model/*` and `/types/*` routes stay; they are how the
+model itself is edited.
 
 ## Risks worth watching
 

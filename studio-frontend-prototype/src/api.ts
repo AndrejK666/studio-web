@@ -2,6 +2,8 @@ import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./reports-model";
+import type { DomainEntity } from "./domain-model.gen";
+import type { DomainQuery, DomainQueryResult } from "./domain-query";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -3081,6 +3083,14 @@ export const api = {
   /** Read the model graph back out of Graph Storage. */
   domainModelGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/model/graph", token),
+  /** Experimental: one type's objects filtered, ordered, projected, with
+   *  declared relations followed. Typed from the model (`domain-query.ts`), so
+   *  a field or relation the model lacks is a compile error, not a 400. */
+  queryDomain: <T extends DomainEntity>(token: string, query: DomainQuery<T>) =>
+    request<DomainQueryResult<T>>("/studio-domain-model/v1/query", token, {
+      method: "POST",
+      body: JSON.stringify(query),
+    }),
   /** The instance graph: created objects and the relations between them. */
   domainObjectsGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),

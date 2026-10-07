@@ -1243,12 +1243,21 @@ pub fn register_routes(
         .operation_id("studio_domain_model.list_objects")
         .summary("List stored domain objects")
         .description(
-            "Reads back the objects created via POST /objects, optionally of              one type. Paged: `total` counts every match, a next page exists              when `offset + objects.len() < total`.",
+            "Deprecated: use `POST /studio-domain-model/v1/query`, which reads one type \
+             with a filter, an order, fields and relations. This operation is removed \
+             after 2026-12-01; no portal calls it. Reads back the objects created via \
+             POST /objects, optionally of one type. Paged: `total` counts every match, \
+             a next page exists when `offset + objects.len() < total`.",
         )
         .tag("StudioDomainModel")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param_typed("offset", false, "Zero-based index of the first object", "integer")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first object",
+            "integer",
+        )
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(list_objects)
         .json_response_with_schema::<ObjectListResponse>(openapi, StatusCode::OK, "Stored objects")
