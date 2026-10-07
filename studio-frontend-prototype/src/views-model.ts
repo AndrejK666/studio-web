@@ -10,7 +10,14 @@
 // This file is the part with no React: the shape of a view, what it compiles
 // to, and how it is stored. `views.tsx` is the screen.
 
-import { DOMAIN_FIELDS, DOMAIN_RELATION_TARGETS, type DomainEntity, type DomainFieldKind } from "./domain-model.gen";
+import {
+  DOMAIN_BUCKETS,
+  DOMAIN_FIELDS,
+  DOMAIN_RELATION_TARGETS,
+  type DomainEntity,
+  type DomainFieldKind,
+} from "./domain-model.gen";
+import type { RawEdge, RawObj } from "./domain-model-graph";
 
 /** One condition, as the editor holds it. Conditions are ANDed. */
 export interface ViewCondition {
@@ -43,7 +50,11 @@ export interface ViewSpec {
   /** Relations shown as columns of the related objects' names. */
   relations: string[];
   sort: { field: string; direction: "asc" | "desc" } | null;
+  /** A table of the objects, or a graph of them and their related objects. */
+  kind: ViewKind;
 }
+
+export type ViewKind = "table" | "graph";
 
 /** A query as sent: the generated types are too precise to hold a view whose
  *  type is only known at runtime, so the screen speaks this looser shape. */
@@ -100,7 +111,7 @@ export function labelField(type: DomainEntity): string {
 
 /** A new view of `type`, with its label field as the one column. */
 export function blankView(type: DomainEntity, id: string): ViewSpec {
-  return { id, name: "", type, columns: [labelField(type)], conditions: [], relations: [], sort: null };
+  return { id, name: "", type, columns: [labelField(type)], conditions: [], relations: [], sort: null, kind: "table" };
 }
 
 /** What is wrong with a view, in the words the editor shows. Empty when it can be saved. */
@@ -195,13 +206,15 @@ export function toViewObject(spec: ViewSpec): Record<string, unknown> {
   return {
     id: spec.id,
     name: spec.name.trim(),
-    view_kind: "object",
+    // The model's own vocabulary: `object` is a list, `graph` a graph.
+    view_kind: spec.kind === "graph" ? "graph" : "object",
     query: toQuery(spec),
     presentation: {
       columns: spec.columns,
       relations: spec.relations,
       conditions: spec.conditions,
       sort: spec.sort,
+      kind: spec.kind,
     },
   };
 }
@@ -220,6 +233,7 @@ export function fromViewObject(value: Record<string, unknown>): ViewSpec | null 
     conditions: Array.isArray(p?.conditions) ? p.conditions : [],
     relations: Array.isArray(p?.relations) ? p.relations : Object.keys(query?.include ?? {}),
     sort: p?.sort ?? null,
+    kind: p?.kind === "graph" || value.view_kind === "graph" ? "graph" : "table",
   };
 }
 
@@ -238,4 +252,47 @@ export function cellText(v: unknown): string {
   if (Array.isArray(v)) return v.map(cellText).join(", ");
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+/** How many objects a graph view draws, and how many of each one's related
+ *  objects: a graph past a few hundred nodes is a hairball, not an answer. */
+export const GRAPH_LIMIT = 150;
+export const GRAPH_RELATED_LIMIT = 20;
+
+/** The view's query for a graph: the first objects and more of their relations. */
+export function graphQuery(spec: ViewSpec): LooseQuery {
+  const q = toQuery(spec);
+  q.limit = GRAPH_LIMIT;
+  for (const sel of Object.values(q.include ?? {})) sel.limit = GRAPH_RELATED_LIMIT;
+  return q;
+}
+
+/** A query's answer as the graph draws it: each object a node, each included
+ *  relation an edge from the object to the one it reaches. An object reached
+ *  twice is one node. */
+export function toGraph(spec: ViewSpec, res: LooseResult): { nodes: RawObj[]; edges: RawEdge[] } {
+  const nodes = new Map<string, RawObj>();
+  const edges: RawEdge[] = [];
+  const add = (r: LooseRow) => {
+    if (nodes.has(r.id)) return;
+    const entity = r.entity as DomainEntity;
+    const label = entity in DOMAIN_FIELDS ? labelField(entity) : "name";
+    nodes.set(r.id, {
+      instance_id: r.id,
+      entity: r.entity,
+      bucket: DOMAIN_BUCKETS[entity] ?? "",
+      name: cellText(r.value[label] ?? r.id),
+      value: r.value,
+    });
+  };
+  for (const r of res.items) {
+    add(r);
+    for (const name of spec.relations) {
+      for (const child of r.relations[name]?.items ?? []) {
+        add(child);
+        edges.push({ type_id: name, from: r.id, to: child.id, payload: { relation: name } });
+      }
+    }
+  }
+  return { nodes: [...nodes.values()], edges };
 }

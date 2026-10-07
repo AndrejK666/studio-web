@@ -3113,6 +3113,16 @@ export const api = {
       violations: { field: string; kind: string; detail: string }[];
       undeclared: string[];
     }>("/studio-domain-model/v1/objects", token, { method: "POST", body: JSON.stringify(body) }),
+  /** Objects written with a free-form scope rather than a project: no project
+   *  grant reaches them (ADR-0035). One bounded read; `complete` says whether
+   *  it saw everything. */
+  domainLegacyScopes: (token: string) =>
+    request<{
+      items: { instance_id: string; entity: string; name: string | null; scope: string }[];
+      total: number;
+      complete: boolean;
+      scanned: number;
+    }>("/studio-domain-model/v1/objects/legacy-scopes?limit=200", token),
   /** The instance graph: created objects and the relations between them. */
   domainObjectsGraph: (token: string) =>
     request<{ nodes: unknown[]; edges: unknown[] }>("/studio-domain-model/v1/objects/graph", token),

@@ -216,6 +216,11 @@ for (const id of ids) {
 }
 out += "};\n\n";
 
+out += "/** Per entity, the bucket it belongs to: what the graphs colour it by. */\n";
+out += "export const DOMAIN_BUCKETS: { readonly [E in DomainEntity]: string } = {\n";
+for (const id of ids) out += `  ${prop(id)}: ${JSON.stringify(byId.get(id).bucket ?? "")},\n`;
+out += "};\n\n";
+
 out += "/** The entity ids, in the model's order. */\n";
 out += `export const DOMAIN_ENTITIES = ${JSON.stringify(ids, null, 2).replace(/\n/g, "\n")} as const satisfies readonly DomainEntity[];\n`;
 

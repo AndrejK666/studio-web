@@ -1045,6 +1045,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-domain-model/v1/objects/legacy-scopes",
+      "operation_id": "studio_domain_model.list_legacy_scopes",
+      "tag": "StudioDomainModel",
+      "summary": "Objects stored with a scope that is not a project",
+      "authenticated": true,
+      "responses": [
+        "LegacyScopesResponse"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-domain-model/v1/relations",
       "operation_id": "studio_domain_model.relation_catalog",
       "tag": "StudioDomainModel",
@@ -1102,6 +1118,7 @@
       "errors": [
         "400",
         "401",
+        "403",
         "500"
       ]
     },

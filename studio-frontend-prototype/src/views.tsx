@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
 import { DataTable, type Column, type PageRequest } from "./data-table";
+import { DomainModelGraph, type GraphSource } from "./domain-model-graph";
 import { DOMAIN_ENTITIES, type DomainEntity } from "./domain-model.gen";
 import type { DomainQuery } from "./domain-query";
 import { errText } from "./format";
@@ -17,10 +18,12 @@ import {
   cellText,
   fieldsOf,
   fromViewObject,
+  graphQuery,
   labelField,
   pageQuery,
   problems,
   relationsOf,
+  toGraph,
   toViewObject,
   type LooseQuery,
   type LooseResult,
@@ -148,14 +151,18 @@ export function ViewsScreen({ token }: { token: string }) {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <strong>{selected.name}</strong>
             <span className="hint">
-              {selected.type}
+              {selected.type} · {selected.kind}
               {selected.conditions.length > 0 && ` · ${selected.conditions.length} conditions`}
             </span>
             <span style={{ flex: 1 }} />
             <button onClick={() => setEditing(selected)}>Edit</button>
             <button onClick={() => void retire(selected)}>Retire</button>
           </div>
-          <ViewTable token={token} spec={selected} />
+          {selected.kind === "graph" ? (
+            <ViewGraph token={token} spec={selected} />
+          ) : (
+            <ViewTable token={token} spec={selected} />
+          )}
         </div>
       )}
 
@@ -246,6 +253,19 @@ export function ViewTable({ token, spec }: { token: string; spec: ViewSpec }) {
       />
     </>
   );
+}
+
+/** One view as a graph: its objects and the related objects it includes, with
+ *  the relations between them. The same canvas the model graph uses. */
+export function ViewGraph({ token, spec }: { token: string; spec: ViewSpec }) {
+  const source = useMemo<GraphSource>(
+    () => ({
+      key: JSON.stringify(spec),
+      load: async () => toGraph(spec, await runQuery(token, graphQuery(spec))),
+    }),
+    [token, spec],
+  );
+  return <DomainModelGraph token={token} source={source} />;
 }
 
 /** The view editor: type, columns, conditions, related objects, order. */
@@ -435,6 +455,14 @@ export function ViewEditor({
             <option value="desc">descending</option>
           </select>
         )}
+      </label>
+
+      <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        Show as
+        <select value={spec.kind} onChange={(e) => setSpec({ ...spec, kind: e.target.value as ViewSpec["kind"] })}>
+          <option value="table">a table</option>
+          <option value="graph">a graph, with the related objects</option>
+        </select>
       </label>
 
       {issues.length > 0 && (

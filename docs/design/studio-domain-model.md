@@ -389,7 +389,8 @@ onto the query, is [the migration plan](../domain-query-migration.md).
 | `GET` | `/types/{id}` | One type with everything it inherits, and its relations | unstable |
 | `POST` | `/types/{id}/fields` | Add a field | unstable |
 | `PATCH` `DELETE` | `/types/{id}/fields/{name}` | Rename (with migration), retype, require; drop | unstable |
-| `GET` | `/types/{id}/conformance` | How stored objects measure up against the type | unstable |
+| `GET` | `/types/{id}/conformance` | How stored objects measure up against the type, over the objects the caller may read | unstable |
+| `GET` | `/objects/legacy-scopes` | Objects whose scope names no project, so no project grant reaches them (ADR-0035) | unstable |
 | `POST` `GET` | `/objects` | Create or upsert an object (`validate`, `if_absent`); list by `type` | unstable |
 | `GET` | `/objects/graph` | Objects and their relations, `limit` 500 by default and at most 5,000, with `truncated` | unstable |
 | `POST` | `/query` | One type's objects filtered, ordered, projected, with declared relations followed (see the query component) | experimental |

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GRAPH_RELATED_LIMIT,
   blankView,
+  graphQuery,
+  toGraph,
   fromViewObject,
   labelField,
   pageQuery,
@@ -19,6 +22,7 @@ const active: ViewSpec = {
   conditions: [{ field: "status", op: "_eq", value: "active" }],
   relations: ["uses"],
   sort: { field: "name", direction: "asc" },
+  kind: "table",
 };
 
 describe("a view compiles to the query endpoint's body", () => {
@@ -111,5 +115,35 @@ describe("what the editor refuses to save", () => {
 
   it("a type's label is its name, then its title", () => {
     expect(labelField("project")).toBe("name");
+  });
+});
+
+describe("a graph view", () => {
+  const graph: ViewSpec = { ...active, kind: "graph" };
+
+  it("is stored as the model's graph kind and read back as one", () => {
+    const stored = toViewObject(graph);
+    expect(stored.view_kind).toBe("graph");
+    expect(fromViewObject(stored)?.kind).toBe("graph");
+  });
+
+  it("asks for more related objects than a table shows", () => {
+    expect(graphQuery(graph).include?.uses.limit).toBe(GRAPH_RELATED_LIMIT);
+  });
+
+  it("draws each object once and each included relation as an edge", () => {
+    const repo = { id: "r1", entity: "repository", value: { name: "web-portal" }, relations: {} };
+    const g = toGraph(graph, {
+      items: [
+        { id: "p1", entity: "project", value: { name: "Apollo" }, relations: { uses: { items: [repo], total: 1, complete: true } } },
+        { id: "p2", entity: "project", value: { name: "Mercury" }, relations: { uses: { items: [repo], total: 1, complete: true } } },
+      ],
+      total: 2,
+      complete: true,
+      warnings: [],
+    });
+    expect(g.nodes.map((n) => n.name)).toEqual(["Apollo", "web-portal", "Mercury"]);
+    expect(g.nodes[0].bucket).toBe("planning");
+    expect(g.edges.map((e) => `${e.from}->${e.to}:${e.type_id}`)).toEqual(["p1->r1:uses", "p2->r1:uses"]);
   });
 });

@@ -1156,6 +1156,32 @@ mod tests {
         assert!(out.rows.items.is_empty());
     }
 
+    #[tokio::test]
+    async fn the_legacy_report_lists_only_scopes_that_name_no_project() {
+        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        in_project(&s, "project", "apollo", MINE).await;
+        object(&s, "project", "shared", json!({ "name": "shared" })).await;
+        s.create_object(
+            &ctx(),
+            "team",
+            "old",
+            WriteOptions {
+                validate: ValidateMode::Off,
+                scope: Some("workspace-7"),
+                ..Default::default()
+            },
+            json!({ "name": "old" }),
+        )
+        .await
+        .unwrap();
+        let r = s.legacy_scopes(&ctx(), 100).await.unwrap();
+        assert!(r.complete);
+        assert_eq!(r.items.len(), 1);
+        assert_eq!(r.items[0].entity, "team");
+        assert_eq!(r.items[0].scope, "workspace-7");
+        assert_eq!(r.items[0].name.as_deref(), Some("old"));
+    }
+
     #[test]
     fn numbers_compare_by_value_and_kinds_do_not_mix() {
         assert!(equal(&json!(1), &json!(1.0)));

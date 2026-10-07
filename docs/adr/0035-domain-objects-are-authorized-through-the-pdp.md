@@ -203,7 +203,8 @@ every entry at once.
   `POST /objects` and `POST /query` (the latter is experimental, so its field is
   renamed outright). The generated client follows.
 - Objects stored with a non-project `scope` are organization-wide for
-  authorization. Nothing lists them yet; a report that does is a follow-up.
+  authorization. `GET /objects/legacy-scopes` lists them (added after this
+  record, with the Check scopes button on the System page's domain-model card).
 - Stored role ladders do not gain the three privileges by themselves. A new
   organization is seeded with them. An organization already on the roles model,
   which today means none, adds them in its access settings, and its owner holds

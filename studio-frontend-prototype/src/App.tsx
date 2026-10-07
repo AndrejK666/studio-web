@@ -6005,6 +6005,17 @@ function SystemView({
   const [modelErr, setModelErr] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
+  // Objects whose scope names no project: authorization treats them as
+  // organization-wide (ADR-0035), so whoever owns the data should see them.
+  const [legacy, setLegacy] = useState<Awaited<ReturnType<typeof api.domainLegacyScopes>> | null>(null);
+  const onLegacyScopes = async () => {
+    setModelErr(null);
+    try {
+      setLegacy(await api.domainLegacyScopes(token));
+    } catch (e) {
+      setModelErr(errText(e));
+    }
+  };
   // Changing the model needs `domain.model` (ADR-0035): an owner or a platform
   // administrator on the tenant model. The server refuses everyone else, so the
   // controls say so instead of failing. `null` until the answer arrives.
@@ -6202,6 +6213,7 @@ function SystemView({
           <button disabled={modelBusy} onClick={() => void onRegenerate()}>
             Regenerate frontend
           </button>
+          <button onClick={() => void onLegacyScopes()}>Check scopes</button>
           <button onClick={() => setShowGraph((v) => !v)}>
             {showGraph ? "Hide graph" : "View graph"}
           </button>
@@ -6211,6 +6223,31 @@ function SystemView({
             Only the organization's owner (or whoever holds <code>domain.model</code>) can load or
             sync a model. Viewing and regenerating stay open.
           </p>
+        )}
+        {legacy && (
+          <div style={{ marginTop: 10 }}>
+            {legacy.total === 0 ? (
+              <p className="hint">
+                Every scoped object names a project ({legacy.scanned} objects read
+                {legacy.complete ? "" : ", not all of them"}).
+              </p>
+            ) : (
+              <>
+                <p className="hint">
+                  <b>{legacy.total}</b> objects carry a scope that is not a project, so no project
+                  grant reaches them; they are organization-wide
+                  {legacy.complete ? "" : ` (of the first ${legacy.scanned} read)`}.
+                </p>
+                <ul style={{ margin: 0, fontSize: 12 }}>
+                  {legacy.items.slice(0, 50).map((o) => (
+                    <li key={o.instance_id}>
+                      <code>{o.scope}</code> · {o.entity} · {o.name ?? o.instance_id}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         )}
         {modelErr && (
           <p className="error" style={{ marginTop: 10 }}>

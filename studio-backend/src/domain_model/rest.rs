@@ -528,6 +528,38 @@ pub struct ConformanceResponse {
     pub sample: Vec<ConformanceSampleDto>,
 }
 
+/// One object stored with a free-form scope.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LegacyScopedDto {
+    pub instance_id: String,
+    /// The object's entity (`project`, `team`, …).
+    pub entity: String,
+    pub name: Option<String>,
+    /// The scope it was written with, which names no tenant.
+    pub scope: String,
+}
+
+/// Objects whose scope is not a project, so no project grant reaches them.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct LegacyScopesResponse {
+    pub items: Vec<LegacyScopedDto>,
+    /// Matches across every page.
+    pub total: u32,
+    /// False when the organization holds more objects than one report reads
+    /// (5 000), so `total` covers the first 5 000 only.
+    pub complete: bool,
+    /// How many objects the report read to find these.
+    pub scanned: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LegacyScopesQuery {
+    #[serde(flatten)]
+    pub page: PageQuery,
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct ConformanceQuery {
     /// Narrow to one workspace/project scope.
@@ -1035,6 +1067,40 @@ async fn remove_field(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn list_legacy_scopes(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(handle): Extension<Handle>,
+    Query(q): Query<LegacyScopesQuery>,
+) -> ApiResult<JsonBody<LegacyScopesResponse>> {
+    let r = handle
+        .0
+        .legacy_scopes(&ctx, CONFORMANCE_LIMIT)
+        .await
+        .map_err(|e| {
+            access_problem(&e)
+                .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
+        })?;
+    let complete = r.complete;
+    let scanned = r.scanned as u64;
+    let rows: Vec<LegacyScopedDto> = r
+        .items
+        .into_iter()
+        .map(|i| LegacyScopedDto {
+            instance_id: i.instance_id,
+            entity: i.entity,
+            name: i.name,
+            scope: i.scope,
+        })
+        .collect();
+    let (items, total) = page_of(rows, q.page);
+    Ok(Json(LegacyScopesResponse {
+        items,
+        total,
+        complete,
+        scanned,
+    }))
+}
+
 async fn conformance(
     Extension(ctx): Extension<SecurityContext>,
     Extension(handle): Extension<Handle>,
@@ -1048,9 +1114,11 @@ async fn conformance(
         .conformance(&ctx, id.trim(), scope, limit)
         .await
         .map_err(|e| {
-            StudioDomainModelError::invalid_argument()
-                .with_constraint(format!("{e:#}"))
-                .create()
+            access_problem(&e).unwrap_or_else(|| {
+                StudioDomainModelError::invalid_argument()
+                    .with_constraint(format!("{e:#}"))
+                    .create()
+            })
         })?;
     Ok(Json(ConformanceResponse {
         type_id: r.entity_id,
@@ -1608,6 +1676,28 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-domain-model/v1/objects/legacy-scopes")
+        .operation_id("studio_domain_model.list_legacy_scopes")
+        .summary("Objects stored with a scope that is not a project")
+        .description(
+            "Objects written before `project_id` with a free-form `scope`. Authorization              treats them as organization-wide, so no project grant reaches them (ADR-0035).              Lists what the caller may read, from one bounded read of at most 5 000 objects              across every type; `complete` says whether it saw them all. Paged: `total`              counts every match.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("offset", false, "Zero-based index of the first object", "integer")
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_legacy_scopes)
+        .json_response_with_schema::<LegacyScopesResponse>(
+            openapi,
+            StatusCode::OK,
+            "The objects and how many there are",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-domain-model/v1/types/{id}/conformance")
         .operation_id("studio_domain_model.conformance")
         .summary("How the stored objects measure up against the type")
@@ -1630,6 +1720,7 @@ pub fn register_routes(
             "The conformance counts",
         )
         .error_400(openapi)
+        .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

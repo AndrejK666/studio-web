@@ -185,6 +185,12 @@ stored as data.
   `includes_3` and `advances`. The screen folds them into one line, and
   gears-rust#5240 is what removes them.
 
+**Then the graph kind.** A view can also be drawn as a graph: the same stored
+query, with its included relations as edges, on the canvas the model graph
+already uses. That makes the Knowledge Graph surface that
+[domain-alignment.md](domain-alignment.md) reserved a saved view as well, and
+it, too, needed no backend change.
+
 Moving an existing relational store onto the model is a separate decision per
 entity, against the line above, with its own data migration and a period of
 dual reads.

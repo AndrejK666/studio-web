@@ -34,6 +34,25 @@ pub struct FieldEdited {
     pub migrated: Option<u64>,
 }
 
+/// One object whose `_scope` names no tenant (ADR-0035 §3).
+#[derive(Debug, Clone)]
+pub struct LegacyScoped {
+    pub instance_id: String,
+    pub entity: String,
+    pub name: Option<String>,
+    pub scope: String,
+}
+
+/// The objects stored with a free-form scope, as far as one bounded read saw.
+#[derive(Debug, Clone, Default)]
+pub struct LegacyScopes {
+    pub items: Vec<LegacyScoped>,
+    /// How many objects were read to find them.
+    pub scanned: usize,
+    /// False when there were more objects than the read took.
+    pub complete: bool,
+}
+
 /// How the objects of one type measure up against the type as it is now.
 #[derive(Debug, Clone, Default)]
 pub struct Conformance {
@@ -1175,6 +1194,68 @@ impl DomainModelService {
         super::query::run(self.store.as_ref(), &ontology, ctx, q, &read).await
     }
 
+    /// Objects whose `_scope` is set but is not a tenant id (ADR-0035 §3).
+    ///
+    /// They were written before `project_id` existed, with a free-form scope,
+    /// and authorization treats them as organization-wide: they keep what they
+    /// had and no project grant reaches them. This lists them so whoever owns
+    /// the data can see what is there. Moving one into a project is a new
+    /// object, since the scope is part of its key.
+    ///
+    /// One bounded read across every domain type, like conformance.
+    pub async fn legacy_scopes(
+        &self,
+        ctx: &SecurityContext,
+        limit: usize,
+    ) -> anyhow::Result<LegacyScopes> {
+        let ontology = self.model(ctx).await?;
+        self.ensure_types(ctx).await?;
+        let type_ids: Vec<String> = ontology
+            .node_types()
+            .into_iter()
+            .map(|n| n.type_id)
+            .collect();
+        let mut objects = self
+            .store
+            .list_objects(ctx, &type_ids, None, Some(limit + 1))
+            .await?;
+        let complete = objects.len() <= limit;
+        objects.truncate(limit);
+        let scanned = objects.len();
+        let read = self.policy.access(ctx, access::READ, None).await?;
+        let mut items: Vec<LegacyScoped> = read
+            .retain(ctx, objects)
+            .await
+            .into_iter()
+            .filter_map(|o| {
+                let scope = o.value.get("_scope")?.as_str()?.trim().to_string();
+                if scope.is_empty() || Uuid::parse_str(&scope).is_ok() {
+                    return None;
+                }
+                Some(LegacyScoped {
+                    entity: ontology
+                        .resolve_entity_id(&o.type_id)
+                        .unwrap_or_else(|| gts::type_leaf(&o.type_id).to_string()),
+                    name: o
+                        .value
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    instance_id: o.instance_id,
+                    scope,
+                })
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            (&a.scope, &a.entity, &a.instance_id).cmp(&(&b.scope, &b.entity, &b.instance_id))
+        });
+        Ok(LegacyScopes {
+            items,
+            scanned,
+            complete,
+        })
+    }
+
     /// Sync the model *as a graph*: materialize one object-type node per entity
     /// and the `inherits` / `declares` edges among them, so the domain model —
     /// with its relations — is itself queryable in the graph. Idempotent: node
@@ -1774,6 +1855,13 @@ impl DomainModelService {
             .await?;
         let truncated = objects.len() > limit;
         objects.truncate(limit);
+        // It reports payload samples, so it reads what the caller may read and
+        // nothing else (ADR-0035 §5).
+        let read = self
+            .policy
+            .access(ctx, access::READ, Some(&entity_id))
+            .await?;
+        let objects = read.retain(ctx, objects).await;
 
         let mut report = Conformance {
             checked: objects.len() as u64,
