@@ -16,7 +16,7 @@ last because renumbering the others would break every reference to them.*
 *Re-checked 2026-10-07 against `cf-gears-graph-storage` 0.1.4 and its SDK
 0.1.1 from crates.io, which is what we run now. Items 2, 3 and 5 gained a
 status line. Items 8–11 come from the experimental domain-model query
-(`POST /studio-domain-model/v1/query`, studio-web#637): the first read in
+(`POST /studio-domain-model/v1/query`, `studio-backend/src/domain_model/query.rs`): the first read in
 Studio that wants the graph to answer a screen's question rather than hand
 back a region for us to sift.*
 

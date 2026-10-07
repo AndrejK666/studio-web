@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-10-07
 ---
 
@@ -8,7 +8,7 @@ date: 2026-10-07
 
 **ID**: `cpt-studio-adr-domain-objects-are-authorized-through-the-pdp`
 
-Status: **proposed** · Date: 2026-10-07 · Applies ADR-0019 to the domain model (ADR-0024) · Step 3 of [the domain-query migration](../domain-query-migration.md) · PR [#637](https://github.com/constructorfabric/studio-web/pull/637) built the query this protects
+Status: **accepted** · Date: 2026-10-07 · Applies ADR-0019 to the domain model (ADR-0024) · Step 3 of [the domain-query migration](../domain-query-migration.md), shipped with the query it protects
 
 ## Table of Contents
 

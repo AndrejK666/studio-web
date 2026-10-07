@@ -9,8 +9,7 @@ request. A field nobody had yet is a model edit (`POST /types/{id}/fields`),
 not backend code and not a migration.
 
 The read is there: `POST /studio-domain-model/v1/query`, beside the existing
-reads, which keep working ([studio-web#637](https://github.com/constructorfabric/studio-web/pull/637);
-the design is the "Query (experimental)" component of
+reads, which keep working (the design is the "Query (experimental)" component of
 [the gear design](design/studio-domain-model.md)). This page says how the portal
 gets from where it is to reading through it, and what each step waits on in
 graph-storage ([the asks](upstream/graph-storage-requests.md), items 2 and 6–11).
@@ -56,10 +55,10 @@ data transition is where it gets tested:
 
 | # | Step | Waits on | Done when |
 |---|---|---|---|
-| 0 | Query beside the existing reads | — | #637 merged (in review) |
-| 1 | Typed client generated from the model | — | **done** in the PR after #637: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI |
+| 0 | Query beside the existing reads | — | **done** 2026-10-07: `POST /studio-domain-model/v1/query` |
+| 1 | Typed client generated from the model | — | **done** 2026-10-07: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI |
 | 2 | Deprecate `GET /objects`; keep `GET /objects/graph` | — | **done** with step 1: removal after 2026-12-01 |
-| 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) (proposed); **built**, stand-checked 2026-10-07 | a query for a type the caller may not read is refused |
+| 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) | **done** 2026-10-07, stand-checked: a query for a type the caller may not read is refused |
 | 4 | Filters pushed down to indexes | graph-storage **item 8** | an indexed filter answers `complete: true` past 5,000 objects |
 | 5 | Exact and reverse relations | graph-storage **items 9, 10** | `warnings` is empty for the model's 50 colliding relations; `include` can go incoming |
 | 6 | First feature built on the model | 1–3 | **done** 2026-10-07: saved views (`views.tsx`); no backend change |
