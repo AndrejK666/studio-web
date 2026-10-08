@@ -147,12 +147,13 @@ Keycloak (sign in with GitHub) — and needs nothing here but Node.
   suite is pointed at each.
 - [`../docs/feature/`](../docs/feature) — per-feature specs (moved from `docs/sdlc/FEATURE/`).
 
-The short version of the first one: `StudioEventsApiService` is already
-registered on the shell, so a screen only subscribes.
+The short version of the first one: the shell registers `StudioEventsApiService`
+for its own screens; an MFE registers its own in `init.ts`, since module realms
+are isolated. Then a screen only subscribes.
 
 ```tsx
 import { useApiStream, apiRegistry } from '@gears-frontx/react';
-import { StudioEventsApiService, type StudioEvent, type StudioRunEvent } from '@/app/api';
+import { StudioEventsApiService, type StudioEvent, type StudioRunEvent } from '@constructor-studio/mfe-shared';
 
 function RunTicker() {
   const service = apiRegistry.getService(StudioEventsApiService);

@@ -23,21 +23,25 @@ import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
-import { StudioTasksApiService } from './api/StudioTasksApiService';
-import { ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import {
+  ConnectorsApiService,
+  StudioEventsApiService,
+  StudioTasksApiService,
+} from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build so plugin sync finds them.
-// Five gears: account-management holds the projects themselves (tenants, since
+// Six gears: account-management holds the projects themselves (tenants, since
 // the studio-project gear was retired), studio-connector the source hosts the
 // New project wizard imports from, studio-artifact-ingest the graph of what a
 // project's repositories contain, studio-tasks the run each repository's sync
-// is, and studio-documents the journey-stage catalogue a new project is seeded
-// from.
+// is, studio-events the stream those runs are announced on, and
+// studio-documents the journey-stage catalogue a new project is seeded from.
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(ConnectorsApiService);
 apiRegistry.register(ArtifactIngestApiService);
 apiRegistry.register(DocumentsApiService);
 apiRegistry.register(StudioTasksApiService);
+apiRegistry.register(StudioEventsApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.

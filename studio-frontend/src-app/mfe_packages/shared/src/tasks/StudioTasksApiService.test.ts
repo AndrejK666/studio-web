@@ -17,6 +17,10 @@ describe('StudioTasksApiService', () => {
     expect(service.run({ runId: 'a/b' }).key[2]).toBe('/runs/a%2Fb');
   });
 
+  it('asks a run to stop with a POST to its cancel action', () => {
+    expect(service.cancel('r-1').key).toEqual(['/cf/studio-tasks/v1', 'POST', '/runs/r-1/cancel']);
+  });
+
   it('puts a run back on the queue with a POST to its retry action', () => {
     expect(service.retry('r-1').key).toEqual(['/cf/studio-tasks/v1', 'POST', '/runs/r-1/retry']);
     expect(service.retry('a/b').key[2]).toBe('/runs/a%2Fb/retry');

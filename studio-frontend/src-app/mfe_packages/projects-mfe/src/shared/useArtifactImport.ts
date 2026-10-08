@@ -15,6 +15,14 @@ export function useProjectImport(projectId: string): ProjectImport {
   return useAppSelector((s) => projectImport(s[ARTIFACT_SYNC_SLICE_KEY], projectId));
 }
 
+export function cancelRepoSync(projectId: string, repo: string): void {
+  eventBus.emit('mfe/artifacts/cancel-requested', { projectId, repo });
+}
+
+export function retryRepoSync(projectId: string, repo: string): void {
+  eventBus.emit('mfe/artifacts/retry-requested', { projectId, repo });
+}
+
 export interface ArtifactImportView {
   isFirstImport: boolean;
   canSync: boolean;

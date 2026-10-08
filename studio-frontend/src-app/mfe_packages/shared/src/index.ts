@@ -125,3 +125,23 @@ export {
   type ProjectStatus,
 } from './project/projectConfig';
 export { checkoutDirectory, sessionSources, type SessionSource } from './project/sessionSources';
+export {
+  StudioEventsApiService,
+  STUDIO_EVENTS_API_BASE_URL,
+  type StudioEvent,
+  type StudioEventPage,
+  type StudioRunEvent,
+} from './tasks/StudioEventsApiService';
+export {
+  StudioTasksApiService,
+  STUDIO_TASKS_API_BASE_URL,
+  type StudioRun,
+  type StudioRunState,
+} from './tasks/StudioTasksApiService';
+export { runCount, type RunUpdate } from './tasks/runs';
+export {
+  createRunFollower,
+  readCursor,
+  type RunFollower,
+  type RunFollowerOptions,
+} from './tasks/followRuns';

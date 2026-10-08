@@ -4,14 +4,14 @@ import { createRoot } from 'react-dom/client';
 import { FrontXProvider, apiRegistry, createFrontXApp, registerSlice, MfeHandlerMF, gtsPlugin, FRONTX_MFE_ENTRY_MF } from '@gears-frontx/react';
 import { SHELL_SCHEMAS } from '@/app/mfe/schemas';
 import { Toaster } from '@/app/components/ui/sonner';
-import { AccountsApiService, ConnectorsApiService, STUDIO_MFE_ENTRY_IFRAME } from '@constructor-studio/mfe-shared';
 import {
-  IdentityApiService,
-  OrganizationsApiService,
+  AccountsApiService,
+  ConnectorsApiService,
+  STUDIO_MFE_ENTRY_IFRAME,
   StudioEventsApiService,
-  StudioSessionApiService,
   StudioTasksApiService,
-} from '@/app/api';
+} from '@constructor-studio/mfe-shared';
+import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
@@ -40,8 +40,7 @@ apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);
 // The backend's push channel: studio-tasks announces every background run on
-// it, so a view is told instead of polling. Registered on the shell so every
-// MFE shares one stream.
+// it, so a view is told instead of polling.
 apiRegistry.register(StudioEventsApiService);
 // The editor's session: its launch, the run that says it is ready, and the
 // sources and connections it clones from.

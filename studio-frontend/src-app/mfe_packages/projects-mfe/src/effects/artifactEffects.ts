@@ -1,5 +1,6 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-sync-unit:p1
 // @cpt-algo:cpt-studiofrontend-algo-project-artifacts-sync:p2
+// @cpt-algo:cpt-studiofrontend-algo-project-artifacts-run-control:p2
 import {
   apiRegistry,
   eventBus,
@@ -7,49 +8,46 @@ import {
   type FrontXApp,
   type RootState,
 } from '@gears-frontx/react';
-import { refusalFrom, type Refusal } from '@constructor-studio/mfe-shared';
-import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
-import { StudioTasksApiService, type TaskRunDto } from '../api/StudioTasksApiService';
 import {
+  StudioEventsApiService,
+  StudioTasksApiService,
+  createRunFollower,
+  readCursor,
+  refusalFrom,
+  violationOfType,
+  type RunFollower,
+} from '@constructor-studio/mfe-shared';
+import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
+import {
+  ARTIFACT_SYNC_SLICE_KEY,
   importAbandoned,
   importStarted,
+  projectImport,
+  repoCancelling,
+  repoControlRefused,
   repoEnqueued,
   repoProgressed,
-  type RepoImportStatus,
+  repoRetried,
+  repoUpdated,
 } from '../slices/artifactSyncSlice';
 import { NAV_SLICE_KEY } from '../slices/navSlice';
+import { canCancel, canRetry } from '../model/repoImport';
 import { recordAttempt } from '../shared/importAttempts';
-import type { SyncRequest } from '../events/artifactEvents';
+import type { RepoRef, SyncRequest } from '../events/artifactEvents';
 import '../events/artifactEvents';
 
 const CONCURRENCY = 3;
-const POLL_INTERVAL_MS = 2500;
 
-const MAX_POLLS = 480;
-const MAX_POLL_FAILURES = 3;
+/** The gear's answer to a cancel of a run that has already ended. */
+const CANCEL_REFUSED = 'TASK_CANCEL_REFUSED';
 
-function isNotFound(error: unknown): boolean {
-  return (error as { response?: { status?: number } })?.response?.status === 404;
-}
-
-function gearSaid(text: string | null | undefined): Refusal | null {
-  return text ? { kind: 'provider', text } : null;
-}
-
-/** A run's state as an import row's; a cancelled sync did not come through. */
-function importStatus(run: TaskRunDto): RepoImportStatus {
-  return run.state === 'cancelled' ? 'failed' : run.state;
-}
-
-/** Nodes the sync has flushed so far, from the counts in the run's `result`. */
-function storedOf(run: TaskRunDto): number {
-  const stored = run.result?.stored;
-  return typeof stored === 'number' && Number.isFinite(stored) ? stored : 0;
-}
-
-/** What the row says: what it did, why it stopped, or where it is. */
-function runMessage(run: TaskRunDto): string | null {
-  return run.summary ?? run.last_error ?? run.progress ?? null;
+/** One project's import, watched until the project in scope changes. */
+interface Watch {
+  follower: RunFollower;
+  /** The repository each run syncs. */
+  repos: Map<string, string>;
+  ended: boolean;
+  end: () => void;
 }
 
 async function bounded<T>(
@@ -67,17 +65,81 @@ async function bounded<T>(
 }
 
 export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void {
-  const generations = new Map<string, number>();
+  const watches = new Map<string, Watch>();
+  const events = () => apiRegistry.getService(StudioEventsApiService);
+  const tasks = () => apiRegistry.getService(StudioTasksApiService);
 
   const openProjectId = (): string | null =>
     (app.store.getState() as RootState)[NAV_SLICE_KEY].projectId;
 
+  const rowOf = (projectId: string, repo: string) =>
+    projectImport((app.store.getState() as RootState)[ARTIFACT_SYNC_SLICE_KEY], projectId).repos.find(
+      (row) => row.repo === repo
+    );
+
+  const watch = (projectId: string): Watch => {
+    const current = watches.get(projectId);
+    if (current) return current;
+
+    const repos = new Map<string, string>();
+    const follower = createRunFollower({
+      events: events(),
+      tasks: tasks(),
+      onRun: (update) => {
+        const repo = repos.get(update.runId);
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
+        if (repo) dispatch(repoUpdated({ projectId, repo, update }));
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
+      },
+      onLost: (runId, error) => {
+        const repo = repos.get(runId);
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-13
+        if (repo) {
+          dispatch(
+            repoProgressed({
+              projectId,
+              repo,
+              status: 'lost',
+              reason: refusalFrom(error, 'artifacts_reason_task_lost'),
+            })
+          );
+        }
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-13
+      },
+    });
+
+    // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-16
+    const unsubscribe = app.store.subscribe(() => {
+      if (openProjectId() === projectId) return;
+      const state = (app.store.getState() as RootState)[ARTIFACT_SYNC_SLICE_KEY];
+      const running = projectImport(state, projectId).phase === 'running';
+      next.end();
+      if (running) dispatch(importAbandoned(projectId));
+    });
+    // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-16
+
+    const next: Watch = {
+      follower,
+      repos,
+      ended: false,
+      end: () => {
+        if (next.ended) return;
+        next.ended = true;
+        follower.stop();
+        unsubscribe();
+        if (watches.get(projectId) === next) watches.delete(projectId);
+      },
+    };
+    watches.set(projectId, next);
+    return next;
+  };
+
   eventBus.on('mfe/artifacts/sync-requested', (request: SyncRequest) => {
     const { projectId, workspaceId, repos, unsyncable } = request;
     const ingest = apiRegistry.getService(ArtifactIngestApiService);
-    const studioTasks = apiRegistry.getService(StudioTasksApiService);
-    const generation = (generations.get(projectId) ?? 0) + 1;
-    generations.set(projectId, generation);
+    watches.get(projectId)?.end();
 
     // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-1
     // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-2
@@ -89,23 +151,18 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
     // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-3
 
     if (repos.length === 0) return;
-
-    const stored = new Map<string, number>();
-
-    const superseded = (): boolean => generations.get(projectId) !== generation;
-
-    const progressed = (repo: string, status: RepoImportStatus, reason: Refusal | null): void => {
-      dispatch(repoProgressed({ projectId, repo, status, reason, stored: stored.get(repo) ?? 0 }));
-    };
+    const mine = watch(projectId);
 
     void (async () => {
-      const runs = new Map<string, string>();
-      const failures = new Map<string, number>();
-
       // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-4
+      const cursor = await readCursor(events(), 'artifacts');
+      // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-4
+
       await bounded(repos, CONCURRENCY, async (entry) => {
-        if (superseded()) return;
+        if (mine.ended) return;
+        let runId: string;
         try {
+          // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
           const enqueued = await ingest.sync.fetch({
             provider: entry.provider,
             base_url: entry.baseUrl,
@@ -114,68 +171,103 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
             project_id: projectId,
             workspace_id: workspaceId ?? undefined,
           });
-          runs.set(entry.repo, enqueued.run_id);
-          dispatch(repoEnqueued({ projectId, repo: entry.repo, runId: enqueued.run_id }));
+          // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
+          runId = enqueued.run_id;
         } catch (error) {
-          progressed(entry.repo, 'failed', refusalFrom(error, 'artifacts_reason_request_failed'));
-        }
-      });
-      // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-4
-
-      for (let poll = 0; poll < MAX_POLLS && runs.size > 0; poll += 1) {
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        if (superseded()) return;
-        if (openProjectId() !== projectId) {
-          dispatch(importAbandoned(projectId));
+          if (!mine.ended) {
+            dispatch(
+              repoProgressed({
+                projectId,
+                repo: entry.repo,
+                status: 'failed',
+                reason: refusalFrom(error, 'artifacts_reason_request_failed'),
+              })
+            );
+          }
           return;
         }
-
-        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
-        const answers = await Promise.all(
-          [...runs].map(async ([repo, runId]) => {
-            try {
-              const run = await studioTasks.run({ runId }).fetch({ staleTime: 0 });
-              return { repo, run, error: null };
-            } catch (error) {
-              return { repo, run: null, error };
-            }
-          })
-        );
-        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-5
-
-        for (const { repo, run, error } of answers) {
-          if (!run) {
-            // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
-            // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-9
-            const misses = (failures.get(repo) ?? 0) + 1;
-            failures.set(repo, misses);
-            if (isNotFound(error) || misses >= MAX_POLL_FAILURES) {
-              runs.delete(repo);
-              progressed(repo, 'lost', refusalFrom(error, 'artifacts_reason_task_lost'));
-            }
-            // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
-            // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-9
-            continue;
-          }
-
-          failures.delete(repo);
-          stored.set(repo, storedOf(run));
-
-          // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
-          // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
-          const status = importStatus(run);
-          if (status === 'succeeded' || status === 'failed') runs.delete(repo);
-          progressed(repo, status, gearSaid(runMessage(run)));
-          // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-10
-          // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
-        }
-      }
-
-      // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12
-      for (const repo of runs.keys()) {
-        progressed(repo, 'unwatched', { kind: 'i18n', key: 'artifacts_reason_unwatched' });
-      }
-      // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-12
+        if (mine.ended) return;
+        mine.repos.set(runId, entry.repo);
+        dispatch(repoEnqueued({ projectId, repo: entry.repo, runId }));
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-6
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-7
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-9
+        mine.follower.follow([runId], cursor);
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-6
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-7
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-8
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-9
+      });
     })();
   });
+
+  // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-1
+  eventBus.on('mfe/artifacts/cancel-requested', ({ projectId, repo }: RepoRef) => {
+    const row = rowOf(projectId, repo);
+    if (!row?.runId || !canCancel(row)) return;
+    const runId = row.runId;
+    // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-3
+    dispatch(repoCancelling({ projectId, repo }));
+    // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-3
+    void (async () => {
+      try {
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-2
+        await tasks().cancel(runId).fetch(undefined);
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-2
+      } catch (error) {
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-4
+        // It ended meanwhile; its terminal event says how.
+        if (violationOfType(error, CANCEL_REFUSED)) return;
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-4
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-8
+        dispatch(
+          repoControlRefused({
+            projectId,
+            repo,
+            refusal: refusalFrom(error, 'artifacts_reason_cancel_refused'),
+          })
+        );
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-8
+      }
+    })();
+  });
+  // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-1
+
+  // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-5
+  eventBus.on('mfe/artifacts/retry-requested', ({ projectId, repo }: RepoRef) => {
+    const row = rowOf(projectId, repo);
+    if (!row?.runId || !canRetry(row)) return;
+    const runId = row.runId;
+    const mine = watch(projectId);
+    mine.repos.set(runId, repo);
+    void (async () => {
+      const cursor = await readCursor(events(), 'artifacts');
+      if (mine.ended) return;
+      try {
+        // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-6
+        await tasks().retry(runId).fetch(undefined);
+        // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-6
+      } catch (error) {
+        if (!mine.ended) {
+          dispatch(
+            repoControlRefused({
+              projectId,
+              repo,
+              refusal: refusalFrom(error, 'artifacts_reason_retry_refused'),
+            })
+          );
+        }
+        return;
+      }
+      if (mine.ended) return;
+      // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-7
+      // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-9
+      dispatch(repoRetried({ projectId, repo }));
+      mine.follower.follow([runId], cursor);
+      // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-7
+      // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-9
+    })();
+  });
+  // @cpt-end:cpt-studiofrontend-algo-project-artifacts-run-control:p2:inst-5
 }

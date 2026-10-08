@@ -1,5 +1,5 @@
 import { renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodesParams } from '../api/ArtifactIngestApiService';
 import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 
@@ -14,9 +14,10 @@ interface Answer {
   isError: boolean;
 }
 
-const { answer, invalidate } = vi.hoisted(() => ({
+const { answer, invalidate, imported } = vi.hoisted(() => ({
   answer: vi.fn<(params: NodesParams) => Answer>(),
   invalidate: vi.fn(),
+  imported: vi.fn(),
 }));
 
 vi.mock('@gears-frontx/react', () => ({
@@ -28,9 +29,7 @@ vi.mock('../api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: cl
 vi.mock('./useProjectConfig', () => ({
   useProjectConfig: () => ({ config: { sources: [] }, loading: false, failed: false }),
 }));
-vi.mock('./useArtifactImport', () => ({
-  useProjectImport: () => ({ phase: 'idle', repos: [] }),
-}));
+vi.mock('./useArtifactImport', () => ({ useProjectImport: () => imported() }));
 
 import { useArtifacts } from './useArtifacts';
 
@@ -40,6 +39,7 @@ const isRepositoryTotal = (params: NodesParams) =>
 
 beforeEach(() => {
   invalidate.mockClear();
+  imported.mockReturnValue({ phase: 'idle', repos: [] });
   answer.mockReset();
   // The page answers for its filters; every limit=1 read with a repo answers 96.
   answer.mockImplementation((params) => {
@@ -124,5 +124,93 @@ describe('the type filter', () => {
     renderHook(() => useArtifacts('p1', { repo: null, kind: null, search: '', offset: 0 }));
     expect(pageRequest()).toBeDefined();
     expect(pageRequest()).not.toHaveProperty('type', expect.anything());
+  });
+});
+
+describe('the re-read while an import runs', () => {
+  const QUERY = { repo: null, kind: null, search: '', offset: 0 };
+  /** One refetch invalidates the page, the repositories, the project count and the repository total. */
+  const READS_PER_REFETCH = 4;
+  const importing = (...repos: [status: string, stored: number][]) => ({
+    phase: 'running',
+    repos: repos.map(([status, stored], i) => ({ repo: `acme/r-${i}`, status, stored })),
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('happens at once when a sync starts or settles, and not again for the same statuses', () => {
+    imported.mockReturnValue(importing(['queued', 0], ['queued', 0]));
+    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    invalidate.mockClear();
+
+    imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
+    rerender();
+    expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+
+    rerender();
+    expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+  });
+
+  it('happens once in two seconds however often the stored count grows', () => {
+    imported.mockReturnValue(importing(['running', 0]));
+    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    invalidate.mockClear();
+
+    for (const stored of [1_000, 2_000, 3_000]) {
+      imported.mockReturnValue(importing(['running', stored]));
+      rerender();
+    }
+    expect(invalidate).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2_000);
+    expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+  });
+
+  it('keeps happening every two seconds while the stored count keeps growing', () => {
+    imported.mockReturnValue(importing(['running', 0]));
+    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    invalidate.mockClear();
+
+    for (let second = 1; second <= 5; second += 1) {
+      imported.mockReturnValue(importing(['running', second * 1_000]));
+      rerender();
+      vi.advanceTimersByTime(1_000);
+      if (second === 2) expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+    }
+
+    expect(invalidate).toHaveBeenCalledTimes(2 * READS_PER_REFETCH);
+  });
+
+  it('drops the pending one when a status change re-reads at once', () => {
+    imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
+    const { rerender } = renderHook(() => useArtifacts('p1', QUERY));
+    invalidate.mockClear();
+
+    imported.mockReturnValue(importing(['running', 1_000], ['queued', 0]));
+    rerender();
+    imported.mockReturnValue(importing(['running', 1_000], ['running', 0]));
+    rerender();
+    vi.advanceTimersByTime(2_000);
+
+    expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+  });
+
+  it('does not happen once the hook is gone', () => {
+    imported.mockReturnValue(importing(['running', 0]));
+    const { rerender, unmount } = renderHook(() => useArtifacts('p1', QUERY));
+    invalidate.mockClear();
+
+    imported.mockReturnValue(importing(['running', 1_000]));
+    rerender();
+    unmount();
+    vi.advanceTimersByTime(2_000);
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

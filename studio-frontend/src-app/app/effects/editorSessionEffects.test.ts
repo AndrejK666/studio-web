@@ -18,19 +18,20 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 vi.mock('@/app/mfe/sharedContext', () => ({ publishFrameUrl }));
 vi.mock('sonner', () => ({ toast: { info: toastInfo } }));
 
-import { AccountsApiService, ConnectorsApiService, type StudioArtifact } from '@constructor-studio/mfe-shared';
+import {
+  AccountsApiService,
+  ConnectorsApiService,
+  StudioEventsApiService,
+  StudioTasksApiService,
+  type StudioArtifact,
+  type StudioEvent,
+  type StudioRunState,
+} from '@constructor-studio/mfe-shared';
 import { stubFrame } from '@frontx-test-utils/stubFrame';
 import type { MfeEntryIframe } from '@/app/mfe/MfeHandlerIframe';
 import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY } from '@/app/slices/appSessionSlice';
-import {
-  StudioEventsApiService,
-  StudioSessionApiService,
-  StudioTasksApiService,
-  type StudioEvent,
-  type StudioRunState,
-  type StudioSessionState,
-} from '@/app/api';
+import { StudioSessionApiService, type StudioSessionState } from '@/app/api';
 import { DARK_THEME_ID } from '@/app/themes/dark';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
 import { DRACULA_THEME_ID } from '@/app/themes/dracula';

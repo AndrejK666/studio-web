@@ -16,21 +16,8 @@ export {
 } from './types';
 export { identityMockMap, organizationsMockMap } from './mocks';
 export {
-  StudioEventsApiService,
-  STUDIO_EVENTS_API_BASE_URL,
-  type StudioEvent,
-  type StudioEventPage,
-  type StudioRunEvent,
-} from './StudioEventsApiService';
-export {
   StudioSessionApiService,
   STUDIO_SESSION_API_BASE_URL,
   type StudioSession,
   type StudioSessionState,
 } from './StudioSessionApiService';
-export {
-  StudioTasksApiService,
-  STUDIO_TASKS_API_BASE_URL,
-  type StudioRun,
-  type StudioRunState,
-} from './StudioTasksApiService';

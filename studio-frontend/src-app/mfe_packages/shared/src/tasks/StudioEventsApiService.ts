@@ -18,10 +18,8 @@ import {
   SseProtocol,
   SseStreamProtocol,
 } from '@gears-frontx/react';
-// The shell's own transport, imported by path rather than by package name:
-// this is the same package, and a relative import keeps the app runnable and
-// testable without the `dist-lib` build step in between.
-import { SseAuthPlugin } from '../../../src/api/plugins/SseAuthPlugin';
+// TODO: the authenticated SSE transport belongs in FrontX; import it from there once it lands.
+import { SseAuthPlugin } from '@gears-frontx/frontx-template-shell';
 
 export const STUDIO_EVENTS_API_BASE_URL = '/cf/studio-events/v1';
 
@@ -84,6 +82,10 @@ const GAP_PAGE = 500;
  * of the first page, oldest first. Stops at that mark, or at an empty page —
  * not at a short one, so a lowered server clamp cannot turn this back into a
  * one-page read; whatever is published past the mark is on the live stream.
+ *
+ * Fails when a page does not start right after the seq it asked from: the
+ * window was pruned past it, and the events in between are gone. `seq` is not
+ * dense (a failed write skips one), so a hole there fails it too — rarely.
  */
 export async function pageThrough(
   read: (afterSeq: number, limit: number) => Promise<StudioEventPage>,
@@ -95,6 +97,10 @@ export async function pageThrough(
   for (;;) {
     const page = await read(after, GAP_PAGE);
     mark ??= page.latest_seq;
+    const first = page.events[0];
+    if (first && first.seq !== after + 1) {
+      throw new Error(`events ${after + 1}..${first.seq - 1} are no longer retained`);
+    }
     events.push(...page.events);
     const last = page.events[page.events.length - 1];
     if (!last || last.seq >= mark) return events;

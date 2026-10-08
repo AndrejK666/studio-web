@@ -118,6 +118,12 @@ describe('StudioEventsApiService', () => {
     expect(replayed[replayed.length - 1]?.seq).toBe(1500);
   });
 
+  it('fails when the window was pruned past the cursor, so the events in between are gone', async () => {
+    const read = vi.fn(async () => ({ events: [event(9), event(10)], latest_seq: 10 }));
+
+    await expect(pageThrough(read, 3)).rejects.toThrow('events 4..8 are no longer retained');
+  });
+
   // The cursor mechanics themselves — replaying the gap, dropping the overlap
   // — are the transport's, and are covered in
   // src/api/sse/__tests__/FetchEventSource.test.ts. Exercising them here would

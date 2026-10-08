@@ -26,6 +26,7 @@ owner: studio-team
   - [Build the artifact rows](#build-the-artifact-rows)
   - [Decide whether this is a first import](#decide-whether-this-is-a-first-import)
   - [Sync the project's repositories](#sync-the-projects-repositories)
+  - [Cancel or retry a repository's sync](#cancel-or-retry-a-repositorys-sync)
 - [4. States (CDSL)](#4-states-cdsl)
   - [Import State Machine](#import-state-machine)
 - [5. Definitions of Done](#5-definitions-of-done)
@@ -36,6 +37,7 @@ owner: studio-team
   - [Updated shows a time or says where the row came from](#updated-shows-a-time-or-says-where-the-row-came-from)
   - [Reads are scoped to the project](#reads-are-scoped-to-the-project)
   - [A repository is the unit of sync and of retry](#a-repository-is-the-unit-of-sync-and-of-retry)
+  - [Every repository's sync is shown and can be stopped or retried](#every-repositorys-sync-is-shown-and-can-be-stopped-or-retried)
   - [A first import is recognised from data](#a-first-import-is-recognised-from-data)
   - [A created project opens](#a-created-project-opens)
   - [Opening a file is the shell's to answer](#opening-a-file-is-the-shells-to-answer)
@@ -145,7 +147,25 @@ have and the choice changes the code:
 - **No progress stepper.** The gear reports phases and a `stored` count, so a
   five-stage stepper is buildable for four of its five stages — but the row
   count in the header climbs from the same data, and one moving number is enough
-  for the first cut.
+  for the first cut. Each repository's state, phase and counts are kept in the
+  store; showing them, with Cancel and Retry, belongs to the project's Sources
+  tab, which a later change adds.
+- **A run is watched on the event stream, not polled.** Every `studio-tasks`
+  run publishes its transitions as `task.*` events on the tenant's
+  `studio-events` stream ([D2](../api-conventions.md#d-long-running-work)), and
+  the cursor is read before the first sync is requested (D3), so the stream
+  replays whatever a run did before it opened. A run that joins a stream
+  already open is read once with `GET /runs/{id}`, and runs are read on an
+  interval only once the stream cannot be opened, cannot replay what it
+  missed, or ends, or that one read fails. There is no watch window: the gear
+  runs one repository's sync at a time (`INGEST_SLOT`, studio-web#563), so a
+  project's last repository can start long after its first, and a window
+  measured from the request would stop watching it before it begins.
+- **The run client is shared.** The `studio-tasks` and `studio-events`
+  services and the run follower live in `@constructor-studio/mfe-shared`, and
+  the shell's editor session follows its runs through the same follower. The
+  SSE transport (`SseAuthPlugin`) stays in the shell's library and is imported
+  by package name.
 
 **Requirements**: `cpt-studio-fr-artifact-ingest`
 
@@ -171,7 +191,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Feature**: [Create a project](project-create.md) — writes the sources this feature syncs
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the parent tenant tagged onto every synced node
 - **Feature**: [Connect a source host](connection-create.md) — holds the `secret_ref` a sync needs
-- **Dependencies**: `studio-artifact-ingest` (`/cf/studio-artifact-ingest/v1`), account-management (`/cf/account-management/v1`), studio-connector (`/cf/studio-connector/v1`)
+- **Dependencies**: `studio-artifact-ingest` (`/cf/studio-artifact-ingest/v1`), `studio-tasks` (`/cf/studio-tasks/v1`), `studio-events` (`/cf/studio-events/v1`), account-management (`/cf/account-management/v1`), studio-connector (`/cf/studio-connector/v1`)
 - **Prerequisite**: `@gears-frontx/ui-kit` at `0.4.0-alpha.1` or later, for `DataTable` and `Sidebar`
 
 ## 2. Actor Flows (CDSL)
@@ -290,15 +310,38 @@ Definitions of Done, which are traced.
 1. [x] - `p1` - Resolve each source's connection, for the provider, the installation root and the credential reference the gear needs - `inst-1`
 2. [x] - `p1` - **IF** a source's connection cannot be resolved - `inst-2`
    1. [x] - `p1` - Record that repository as unsyncable and continue with the rest - `inst-3`
-3. [x] - `p1` - `API: POST /cf/studio-artifact-ingest/v1/sync (provider, base_url, secret_ref, repo_full_path, project, workspace)` for each source, a bounded number at a time - `inst-4`
-4. [x] - `p1` - `API: GET /cf/studio-tasks/v1/runs/{id}` for the runs not yet settled, on an interval - `inst-5`
-5. [x] - `p1` - Report each task's stored count onward, so a reader can tell that what is queryable has grown - `inst-6`
-   1. [x] - `p1` - **IF** it has grown, the read that displays it re-issues itself; the import does not reach into its cache - `inst-7`
-6. [x] - `p1` - **IF** the gear no longer knows a task, or three polls in a row go unanswered - `inst-8`
-   1. [x] - `p1` - Treat it as lost rather than pending, and stop asking about it - `inst-9`
-7. [x] - `p1` - **IF** a task failed - `inst-10`
-   1. [x] - `p1` - Keep its reason against its repository, and do not resubmit it - `inst-11`
-8. [x] - `p1` - **RETURN** when no task is left unsettled, or when the watch window ends; a task still running then is left to the gear and shown as no longer watched - `inst-12`
+3. [x] - `p1` - `API: GET /cf/studio-events/v1/events?after_seq=0&limit=1` for the tenant's cursor, before the first sync is requested - `inst-4`
+4. [x] - `p1` - `API: POST /cf/studio-artifact-ingest/v1/sync (provider, base_url, secret_ref, repo_full_path, project, workspace)` for each source, a bounded number at a time - `inst-5`
+5. [x] - `p1` - `API: GET /cf/studio-events/v1/stream` from the cursor, keeping the `task.*` events whose subject is one of the runs - `inst-6`
+6. [x] - `p1` - `API: GET /cf/studio-tasks/v1/runs/{id}` once for a run that joins the stream after it opened; the stream's replay from the cursor covers the rest - `inst-7`
+7. [x] - `p1` - **IF** the stream cannot be opened, cannot replay what it missed, or ends, or the read of a run joining it fails - `inst-8`
+   1. [x] - `p1` - `API: GET /cf/studio-tasks/v1/runs/{id}` for the runs not yet settled, on an interval, for the rest of the import - `inst-9`
+8. [x] - `p1` - Report each run's state, phase and counts onward; a run waiting for another repository's sync is reported as queued - `inst-10`
+   1. [x] - `p1` - **IF** a run starts or settles, the read of the project's repositories re-issues itself; **IF** its stored count has grown, the reads of the artifacts do, at most once every two seconds. The import does not reach into their cache - `inst-11`
+9. [x] - `p1` - **IF** the gear no longer knows a run, or five reads in a row go unanswered - `inst-12`
+   1. [x] - `p1` - Treat it as lost rather than pending, and stop asking about it - `inst-13`
+10. [x] - `p1` - **IF** a run failed or was cancelled - `inst-14`
+    1. [x] - `p1` - Keep its reason against its repository, and do not resubmit it - `inst-15`
+11. [x] - `p1` - **RETURN** when no run is left unsettled. Nothing ends the watch early but a change of the project in scope - `inst-16`
+
+### Cancel or retry a repository's sync
+
+- [x] `p2` - **ID**: `cpt-studiofrontend-algo-project-artifacts-run-control`
+
+**Input**: a repository row and the run that syncs it
+
+**Output**: the row's new state, or the gear's refusal against it
+
+**Steps**:
+1. [x] - `p1` - **IF** the member cancels a queued or running sync - `inst-1`
+   1. [x] - `p1` - `API: POST /cf/studio-tasks/v1/runs/{id}/cancel` - `inst-2`
+   2. [x] - `p1` - Record the repository as cancelling until the run's terminal event; the gear finishes the work it started before it records the cancel - `inst-3`
+   3. [x] - `p1` - **IF** the gear refuses because the run has already ended, wait for that event; it is not an error - `inst-4`
+2. [x] - `p1` - **IF** the member retries a failed or cancelled sync that has a run - `inst-5`
+   1. [x] - `p1` - `API: POST /cf/studio-tasks/v1/runs/{id}/retry` - `inst-6`
+   2. [x] - `p1` - Record the repository as queued and keep watching the same run; a retry puts the run back on the queue rather than starting another - `inst-7`
+3. [x] - `p1` - **IF** the gear refuses either, keep the repository's state and record the refusal against it - `inst-8`
+4. [x] - `p1` - **RETURN** the row's state - `inst-9`
 
 ## 4. States (CDSL)
 
@@ -314,10 +357,12 @@ Definitions of Done, which are traced.
 1. [ ] - `p1` - **FROM** Idle **TO** Running **WHEN** the section opens on a project whose sources have not been pulled in - `inst-1`
 2. [ ] - `p1` - **FROM** Idle **TO** Running **WHEN** the member asks for a sync - `inst-2`
 3. [ ] - `p1` - **FROM** Running **TO** Settled **WHEN** every task has succeeded - `inst-3`
-4. [ ] - `p1` - **FROM** Running **TO** Failed **WHEN** every task has failed or been lost - `inst-4`
+4. [ ] - `p1` - **FROM** Running **TO** Failed **WHEN** every task has failed, been cancelled or been lost - `inst-4`
 5. [ ] - `p1` - **FROM** Running **TO** Settled **WHEN** some tasks succeeded and some failed; the failures are reported against their repositories - `inst-5`
 6. [ ] - `p1` - **FROM** Failed **TO** Running **WHEN** the member asks for a sync again - `inst-6`
 7. [ ] - `p1` - **FROM** Running **TO** Idle **WHEN** the project in scope changes; the tasks outlive the screen on the server and are simply no longer watched. The attempt stays recorded, so returning does not restart it - `inst-7`
+8. [ ] - `p1` - **FROM** Settled **TO** Running **WHEN** the member retries a repository's sync - `inst-8`
+9. [ ] - `p1` - **FROM** Failed **TO** Running **WHEN** the member retries a repository's sync - `inst-9`
 
 ## 5. Definitions of Done
 
@@ -613,17 +658,50 @@ A failed repository is reported and left alone. It is not resubmitted on its
 own, and re-entering the section does not restart it, because an import that
 produced nothing would otherwise burn the same rate limit on every visit.
 
-One unanswered poll is not a failure. The gear is asked again, and only a task
-it says it does not know, or three unanswered polls in a row, ends the watch
-for that repository. Leaving the project ends the watch for all of them, and
-the tasks run on. Every poll asks the gear, never the shared fetch cache.
+A run is followed on the event stream until it settles, however long it waits
+behind another repository. A read of the run is not a failure when it goes
+unanswered; only a run the gear says it does not know, or five unanswered
+reads in a row, ends the watch for that repository. Leaving the project ends
+the watch for all of them, and the tasks run on. Every read asks the gear,
+never the shared fetch cache.
 
 **Implements**:
 - `cpt-studiofrontend-algo-project-artifacts-sync`
 
 **Touches**:
-- API: `POST /cf/studio-artifact-ingest/v1/sync`, `GET /cf/studio-tasks/v1/runs/{id}`
-- Entities: `artifactEffects`, `artifactSync`, `artifactSyncSlice`
+- API: `POST /cf/studio-artifact-ingest/v1/sync`, `GET /cf/studio-tasks/v1/runs/{id}`, `GET /cf/studio-events/v1/stream`, `GET /cf/studio-events/v1/events`
+- Entities: `artifactEffects`, `artifactSyncSlice`, `followRuns`
+
+### Every repository's sync is shown and can be stopped or retried
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-run-control`
+
+Not implemented in this feature: the store and the effects hold everything below,
+and the project's Sources tab, added by a later change, shows it. Until then the
+Artifacts section reports only the repositories that did not come through, as
+before.
+
+The system **MUST** show each repository's sync as its own line — queued,
+importing with its phase and counts, cancelling, succeeded with the gear's
+summary, failed or cancelled with its reason — whether or not the project
+already has artifacts, **MUST** offer Cancel on a queued or importing sync and
+Retry on a failed or cancelled one that has a run, and **MUST NOT** show a
+cancelled sync's line as failed. A repository whose sync request was refused
+has no run to retry; Sync repositories is the way back for it.
+
+Cancel is a request, not an outcome: the gear records it when the handler
+returns, and the ingest handler does not stop early. So the line says
+cancelling, its counts keep moving, and it becomes cancelled only on the run's
+terminal event. A run that is waiting for another repository's sync is already
+`running` on the gear; its phase says it is waiting, and the line says queued.
+
+**Implements**:
+- `cpt-studiofrontend-algo-project-artifacts-run-control`
+- `cpt-studiofrontend-algo-project-artifacts-sync`
+
+**Touches**:
+- API: `POST /cf/studio-tasks/v1/runs/{id}/cancel`, `POST /cf/studio-tasks/v1/runs/{id}/retry`
+- Entities: `artifactEffects`, `artifactSyncSlice`
 
 ### A first import is recognised from data
 
@@ -798,6 +876,8 @@ placeholder, a dash or a zero dressed as an answer.
 - [ ] Opening a project that already has artifacts lands on its first section and requests no sync.
 - [ ] Reloading the page during an import does not start a second import.
 - [ ] One repository failing to sync leaves the other repositories' rows in the table, and the failure is reported against that repository.
+- [ ] Creating a project from three repositories lists all three in the repository filter as each one's sync starts, without a reload, even when the first takes longer than twenty minutes.
+- [ ] While the event stream is open, no run is read on an interval.
 - [ ] Every repository failing to sync is reported, and re-entering the section does not start the import again.
 - [ ] Leaving Artifacts for another section and returning shows the rows that arrived while it was away.
 - [ ] Pulling a repository into another project leaves this project's rows for it untouched, and no banner claims a repository was never pulled in.

@@ -22,9 +22,19 @@ export interface SyncRequest {
   unsyncable: { repo: string; reason: Refusal }[];
 }
 
+/** One repository of a project's import. */
+export interface RepoRef {
+  projectId: string;
+  repo: string;
+}
+
 declare module '@gears-frontx/react' {
   interface EventPayloadMap {
     /** Pull these repositories into this project's graph. */
     'mfe/artifacts/sync-requested': SyncRequest;
+    /** Stop this repository's sync. */
+    'mfe/artifacts/cancel-requested': RepoRef;
+    /** Put this repository's failed or cancelled sync back on the queue. */
+    'mfe/artifacts/retry-requested': RepoRef;
   }
 }

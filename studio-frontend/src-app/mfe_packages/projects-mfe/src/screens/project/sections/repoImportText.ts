@@ -5,7 +5,9 @@ import type { RepoImport } from '../../../slices/artifactSyncSlice';
 export function repoImportLine(t: ScreenText, repo: RepoImport): string {
   const reason =
     repo.reason === null
-      ? ''
+      ? repo.status === 'cancelled'
+        ? t('artifacts_reason_cancelled')
+        : ''
       : repo.reason.kind === 'i18n'
         ? t(repo.reason.key)
         : repo.reason.text;
@@ -13,5 +15,10 @@ export function repoImportLine(t: ScreenText, repo: RepoImport): string {
 }
 
 export function notComeThrough(repo: RepoImport): boolean {
-  return repo.status === 'failed' || repo.status === 'lost' || repo.status === 'unsyncable';
+  return (
+    repo.status === 'failed' ||
+    repo.status === 'cancelled' ||
+    repo.status === 'lost' ||
+    repo.status === 'unsyncable'
+  );
 }

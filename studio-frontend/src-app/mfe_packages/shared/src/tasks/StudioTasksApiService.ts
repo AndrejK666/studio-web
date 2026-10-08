@@ -1,7 +1,7 @@
 /**
  * Studio Tasks Domain - API Service
  *
- * One background run of `studio-tasks`, read by id and put back on the queue.
+ * One background run of `studio-tasks`, read by id, cancelled, and put back on the queue.
  * Its transitions arrive on studio-events; these reads are for when the stream
  * cannot say.
  */
@@ -48,6 +48,17 @@ export class StudioTasksApiService extends BaseApiService {
 
   /** Read with `staleTime: 0`: the shared cache would answer one state per 30 s. */
   readonly run = this.protocol(RestEndpointProtocol).queryWith<StudioRun, { runId: string }>(runPath);
+
+  /**
+   * Asks the run to stop. Only a flag: the run ends `cancelled` once its
+   * handler returns. Refused (`TASK_CANCEL_REFUSED`) for a run that has ended.
+   */
+  cancel(runId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<StudioRun, void>(
+      'POST',
+      `${runPath({ runId })}/cancel`
+    );
+  }
 
   /** Back on the queue. Refused for a run that succeeded or has not ended. */
   retry(runId: string) {

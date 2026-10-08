@@ -20,77 +20,172 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 
 import type { AppDispatch, FrontXApp } from '@gears-frontx/react';
+import {
+  StudioEventsApiService,
+  StudioTasksApiService,
+  type StudioEvent,
+  type StudioRun,
+} from '@constructor-studio/mfe-shared';
 import { initArtifactEffects } from './artifactEffects';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
-import { StudioTasksApiService, type TaskRunDto } from '../api/StudioTasksApiService';
-import { repoEnqueued, repoProgressed } from '../slices/artifactSyncSlice';
+import {
+  ARTIFACT_SYNC_SLICE_KEY,
+  artifactSyncSlice,
+  importAbandoned,
+  projectImport,
+  repoCancelling,
+  repoEnqueued,
+  repoProgressed,
+  repoRetried,
+  type ArtifactSyncState,
+} from '../slices/artifactSyncSlice';
 import { NAV_SLICE_KEY } from '../slices/navSlice';
 
 const PROJECT = 'p-1';
-const REPO = 'acme/api';
+const REPOS = ['acme/api', 'acme/web', 'acme/docs'];
+const MINUTE = 60_000;
 
-function run(overrides: Partial<TaskRunDto>): TaskRunDto {
+function taskEvent(seq: number, runId: string, kind: string, payload: Record<string, unknown> = {}): StudioEvent {
+  const state = kind === 'task.progress' ? 'running' : kind.slice('task.'.length);
   return {
-    id: 'r-1',
-    state: 'running',
+    seq,
+    at_ms: seq,
+    kind,
+    subject_type: 'task_run',
+    subject_id: runId,
+    source: 'studio-tasks',
+    payload: { run_id: runId, state, ...payload },
+  };
+}
+
+function run(id: string, state: StudioRun['state'], overrides: Partial<StudioRun> = {}): StudioRun {
+  return {
+    id,
+    tenant_id: 't',
+    task_type: 'artifact.ingest',
+    state,
+    payload: {},
+    partition_key: null,
+    attempts: 1,
     progress: null,
     summary: null,
     result: null,
     last_error: null,
+    cancel_requested: false,
+    requested_by: 'u',
+    created_at: '',
+    updated_at: '',
+    started_at: null,
+    finished_at: null,
     ...overrides,
   };
 }
 
-let syncFetch: ReturnType<typeof vi.fn>;
-let runOf: ReturnType<typeof vi.fn>;
-let dispatch: ReturnType<typeof vi.fn>;
-
-/** Answers `GET /runs/{id}` with `answers`, one per poll, the last one repeated. */
-function runsAnswer(...answers: (TaskRunDto | Error)[]): void {
-  let poll = 0;
-  runOf.mockImplementation(() => ({
-    fetch: () => {
-      const answer = answers[Math.min(poll, answers.length - 1)];
-      poll += 1;
-      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+/** A refusal that says nothing readable, so the line falls back to the portal's own words. */
+function refusal(status: number, violationType?: string): Error {
+  return Object.assign(new Error(), {
+    response: {
+      status,
+      data: violationType ? { context: { violations: [{ type: violationType }] } } : {},
     },
+  });
+}
+
+function harness(repos = REPOS) {
+  let state: ArtifactSyncState = artifactSyncSlice.reducer(undefined, { type: '@@init' });
+  let openProject: string | null = PROJECT;
+  const subscribers = new Set<() => void>();
+  const dispatch = vi.fn((action: { type: string; payload?: unknown }) => {
+    state = artifactSyncSlice.reducer(state, action as never);
+    subscribers.forEach((listener) => listener());
+    return action;
+  });
+  const app = {
+    store: {
+      getState: () => ({ [NAV_SLICE_KEY]: { projectId: openProject }, [ARTIFACT_SYNC_SLICE_KEY]: state }),
+      subscribe: (listener: () => void) => {
+        subscribers.add(listener);
+        return () => subscribers.delete(listener);
+      },
+    },
+  } as unknown as FrontXApp;
+
+  const stream: { onEvent: ((event: StudioEvent) => void) | null; onComplete: (() => void) | null } = {
+    onEvent: null,
+    onComplete: null,
+  };
+  const disconnect = vi.fn();
+  const events = {
+    cursor: { fetch: vi.fn().mockResolvedValue({ events: [], latest_seq: 7 }) },
+    streamFrom: vi.fn((_cursor: number) => ({
+      connect: (onEvent: (event: StudioEvent) => void, onComplete?: () => void) => {
+        stream.onEvent = onEvent;
+        stream.onComplete = onComplete ?? null;
+        return Promise.resolve('connection-1');
+      },
+      disconnect,
+    })),
+  };
+  let enqueued = 0;
+  const syncFetch = vi.fn(() => Promise.resolve({ run_id: `r-${(enqueued += 1)}`, status: 'queued' }));
+  const runRead = vi.fn(({ runId }: { runId: string }) => ({
+    fetch: vi.fn().mockResolvedValue(run(runId, 'queued')),
   }));
+  const cancelFetch = vi.fn().mockResolvedValue(run('r-1', 'running', { cancel_requested: true }));
+  const retryFetch = vi.fn().mockResolvedValue(run('r-1', 'queued'));
+  const tasks = {
+    run: runRead,
+    cancel: vi.fn(() => ({ fetch: cancelFetch })),
+    retry: vi.fn(() => ({ fetch: retryFetch })),
+  };
+  mockGetService.mockImplementation((service: unknown) => {
+    if (service === ArtifactIngestApiService) return { sync: { fetch: syncFetch } };
+    if (service === StudioTasksApiService) return tasks;
+    if (service === StudioEventsApiService) return events;
+    throw new Error('unexpected service');
+  });
+  initArtifactEffects(dispatch as unknown as AppDispatch, app);
+
+  const emit = (name: string, payload: unknown): void => {
+    for (const handler of listeners.get(name) ?? []) void handler(payload);
+  };
+
+  return {
+    dispatch,
+    events,
+    stream,
+    disconnect,
+    syncFetch,
+    tasks,
+    cancelFetch,
+    retryFetch,
+    rows: () => projectImport(state, PROJECT).repos,
+    phase: () => projectImport(state, PROJECT).phase,
+    leaveProject: () => {
+      openProject = 'p-2';
+      dispatch({ type: 'test/nav-changed' });
+    },
+    requestSync: () =>
+      emit('mfe/artifacts/sync-requested', {
+        projectId: PROJECT,
+        workspaceId: 'ws-1',
+        repos: repos.map((repo) => ({ repo, provider: 'github', secretRef: 's' })),
+        unsyncable: [],
+      }),
+    cancel: (repo: string) => emit('mfe/artifacts/cancel-requested', { projectId: PROJECT, repo }),
+    retry: (repo: string) => emit('mfe/artifacts/retry-requested', { projectId: PROJECT, repo }),
+  };
 }
 
-function requestSync(): void {
-  for (const handler of listeners.get('mfe/artifacts/sync-requested') ?? []) {
-    void handler({
-      projectId: PROJECT,
-      workspaceId: 'ws-1',
-      repos: [{ repo: REPO, provider: 'github', baseUrl: undefined, secretRef: 's' }],
-      unsyncable: [],
-    });
-  }
-}
+const actions = (h: ReturnType<typeof harness>, type: string) =>
+  h.dispatch.mock.calls
+    .map(([action]) => action as { type: string; payload: Record<string, unknown> })
+    .filter((action) => action.type === type);
 
-function progressedWith() {
-  return dispatch.mock.calls
-    .map(([action]) => action)
-    .filter((action) => action.type === repoProgressed.type)
-    .map((action) => action.payload);
-}
-
-describe('a repository sync, followed through its studio-tasks run', () => {
+describe('a repository sync, followed on the event stream', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     listeners.clear();
-    syncFetch = vi.fn().mockResolvedValue({ run_id: 'r-1', status: 'queued' });
-    runOf = vi.fn();
-    mockGetService.mockImplementation((service: unknown) => {
-      if (service === ArtifactIngestApiService) return { sync: { fetch: syncFetch } };
-      if (service === StudioTasksApiService) return { run: runOf };
-      throw new Error('unexpected service');
-    });
-    dispatch = vi.fn();
-    const app = {
-      store: { getState: () => ({ [NAV_SLICE_KEY]: { projectId: PROJECT } }) },
-    } as unknown as FrontXApp;
-    initArtifactEffects(dispatch as unknown as AppDispatch, app);
   });
 
   afterEach(() => {
@@ -98,52 +193,243 @@ describe('a repository sync, followed through its studio-tasks run', () => {
     vi.clearAllMocks();
   });
 
-  it('records the run id the sync answered', async () => {
-    runsAnswer(run({ state: 'running' }));
-    requestSync();
+  it('reads the cursor before the first sync and follows every run from it on one stream', async () => {
+    const h = harness();
+    h.requestSync();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(dispatch).toHaveBeenCalledWith(repoEnqueued({ projectId: PROJECT, repo: REPO, runId: 'r-1' }));
-  });
-
-  it('polls the run, shows its counts as it goes, and stops when it succeeds', async () => {
-    runsAnswer(
-      run({ state: 'running', progress: 'files', result: { stored: 3 } }),
-      run({ state: 'succeeded', summary: '12 stored', result: { stored: 12 } })
+    expect(h.events.cursor.fetch.mock.invocationCallOrder[0]).toBeLessThan(
+      h.syncFetch.mock.invocationCallOrder[0] ?? 0
     );
-    requestSync();
-    await vi.advanceTimersByTimeAsync(2500 * 4);
-
-    expect(runOf).toHaveBeenCalledWith({ runId: 'r-1' });
-    expect(runOf).toHaveBeenCalledTimes(2);
-    expect(progressedWith()).toEqual([
-      { projectId: PROJECT, repo: REPO, status: 'running', reason: { kind: 'provider', text: 'files' }, stored: 3 },
-      { projectId: PROJECT, repo: REPO, status: 'succeeded', reason: { kind: 'provider', text: '12 stored' }, stored: 12 },
-    ]);
+    expect(h.events.streamFrom).toHaveBeenCalledTimes(1);
+    expect(h.events.streamFrom).toHaveBeenCalledWith(7);
+    expect(actions(h, repoEnqueued.type).map((action) => action.payload.runId)).toEqual(['r-1', 'r-2', 'r-3']);
   });
 
-  it('counts a cancelled run as failed, with the reason it stopped', async () => {
-    runsAnswer(run({ state: 'cancelled', last_error: 'cancelled by a person' }));
-    requestSync();
-    await vi.advanceTimersByTimeAsync(2500 * 2);
+  it('shows a run waiting for the ingest slot as queued, and running once its sync starts', async () => {
+    const h = harness();
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(progressedWith()).toEqual([
-      {
-        projectId: PROJECT,
-        repo: REPO,
-        status: 'failed',
-        reason: { kind: 'provider', text: 'cancelled by a person' },
-        stored: 0,
-      },
-    ]);
+    h.stream.onEvent?.(taskEvent(8, 'r-2', 'task.progress', { phase: "waiting for another repository's sync to finish…" }));
+    expect(h.rows()[1]).toMatchObject({ status: 'queued' });
+
+    h.stream.onEvent?.(taskEvent(9, 'r-2', 'task.progress', { phase: 'pulling issues…', result: { stored: 4 } }));
+    expect(h.rows()[1]).toMatchObject({ status: 'running', phase: 'pulling issues…', stored: 4 });
+  });
+
+  it('keeps following a repository that starts after the first has run for more than twenty minutes', async () => {
+    const h = harness();
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.running'));
+    await vi.advanceTimersByTimeAsync(25 * MINUTE);
+    h.stream.onEvent?.(taskEvent(9, 'r-1', 'task.succeeded', { summary: 'acme/api: done', result: { stored: 40 } }));
+    h.stream.onEvent?.(taskEvent(10, 'r-2', 'task.progress', { phase: 'pulling issues…' }));
+
+    expect(h.rows().map((row) => row.status)).toEqual(['succeeded', 'running', 'queued']);
+    expect(h.rows()[0]).toMatchObject({ summary: 'acme/api: done', stored: 40 });
+    expect(h.phase()).toBe('running');
+    // The stream answered throughout: nothing was read on an interval.
+    expect(h.tasks.run).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes the stream once every run has settled', async () => {
+    const h = harness(['acme/api']);
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.failed', { error: 'rate limited' }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.rows()[0]).toMatchObject({ status: 'failed', reason: { kind: 'provider', text: 'rate limited' } });
+    expect(h.phase()).toBe('failed');
+    expect(h.disconnect).toHaveBeenCalledWith('connection-1');
+  });
+
+  it('reads the runs on an interval once the stream ends', async () => {
+    const h = harness(['acme/api']);
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+    h.tasks.run.mockReturnValue({ fetch: vi.fn().mockResolvedValue(run('r-1', 'succeeded', { summary: 'ok' })) });
+
+    h.stream.onComplete?.();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(h.tasks.run).toHaveBeenCalledWith({ runId: 'r-1' });
+    expect(h.rows()[0]).toMatchObject({ status: 'succeeded', summary: 'ok' });
   });
 
   it('calls a run the gear no longer has lost', async () => {
-    runsAnswer(Object.assign(new Error('gone'), { response: { status: 404 } }));
-    requestSync();
-    await vi.advanceTimersByTimeAsync(2500 * 2);
+    const h = harness(['acme/api']);
+    h.events.cursor.fetch.mockRejectedValue(refusal(500));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    h.tasks.run.mockReturnValue({ fetch: vi.fn().mockRejectedValue(refusal(404)) });
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(progressedWith()).toHaveLength(1);
-    expect(progressedWith()[0]).toMatchObject({ repo: REPO, status: 'lost' });
+    expect(h.events.streamFrom).not.toHaveBeenCalled();
+    const progressed = actions(h, repoProgressed.type);
+    expect(progressed[progressed.length - 1]?.payload).toMatchObject({ repo: 'acme/api', status: 'lost' });
+  });
+
+  it('calls a repository whose sync request was refused failed, and follows no run for it', async () => {
+    const h = harness(['acme/api']);
+    h.syncFetch.mockRejectedValueOnce(refusal(500));
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.rows()[0]).toMatchObject({
+      status: 'failed',
+      runId: null,
+      reason: { kind: 'i18n', key: 'artifacts_reason_request_failed' },
+    });
+    expect(h.phase()).toBe('failed');
+    expect(h.events.streamFrom).not.toHaveBeenCalled();
+  });
+
+  it("ends the first import's stream when a sync is asked for again, and its late events change nothing", async () => {
+    const h = harness(['acme/api']);
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+    const first = { ...h.stream };
+
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+    first.onEvent?.(taskEvent(8, 'r-1', 'task.succeeded', { summary: 'acme/api: done' }));
+
+    expect(h.disconnect).toHaveBeenCalledWith('connection-1');
+    expect(h.rows()[0]).toMatchObject({ runId: 'r-2', status: 'queued', summary: null });
+  });
+
+  it('stops watching when the project in scope changes; the runs go on', async () => {
+    const h = harness();
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+
+    h.leaveProject();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(actions(h, importAbandoned.type)).toHaveLength(1);
+    expect(h.disconnect).toHaveBeenCalled();
+  });
+
+  it('keeps a settled import as it is when the project in scope changes', async () => {
+    const h = harness(['acme/api']);
+    h.requestSync();
+    await vi.advanceTimersByTimeAsync(0);
+    h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.failed', { error: 'rate limited' }));
+
+    h.leaveProject();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(actions(h, importAbandoned.type)).toHaveLength(0);
+    expect(h.rows()[0]).toMatchObject({ status: 'failed' });
+  });
+
+  describe('cancel', () => {
+    it('asks the gear to stop the run and says cancelling until the run is recorded cancelled', async () => {
+      const h = harness(['acme/api']);
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.progress', { phase: 'pulling issues…' }));
+
+      h.cancel('acme/api');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.tasks.cancel).toHaveBeenCalledWith('r-1');
+      expect(actions(h, repoCancelling.type)).toHaveLength(1);
+      expect(h.rows()[0]).toMatchObject({ status: 'running', cancelling: true });
+
+      h.stream.onEvent?.(taskEvent(9, 'r-1', 'task.cancelled'));
+      expect(h.rows()[0]).toMatchObject({ status: 'cancelled', cancelling: false });
+    });
+
+    it('takes a refusal for a run that already ended as no error', async () => {
+      const h = harness(['acme/api']);
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.cancelFetch.mockRejectedValue(refusal(400, 'TASK_CANCEL_REFUSED'));
+
+      h.cancel('acme/api');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.rows()[0]).toMatchObject({ cancelling: true, refusal: null });
+    });
+
+    it('sends nothing for a row it cannot cancel', async () => {
+      const h = harness(['acme/api', 'acme/web']);
+      h.syncFetch.mockRejectedValueOnce(refusal(500));
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.succeeded'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      h.cancel('acme/api');
+      h.cancel('acme/web');
+      h.cancel('acme/other');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.tasks.cancel).not.toHaveBeenCalled();
+      expect(actions(h, repoCancelling.type)).toHaveLength(0);
+    });
+  });
+
+  describe('retry', () => {
+    it('puts a failed run back on the queue and follows the same run again', async () => {
+      const h = harness(['acme/api']);
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.failed', { error: 'rate limited' }));
+      await vi.advanceTimersByTimeAsync(0);
+      h.events.cursor.fetch.mockResolvedValue({ events: [], latest_seq: 12 });
+
+      h.retry('acme/api');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.tasks.retry).toHaveBeenCalledWith('r-1');
+      expect(actions(h, repoRetried.type)).toHaveLength(1);
+      expect(h.rows()[0]).toMatchObject({ status: 'queued', reason: null });
+      expect(h.events.streamFrom).toHaveBeenLastCalledWith(12);
+
+      h.stream.onEvent?.(taskEvent(13, 'r-1', 'task.succeeded', { summary: 'acme/api: done' }));
+      expect(h.rows()[0]).toMatchObject({ status: 'succeeded' });
+      expect(h.phase()).toBe('settled');
+    });
+
+    it('keeps the row as it was and says why when the gear refuses', async () => {
+      const h = harness(['acme/api']);
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.cancelled'));
+      await vi.advanceTimersByTimeAsync(0);
+      h.retryFetch.mockRejectedValue(refusal(400));
+
+      h.retry('acme/api');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.rows()[0]).toMatchObject({
+        status: 'cancelled',
+        refusal: { kind: 'i18n', key: 'artifacts_reason_retry_refused' },
+      });
+    });
+
+    it('sends nothing for a row it cannot retry', async () => {
+      const h = harness(['acme/api', 'acme/web', 'acme/docs']);
+      h.syncFetch.mockRejectedValueOnce(refusal(500));
+      h.requestSync();
+      await vi.advanceTimersByTimeAsync(0);
+      h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.running'));
+      h.dispatch(repoProgressed({ projectId: PROJECT, repo: 'acme/docs', status: 'lost', reason: null }));
+
+      h.retry('acme/api');
+      h.retry('acme/web');
+      h.retry('acme/docs');
+      h.retry('acme/other');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(h.tasks.retry).not.toHaveBeenCalled();
+      expect(actions(h, repoRetried.type)).toHaveLength(0);
+    });
   });
 });
