@@ -135,6 +135,11 @@ pub struct CatalogNodeListResponse {
     /// without saying so is worse than a page that admits it.
     #[serde(default)]
     pub truncated: bool,
+    /// The organization's components left out because the platform has one
+    /// of the same name (ADR-0042): the platform's is listed, the
+    /// organization's annotations over it. Empty outside `/components`.
+    #[serde(default)]
+    pub shadowed: Vec<String>,
 }
 
 /// Open, Studio-owned metadata for a gear. The payload is intentionally
@@ -242,6 +247,10 @@ pub struct RepoSourceDto {
     /// or a `.cf-studio-kit.toml` manifest. Kits land as their own node type
     /// rather than as gears wearing a label.
     pub mode: Option<String>,
+    /// In an answer of `GET /sources`: the platform's catalogue already reads
+    /// this repository in this mode (ADR-0042), so the organization's copy is
+    /// shadowed and can be removed. Ignored in a request.
+    pub shadowed_by_platform: Option<bool>,
 }
 
 /// A roadmap board: a GitHub Project whose items plan the gears.
@@ -350,6 +359,7 @@ impl SyncRequestDto {
             repos,
             roadmaps,
             registry: false,
+            platform: false,
         }
     }
 }
@@ -445,9 +455,13 @@ async fn list_gears(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<CatalogNodeListResponse>> {
-    let (nodes, truncated) = catalog
+    let super::service::TieredNodes {
+        nodes,
+        truncated,
+        shadowed,
+    } = catalog
         .service
-        .list_component_nodes(&ctx)
+        .list_component_nodes_tiered(&ctx)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     // The reference's classification, laid onto each node: what it is, what
@@ -497,6 +511,7 @@ async fn list_gears(
             })
             .collect(),
         truncated,
+        shadowed,
     }))
 }
 
@@ -767,6 +782,8 @@ pub struct ComponentValuesDto {
     pub sources: Vec<ComponentSourceDto>,
     /// Known from a roadmap board alone: planned, no code catalogued yet.
     pub planned: bool,
+    /// Whose catalogue it is in (ADR-0042): `platform` or `organization`.
+    pub tier: String,
 }
 
 /// One place a component's facts came from.
@@ -814,6 +831,7 @@ async fn component_values(
                 })
                 .collect(),
             planned: c.planned,
+            tier: c.tier,
         })
         .collect();
 
@@ -1326,6 +1344,7 @@ async fn list_profiles(
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,
+        shadowed: Vec::new(),
     }))
 }
 
@@ -1519,6 +1538,7 @@ async fn list_versions(
     Ok(Json(CatalogNodeListResponse {
         nodes: to_dtos(nodes),
         truncated: false,
+        shadowed: Vec::new(),
     }))
 }
 
@@ -1771,7 +1791,38 @@ fn source_dto(s: RepoSource) -> RepoSourceDto {
         repo: s.repo,
         git_ref: Some(s.git_ref).filter(|r| !r.is_empty()),
         mode: Some(s.mode).filter(|m| !m.is_empty()),
+        shadowed_by_platform: None,
     }
+}
+
+/// The organization's sources as `GET /sources` answers them: each marked
+/// whether the platform already reads it (ADR-0042). The platform's own
+/// sources, read as the platform, are never marked.
+async fn marked_sources(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    sources: Vec<RepoSource>,
+) -> Vec<RepoSourceDto> {
+    let platform = match catalog.service.platform_ctx(ctx) {
+        Some(p) => catalog
+            .service
+            .list_sources(&p)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's sources unreadable");
+            })
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    sources
+        .into_iter()
+        .map(|s| {
+            let shadowed = super::tiers::shadowed_by_platform(&s, &platform);
+            let mut dto = source_dto(s);
+            dto.shadowed_by_platform = Some(shadowed);
+            dto
+        })
+        .collect()
 }
 
 fn source_of(d: RepoSourceDto) -> RepoSource {
@@ -1973,14 +2024,8 @@ async fn list_sources(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
 ) -> ApiResult<JsonBody<RepoSourceListDto>> {
-    let items: Vec<RepoSourceDto> = catalog
-        .service
-        .list_sources(&ctx)
-        .await
-        .map_err(internal)?
-        .into_iter()
-        .map(source_dto)
-        .collect();
+    let stored = catalog.service.list_sources(&ctx).await.map_err(internal)?;
+    let items = marked_sources(&catalog, &ctx, stored).await;
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(RepoSourceListDto { items, total }))
 }
@@ -1990,17 +2035,179 @@ async fn update_sources(
     Extension(catalog): Extension<Catalog>,
     Json(body): Json<ReplaceSourcesRequest>,
 ) -> ApiResult<JsonBody<RepoSourceListDto>> {
-    let items: Vec<RepoSourceDto> = catalog
+    let stored = catalog
         .service
         .replace_sources(&ctx, body.items.into_iter().map(source_of).collect())
+        .await
+        .map_err(internal)?;
+    let items = marked_sources(&catalog, &ctx, stored).await;
+    catalog.ensure_registry_schedule(&ctx).await;
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(RepoSourceListDto { items, total }))
+}
+
+// ── the platform's catalogue (ADR-0042) ─────────────────────────────────────
+
+/// The platform's catalogue sources and crates.io keyword.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PlatformSourcesDto {
+    pub items: Vec<RepoSourceDto>,
+    pub total: u32,
+    /// The crates.io keyword the platform's catalogue syncs; null for none.
+    pub crates_io: Option<String>,
+}
+
+/// What replaces the platform's catalogue sources.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReplacePlatformSourcesRequest {
+    pub items: Vec<RepoSourceDto>,
+    /// The crates.io keyword; null or blank for no crates.io source.
+    pub crates_io: Option<String>,
+}
+
+/// May the caller run the platform's catalogue? Only a platform
+/// administrator, as studio-user answers it; without studio-user nobody can
+/// be shown to be one, so nobody is.
+pub(crate) async fn may_run_platform(
+    reader: Option<&dyn crate::user_profile::OrganizationReader>,
+    ctx: &SecurityContext,
+) -> bool {
+    match reader {
+        Some(reader) => reader
+            .is_platform_admin(&ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
+fn platform_refusal() -> CanonicalError {
+    StudioComponentsCatalogError::permission_denied()
+        .with_reason("PLATFORM_ADMIN_REQUIRED")
+        .create()
+}
+
+impl Catalog {
+    /// studio-user's reader, resolved per request like every other port.
+    fn organizations(&self) -> Option<Arc<dyn crate::user_profile::OrganizationReader>> {
+        self.hub
+            .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .ok()
+    }
+
+    /// The caller acting in the platform's tenant, once shown to be a
+    /// platform administrator; 403 otherwise.
+    async fn as_platform(&self, ctx: &SecurityContext) -> ApiResult<SecurityContext> {
+        if !may_run_platform(self.organizations().as_deref(), ctx).await {
+            return Err(platform_refusal());
+        }
+        super::registry::in_tenant(ctx, super::tiers::PLATFORM_TENANT).map_err(internal)
+    }
+
+    /// Make sure the platform's catalogue is synced daily. Best effort, like
+    /// the registry's schedule.
+    async fn ensure_platform_schedule(&self, pctx: &SecurityContext) {
+        let Ok(schedules) = self.hub.get::<dyn crate::scheduler::port::Schedules>() else {
+            tracing::info!(
+                "components-catalog: no scheduler; the platform's catalogue syncs when asked"
+            );
+            return;
+        };
+        if let Err(e) = schedules
+            .ensure(pctx, super::sync_task::platform_schedule_spec())
+            .await
+        {
+            tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's schedule could not be ensured");
+        }
+    }
+}
+
+async fn list_platform_sources(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<PlatformSourcesDto>> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .list_sources(&pctx)
         .await
         .map_err(internal)?
         .into_iter()
         .map(source_dto)
         .collect();
-    catalog.ensure_registry_schedule(&ctx).await;
-    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    Ok(Json(RepoSourceListDto { items, total }))
+    let crates_io = catalog
+        .service
+        .stored_keyword(&pctx)
+        .await
+        .map_err(internal)?;
+    Ok(Json(PlatformSourcesDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        crates_io,
+    }))
+}
+
+async fn update_platform_sources(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ReplacePlatformSourcesRequest>,
+) -> ApiResult<JsonBody<PlatformSourcesDto>> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .replace_sources(&pctx, body.items.into_iter().map(source_of).collect())
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(source_dto)
+        .collect();
+    let crates_io = catalog
+        .service
+        .set_stored_keyword(&pctx, body.crates_io)
+        .await
+        .map_err(internal)?;
+    catalog.ensure_platform_schedule(&pctx).await;
+    Ok(Json(PlatformSourcesDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        crates_io,
+    }))
+}
+
+async fn sync_platform(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(catalog): Extension<Catalog>,
+    headers: HeaderMap,
+) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
+    let pctx = catalog.as_platform(&ctx).await?;
+    let idempotency_key = crate::idempotency::key(&headers)?;
+    let queue = catalog.queue()?;
+    let run_id = queue
+        .enqueue(
+            &pctx,
+            crate::tasks::sdk::NewRun {
+                tenant: super::tiers::PLATFORM_TENANT,
+                task_type: TASK_TYPE,
+                payload: super::sync_task::platform_payload(),
+                partition_key: Some("catalog"),
+                idempotency_key: idempotency_key.as_deref(),
+                coalesce_queued: true,
+                notify_workspace_id: None,
+            },
+        )
+        .await
+        .map_err(internal)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CatalogSyncEnqueued {
+            run_id: run_id.to_string(),
+            status: "queued".to_string(),
+        }),
+    ))
 }
 
 async fn list_registry_entries(
@@ -2266,7 +2473,76 @@ async fn update_registry_excluded_projects(
     Ok(Json(ExcludedProjectsDto { project_ids }))
 }
 
+fn register_platform_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = OperationBuilder::get("/studio-components-catalog/v1/platform/sources")
+        .operation_id("studio_components_catalog.list_platform_sources")
+        .summary("The platform's catalogue sources")
+        .description(
+            "The repositories and the crates.io keyword the platform's catalogue \
+             reads (ADR-0042), stored in the platform's tenant. Every \
+             organization's catalogue reads the platform's beside its own. 403 \
+             for anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_platform_sources)
+        .json_response_with_schema::<PlatformSourcesDto>(openapi, StatusCode::OK, "Sources")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/platform/sources")
+        .operation_id("studio_components_catalog.update_platform_sources")
+        .summary("Replace the platform's catalogue sources")
+        .description(
+            "Replaces the platform's catalogue sources and crates.io keyword \
+             (ADR-0042), normalized as `PUT /sources` normalizes an \
+             organization's. Also makes sure the platform's catalogue is synced \
+             daily (a `catalog.sync` schedule with `{\"platform\": true}`). 403 \
+             for anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(update_platform_sources)
+        .json_request::<ReplacePlatformSourcesRequest>(openapi, "The sources")
+        .json_response_with_schema::<PlatformSourcesDto>(openapi, StatusCode::OK, "Stored sources")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::post("/studio-components-catalog/v1/platform/sync")
+        .operation_id("studio_components_catalog.sync_platform")
+        .summary("Enqueue a sync of the platform's catalogue")
+        .description(
+            "Queues a `catalog.sync` run in the platform's tenant that reads the \
+             platform's stored sources when it starts (ADR-0042). Answers 202 \
+             with the `run_id` to follow at `GET /studio-tasks/v1/runs/{run_id}`. \
+             Send an `Idempotency-Key` header to make a retry safe. 403 for \
+             anyone but a platform administrator.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .param(crate::idempotency::param())
+        .handler(sync_platform)
+        .json_response_with_schema::<CatalogSyncEnqueued>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Sync enqueued",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+}
+
 fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = register_platform_routes(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
         .summary("The organization's catalogue sources, kept on the server")

@@ -2575,6 +2575,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           <ComponentsCatalog
             token={token}
             tenantId={orgAsSpace?.id}
+            isPlatformAdmin={showPlatform}
             query={filters.query}
             kindFilter={filters.gearKind}
             sortMode={filters.gearSort}

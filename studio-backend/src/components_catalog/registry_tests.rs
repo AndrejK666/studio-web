@@ -622,6 +622,7 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
         organization_id: Some(org),
         excluded_project_ids: vec![],
         last_walk: vec![walked(P1, "a", "read")],
+        crates_io_keyword: None,
     };
     svc.sink
         .upsert(

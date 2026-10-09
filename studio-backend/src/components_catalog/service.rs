@@ -151,12 +151,37 @@ pub struct SyncSources {
     /// (`catalog.registry`, ADR-0041). What a sync of the stored sources asks.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub registry: bool,
+    /// Read the platform's stored sources when the run starts (ADR-0042):
+    /// what `POST /platform/sync` and the platform's schedule queue, in the
+    /// platform's tenant. The other fields are then ignored.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub platform: bool,
 }
 
 impl SyncSources {
     /// Whether the catalogue phases have anything to read.
     pub fn names_a_catalogue_source(&self) -> bool {
         self.crates_io.is_some() || !self.repos.is_empty() || !self.roadmaps.is_empty()
+    }
+}
+
+impl CatalogService {
+    /// What the platform's catalogue reads, as its administrator saved it:
+    /// the sources stored in the platform's tenant and its crates.io keyword.
+    pub async fn platform_sync_sources(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<SyncSources> {
+        if !super::tiers::is_platform(ctx) {
+            anyhow::bail!("the platform's catalogue is synced in the platform's tenant only");
+        }
+        Ok(SyncSources {
+            crates_io: self.stored_keyword(ctx).await?,
+            repos: self.list_sources(ctx).await?,
+            roadmaps: Vec::new(),
+            registry: false,
+            platform: false,
+        })
     }
 }
 
@@ -169,6 +194,18 @@ pub struct ResolvedComponent {
     pub sources: Vec<super::values::Source>,
     /// A gear known from a roadmap board alone, with no code catalogued yet.
     pub planned: bool,
+    /// `platform` or `organization` (ADR-0042): whose catalogue it is in.
+    pub tier: String,
+}
+
+/// The components an organization's catalogue lists: the platform's and its
+/// own, joined (`super::tiers`).
+pub struct TieredNodes {
+    pub nodes: Vec<CatalogNodeView>,
+    /// Whether a cap cut either tier's list short.
+    pub truncated: bool,
+    /// The organization's components the platform's shadow, by name.
+    pub shadowed: Vec<String>,
 }
 
 /// Whether a listed node is a planned gear whose code is catalogued: its plan
@@ -277,6 +314,18 @@ pub struct CatalogService {
     pub(super) hub: std::sync::OnceLock<Arc<toolkit::client_hub::ClientHub>>,
 }
 
+/// A read of the platform's tier, best effort: a platform that will not
+/// answer leaves the organization's own catalogue, which stands alone.
+fn best_effort<T>(read: anyhow::Result<T>) -> Option<T> {
+    match read {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's tier did not answer; serving the organization's alone");
+            None
+        }
+    }
+}
+
 /// Bumps the catalogue generation when dropped — at the end of a write, so a
 /// reader that cached what it saw DURING the write is invalidated by it.
 pub(crate) struct Changed(Arc<std::sync::atomic::AtomicU64>);
@@ -348,6 +397,29 @@ impl CatalogService {
     /// The default crates.io keyword, used when a sync request omits one.
     pub fn default_keyword(&self) -> &str {
         &self.keyword
+    }
+
+    /// The caller acting in the platform's tenant, to read the platform's
+    /// tier (ADR-0042) -- or `None` when there is nothing to join: the caller
+    /// already acts there, or the store does not keep tenants apart.
+    pub(super) fn platform_ctx(&self, ctx: &SecurityContext) -> Option<SecurityContext> {
+        if super::tiers::is_platform(ctx) || !self.sink.tenant_scoped() {
+            return None;
+        }
+        match super::registry::in_tenant(ctx, super::tiers::PLATFORM_TENANT) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's tier is unreadable to this caller");
+                None
+            }
+        }
+    }
+
+    /// The platform's profiles, best effort, when there is a platform tier
+    /// to read.
+    async fn platform_profiles(&self, ctx: &SecurityContext) -> Option<Vec<GtsNode>> {
+        let pctx = self.platform_ctx(ctx)?;
+        best_effort(self.sink.list(&pctx, Some("gear_profile")).await)
     }
 
     /// The catalogue's gears repository as a place the engine can check out:
@@ -1097,6 +1169,12 @@ impl CatalogService {
                     category: super::values::category_of(&node.value, profile),
                     sources: super::values::sources_of(&node.type_id, &node.value, profile),
                     planned: node.type_id == gts::ROADMAP_ITEM_TYPE,
+                    tier: node
+                        .value
+                        .get("tier")
+                        .and_then(Value::as_str)
+                        .unwrap_or(super::tiers::own_tier(ctx))
+                        .to_owned(),
                     values,
                     name,
                 })
@@ -1188,9 +1266,26 @@ impl CatalogService {
         Ok(Vec::new())
     }
 
-    /// Read the editable, Studio-owned metadata for all catalogued gears.
+    /// Read the editable, Studio-owned metadata for all catalogued gears: the
+    /// platform's, with this organization's annotations over them, and the
+    /// organization's own (`super::tiers::join_profiles`).
     pub async fn list_profiles(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsNode>> {
-        self.sink.list(ctx, Some("gear_profile")).await
+        let own = self.sink.list(ctx, Some("gear_profile")).await?;
+        let platform = self.platform_profiles(ctx).await;
+        Ok(match platform {
+            Some(platform) => super::tiers::join_profiles(platform, own),
+            None => super::tiers::join_profiles(Vec::new(), own)
+                .into_iter()
+                .map(|mut n| {
+                    if super::tiers::is_platform(ctx)
+                        && let Some(obj) = n.value.as_object_mut()
+                    {
+                        obj.insert("tier".into(), Value::String(super::tiers::PLATFORM.into()));
+                    }
+                    n
+                })
+                .collect(),
+        })
     }
 
     /// Upsert a gear profile without touching the crates.io-owned catalog node.
@@ -1220,12 +1315,37 @@ impl CatalogService {
         value
             .entry("title".to_owned())
             .or_insert_with(|| Value::String(gear_name.to_owned()));
-        let node = gts::gear_profile_node(gear_name, Value::Object(value));
+        // A platform component's facts are the platform's: the organization
+        // keeps its annotation only, and reads it laid over them (ADR-0042).
+        let platform = self
+            .platform_profiles(ctx)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|n| {
+                n.value
+                    .get("gear_name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|g| g.eq_ignore_ascii_case(gear_name))
+            });
+        let stored = match &platform {
+            Some(_) => super::tiers::annotation_of(Value::Object(value)),
+            None => Value::Object(value),
+        };
+        let node = gts::gear_profile_node(gear_name, stored);
         self.sink.register_types(ctx).await?;
         self.sink
             .upsert(ctx, std::slice::from_ref(&node), &[])
             .await?;
-        Ok(node)
+        Ok(match platform {
+            Some(platform) => {
+                let mut joined = super::tiers::join_profiles(vec![platform], vec![node]);
+                joined.pop().unwrap_or_else(|| {
+                    gts::gear_profile_node(gear_name, Value::Object(serde_json::Map::new()))
+                })
+            }
+            None => node,
+        })
     }
 
     /// The field schemas this tenant renders component pages against: the
@@ -1239,6 +1359,20 @@ impl CatalogService {
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<Vec<TypeFieldSchema>> {
+        let own = self.stored_field_schemas(ctx).await;
+        let platform = match self.platform_ctx(ctx) {
+            Some(p) => self.stored_field_schemas(&p).await,
+            None => Vec::new(),
+        };
+        Ok(super::tiers::layered_schemas(
+            field_schema::builtin_schemas(),
+            platform,
+            own,
+        ))
+    }
+
+    /// One tenant's own field-schema records, unparseable ones skipped.
+    async fn stored_field_schemas(&self, ctx: &SecurityContext) -> Vec<TypeFieldSchema> {
         let stored = match self.sink.list(ctx, Some("field_schema")).await {
             Ok(nodes) => nodes,
             Err(e) => {
@@ -1269,10 +1403,7 @@ impl CatalogService {
                 },
             )
             .collect();
-        Ok(field_schema::overlay(
-            field_schema::builtin_schemas(),
-            parsed,
-        ))
+        parsed
     }
 
     /// How many nodes of each type the graph holds.
@@ -1326,6 +1457,18 @@ impl CatalogService {
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<(Vec<CatalogNodeView>, bool)> {
+        let tiered = self.list_component_nodes_tiered(ctx).await?;
+        Ok((tiered.nodes, tiered.truncated))
+    }
+
+    /// [`Self::list_component_nodes`] with what the join left out: the
+    /// platform's components and the organization's, each marked with its
+    /// tier, an organization component the platform shadows counted rather
+    /// than listed (`super::tiers::join_nodes`).
+    pub async fn list_component_nodes_tiered(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<TieredNodes> {
         let marked: Vec<String> = self
             .list_field_schemas(ctx)
             .await?
@@ -1334,7 +1477,11 @@ impl CatalogService {
             .map(|s| gts::graph_type_id(&s.describes))
             .collect();
         if marked.is_empty() {
-            return Ok((Vec::new(), false));
+            return Ok(TieredNodes {
+                nodes: Vec::new(),
+                truncated: false,
+                shadowed: Vec::new(),
+            });
         }
         let (mut nodes, truncated) = self
             .sink
@@ -1344,7 +1491,30 @@ impl CatalogService {
         // that component carries the plan, and listing both would show one
         // gear twice.
         nodes.retain(|n| !is_implemented_plan(n));
-        Ok((nodes, truncated))
+        let platform = match self.platform_ctx(ctx) {
+            Some(p) => best_effort(
+                self.sink
+                    .list_of_types(&p, &marked, COMPONENT_LIST_CAP)
+                    .await,
+            ),
+            None => None,
+        };
+        Ok(match platform {
+            Some((mut platform, platform_truncated)) => {
+                platform.retain(|n| !is_implemented_plan(n));
+                let joined = super::tiers::join_nodes(platform, nodes);
+                TieredNodes {
+                    nodes: joined.nodes,
+                    truncated: truncated || platform_truncated,
+                    shadowed: joined.shadowed,
+                }
+            }
+            None => TieredNodes {
+                nodes: super::tiers::mark_all(nodes, super::tiers::own_tier(ctx)),
+                truncated,
+                shadowed: Vec::new(),
+            },
+        })
     }
 
     /// Every node type the graph holds, with what the studio says about each.
@@ -1434,6 +1604,18 @@ impl CatalogService {
         self.put_or_prune(ctx, record).await
     }
 
+    /// Whether a tenant with no record of its own for `describes` treats it
+    /// as a component: the platform's mark when the platform has one
+    /// (ADR-0042), else the built-in's.
+    async fn inherited_component(&self, ctx: &SecurityContext, describes: &str) -> bool {
+        if let Some(p) = self.platform_ctx(ctx)
+            && let Ok(Some(platform)) = self.stored_field_schema(&p, describes).await
+        {
+            return platform.component;
+        }
+        field_schema::builtin_component(describes)
+    }
+
     /// This tenant's own record for one type, before any built-in is laid
     /// under it. The overlaid read cannot answer this: it cannot tell a
     /// built-in from a tenant record that happens to agree with it.
@@ -1458,7 +1640,7 @@ impl CatalogService {
         mut record: TypeFieldSchema,
     ) -> anyhow::Result<TypeFieldSchema> {
         let _changed = self.changed();
-        let inherited = field_schema::builtin_component(&record.describes);
+        let inherited = self.inherited_component(ctx, &record.describes).await;
         if !record.adds_anything(inherited) {
             self.sink
                 .delete(ctx, &gts::field_schema_instance_id(&record.describes))
@@ -1516,7 +1698,7 @@ impl CatalogService {
         // page for it.
         schema.component = match self.stored_field_schema(ctx, describes).await? {
             Some(stored) => stored.component,
-            None => field_schema::builtin_component(describes),
+            None => self.inherited_component(ctx, describes).await,
         };
         self.put_or_prune(ctx, schema).await
     }

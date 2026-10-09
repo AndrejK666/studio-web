@@ -857,6 +857,11 @@ struct SettingsRecord {
     /// a project with no components from one the walk could not read.
     #[serde(default)]
     last_walk: Vec<ProjectWalk>,
+    /// The crates.io keyword the catalogue syncs with. Kept for the
+    /// platform's catalogue (ADR-0042), whose sync a schedule starts and so
+    /// cannot be handed the keyword by a page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    crates_io_keyword: Option<String>,
 }
 
 /// What the last walk saw of one project.
@@ -1096,12 +1101,10 @@ impl CatalogService {
             .into_iter()
             .filter(|p| seen.insert(*p))
             .collect();
-        let last_walk = self.settings(ctx).await?.last_walk;
-        let value = serde_json::to_value(SettingsRecord {
-            organization_id: Some(org),
-            excluded_project_ids: ids.clone(),
-            last_walk,
-        })?;
+        let mut settings = self.settings(ctx).await?;
+        settings.organization_id = Some(org);
+        settings.excluded_project_ids = ids.clone();
+        let value = serde_json::to_value(settings)?;
         self.sink
             .upsert(
                 ctx,
@@ -1110,6 +1113,40 @@ impl CatalogService {
             )
             .await?;
         Ok(ids)
+    }
+
+    /// The crates.io keyword this tenant's catalogue syncs with, when one was
+    /// saved.
+    pub async fn stored_keyword(&self, ctx: &SecurityContext) -> anyhow::Result<Option<String>> {
+        Ok(self.settings(ctx).await?.crates_io_keyword)
+    }
+
+    /// Save the crates.io keyword this tenant's catalogue syncs with; empty
+    /// or `None` means no crates.io source.
+    pub async fn set_stored_keyword(
+        &self,
+        ctx: &SecurityContext,
+        keyword: Option<String>,
+    ) -> anyhow::Result<Option<String>> {
+        self.sink.register_types(ctx).await?;
+        let org = ctx.subject_tenant_id();
+        let keyword = keyword
+            .map(|k| k.trim().to_owned())
+            .filter(|k| !k.is_empty());
+        let mut settings = self.settings(ctx).await?;
+        settings.organization_id = Some(org);
+        settings.crates_io_keyword.clone_from(&keyword);
+        self.sink
+            .upsert(
+                ctx,
+                &[gts::registry_settings_node(
+                    &org.to_string(),
+                    serde_json::to_value(settings)?,
+                )],
+                &[],
+            )
+            .await?;
+        Ok(keyword)
     }
 
     /// Every entry of the organization's registry, with its occurrences.

@@ -350,6 +350,24 @@ export interface CatalogRepoSource {
   repo: string;
   git_ref: string | null;
   mode: string;
+  /** In an answer: the platform's catalogue already reads this repository in
+   *  this mode (ADR-0042), so the organization's copy can be removed. */
+  shadowed_by_platform?: boolean | null;
+}
+
+/** A source as a request sends it: without what only an answer carries. */
+export function bareSource(s: CatalogRepoSource): CatalogRepoSource {
+  const out = { ...s };
+  delete out.shadowed_by_platform;
+  return out;
+}
+
+/** The platform's catalogue sources (ADR-0042): a platform administrator's. */
+export interface PlatformSources {
+  items: CatalogRepoSource[];
+  total: number;
+  /** The crates.io keyword; null for none. */
+  crates_io: string | null;
 }
 
 /** Where a registry entry was found. */
@@ -669,7 +687,16 @@ export interface Candidate {
   registry_state?: string | null;
   /** For a `deprecated` registry gear, the entry to use instead. */
   replaced_by?: string | null;
+  /** Whose component it is (ADR-0042): the shared set, the organization's
+   *  own, or this project's. Absent from a server older than the tiers. */
+  tier?: ComponentTier;
 }
+
+/** Where a component comes from (ADR-0042): `platform` -- the shared set,
+ *  synced once for every organization; `organization` -- the organization's
+ *  own catalogue and registry; `project` -- declared in this project's own
+ *  repositories. */
+export type ComponentTier = "platform" | "organization" | "project";
 
 /** Why a candidate was offered, in the words of the step that offered it. */
 export function matchReason(c: Candidate): string {
@@ -922,6 +949,8 @@ export interface ComponentValues {
   sources?: ComponentSource[];
   /** Known from a roadmap board alone: planned, no code catalogued yet. */
   planned?: boolean;
+  /** Whose catalogue it is in (ADR-0042). */
+  tier?: ComponentTier;
 }
 
 /** One place a component's facts came from. */
@@ -1342,6 +1371,12 @@ export interface CatalogNode {
   type_id: string;
   instance_id: string;
   value: {
+    /** Whose catalogue it is in (ADR-0042): the platform's, read-only to an
+     *  organization, or the organization's own. */
+    tier?: ComponentTier;
+    /** On a profile: the platform's, with this organization's annotation
+     *  laid over it. */
+    annotated?: boolean;
     // Gear nodes:
     name?: string;
     kind?: string;
@@ -3906,7 +3941,22 @@ export const api = {
   saveCatalogSources: (token: string, items: CatalogRepoSource[]) =>
     request<{ items: CatalogRepoSource[]; total: number }>("/studio-components-catalog/v1/sources", token, {
       method: "PUT",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items: items.map(bareSource) }),
+    }),
+  /** The platform's catalogue sources (ADR-0042). A platform administrator
+   *  only: anyone else gets a 403 problem. */
+  platformSources: (token: string) =>
+    request<PlatformSources>("/studio-components-catalog/v1/platform/sources", token),
+  savePlatformSources: (token: string, items: CatalogRepoSource[], crates_io: string | null) =>
+    request<PlatformSources>("/studio-components-catalog/v1/platform/sources", token, {
+      method: "PUT",
+      body: JSON.stringify({ items: items.map(bareSource), crates_io }),
+    }),
+  /** Queue a sync of the platform's catalogue from its stored sources. */
+  syncPlatform: (token: string) =>
+    request<{ run_id: string; status: string }>("/studio-components-catalog/v1/platform/sync", token, {
+      method: "POST",
+      headers: idempotent(),
     }),
   /** The organization's component registry (ADR-0041): every component its
    *  projects declare, with where each was found. */
@@ -4077,7 +4127,7 @@ export const api = {
 
   /** Read back the ingested gear crates. */
   listComponents: (token: string) =>
-    request<{ nodes: CatalogNode[]; truncated?: boolean }>(
+    request<{ nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] }>(
       "/studio-components-catalog/v1/components",
       token,
     ),

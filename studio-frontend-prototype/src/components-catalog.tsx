@@ -1,7 +1,26 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComponentRegistry } from "./component-registry";
-import { ApiError, api } from "./api";
-import type { ComponentSource, ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
+import { ApiError, api, PLATFORM_ROOT_TENANT_ID } from "./api";
+import type {
+  CatalogRepoSource,
+  ComponentSource,
+  ComponentValues,
+  CatalogNode,
+  Connection,
+  FieldSchema,
+  StudioKit,
+} from "./api";
+import {
+  TIER_TABS,
+  annotationNote,
+  inTierTab,
+  shadowedNote,
+  shadowedSources,
+  sourceShadowHint,
+  tierCounts,
+  withoutSource,
+  type TierTab,
+} from "./component-tiers";
 import { errText } from "./format";
 import { fieldTrend, type ComponentSnapshot, type FieldTrend } from "./field-trend";
 import { readinessOf } from "./readiness";
@@ -408,6 +427,8 @@ function kitAsNode(kit: StudioKit): CatalogNode {
     type_id: KIT_TYPE,
     instance_id: `kit:${kit.slug}`,
     value: {
+      // A built-in kit ships with the platform (ADR-0042).
+      tier: "platform",
       name: kit.slug,
       kind: "kit",
       description: kit.description,
@@ -426,9 +447,13 @@ export function ComponentsCatalog({
   onCategories,
   focus = null,
   projects = [],
+  isPlatformAdmin = false,
 }: {
   token: string;
   tenantId?: string;
+  /** Whether the caller is a platform administrator: the one who names the
+   *  platform's catalogue sources (ADR-0042). */
+  isPlatformAdmin?: boolean;
   /** The organization's projects: which ones the registry reads. */
   projects?: { id: string; name: string }[];
   /** The shell's filter rail. Not read: the catalogue's search, kind,
@@ -454,6 +479,15 @@ export function ComponentsCatalog({
   /** The catalogue (what the sources list) or the registry (what the
    *  organization's projects declare, ADR-0041). */
   const [pane, setPane] = useState<"catalogue" | "registry">("catalogue");
+  /** Which tier the catalogue shows (ADR-0042): the platform's, ours, or
+   *  both. The registry is the organization's, so it sits under Ours. */
+  const [tierTab, setTierTab] = useState<TierTab>("all");
+  /** The organization's components the platform shadows, by name. */
+  const [shadowed, setShadowed] = useState<string[]>([]);
+  /** The organization's sources as the server keeps them, each marked
+   *  whether the platform already reads it. */
+  const [serverSources, setServerSources] = useState<CatalogRepoSource[] | null>(null);
+  const [showPlatformSources, setShowPlatformSources] = useState(false);
   useEffect(() => {
     if (focus) setSelected(focus.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -578,6 +612,7 @@ export function ComponentsCatalog({
       // deployment which has never run a kit sync still shows them.
       const nodes = componentResponse.nodes ?? [];
       setTruncated(Boolean(componentResponse.truncated));
+      setShadowed(componentResponse.shadowed ?? []);
       const registry = new Map((kitResponse.items ?? []).map((k) => [k.slug, k]));
       const synced = new Set(
         nodes
@@ -721,6 +756,7 @@ export function ComponentsCatalog({
       // already applied the marks to what it sent -- but applying it in one
       // place is what keeps the two agreeing.
       .filter((g) => componentTypes === null || componentTypes.has(g.type_id))
+      .filter((g) => inTierTab(g, tierTab))
       .filter((g) => !hideSdk || componentKind(g) !== "sdk")
       .filter((g) => !cat || categoryOf(g).toLowerCase().includes(cat))
       .filter((g) => {
@@ -738,7 +774,43 @@ export function ComponentsCatalog({
       return sortMode === "name-desc" ? -cmp : cmp;
     });
     return rows;
-  }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes]);
+  }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes, tierTab]);
+  const tiers = useMemo(() => tierCounts(gears ?? []), [gears]);
+
+  // The organization's sources as the server keeps them, read when the
+  // Sources panel opens: which of them the platform already provides.
+  useEffect(() => {
+    if (!showSources) return;
+    let live = true;
+    api
+      .catalogSources(token)
+      .then(({ items }) => {
+        if (live) setServerSources(items ?? []);
+      })
+      .catch(() => {
+        if (live) setServerSources(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, showSources]);
+
+  const removeServerSource = async (gone: CatalogRepoSource) => {
+    if (!serverSources) return;
+    try {
+      const { items } = await api.saveCatalogSources(token, withoutSource(serverSources, gone));
+      // Saved without it; the server answers what it now keeps, unmarked.
+      setServerSources(items.map((i) => ({ ...i, shadowed_by_platform: false })));
+      // This browser's picker for the next sync stops naming it too.
+      const sameRepo = (sel: RepoSel) => sel.repo.trim().toLowerCase() === gone.repo.trim().toLowerCase();
+      for (const which of ["gears", "frontx", "kits", "kitsPm"] as const) {
+        const mode = which === "kitsPm" ? "kits" : which;
+        if (mode === (gone.mode || "gears") && sameRepo(sources[which])) setRepo(which, { enabled: false });
+      }
+    } catch (e) {
+      setErr(errText(e));
+    }
+  };
 
   /* The chip above the table wins over the filter rail's kind; either way it
      is one value, applied by the same predicate the chips counted with. */
@@ -892,14 +964,34 @@ export function ComponentsCatalog({
             <div className="crumb">
               <h1>Components</h1>
               <span className="asof">{filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}</span>
-              <span className="chips" role="tablist" style={{ margin: "0 0 0 12px" }}>
-                <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
-                  Catalogue
-                </button>
-                <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
-                  Registry
-                </button>
+              <span className="chips" role="tablist" aria-label="Tier" style={{ margin: "0 0 0 12px" }}>
+                {TIER_TABS.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    role="tab"
+                    title={t.title}
+                    aria-selected={tierTab === t.value}
+                    className={`chip ${tierTab === t.value ? "on" : ""}`}
+                    onClick={() => {
+                      setTierTab(t.value);
+                      if (t.value !== "organization") setPane("catalogue");
+                    }}
+                  >
+                    {t.label} <span className="n">{tiers[t.value]}</span>
+                  </button>
+                ))}
               </span>
+              {tierTab === "organization" && (
+                <span className="chips" role="tablist" aria-label="Ours" style={{ margin: "0 0 0 8px" }}>
+                  <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
+                    Catalogue
+                  </button>
+                  <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                    Registry
+                  </button>
+                </span>
+              )}
             </div>
             <div className="tools">
               <div className="seg" role="tablist" aria-label="View mode">
@@ -927,6 +1019,16 @@ export function ComponentsCatalog({
               >
                 Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
               </button>
+              {isPlatformAdmin && (
+                <button
+                  className={`iconbtn${showPlatformSources ? " active" : ""}`}
+                  onClick={() => setShowPlatformSources((v) => !v)}
+                  aria-expanded={showPlatformSources}
+                  title="The sources of the platform's catalogue, which every organization reads"
+                >
+                  Platform sources
+                </button>
+              )}
               <button className="iconbtn" onClick={() => setShowReport(true)}>
                 Roadmap report
               </button>
@@ -938,6 +1040,23 @@ export function ComponentsCatalog({
 
           {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
 
+          {isPlatformAdmin && showPlatformSources && (
+            <PlatformSourcesPanel token={token} onSynced={() => void reload()} />
+          )}
+
+          {showSources && serverSources && shadowedSources(serverSources).length > 0 && (
+            <div className="gcat-hint" data-shadowed-sources>
+              {shadowedSources(serverSources).map((s) => (
+                <p key={`${s.repo}|${s.mode}|${s.git_ref ?? ""}`}>
+                  {sourceShadowHint(s)}{" "}
+                  <button className="ghost" onClick={() => void removeServerSource(s)}>
+                    Remove
+                  </button>
+                </p>
+              ))}
+            </div>
+          )}
+
           {showSources && (
             <SourcesPanel
               sources={sources}
@@ -947,6 +1066,14 @@ export function ComponentsCatalog({
               tenantId={tenantId}
             />
           )}
+
+          {tierTab === "platform" && (
+            <p className="gcat-hint">
+              The platform's components: synced once, for every organization, and read-only here. A field you
+              edit on one is kept as your organization's annotation, over the platform's facts.
+            </p>
+          )}
+          {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
 
           <p className="gcat-sub">
             A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
@@ -1152,6 +1279,175 @@ function KindPicker({
           <span className="gcat-type-n">{c.count}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** The platform's catalogue sources (ADR-0042), for a platform administrator:
+ *  the repositories and the crates.io keyword every organization's catalogue
+ *  reads, saved in the platform's tenant, and a sync of them. */
+function PlatformSourcesPanel({ token, onSynced }: { token: string; onSynced: () => void }) {
+  const [items, setItems] = useState<CatalogRepoSource[] | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .platformSources(token)
+      .then((s) => {
+        if (!live) return;
+        setItems(s.items ?? []);
+        setKeyword(s.crates_io ?? "");
+      })
+      .catch((e) => {
+        if (live) setStatus(errText(e));
+      });
+    api
+      .connections(token, PLATFORM_ROOT_TENANT_ID)
+      .then(({ items: found }) => {
+        if (live) setConnections(found.filter((c) => c.provider === "github"));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token]);
+
+  const patch = (i: number, change: Partial<CatalogRepoSource>) =>
+    setItems((cur) => (cur ?? []).map((s, j) => (j === i ? { ...s, ...change } : s)));
+
+  const save = async (): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const saved = await api.savePlatformSources(
+        token,
+        (items ?? []).filter((s) => s.repo.trim()),
+        keyword.trim() || null,
+      );
+      setItems(saved.items);
+      setKeyword(saved.crates_io ?? "");
+      setStatus("Saved. The platform's catalogue is synced daily from these.");
+      return true;
+    } catch (e) {
+      setStatus(errText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sync = async () => {
+    if (!(await save())) return;
+    setBusy(true);
+    try {
+      const { run_id } = await api.syncPlatform(token);
+      setStatus("Platform sync queued…");
+      const deadline = Date.now() + 10 * 60 * 1000;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const t = await api.componentsCatalogTask(token, run_id);
+        if (t.status === "succeeded") {
+          setStatus(`Platform synced: ${t.gears} gears · ${t.versions} versions`);
+          onSynced();
+          break;
+        }
+        if (t.status === "failed" || t.status === "cancelled") {
+          setStatus(t.message || `sync ${t.status}`);
+          break;
+        }
+        setStatus(`${(t.message || t.status).replace(/…$/, "")} — ${t.gears} gears…`);
+        if (Date.now() > deadline) {
+          setStatus("timed out — still running server-side");
+          break;
+        }
+      }
+    } catch (e) {
+      setStatus(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sources" data-platform-sources>
+      <p className="gcat-hint">
+        <strong>Platform sources.</strong> What the platform's catalogue reads — the shared components every
+        organization sees under Platform. Only a platform administrator sees and changes this.
+      </p>
+      {items === null ? (
+        <p className="gcat-hint">{status || "Loading…"}</p>
+      ) : (
+        <>
+          {items.map((s, i) => (
+            <div key={i} className="editrow">
+              <input
+                aria-label="Repository (owner/name)"
+                placeholder="owner/name"
+                value={s.repo}
+                onChange={(e) => patch(i, { repo: e.target.value })}
+              />
+              <select aria-label="Mode" value={s.mode || "gears"} onChange={(e) => patch(i, { mode: e.target.value })}>
+                <option value="gears">gears</option>
+                <option value="frontx">frontx</option>
+                <option value="kits">kits</option>
+              </select>
+              <input
+                aria-label="Ref"
+                placeholder="HEAD"
+                value={s.git_ref ?? ""}
+                onChange={(e) => patch(i, { git_ref: e.target.value || null })}
+              />
+              <select
+                aria-label="Connection"
+                value={s.connection_id ?? ""}
+                onChange={(e) => patch(i, { connection_id: e.target.value || null })}
+              >
+                <option value="">First GitHub connection</option>
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label || c.account || c.id}
+                  </option>
+                ))}
+              </select>
+              <button className="ghost" onClick={() => setItems(items.filter((_, j) => j !== i))}>
+                Remove
+              </button>
+            </div>
+          ))}
+          <div className="editrow">
+            <button
+              className="ghost"
+              onClick={() =>
+                setItems([
+                  ...items,
+                  { tenant: PLATFORM_ROOT_TENANT_ID, connection_id: null, repo: "", git_ref: null, mode: "gears" },
+                ])
+              }
+            >
+              Add repository
+            </button>
+            <label>
+              crates.io keyword{" "}
+              <input
+                aria-label="crates.io keyword"
+                placeholder="none"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </label>
+            <button className="iconbtn" disabled={busy} onClick={() => void save()}>
+              Save
+            </button>
+            <button className="iconbtn primary" disabled={busy} onClick={() => void sync()}>
+              Save and sync
+            </button>
+          </div>
+          {status && <p className="gcat-hint">{status}</p>}
+        </>
+      )}
     </div>
   );
 }
@@ -2105,9 +2401,14 @@ function GearDetail({
 
       <Versions name={name} rows={versions} repository={gear.value.repository as string | undefined} />
 
+      {annotationNote(gear) && <p className="gcat-hint">{annotationNote(gear)}</p>}
       <div className="editrow">
         <button className="iconbtn" onClick={() => setEditing((e) => !e)}>
-          {editing ? "Close editor" : "Edit Gear profile"}
+          {editing
+            ? "Close editor"
+            : annotationNote(gear)
+              ? "Edit our annotation"
+              : "Edit Gear profile"}
         </button>
         {gear.value.repository && (
           <a href={String(gear.value.repository)} target="_blank" rel="noreferrer">

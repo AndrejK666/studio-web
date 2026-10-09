@@ -70,6 +70,7 @@ rules, not rendering, and a second portal would have grown its own copy.
 | ADR ID | Decision Summary |
 |--------|------------------|
 | `cpt-studio-adr-types-registry-catalogs-meaning-graph-storage-contracts-storage` | Catalogue types are free-form in the types-registry; a field schema is data about a type and lives in graph-storage. |
+| `cpt-studio-adr-component-tiers` | Components come in two tiers: the platform's, synced once in the root tenant and read-only to organizations, and each organization's own; reads join them and mark every component's `tier`. |
 | `cpt-studio-adr-document-types-are-components` | A catalogue key is an instance within one kind; a gear and a kit are different kinds, so different node types. |
 | `cpt-studio-adr-a-report-is-a-definition-over-a-source` | Reports moved to `studio-reports`; this gear keeps reading the board and answers it through `port::RoadmapCatalog`. |
 
@@ -196,12 +197,12 @@ rather than duplicates.
 | `gts.cf.studio.catalog.kit.v1~` | A kit a repository scan found: a repository, a manifest path and a git ref |
 | `gts.cf.studio.catalog.roadmap_item.v1~` | A gear on a roadmap board, keyed on board and issue, whether or not its code exists |
 | `gts.cf.studio.catalog.field_schema.v1~` | What the organization says about one GTS type: its field schema (with the `quality` block) and whether it counts as a component; built-ins overlaid by the tenant's own |
-| `gts.cf.studio.catalog.source.v1~` | One catalogue source of the organization, kept on the server (ADR-0041): repository, ref, mode; replaces the browser's `cf.components.sources` |
+| `gts.cf.studio.catalog.source.v1~` | One catalogue source of the organization, kept on the server (ADR-0041): repository, ref, mode; replaces the browser's `cf.components.sources`. The platform's sources (ADR-0042) are the same nodes in the platform's (root) tenant, with the root as their organization |
 | `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`, `merged`), owner (`{kind: person\|team, id?, name}`), category, capabilities, `aliases` (names merged into it), `merged_into`, `replaced_by`, the published `version`, and the fingerprint of the files it was last read from; for a candidate (P3) its `score`, `evidence` (`[{signal, detail, weight}]`) and `candidate_fingerprints` (the code it was found — or rejected — in) |
 | `gts.cf.studio.catalog.registry_decision.v1~` | One decision a person made about a registry entry: `action`, the state it moved `from` and `to`, `by` (the person's Studio id, else the token's subject), `at`, `reason` and `details` (the fields it set); joined to its entry by `gts.cf.studio.catalog.decided.v1~` |
 | `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project, what declares it (`declared_in`; `detected` for a candidate, with its score, evidence and module fingerprint), and the tenant and connection it was read through; joined to its entry by `gts.cf.studio.catalog.found_in.v1~`. Keyed on the entry, the project, the repository and the path, so one repository attached to two projects gives each its own occurrence |
 | `gts.cf.studio.catalog.registry_read.v1~` | One repository the registry walk read for one project (connection, repository, ref): the fingerprint of the files discovery reads and the commit, so an unchanged repository is not read again after a restart either |
-| `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips |
+| `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips, what the last walk saw, and the crates.io keyword the tenant's catalogue syncs with (kept for the platform's, whose sync a schedule starts) |
 | `gts.cf.studio.catalog.component_snapshot.v1~` | One component's fields on one day: the number `n`, the grade `s` and the badge `b` (cut to 80 characters); kept out of the enumerated catalogue types |
 
 A field value has the shape `{ v, b, n, s, l, u }`. Field schemas and the
@@ -538,6 +539,89 @@ declaration. Without studio-product the route answers 503; an occurrence
 recorded before the walk kept its connection is `failed_precondition` until
 the project is read again.
 
+#### Tiers
+
+- [x] `p2` - **ID**: `cpt-studio-component-components-catalog-tiers`
+
+The platform's components and the organization's, read together
+(ADR-0042, `cpt-studio-adr-component-tiers`). Phase 1 of the ADR is built:
+
+- [x] **Phase 1** (`tiers.rs`, the platform routes, the joined reads): the
+  platform's catalogue synced in the root tenant, reads that join both tiers,
+  `tier` on every component and candidate, the Components page in tabs
+  (Platform | Ours | All).
+- [ ] **Phase 2**: the organization's gear repository as the default target of
+  "Create a gear".
+- [ ] **Phase 3**: publishing as a pull request into the platform's repository.
+- [ ] **Phase 4**: several corpora and pinned versions, once the engine has
+  them.
+
+##### Why this component exists
+
+Every organization used to sync `gears-rust` itself and keep its own copy of
+the shared set. The platform's catalogue is now synced once, in the
+platform's (root) tenant, and every organization reads it beside its own.
+
+##### Responsibility scope
+
+- **The platform's catalogue.** Its sources are `source` nodes in the root
+  tenant (the root as their organization) and its crates.io keyword is in the
+  root's settings node, both edited only by a platform administrator
+  (studio-user's `OrganizationReader::is_platform_admin`; 403
+  `PLATFORM_ADMIN_REQUIRED` otherwise, and nobody without studio-user).
+  `POST /platform/sync` queues a `catalog.sync` run in the root tenant whose
+  payload is `{"platform": true}`: the run reads the stored sources when it
+  starts, and refuses to run anywhere but the root. Saving the sources ensures
+  a daily schedule (`0 3 * * *`) with the same payload; schedules fire in the
+  platform's tenant, where the run belongs. The organization's `/sources` and
+  `/sync` are unchanged.
+- **Reads join the tiers.** `/components`, `/component-values`, `/profiles`,
+  `/reference` and what spec-mapping reads through
+  `port::ComponentCatalog::components` read the platform's nodes in the root
+  tenant (the caller acting there, as `registry::in_tenant` builds it) and the
+  organization's in its own, and mark each `tier: platform | organization`.
+  The platform's read is best effort: a root that will not answer leaves the
+  organization's catalogue alone. Every catalogue read keeps only the rows
+  the context tenant owns (the envelope's `tenant_id`): graph-storage keeps
+  the read scope the PDP returned, which admits every organization the caller
+  is a member of, and a node another tenant wrote under the same
+  deterministic key is not this tenant's (`catalog_graph::build_sink_own_tenant`;
+  studio-product's sink is unchanged). A caller already in the root reads one tier,
+  `platform`. A store that does not keep tenants apart (the in-memory fallback
+  without graph-storage) has nothing to join, and everything is the caller's
+  own tier.
+- **One component, one tier.** The platform wins a name it has: an
+  organization node of the same name (case-insensitive) is left out and named
+  in `/components`' `shadowed`, so the page can say so. A node with no name is
+  never shadowed. An organization that configured `gears-rust` itself sees it
+  once, as the platform's, until it removes the source; `GET /sources` marks
+  such a source `shadowed_by_platform` (same repository, case-insensitive, in
+  the same mode). There is no data migration.
+- **Annotations over facts.** A platform component's profile is the
+  platform's (`auto`, `uml`, …) with the organization's profile node of the
+  same `gear_name` laid over it: its `values` key by key, and every other key
+  it sets except `auto` and `uml`; such a profile reads `annotated: true`.
+  Writing a profile for a platform component from an organization stores
+  only that annotation (`auto`, `uml` and the read marks dropped) in the
+  organization's tenant, and answers the joined profile.
+- **Schemas and marks stay the organization's.** The field schemas a tenant
+  renders against are the built-ins, the platform's records over them, the
+  organization's over those; a layout the platform authored reads
+  `owner: platform`. A mark the organization never set falls back to the
+  platform's, and whether a record is redundant is judged against that.
+
+##### Responsibility boundaries
+
+The platform's facts are never written from an organization. Publishing an
+organization's gear to the platform (ADR-0042 §4) and composing from more
+than one corpus are later phases.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-user` — asks who is a platform administrator
+- `cpt-studio-component-scheduler` — ensures the platform's daily sync with
+- `cpt-studio-component-spec-mapping` — is read, with each component's tier, by
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-components-catalog-rest`
@@ -551,22 +635,25 @@ the project is read again.
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them | unstable |
-| `GET` | `/components` | Every node of every type this organization marks as a component | unstable |
+| `GET` | `/components` | Every node of every type this organization marks as a component: the platform's and the organization's, each with its `tier`; `shadowed` names the organization's left out because the platform has the same name (ADR-0042) | unstable |
 | `GET` | `/versions` | Ingested crate versions; `crate` narrows to one | unstable |
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
-| `GET` | `/component-values` | Each component's fields with its three sources reconciled, and its grade | unstable |
+| `GET` | `/component-values` | Each component's fields with its three sources reconciled, its grade and its `tier`; a platform component's values are the platform's with the organization's annotation over them | unstable |
 | `GET` | `/component-history` | Snapshots: each component's earliest in the window, or one `component`'s every one; `days` default 30, at most 366 | unstable |
 | `GET` | `/activity` | Commits, churn, authors and pull requests per gear; `days` (default 30), `compare=previous` | unstable |
-| `GET` | `/profiles` | The Studio-managed profiles | unstable |
-| `POST` | `/components/{name}/profile` | Create or replace one gear's profile; a body that does not fit the profile schema is refused | unstable |
+| `GET` | `/profiles` | The Studio-managed profiles: the platform's with the organization's annotations over them (`annotated`), then the organization's own, each with its `tier` | unstable |
+| `POST` | `/components/{name}/profile` | Create or replace one gear's profile; a body that does not fit the profile schema is refused. For a platform component an organization stores its annotation only, and the answer is the joined profile | unstable |
 | `GET` | `/types` | Every node type the graph holds, its component mark and schema owner | unstable |
 | `GET` | `/types/counts` | Nodes per type, exact up to a cap | unstable |
 | `PUT` | `/types/{type_id}/component` | Mark or unmark a type as a component | unstable |
 | `GET` | `/field-schemas` | The field schema per component type, built-ins overlaid by the tenant's own | unstable |
 | `PUT` | `/field-schemas/{describes}` | Replace the tenant's schema for one type | unstable |
 | `DELETE` | `/field-schemas/{describes}` | Revert to the built-in; reverting an unoverridden type is not an error | unstable |
-| `GET` | `/sources` | The organization's catalogue sources, kept on the server: `{items: RepoSourceDto[], total}` | unstable |
+| `GET` | `/sources` | The organization's catalogue sources, kept on the server: `{items: RepoSourceDto[], total}`, each with `shadowed_by_platform` when the platform already reads it | unstable |
 | `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. Ensures the hourly registry schedule | unstable |
+| `GET` | `/platform/sources` | The platform's catalogue sources and crates.io keyword: `{items, total, crates_io}`. 403 for anyone but a platform administrator | unstable |
+| `PUT` | `/platform/sources` | Replace them with `{items, crates_io}`; ensures the platform's daily sync schedule. 403 for anyone but a platform administrator | unstable |
+| `POST` | `/platform/sync` | Queue a `catalog.sync` run in the root tenant that reads the platform's stored sources; 202 with `run_id`. 403 for anyone but a platform administrator | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
 | `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`, checked against the lifecycle table and recorded. Answers the entry with its decisions. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |

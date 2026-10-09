@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Candidate, PlanRow } from "./api";
 import {
   candidateReasons,
+  candidateTier,
   candidateStrength,
   couldBecomeGear,
   coverageSummary,
@@ -11,6 +12,8 @@ import {
   picksBeyondShortlist,
   rowCoverage,
   specReasons,
+  tierReason,
+  tierTag,
 } from "./spec-coverage";
 
 const cand = (name: string, extra: Partial<Candidate> = {}): Candidate => ({
@@ -111,6 +114,23 @@ describe("why a gear is offered", () => {
       "Deprecated in the organization's registry: no longer to be chosen.",
     );
     expect(candidateReasons(cand("a", { registry_state: "registered" }), "x").some((l) => l.includes("Deprecated"))).toBe(false);
+  });
+
+  it("tags a candidate with its tier and says what the tier means", () => {
+    expect(candidateTier(cand("a", { tier: "platform" }))).toBe("platform");
+    expect(candidateTier(cand("a", { tier: "organization" }))).toBe("organization");
+    // A server older than the tiers: only the project's own is known.
+    expect(candidateTier(cand("a", { origin: "project" }))).toBe("project");
+    expect(candidateTier(cand("a"))).toBeNull();
+    expect(tierTag("platform")).toBe("PLATFORM");
+    expect(tierTag("organization")).toBe("OURS");
+    expect(tierTag("project")).toBe("THIS PROJECT");
+    expect(candidateReasons(cand("a", { tier: "platform" }), "x")[0]).toBe(tierReason("platform"));
+    expect(candidateReasons(cand("a", { tier: "organization" }), "x")[0]).toContain("Offered before an equally strong platform gear");
+    // The project's own says so in its own words, once.
+    const own = candidateReasons(cand("a", { tier: "project", origin: "project", path: "src/a" }), "x");
+    expect(own[0]).toBe("Declared in this project's own repository, at src/a: you already have it.");
+    expect(own.some((l) => l === tierReason("project"))).toBe(false);
   });
 
   it("names the contract and what blocks the engine", () => {

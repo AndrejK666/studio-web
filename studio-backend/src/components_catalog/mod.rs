@@ -28,6 +28,7 @@ pub mod sdk;
 mod service;
 mod sync_task;
 mod taxonomy;
+mod tiers;
 pub(crate) mod values;
 
 /// The catalogue's node vocabulary lives beside the store it is written to.
@@ -87,7 +88,7 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .unwrap_or_else(|| DEFAULT_KEYWORD.to_string());
         info!(keyword = %keyword, "studio-components-catalog: cataloguing crates.io keyword");
 
-        let sink = crate::catalog_graph::build_sink(
+        let sink = crate::catalog_graph::build_sink_own_tenant(
             ctx.client_hub().as_ref(),
             "studio-components-catalog",
         );

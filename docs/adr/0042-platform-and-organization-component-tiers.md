@@ -152,7 +152,7 @@ Studio's side follows once the engine answers this.
 
 1. **The platform tier:** sync in the root tenant, reads join the two tiers, the
    tier on every component, the Components page in tabs (Platform | Ours |
-   All).
+   All). *Built: see the catalogue design's Tiers component.*
 2. **The organization's gear repository** as the default target of "Create a
    gear".
 3. **Publish as contribution:** a pull request into `gears-rust` (ADR-0041's

@@ -68,6 +68,7 @@ pub fn board_sync_payload(board: BoardSource) -> anyhow::Result<Value> {
         repos: Vec::new(),
         roadmaps: vec![board],
         registry: false,
+        platform: false,
     })?)
 }
 
@@ -150,6 +151,12 @@ mod tests {
 
 // ── What the spec-mapping gear reads ─────────────────────────────────────────
 
+/// The tiers a component comes from (ADR-0042): every node
+/// [`ComponentCatalog::components`] answers carries one as `tier`.
+pub use super::tiers::{
+    ORGANIZATION as TIER_ORGANIZATION, PLATFORM as TIER_PLATFORM, PROJECT as TIER_PROJECT,
+};
+
 /// One change the Gearbox engine would make to a set of gears.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EngineChange {
@@ -166,7 +173,9 @@ pub struct EngineChange {
 pub trait ComponentCatalog: Send + Sync {
     /// Every catalogued component's node, and the profiles by the gear they
     /// describe (`gear_name`). In the context's tenant, which the caller has
-    /// already scoped to the organization on screen.
+    /// already scoped to the organization on screen, joined with the
+    /// platform's tier: each node marked `tier` (`platform` or
+    /// `organization`), an organization node the platform shadows left out.
     async fn components(
         &self,
         ctx: &SecurityContext,

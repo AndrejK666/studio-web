@@ -23,6 +23,28 @@ use super::service::{CatalogCounts, CatalogService, SyncSources};
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "catalog.sync";
 
+/// Every day at 03:00 UTC: the platform's catalogue (ADR-0042) follows its
+/// sources once a day; its administrator syncs sooner from the page.
+pub const DAILY: &str = "0 3 * * *";
+
+/// The payload of a sync of the platform's catalogue: its stored sources,
+/// read when the run starts.
+pub fn platform_payload() -> serde_json::Value {
+    serde_json::json!({ "platform": true })
+}
+
+/// The schedule that keeps the platform's catalogue current. Schedules fire
+/// in the platform's tenant, which is where this one's run belongs.
+pub fn platform_schedule_spec() -> crate::scheduler::port::ScheduleSpec {
+    crate::scheduler::port::ScheduleSpec {
+        name: "Sync the platform's component catalogue".to_owned(),
+        task_type: TASK_TYPE,
+        payload: platform_payload(),
+        cron: DAILY.to_owned(),
+        enabled: true,
+    }
+}
+
 pub struct CatalogSyncTask {
     service: Arc<CatalogService>,
 }
@@ -40,7 +62,7 @@ impl TaskHandler for CatalogSyncTask {
     }
 
     async fn run(&self, ctx: &TaskContext) -> TaskOutcome {
-        let sources: SyncSources = match serde_json::from_value(ctx.payload.clone()) {
+        let mut sources: SyncSources = match serde_json::from_value(ctx.payload.clone()) {
             Ok(sources) => sources,
             // Written by a different version of this route; a retry cannot make
             // it readable.
@@ -50,6 +72,30 @@ impl TaskHandler for CatalogSyncTask {
                 ));
             }
         };
+        // The platform's catalogue (ADR-0042): what its administrator saved,
+        // read now, so a schedule syncs today's sources. Only ever in the
+        // platform's tenant.
+        let mut security = ctx.security.clone();
+        if sources.platform {
+            if ctx.tenant != super::tiers::PLATFORM_TENANT {
+                return TaskOutcome::Failed(
+                    "studio-components-catalog: the platform's catalogue syncs in the platform's tenant only".to_owned(),
+                );
+            }
+            security = match super::registry::in_tenant(&ctx.security, ctx.tenant) {
+                Ok(s) => s,
+                Err(e) => return TaskOutcome::Failed(format!("studio-components-catalog: {e:#}")),
+            };
+            sources = match self.service.platform_sync_sources(&security).await {
+                Ok(s) if s.names_a_catalogue_source() => s,
+                Ok(_) => {
+                    return TaskOutcome::done(
+                        "the platform names no catalogue source; nothing to sync",
+                    );
+                }
+                Err(e) => return TaskOutcome::Failed(format!("studio-components-catalog: {e:#}")),
+            };
+        }
         if !sources.names_a_catalogue_source() && !sources.registry {
             return TaskOutcome::Failed(
                 "studio-components-catalog: this run names no source to read".to_owned(),
@@ -59,20 +105,14 @@ impl TaskHandler for CatalogSyncTask {
         let (progress, drain) = ctx.progress_bridge();
         let registry = sources.registry;
         let mut outcome = if sources.names_a_catalogue_source() {
-            self.service
-                .run_sync(&ctx.security, sources, &progress)
-                .await
+            self.service.run_sync(&security, sources, &progress).await
         } else {
             Ok(CatalogCounts::default())
         };
         // The registry phase, last: the catalogue is written whether or not
         // it finishes, and the run's result says how it went.
         if registry && let Ok(counts) = &mut outcome {
-            match self
-                .service
-                .run_registry(&ctx.security, &[], &progress)
-                .await
-            {
+            match self.service.run_registry(&security, &[], &progress).await {
                 Ok(r) => counts.registry = Some(r),
                 Err(e) => {
                     tracing::warn!(error = %format!("{e:#}"), "studio-components-catalog: the registry phase failed");
@@ -137,6 +177,7 @@ mod tests {
             }],
             roadmaps: Vec::new(),
             registry: false,
+            platform: false,
         };
         let back: SyncSources =
             serde_json::from_value(serde_json::to_value(&sources).unwrap()).unwrap();
@@ -162,6 +203,32 @@ mod tests {
                 .as_object()
                 .unwrap()
                 .contains_key("registry")
+        );
+    }
+
+    #[test]
+    fn the_platform_schedule_syncs_the_platform_from_its_stored_sources() {
+        let spec = platform_schedule_spec();
+        assert_eq!(spec.task_type, TASK_TYPE);
+        assert_eq!(spec.cron, DAILY);
+        let back: SyncSources = serde_json::from_value(spec.payload.clone()).unwrap();
+        assert!(back.platform);
+        assert!(!back.registry);
+        assert!(!back.names_a_catalogue_source());
+        assert!(crate::scheduler::port::payload_matches(
+            &spec.payload,
+            &platform_payload()
+        ));
+        // An organization's payload does not name it.
+        let org: SyncSources =
+            serde_json::from_value(serde_json::json!({ "crates_io": "k" })).unwrap();
+        assert!(!org.platform);
+        assert!(
+            !serde_json::to_value(&org)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("platform")
         );
     }
 

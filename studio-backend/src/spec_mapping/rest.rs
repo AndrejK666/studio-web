@@ -189,6 +189,11 @@ pub struct CandidateDto {
     /// For a `deprecated` registry gear, the entry to use instead, when the
     /// decision named one.
     pub replaced_by: Option<String>,
+    /// Whose component it is (ADR-0042): `project` (declared in this
+    /// project's own repositories), `organization` (the organization's
+    /// catalogue or registry) or `platform` (the shared set). On otherwise
+    /// equal ranking, the project's and the organization's come first.
+    pub tier: String,
 }
 
 #[derive(Debug)]
@@ -613,6 +618,7 @@ fn plan_dto(
                     path: None,
                     registry_state: None,
                     replaced_by: None,
+                    tier: c.tier,
                 })
                 .collect(),
         })
