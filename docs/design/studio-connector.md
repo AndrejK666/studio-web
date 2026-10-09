@@ -47,6 +47,9 @@ A model-provider driver does not call its provider. `studio-llm-proxy` is
 Studio's one way out to a model provider (ADR-0039): the Anthropic and OpenAI
 drivers test a key through its `ModelProviders` port, and what stays here is
 where the key is stored, which hosts it may be sent to, and the test's verdict.
+The proxy in turn asks this gear for the key a member's agents and IDE chat run
+on when the member keeps none in their profile: their personal AI connection,
+the workspace's, or the organization's (`ConnectorService::model_key_for`).
 
 ### 1.2 Architecture Drivers
 
@@ -217,8 +220,15 @@ read a token from credstore per call and hand the driver a `ConnectionAuth`,
 never cached; list repositories and targets; send a message; publish a file
 (default branch, branch head, create branch, put file, open or reuse a pull
 request, composed here so the order is provider-independent);
-`delivery_preflight`; and `delete_personal_of`, which `cpt-studio-component-user`
-calls to remove a leaver's personal connections. A `personal` connection is
+`delivery_preflight`; `delete_personal_of`, which `cpt-studio-component-user`
+calls to remove a leaver's personal connections; and `model_key_for`, which
+`cpt-studio-component-llm-proxy` calls for a member's model-provider key. That
+one collects the provider's connections from the named workspace (or the
+caller's own tenant) and its ancestors, nearest first, and tries them personal,
+then workspace (only when a workspace is named), then organization — the
+opposite of `named_or_default`, which puts shared connections first for a
+background job. Each token is read as the caller; one they cannot read is
+skipped, never fatal. A `personal` connection is
 edited only by the person who created it, resolved through studio-user's
 `PersonResolver`; without that gear the guard falls back to comparing subjects,
 which can refuse an edit that should be allowed, never allow one that should
@@ -381,6 +391,9 @@ a `connectors::sdk::Repository`. `cpt-studio-component-artifact-ingest`
 resolves source drivers through `source_driver_ids()` and checks out with
 `connectors::sdk::git_checkout`. Project sources resolve a connection with
 `service::connection_by_id`.
+`cpt-studio-component-llm-proxy` reads AI connections back through the same
+handle, `ConnectorService::model_key_for` resolved per call, for the key a
+member's agents and IDE chat run on.
 
 ### 3.5 External Dependencies
 
