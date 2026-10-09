@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "./api";
 import type { RegistryDecisionInput, RegistryDeclareResult, RegistryEntry, RegistryProjectWalk } from "./api";
 import { errText } from "./format";
+import { occurrencePlace } from "./org-gear-repository";
 import {
   ACTION_LABEL,
   REGISTRY_STATES,
@@ -440,7 +441,7 @@ function RegistryRow({
             <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
               {e.occurrences.map((o) => (
                 <li key={`${o.repo}:${o.path}`}>
-                  {o.project_name ?? o.project_id ?? "—"} · <code>{o.repo}</code>
+                  {occurrencePlace(o)} · <code>{o.repo}</code>
                   {o.git_ref ? `@${o.git_ref}` : ""} · <code>{o.path}</code> · {o.declared_in}
                   {o.commit ? <span style={{ opacity: 0.6 }}> · {o.commit.slice(0, 7)}</span> : null}
                 </li>

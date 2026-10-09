@@ -15,6 +15,7 @@
 //! [`port`].
 
 mod gearbox;
+mod new_gear;
 pub mod port;
 mod rest;
 mod scaffold;
@@ -112,6 +113,13 @@ impl RestApiCapability for StudioProductGear {
                 ctx.client_hub(),
             ))
                 as Arc<dyn port::GearDeclarations>);
+        // "Create a gear" into the organization's gear repository, which the
+        // catalogue's registry keeps (ADR-0042 §2).
+        ctx.client_hub()
+            .register::<dyn port::GearScaffolds>(Arc::new(port::Scaffolds::new(
+                Arc::clone(&service),
+                ctx.client_hub(),
+            )) as Arc<dyn port::GearScaffolds>);
 
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);

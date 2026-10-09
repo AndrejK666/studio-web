@@ -831,7 +831,7 @@ function SuggestedComponents({
                           type="button"
                           className="linklike"
                           style={{ marginLeft: "auto", fontSize: 12 }}
-                          title="Scaffold a gear for it in the project's gear repository, with the specs' requirements as its PRD"
+                          title="Scaffold a gear for it, with the specs' requirements as its PRD: into the project's gear repository, else the organization's — the dialog says which"
                           onClick={() => setScaffoldFor(row)}
                         >
                           Create a gear for it

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComponentRegistry } from "./component-registry";
+import { OrgGearRepositoryCard } from "./org-gear-repository-card";
 import { ApiError, api, PLATFORM_ROOT_TENANT_ID } from "./api";
 import type {
   CatalogRepoSource,
@@ -1072,6 +1073,9 @@ export function ComponentsCatalog({
               The platform's components: synced once, for every organization, and read-only here. A field you
               edit on one is kept as your organization's annotation, over the platform's facts.
             </p>
+          )}
+          {tierTab === "organization" && (
+            <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
           )}
           {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
 

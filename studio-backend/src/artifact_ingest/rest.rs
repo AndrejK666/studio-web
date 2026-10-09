@@ -1141,27 +1141,7 @@ pub struct WaitingPullRequestListDto {
     pub members_known: bool,
 }
 
-/// The organization a project or workspace hangs under (project → workspace →
-/// organization), read as the caller, so a caller learns nothing about an
-/// organization their scope does not reach. `None` when any step fails or no
-/// organization is found within that many steps up.
-async fn organization_of(
-    am: &dyn account_management_sdk::AccountManagementClient,
-    ctx: &SecurityContext,
-    scope: Uuid,
-) -> Option<Uuid> {
-    let mut id = scope;
-    for _ in 0..3 {
-        let tenant = am.get_tenant(ctx, id).await.ok()?;
-        if tenant.tenant_type.as_deref()
-            == Some(crate::organizations::sdk::ORGANIZATION_TENANT_TYPE)
-        {
-            return Some(id);
-        }
-        id = tenant.parent_id?.0;
-    }
-    None
-}
+use crate::organizations::sdk::organization_of;
 
 /// GET /studio-artifact-ingest/v1/open-pull-requests — who they wait on.
 async fn open_pull_requests(

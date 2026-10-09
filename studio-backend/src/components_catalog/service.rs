@@ -299,7 +299,7 @@ pub struct CatalogService {
     /// A project's gear repository, which `studio-product` keeps.
     products: std::sync::OnceLock<crate::product::port::Products>,
     /// Reads a project's own sources, for a project with no gear repository.
-    account_management:
+    pub(super) account_management:
         std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,
     /// Bumped whenever the catalogue changes through this service (a sync, a
     /// profile, a field schema), so a cached read built from the old state is
@@ -338,7 +338,7 @@ impl Drop for Changed {
 
 impl CatalogService {
     /// The connector service, when `studio-connector` has published one.
-    fn connector_service(&self) -> Option<Arc<ConnectorService>> {
+    pub(super) fn connector_service(&self) -> Option<Arc<ConnectorService>> {
         self.connectors.as_ref()?.get()
     }
 

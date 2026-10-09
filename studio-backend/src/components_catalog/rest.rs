@@ -1617,6 +1617,10 @@ pub struct OccurrenceDto {
     /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
     /// where a candidate detector found it and nothing declares it.
     pub declared_in: String,
+    /// `project`, or `organization` for the organization's gear repository
+    /// (ADR-0042), which belongs to no project: `project_id` is then null and
+    /// `project_name` is the organization's.
+    pub scope: String,
 }
 
 /// Who answers for a registry entry.
@@ -1871,6 +1875,7 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
             .occurrences
             .into_iter()
             .map(|o| OccurrenceDto {
+                scope: o.scope_name().to_owned(),
                 project_id: o.project_id,
                 project_name: o.project_name,
                 repo: o.repo,
@@ -2541,8 +2546,14 @@ fn register_platform_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .register(router, openapi)
 }
 
+#[path = "registry_gear_repository_rest.rs"]
+mod gear_repository;
+
 fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_platform_routes(router, openapi);
+    // Before `/registry/{name}`'s routes, though axum prefers the literal
+    // segment either way.
+    let router = gear_repository::register(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
         .summary("The organization's catalogue sources, kept on the server")

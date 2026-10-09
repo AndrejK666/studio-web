@@ -381,6 +381,46 @@ export interface RegistryOccurrence {
   /** `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
    *  where a candidate detector found it and nothing declares it. */
   declared_in: string;
+  /** `project`, or `organization` for the organization's gear repository
+   *  (ADR-0042): then `project_id` is null and `project_name` is the
+   *  organization's. Absent from a server older than it. */
+  scope?: "project" | "organization" | string;
+}
+
+/** The organization's gear repository (ADR-0042 §2): where "Create a gear"
+ *  writes for a project without one of its own. */
+export interface OrgGearRepository {
+  /** The tenant whose catalogue holds the connection. */
+  tenant: string;
+  connection_id: string;
+  connection_label?: string | null;
+  /** `owner/name`. */
+  repo: string;
+  /** The branch new gears go back to. */
+  branch: string;
+  set_by?: string | null;
+  set_at?: string | null;
+}
+
+/** `GET /registry/gear-repository`: the setting, and whether the caller may
+ *  change it (`component.registry`). */
+export interface OrgGearRepositoryState {
+  gear_repository: OrgGearRepository | null;
+  may_manage: boolean;
+}
+
+/** What a scaffold wrote (or, on a dry run, would write), and where. */
+export interface ScaffoldResult {
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+  files: ScaffoldFile[];
+  /** `owner/name` written into; absent when there is nowhere to write. */
+  repo?: string | null;
+  /** Project scaffolds: which repository it is, in the order they are
+   *  chosen — `project`, `organization` or `sources`. The organization
+   *  route answers `organization`. */
+  target?: "project" | "organization" | "sources" | string | null;
 }
 
 /** What the last registry walk saw of one project. */
@@ -3994,6 +4034,52 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  /** The organization's gear repository (ADR-0042 §2). Every member reads it. */
+  orgGearRepository: (token: string) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token),
+  /** Set it. The connection must be organization-scoped; anything else is a
+   *  400 saying why. An organization administrator only. */
+  setOrgGearRepository: (token: string, body: { connection_id: string; repo: string; branch?: string }) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** Unset it; the repository itself is not touched. */
+  deleteOrgGearRepository: (token: string) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository", token, {
+      method: "DELETE",
+    }),
+  /** Create a repository through an organization-scoped connection and set it. */
+  createOrgGearRepository: (
+    token: string,
+    body: { connection_id: string; name: string; owner?: string; is_org?: boolean; private?: boolean },
+  ) =>
+    request<OrgGearRepositoryState>("/studio-components-catalog/v1/registry/gear-repository/create", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** Create a gear in the organization's gear repository: the same skeleton
+   *  a project's scaffold writes, with a pull request by default. `dry_run`
+   *  answers the files only. An organization administrator only. */
+  scaffoldOrgGear: (
+    token: string,
+    body: {
+      slug: string;
+      problem?: string;
+      capabilities?: string[];
+      gear_kind?: GearKind;
+      plugin_host?: string;
+      plugin_spec?: string;
+      parent_dir?: string;
+      app_title?: string;
+      open_pr?: boolean;
+      dry_run?: boolean;
+    },
+  ) =>
+    request<ScaffoldResult & { dry_run: boolean }>("/studio-components-catalog/v1/registry/scaffold", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).then((r) => ({ ...r, target: "organization" as const })),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
    * read through `taskRun`; the counts are the run's `result`. */
   componentsCatalogTask: async (token: string, taskId: string) => {
@@ -4213,12 +4299,7 @@ export const api = {
       open_pr?: boolean;
     },
   ) =>
-    request<{
-      branch: string;
-      commit_sha: string;
-      pr_url?: string | null;
-      files: ScaffoldFile[];
-    }>(
+    request<ScaffoldResult>(
       `/studio-product/v1/projects/${encodeURIComponent(projectId)}/scaffold`,
       token,
       { method: "POST", body: JSON.stringify(body) },

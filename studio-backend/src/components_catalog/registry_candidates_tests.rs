@@ -52,6 +52,7 @@ fn declared(name: &str, path: &str) -> LocalGear {
 fn read(project: Uuid, print: &str, gears: Vec<LocalGear>, candidates: Vec<Candidate>) -> RepoRead {
     RepoRead {
         project_id: project,
+        organization: false,
         project_name: format!("project {}", project.as_u128()),
         repo: "acme/app".into(),
         repo_key: format!("k{}", project.as_u128()),

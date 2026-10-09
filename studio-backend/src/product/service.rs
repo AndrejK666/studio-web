@@ -15,11 +15,66 @@ use serde_json::{Value, json};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::port::RepositoryTarget;
 use crate::catalog_graph::CatalogSink;
 use crate::catalog_graph::gts::{self, GtsNode};
 use crate::connectors::sdk::{
     ConnectorService, Connectors, CreatedRepository, Repository, create_repository,
 };
+
+/// Which repository "Create a gear" writes into, in the order it is chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetOrigin {
+    /// The project's own gear repository.
+    Project,
+    /// The organization's gear repository (ADR-0042 §2).
+    Organization,
+    /// The first of the project's `sources[]` read through a connection.
+    Sources,
+}
+
+impl TargetOrigin {
+    /// `project`, `organization` or `sources`: what a response says.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Organization => "organization",
+            Self::Sources => "sources",
+        }
+    }
+}
+
+/// A repository a new gear is written into, and why that one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScaffoldTarget {
+    pub target: RepositoryTarget,
+    pub origin: TargetOrigin,
+}
+
+/// The scaffold's target order (ADR-0042 §2): the project's gear repository
+/// wins for its project; the organization's gear repository is next; the
+/// project's sources are last. Pure.
+pub fn pick_scaffold_target(
+    project: Option<RepositoryTarget>,
+    organization: Option<RepositoryTarget>,
+    sources: Option<RepositoryTarget>,
+) -> Option<ScaffoldTarget> {
+    let pick =
+        |t: Option<RepositoryTarget>, origin| t.map(|target| ScaffoldTarget { target, origin });
+    pick(project, TargetOrigin::Project)
+        .or_else(|| pick(organization, TargetOrigin::Organization))
+        .or_else(|| pick(sources, TargetOrigin::Sources))
+}
+
+/// What a scaffold says when a project has nowhere to write a new gear.
+pub fn no_repo_text() -> &'static str {
+    "this project has no repository connected to write to — add one on its Sources tab, or set the organization's gear repository on its Components page"
+}
+
+/// What a write says when a project has nowhere to write.
+fn no_repo() -> anyhow::Error {
+    anyhow!("this project has no repository connected to write to — add one on its Sources tab")
+}
 
 pub struct ProductService {
     sink: Arc<dyn CatalogSink>,
@@ -135,30 +190,6 @@ impl ProductService {
         Ok(node)
     }
 
-    /// Write a scaffolded gear into the project's connected gear repository: a
-    /// branch off the connected base branch carrying the skeleton files, and an
-    /// optional pull request. The connection token is resolved via the
-    /// connectors service (it stays in credstore).
-    pub async fn scaffold_into_repo(
-        &self,
-        ctx: &SecurityContext,
-        project_id: &str,
-        slug: &str,
-        files: Vec<super::scaffold::ScaffoldFile>,
-        open_pr: bool,
-    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
-        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
-        self.write_to_project_repo(
-            ctx,
-            project_id,
-            Some(&format!("scaffold/{slug}")),
-            &files,
-            &format!("scaffold: {slug} gear skeleton"),
-            pr_title.as_deref(),
-        )
-        .await
-    }
-
     /// Commit files into the project's connected gear repository: on a new
     /// `branch` off its base branch (which must not exist yet), with a pull
     /// request when `pr_title` is given, or with `branch: None` straight onto
@@ -253,42 +284,66 @@ impl ProductService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<(Uuid, Option<Uuid>, String, String)> {
-        if let Some(node) = self.get_project_repo(ctx, project_id).await? {
-            let v = node.value;
-            let repo = v
-                .get("repo")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow!("connected gear repo has no 'repo'"))?
-                .to_string();
-            let base_branch = v
-                .get("branch")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("main")
-                .to_string();
-            let tenant: Uuid = v
-                .get("tenant")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| anyhow!("connected gear repo has no 'tenant'"))?;
-            let connection_id: Option<Uuid> = v
-                .get("connection_id")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse().ok());
-            return Ok((tenant, connection_id, repo, base_branch));
-        }
-        let no_repo = || {
-            anyhow!(
-                "this project has no repository connected to write to — add one on its Sources tab"
-            )
+        let target = match self.project_gear_repo_target(ctx, project_id).await? {
+            Some(t) => Some(t),
+            None => self.source_target(ctx, project_id).await,
         };
+        let t = target.ok_or_else(no_repo)?;
+        Ok((t.tenant, t.connection_id, t.repo, t.base_branch))
+    }
+
+    /// The gear repository connected to the project, as a write target.
+    async fn project_gear_repo_target(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<RepositoryTarget>> {
+        let Some(node) = self.get_project_repo(ctx, project_id).await? else {
+            return Ok(None);
+        };
+        let v = node.value;
+        let repo = v
+            .get("repo")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("connected gear repo has no 'repo'"))?
+            .to_string();
+        let base_branch = v
+            .get("branch")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("main")
+            .to_string();
+        let tenant: Uuid = v
+            .get("tenant")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| anyhow!("connected gear repo has no 'tenant'"))?;
+        let connection_id: Option<Uuid> = v
+            .get("connection_id")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse().ok());
+        Ok(Some(RepositoryTarget {
+            tenant,
+            connection_id,
+            repo,
+            base_branch,
+        }))
+    }
+
+    /// The project's own repository from `project.config` `sources[]`: the
+    /// first read through a connection the caller sees.
+    async fn source_target(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Option<RepositoryTarget> {
         let (Some(am), Some(connectors)) =
             (self.account_management.get(), self.connector_service())
         else {
-            return Err(no_repo());
+            return None;
         };
-        let project = Uuid::parse_str(project_id).map_err(|_| no_repo())?;
+        let project = Uuid::parse_str(project_id).ok()?;
         for source in crate::project_sources::read(am.as_ref(), ctx, project)
             .await
             .unwrap_or_default()
@@ -301,10 +356,81 @@ impl ProductService {
                     .branch
                     .filter(|b| !b.trim().is_empty())
                     .unwrap_or_else(|| "main".to_owned());
-                return Ok((tenant, Some(connection_id), source.full_path, branch));
+                return Some(RepositoryTarget {
+                    tenant,
+                    connection_id: Some(connection_id),
+                    repo: source.full_path,
+                    base_branch: branch,
+                });
             }
         }
-        Err(no_repo())
+        None
+    }
+
+    /// Where "Create a gear" writes for a project (ADR-0042 §2): its own gear
+    /// repository, else `organization` -- the organization's gear
+    /// repository, which the caller asked the catalogue for -- else the
+    /// project's sources. `None` when there is none of the three.
+    pub async fn scaffold_target(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        organization: Option<RepositoryTarget>,
+    ) -> anyhow::Result<Option<ScaffoldTarget>> {
+        let project = self.project_gear_repo_target(ctx, project_id).await?;
+        // Read only when it would be the answer: it lists connections.
+        let source = if project.is_none() && organization.is_none() {
+            self.source_target(ctx, project_id).await
+        } else {
+            None
+        };
+        Ok(pick_scaffold_target(project, organization, source))
+    }
+
+    /// The organization a project hangs under, as the caller reads the tree.
+    pub async fn organization_of_project(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> Option<Uuid> {
+        let am = self.account_management.get()?;
+        crate::organizations::sdk::organization_of(am.as_ref(), ctx, project_id).await
+    }
+
+    /// Commit a new gear's `files` onto `scaffold/<slug>` off `target`'s base
+    /// branch, through its connection, with a pull request when `open_pr`.
+    pub async fn scaffold_into_target(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        slug: &str,
+        files: &[super::scaffold::ScaffoldFile],
+        open_pr: bool,
+    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("connectors service unavailable"))?;
+        let repo = Repository::open(
+            &connectors,
+            ctx,
+            target.tenant,
+            target.connection_id,
+            "github",
+            &target.repo,
+            None,
+        )
+        .await?;
+        let pr_title = open_pr.then(|| format!("Scaffold {slug} gear"));
+        super::scaffold::write_scaffold(
+            &repo,
+            &target.base_branch,
+            &format!("scaffold/{slug}"),
+            files,
+            &format!("scaffold: {slug} gear skeleton"),
+            pr_title.as_deref(),
+            None,
+        )
+        .await
     }
 
     /// Create a new repository through the connector and record it as this
@@ -345,5 +471,96 @@ impl ProductService {
         });
         self.set_project_repo(ctx, project_id, repo_val).await?;
         Ok(created)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog_graph::MemorySink;
+
+    fn target(repo: &str) -> RepositoryTarget {
+        RepositoryTarget {
+            tenant: Uuid::from_u128(1),
+            connection_id: Some(Uuid::from_u128(2)),
+            repo: repo.into(),
+            base_branch: "main".into(),
+        }
+    }
+
+    #[test]
+    fn a_new_gear_goes_to_the_project_then_the_organization_then_the_sources() {
+        let all = pick_scaffold_target(
+            Some(target("acme/app-gears")),
+            Some(target("acme/gears")),
+            Some(target("acme/app")),
+        )
+        .unwrap();
+        assert_eq!(all.origin, TargetOrigin::Project, "the project's own wins");
+        assert_eq!(all.target.repo, "acme/app-gears");
+
+        let org = pick_scaffold_target(None, Some(target("acme/gears")), Some(target("acme/app")))
+            .unwrap();
+        assert_eq!(org.origin, TargetOrigin::Organization);
+        assert_eq!(org.target.repo, "acme/gears");
+        assert_eq!(org.origin.as_str(), "organization");
+
+        let sources = pick_scaffold_target(None, None, Some(target("acme/app"))).unwrap();
+        assert_eq!(sources.origin, TargetOrigin::Sources);
+        assert_eq!(sources.origin.as_str(), "sources");
+
+        assert_eq!(pick_scaffold_target(None, None, None), None);
+    }
+
+    #[tokio::test]
+    async fn a_project_with_its_own_gear_repository_writes_there_and_one_without_writes_to_the_organizations()
+     {
+        let service = ProductService::new(
+            Arc::new(MemorySink::default()),
+            Connectors::new(Arc::new(toolkit::client_hub::ClientHub::new())),
+        );
+        let ctx = SecurityContext::builder()
+            .subject_id(Uuid::from_u128(7))
+            .subject_tenant_id(Uuid::from_u128(0x0a6))
+            .build()
+            .unwrap();
+        let project = Uuid::from_u128(0x101).to_string();
+
+        let org = service
+            .scaffold_target(&ctx, &project, Some(target("acme/gears")))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(org.origin, TargetOrigin::Organization);
+        assert_eq!(org.target.repo, "acme/gears");
+
+        // Without either, and with no sources readable, nowhere.
+        assert_eq!(
+            service.scaffold_target(&ctx, &project, None).await.unwrap(),
+            None
+        );
+
+        service
+            .set_project_repo(
+                &ctx,
+                &project,
+                json!({
+                    "tenant": Uuid::from_u128(1),
+                    "connection_id": Uuid::from_u128(3),
+                    "repo": "acme/app-gears",
+                    "branch": "dev",
+                }),
+            )
+            .await
+            .unwrap();
+        let own = service
+            .scaffold_target(&ctx, &project, Some(target("acme/gears")))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(own.origin, TargetOrigin::Project);
+        assert_eq!(own.target.repo, "acme/app-gears");
+        assert_eq!(own.target.base_branch, "dev");
+        assert_eq!(own.target.connection_id, Some(Uuid::from_u128(3)));
     }
 }

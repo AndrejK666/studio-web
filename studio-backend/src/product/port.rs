@@ -231,3 +231,120 @@ impl GearDeclarations for Declarations {
         })
     }
 }
+
+// ── Create a gear (ADR-0042 §2) ───────────────────────────────────────────────
+
+/// A new gear to scaffold: what `POST /projects/{id}/scaffold` takes, less
+/// explicit files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NewGear {
+    /// The gear's slug: its branch `scaffold/<slug>`, directory and crate.
+    pub slug: String,
+    pub app_title: Option<String>,
+    /// The PRD's opening sentence.
+    pub problem: Option<String>,
+    pub origin: Option<String>,
+    /// Directory the gear's own goes under (default `gears`).
+    pub parent_dir: Option<String>,
+    /// `service` (default), `minimal` or `plugin`.
+    pub gear_kind: Option<String>,
+    pub plugin_host: Option<String>,
+    pub plugin_spec: Option<String>,
+    /// Capability keys written into its `gear.toml`.
+    pub capabilities: Vec<String>,
+    /// Open a pull request back into the base branch.
+    pub open_pr: bool,
+    /// Answer the files only; nothing is written.
+    pub dry_run: bool,
+}
+
+/// What a scaffold wrote, or -- on a dry run -- would write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScaffoldOutcome {
+    pub branch: String,
+    /// Empty on a dry run.
+    pub commit_sha: String,
+    pub pr_url: Option<String>,
+    pub files: Vec<DeclarationFile>,
+}
+
+/// Why a scaffold did not happen: the request's mistake, or a failure.
+#[derive(Debug)]
+pub enum ScaffoldFailure {
+    Invalid(String),
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for ScaffoldFailure {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Failed(e)
+    }
+}
+
+/// What studio-product offers for writing a new gear into a repository it
+/// does not keep the record of: the organization's gear repository, which
+/// the catalogue's registry keeps (`POST /registry/scaffold`). The skeleton
+/// is the one a project's scaffold writes.
+#[async_trait]
+pub trait GearScaffolds: Send + Sync {
+    /// Generate `gear`'s files and -- unless `dry_run` -- commit them onto
+    /// `scaffold/<slug>` off the target's base branch, with a pull request
+    /// when `open_pr`. `ctx` must reach the target's connection.
+    async fn scaffold_into(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        gear: &NewGear,
+    ) -> Result<ScaffoldOutcome, ScaffoldFailure>;
+}
+
+/// studio-product's [`GearScaffolds`].
+pub struct Scaffolds {
+    service: Arc<super::service::ProductService>,
+    hub: Arc<ClientHub>,
+}
+
+impl Scaffolds {
+    pub(super) fn new(service: Arc<super::service::ProductService>, hub: Arc<ClientHub>) -> Self {
+        Self { service, hub }
+    }
+}
+
+#[async_trait]
+impl GearScaffolds for Scaffolds {
+    async fn scaffold_into(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        gear: &NewGear,
+    ) -> Result<ScaffoldOutcome, ScaffoldFailure> {
+        let gearbox = engine(&self.hub);
+        let files = super::new_gear::files(gearbox.as_deref(), &target.repo, gear).await?;
+        let listed: Vec<DeclarationFile> = files
+            .iter()
+            .map(|f| DeclarationFile {
+                path: f.path.clone(),
+                content: f.content.clone(),
+            })
+            .collect();
+        let slug = super::skeleton::gear_slug(&gear.slug);
+        if gear.dry_run {
+            return Ok(ScaffoldOutcome {
+                branch: format!("scaffold/{slug}"),
+                commit_sha: String::new(),
+                pr_url: None,
+                files: listed,
+            });
+        }
+        let w = self
+            .service
+            .scaffold_into_target(ctx, target, &slug, &files, gear.open_pr)
+            .await?;
+        Ok(ScaffoldOutcome {
+            branch: w.branch,
+            commit_sha: w.commit_sha,
+            pr_url: w.pr_url,
+            files: listed,
+        })
+    }
+}

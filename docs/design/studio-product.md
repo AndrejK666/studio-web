@@ -162,8 +162,31 @@ a pull request (`open_pull_request`); how the provider makes that commit
 (GitHub: the git-data API, one tree, one commit) is the driver's
 (`connectors/github_write.rs`). `create-repo` creates the repository
 through the connector and records it as the project's gear repository in one
-step. A project with no gear repository is written into the repository its
-project config names (`sources[]`).
+step.
+
+**Where a new gear goes** (ADR-0042 §2), in this order
+(`service::pick_scaffold_target`):
+
+1. The project's own gear repository (`project_gear_repo`), when it has one:
+   it wins for its project.
+2. Else the organization's gear repository, which the catalogue keeps
+   (`components_catalog::port::Registry::gear_repository`); the organization
+   is found by walking up from the project
+   (`organizations::sdk::organization_of`), and the write goes as the caller
+   acting in the organization, where its organization-scoped connection is
+   readable.
+3. Else the repository the project config names first (`sources[]`).
+
+The scaffold's answer names the repository (`repo`) and which of the three
+it was (`target`: `project`, `organization`, `sources`); a dry run says where
+it would go, so a screen can state it before anything is written. A
+product's `product.gdl` is still written into the project's gear repository,
+else its sources: the organization's repository holds gears, not products.
+
+The skeleton is generated in one place (`new_gear.rs`) for both callers: the
+project's route, and `port::GearScaffolds::scaffold_into`, through which the
+catalogue's `POST /registry/scaffold` writes a new gear straight into the
+organization's gear repository.
 
 ##### Responsibility boundaries
 
@@ -229,7 +252,10 @@ split it reached into the modules that hold them.
 `port.rs`: `engine(hub)`, the Gearbox engine when this deployment configures
 one; `ProjectProducts` (`gear_repo(ctx, project_id)`), a project's gear
 repository as recorded, and `Products`, the handle that resolves it from the
-ClientHub when used. `sdk.rs` names the engine's types (`Gearbox`,
+ClientHub when used. `GearDeclarations` writes Declare it's manifest
+(ADR-0041 P3), and `GearScaffolds` (`scaffold_into(ctx, target, gear)`) a new
+gear's skeleton into a repository this gear keeps no record of: the
+organization's gear repository (ADR-0042 §2). `sdk.rs` names the engine's types (`Gearbox`,
 `GearConfig`, `CorpusSource`) for a gear that holds the engine.
 
 ##### Responsibility boundaries
@@ -259,7 +285,7 @@ which calls this engine; moving it here is a follow-up.
 | `GET` | `/projects/{project_id}/gear-repo` | The project's gear repository, 0 or 1 node | unstable |
 | `POST` | `/projects/{project_id}/gear-repo` | Connect or replace it; the branch defaults to `main` | unstable |
 | `POST` | `/projects/{project_id}/create-repo` | Create a repository through the connector and record it | unstable |
-| `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request | unstable |
+| `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request: into the project's gear repository, else the organization's, else the project's sources; answers `repo` and `target` (`project`, `organization`, `sources`), on a dry run too | unstable |
 | `GET` | `/projects/{project_id}/product` | The product being composed | unstable |
 | `PUT` | `/projects/{project_id}/product` | Merge fields into it | unstable |
 | `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl`, resolve it, optionally commit it | unstable |
@@ -299,8 +325,11 @@ catalogue's ([studio-components-catalog](studio-components-catalog.md)).
 | `cpt-studio-component-git-proxy` | `git_proxy::sdk` (`authenticate_member`, `send_upstream`, `stream_back`) | The corpus relay |
 | `authn_resolver` | `AuthNResolverClient` | Authenticate a member on the corpus relay |
 | `cpt-studio-component-session` | `studio_session::sdk::TenantMembership` | Whether the caller reaches the workspace |
+| `cpt-studio-component-components-catalog` | `components_catalog::port::Registry::gear_repository` | The organization's gear repository, where a project without one of its own writes a new gear (ADR-0042 §2) |
+| `cpt-studio-component-organizations` | `organizations::sdk::organization_of` | The organization a project hangs under |
 
-`port::engine` and `port::ProjectProducts` are published for
+`port::engine`, `port::ProjectProducts`, `port::GearDeclarations` and
+`port::GearScaffolds` are published for
 `cpt-studio-component-components-catalog`.
 
 ### 3.5 External Dependencies

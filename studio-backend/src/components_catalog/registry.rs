@@ -35,7 +35,7 @@ pub use super::candidates::{DETECTED, Evidence};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::project_gears::LocalGear;
 use super::repo_enrich::ProjectGearsRead;
-use super::service::{CatalogService, RepoSource};
+use super::service::{CatalogService, ProjectRepo, RepoSource};
 use crate::tasks::sdk::SyncReporter;
 
 /// Code that looks like a gear, with evidence (P3). Discovery writes it.
@@ -225,12 +225,43 @@ pub struct OccurrenceRecord {
     /// For a candidate: the fingerprint of the module's own files.
     #[serde(default)]
     pub module_fingerprint: Option<String>,
+    /// `organization` for an occurrence in the organization's gear repository
+    /// (ADR-0042 §2), which belongs to no project; absent for a project's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
+
+/// The scope of an occurrence found in the organization's gear repository.
+pub const SCOPE_ORGANIZATION: &str = "organization";
+/// The scope of an occurrence found in a project's repository.
+pub const SCOPE_PROJECT: &str = "project";
 
 impl OccurrenceRecord {
     /// Found by a detector, not declared.
     pub fn detected(&self) -> bool {
         self.declared_in == DETECTED
+    }
+
+    /// Found in the organization's gear repository, not in a project's.
+    pub fn in_organization(&self) -> bool {
+        self.scope.as_deref() == Some(SCOPE_ORGANIZATION)
+    }
+
+    /// `project` or `organization`.
+    pub fn scope_name(&self) -> &'static str {
+        if self.in_organization() {
+            SCOPE_ORGANIZATION
+        } else {
+            SCOPE_PROJECT
+        }
+    }
+
+    /// Whose read it belongs to: its project, or -- for the organization's
+    /// gear repository -- the organization `org`, which a walk keys its read
+    /// by in the project's place.
+    fn walked_by(&self, org: Uuid) -> Option<Uuid> {
+        self.project_id
+            .or_else(|| self.in_organization().then_some(org))
     }
 
     /// The gear as `project_gears` found it here.
@@ -291,7 +322,12 @@ pub fn declared_in_of(file: &str) -> &'static str {
 /// One repository a walk read anew.
 #[derive(Clone, Debug, Default)]
 pub struct RepoRead {
+    /// The project it is a repository of; for the organization's gear
+    /// repository, the organization itself (see `organization`).
     pub project_id: Uuid,
+    /// The organization's gear repository (ADR-0042 §2): what it finds
+    /// belongs to no project, and its occurrences say `scope: organization`.
+    pub organization: bool,
     pub project_name: String,
     pub repo: String,
     pub repo_key: String,
@@ -350,7 +386,8 @@ pub struct Plan {
 }
 
 /// Whether a stored `(project, repository)` pair is gone, by what the walk
-/// saw.
+/// saw. The organization's gear repository is the pair `(organization,
+/// repository)`: on a full walk it is in scope only while it is set.
 fn pair_gone(walk: &Walk, project: Option<Uuid>, repo_key: &str) -> bool {
     let Some(project) = project else {
         return false;
@@ -517,8 +554,9 @@ pub fn plan(
                 organization_id: walk.org,
                 entry: name,
                 entry_id: entry_id.clone(),
-                project_id: Some(read.project_id),
+                project_id: (!read.organization).then_some(read.project_id),
                 project_name: Some(read.project_name.clone()),
+                scope: read.organization.then(|| SCOPE_ORGANIZATION.to_string()),
                 repo: read.repo.clone(),
                 repo_key: read.repo_key.clone(),
                 git_ref: Some(read.git_ref.clone()).filter(|r| !r.is_empty()),
@@ -580,10 +618,9 @@ pub fn plan(
         if produced.contains_key(id) {
             continue;
         }
-        let reread = occ
-            .project_id
-            .is_some_and(|p| read_now.contains(&(p, occ.repo_key.as_str())));
-        if reread || pair_gone(walk, occ.project_id, &occ.repo_key) {
+        let owner = occ.walked_by(walk.org);
+        let reread = owner.is_some_and(|p| read_now.contains(&(p, occ.repo_key.as_str())));
+        if reread || pair_gone(walk, owner, &occ.repo_key) {
             out.retire.push(id.clone());
             out.occurrences_removed += 1;
         } else {
@@ -862,6 +899,150 @@ struct SettingsRecord {
     /// cannot be handed the keyword by a page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     crates_io_keyword: Option<String>,
+    /// The organization's gear repository (ADR-0042 §2): where "Create a
+    /// gear" writes by default, and a repository the walk reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gear_repository: Option<GearRepository>,
+}
+
+/// The organization's gear repository, as stored (ADR-0042 §2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GearRepository {
+    /// The tenant whose catalogue holds the connection: the organization, or
+    /// an ancestor it inherits the connection from.
+    pub tenant: Uuid,
+    pub connection_id: Uuid,
+    /// `owner/name`.
+    pub repo: String,
+    /// The branch new gears go back to.
+    pub branch: String,
+    /// The connection's label and provider, as they were when it was set,
+    /// so the page can say which connection without another read.
+    #[serde(default)]
+    pub connection_label: Option<String>,
+    /// Who set it (a Studio person id, else the token's subject) and when,
+    /// RFC 3339.
+    #[serde(default)]
+    pub set_by: Option<String>,
+    #[serde(default)]
+    pub set_at: Option<String>,
+}
+
+/// What a request asks the gear repository to be.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GearRepositoryInput {
+    pub connection_id: Uuid,
+    pub repo: String,
+    pub branch: Option<String>,
+}
+
+/// Why a gear repository was refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GearRepositoryError {
+    /// `owner/name` is not one.
+    InvalidRepo(String),
+    /// The organization does not see the connection.
+    UnknownConnection(Uuid),
+    /// The connection's token is not readable where the repository is read
+    /// and written: its scope, and what to do instead.
+    NotShared { scope: String, hint: String },
+}
+
+impl std::fmt::Display for GearRepositoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidRepo(repo) => {
+                write!(f, "`{repo}` is not a repository: name it as owner/name")
+            }
+            Self::UnknownConnection(id) => write!(
+                f,
+                "the organization has no connection {id}: connect the repository on the organization's Connections page"
+            ),
+            Self::NotShared { scope, hint } => {
+                write!(f, "the connection is {scope}-scoped. {hint}")
+            }
+        }
+    }
+}
+
+/// What to say about a connection the organization's gear repository cannot
+/// use. The walk reads it as the service, on a schedule nobody is signed in
+/// to, and a project's "Create a gear" writes it from below the organization;
+/// only an organization-scope connection's token is readable to both.
+/// `None` for an organization-scope connection.
+pub fn gear_repository_scope_refusal(scope: &str) -> Option<String> {
+    match scope.trim().to_ascii_lowercase().as_str() {
+        "organization" | "org" | "shared" => None,
+        "personal" => Some(format!(
+            "{PERSONAL_TOKEN_HINT} The organization's gear repository needs a connection shared with the organization."
+        )),
+        _ => Some(
+            "A workspace's connection is readable only in that workspace, and the organization's gear repository is read by the registry's background walk and written from every project. Connect the repository on the organization with organization scope."
+                .to_owned(),
+        ),
+    }
+}
+
+/// `owner/name`, trimmed, or `None` when it is not one.
+pub fn normalize_repo(repo: &str) -> Option<String> {
+    let repo = repo
+        .trim()
+        .trim_start_matches("https://github.com/")
+        .trim_matches('/')
+        .trim_end_matches(".git");
+    let mut parts = repo.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(name), None)
+            if !owner.trim().is_empty()
+                && !name.trim().is_empty()
+                && !repo.contains(char::is_whitespace) =>
+        {
+            Some(repo.to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The gear repository a request sets, from the connection the organization
+/// sees (`found`: the tenant holding it, its scope and label), or why not.
+/// Pure.
+pub fn gear_repository_of(
+    input: &GearRepositoryInput,
+    found: Option<(Uuid, &str, &str)>,
+    by: Option<String>,
+    at: String,
+) -> Result<GearRepository, GearRepositoryError> {
+    let repo = normalize_repo(&input.repo)
+        .ok_or_else(|| GearRepositoryError::InvalidRepo(input.repo.trim().to_owned()))?;
+    let (tenant, scope, label) =
+        found.ok_or(GearRepositoryError::UnknownConnection(input.connection_id))?;
+    if let Some(hint) = gear_repository_scope_refusal(scope) {
+        return Err(GearRepositoryError::NotShared {
+            scope: if scope.trim().is_empty() {
+                "workspace".to_owned()
+            } else {
+                scope.trim().to_ascii_lowercase()
+            },
+            hint,
+        });
+    }
+    let branch = input
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or("main")
+        .trim_start_matches("refs/heads/")
+        .to_owned();
+    Ok(GearRepository {
+        tenant,
+        connection_id: input.connection_id,
+        repo,
+        branch,
+        connection_label: Some(label.to_owned()).filter(|l| !l.is_empty()),
+        set_by: by,
+        set_at: Some(at),
+    })
 }
 
 /// What the last walk saw of one project.
@@ -911,6 +1092,10 @@ pub fn in_tenant(base: &SecurityContext, tenant: Uuid) -> anyhow::Result<Securit
         .map_err(|e| anyhow!("cannot act in tenant {tenant}: {e}"))
 }
 
+/// Why a personal token does not serve the registry: the opening of what a
+/// person is told about one, by the walk and by the gear repository setting.
+const PERSONAL_TOKEN_HINT: &str = "The repository is connected with a personal token, which the registry's background read cannot use.";
+
 /// What a person can do about a repository the walk could not read.
 ///
 /// The walk runs as the service, on a schedule nobody is signed in to, so a
@@ -920,10 +1105,9 @@ pub fn in_tenant(base: &SecurityContext, tenant: Uuid) -> anyhow::Result<Securit
 pub fn read_failure_hint(error: &str) -> Option<String> {
     let e = error.to_ascii_lowercase();
     if e.contains("personal") || e.contains("not readable") {
-        return Some(
-            "The repository is connected with a personal token, which the registry's background read cannot use. Share the connection with the workspace or the organization, or connect the repository with a shared token."
-                .to_owned(),
-        );
+        return Some(format!(
+            "{PERSONAL_TOKEN_HINT} Share the connection with the workspace or the organization, or connect the repository with a shared token."
+        ));
     }
     if e.contains("401") || e.contains("403") || e.contains("bad credentials") {
         return Some(
@@ -1149,6 +1333,132 @@ impl CatalogService {
         Ok(keyword)
     }
 
+    /// The organization's gear repository, when one is set (ADR-0042 §2).
+    pub async fn gear_repository(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Option<GearRepository>> {
+        Ok(self.settings(ctx).await?.gear_repository)
+    }
+
+    /// Store `repo` as the organization's gear repository, or clear it with
+    /// `None`. What was checked is the caller's business: see
+    /// [`Self::set_gear_repository`].
+    pub async fn store_gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        repo: Option<GearRepository>,
+    ) -> anyhow::Result<Option<GearRepository>> {
+        self.sink.register_types(ctx).await?;
+        let org = ctx.subject_tenant_id();
+        let mut settings = self.settings(ctx).await?;
+        settings.organization_id = Some(org);
+        settings.gear_repository.clone_from(&repo);
+        self.sink
+            .upsert(
+                ctx,
+                &[gts::registry_settings_node(
+                    &org.to_string(),
+                    serde_json::to_value(settings)?,
+                )],
+                &[],
+            )
+            .await?;
+        Ok(repo)
+    }
+
+    /// Set the organization's gear repository: the connection must be one the
+    /// organization sees, and organization-scoped
+    /// ([`gear_repository_scope_refusal`]). `Ok(Err(_))` is a refusal.
+    pub async fn set_gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        input: &GearRepositoryInput,
+        by: Option<String>,
+    ) -> anyhow::Result<Result<GearRepository, GearRepositoryError>> {
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("no connector service is available for the gear repository"))?;
+        let org = ctx.subject_tenant_id();
+        let found = connectors
+            .nearest_by_id(ctx, org, input.connection_id)
+            .await;
+        let repo = match gear_repository_of(
+            input,
+            found
+                .as_ref()
+                .map(|(tenant, c)| (*tenant, c.scope.as_str(), c.label.as_str())),
+            by,
+            now(),
+        ) {
+            Ok(repo) => repo,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        self.store_gear_repository(ctx, Some(repo.clone())).await?;
+        tracing::info!(organization_id = %org, repo = %repo.repo, branch = %repo.branch, "components-catalog: the organization's gear repository was set");
+        Ok(Ok(repo))
+    }
+
+    /// Create a repository through the connection and set it as the
+    /// organization's gear repository. The connection is checked first, so
+    /// a connection the setting would refuse creates nothing. `Ok(Err(_))`
+    /// is a refusal.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        connection_id: Uuid,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+        by: Option<String>,
+    ) -> anyhow::Result<Result<GearRepository, GearRepositoryError>> {
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("no connector service is available for the gear repository"))?;
+        let org = ctx.subject_tenant_id();
+        let Some((tenant, connection)) = connectors.nearest_by_id(ctx, org, connection_id).await
+        else {
+            return Ok(Err(GearRepositoryError::UnknownConnection(connection_id)));
+        };
+        if let Some(hint) = gear_repository_scope_refusal(&connection.scope) {
+            return Ok(Err(GearRepositoryError::NotShared {
+                scope: connection.scope.clone(),
+                hint,
+            }));
+        }
+        let created = crate::connectors::sdk::create_repository(
+            &connectors,
+            ctx,
+            tenant,
+            Some(connection_id),
+            &connection.provider,
+            owner,
+            is_org,
+            name,
+            private,
+        )
+        .await?;
+        let input = GearRepositoryInput {
+            connection_id,
+            repo: created.full_name.clone(),
+            branch: Some(created.default_branch.clone()),
+        };
+        let repo = match gear_repository_of(
+            &input,
+            Some((tenant, &connection.scope, &connection.label)),
+            by,
+            now(),
+        ) {
+            Ok(repo) => repo,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        self.store_gear_repository(ctx, Some(repo.clone())).await?;
+        tracing::info!(organization_id = %org, repo = %repo.repo, "components-catalog: a gear repository was created for the organization");
+        Ok(Ok(repo))
+    }
+
     /// Every entry of the organization's registry, with its occurrences.
     pub async fn registry_entries(
         &self,
@@ -1194,6 +1504,142 @@ impl CatalogService {
             .ok_or_else(|| {
                 anyhow!("the registry cannot list the organization's projects: studio-organizations is not part of this deployment")
             })
+    }
+
+    /// Read the organization's gear repository into `walk`, when one is set:
+    /// in the organization's own tenant, under its own key, its findings
+    /// `scope: organization`. Its status joins the projects' as one more
+    /// row, named after the organization.
+    async fn walk_gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        stored: &HashMap<(Uuid, String), String>,
+        held: &HashMap<(Uuid, String), usize>,
+        walk: &mut Walk,
+        counts: &mut RegistryCounts,
+        statuses: &mut Vec<ProjectWalk>,
+    ) {
+        let org = ctx.subject_tenant_id();
+        let repo = match self.gear_repository(ctx).await {
+            Ok(Some(repo)) => repo,
+            Ok(None) => return,
+            Err(e) => {
+                // Unknown is not unset: keep what was found there.
+                tracing::warn!(organization_id = %org, error = %format!("{e:#}"), "components-catalog: registry: the gear repository setting could not be read");
+                if let Some(scope) = walk.in_scope.as_mut() {
+                    scope.insert(org);
+                }
+                return;
+            }
+        };
+        if let Some(scope) = walk.in_scope.as_mut() {
+            scope.insert(org);
+        }
+        let name = self.organization_name(ctx, org).await;
+        let mut status = ProjectWalk {
+            project_id: org,
+            project_name: name.clone(),
+            at: walk.now.clone(),
+            ..ProjectWalk::default()
+        };
+        let target = ProjectRepo {
+            tenant: repo.tenant,
+            connection_id: Some(repo.connection_id),
+            repo: repo.repo.clone(),
+            branch: repo.branch.clone(),
+            owned: true,
+        };
+        let readers = match self.enrichers(vec![target]) {
+            Ok(readers) => readers,
+            Err(e) => {
+                let error = format!("{e:#}");
+                status.repos.push(RepoWalk {
+                    repo: repo.repo.clone(),
+                    status: "failed".to_owned(),
+                    hint: read_failure_hint(&error),
+                    error: Some(error),
+                    ..RepoWalk::default()
+                });
+                statuses.push(status);
+                return;
+            }
+        };
+        walk.projects_resolved.insert(org);
+        for (target, reader) in readers {
+            let key = reader.repo_key();
+            walk.resolved.insert((org, key.clone()));
+            let known = stored.get(&(org, key.clone())).map(String::as_str);
+            let components = held.get(&(org, key.clone())).copied().unwrap_or(0);
+            match reader
+                .project_gears_unless(ctx, &self.project_gears, known, true)
+                .await
+            {
+                Ok(ProjectGearsRead::Unchanged) => {
+                    counts.repos_unchanged += 1;
+                    status.repos.push(RepoWalk {
+                        repo: target.repo.clone(),
+                        status: "unchanged".to_owned(),
+                        components,
+                        ..RepoWalk::default()
+                    });
+                }
+                Ok(ProjectGearsRead::Read {
+                    fingerprint,
+                    gears,
+                    candidates,
+                }) => {
+                    counts.repos_read += 1;
+                    status.repos.push(RepoWalk {
+                        repo: target.repo.clone(),
+                        status: "read".to_owned(),
+                        components: gears.len(),
+                        ..RepoWalk::default()
+                    });
+                    walk.reads.push(RepoRead {
+                        project_id: org,
+                        organization: true,
+                        project_name: name.clone(),
+                        repo: target.repo.clone(),
+                        repo_key: key,
+                        git_ref: reader.git_ref().to_string(),
+                        commit: reader.head_commit(ctx).await,
+                        fingerprint,
+                        gears: gears.as_ref().clone(),
+                        candidates: candidates.as_ref().clone(),
+                        tenant: Some(target.tenant),
+                        connection_id: target.connection_id,
+                    });
+                }
+                Err(e) => {
+                    counts.repos_failed += 1;
+                    tracing::warn!(organization_id = %org, repo = %target.repo, error = %format!("{e:#}"), "components-catalog: registry: the organization's gear repository could not be read; its occurrences are kept");
+                    let error = format!("{e:#}");
+                    status.repos.push(RepoWalk {
+                        repo: target.repo.clone(),
+                        status: "failed".to_owned(),
+                        components,
+                        hint: read_failure_hint(&error),
+                        error: Some(error),
+                    });
+                }
+            }
+        }
+        statuses.push(status);
+    }
+
+    /// The organization's name, as account-management says; "Organization"
+    /// when it cannot.
+    async fn organization_name(&self, ctx: &SecurityContext, org: Uuid) -> String {
+        match self.account_management.get() {
+            Some(am) => am
+                .get_tenant(ctx, org)
+                .await
+                .ok()
+                .map(|t| t.name)
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| "Organization".to_owned()),
+            None => "Organization".to_owned(),
+        }
     }
 
     /// The registry walk: every project of the context's organization not
@@ -1250,9 +1696,16 @@ impl CatalogService {
         // unchanged repository holds.
         let mut held: HashMap<(Uuid, String), usize> = HashMap::new();
         for (_, o) in occurrences.iter().filter(|(_, o)| o.organization_id == org) {
-            if let Some(p) = o.project_id {
+            if let Some(p) = o.walked_by(org) {
                 *held.entry((p, o.repo_key.clone())).or_default() += 1;
             }
+        }
+        // The organization's gear repository (ADR-0042 §2) is read like a
+        // project's, keyed by the organization, by a full walk only: a walk
+        // over named projects (a push) is about them.
+        if only.is_empty() {
+            self.walk_gear_repository(ctx, &stored, &held, &mut walk, &mut counts, &mut statuses)
+                .await;
         }
         for (i, project) in in_scope.iter().enumerate() {
             let mut status = ProjectWalk {
@@ -1335,6 +1788,7 @@ impl CatalogService {
                         });
                         walk.reads.push(RepoRead {
                             project_id: project.id,
+                            organization: false,
                             project_name: project.name.clone(),
                             repo: target.repo.clone(),
                             repo_key: key,

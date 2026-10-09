@@ -623,6 +623,7 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
         excluded_project_ids: vec![],
         last_walk: vec![walked(P1, "a", "read")],
         crates_io_keyword: None,
+        gear_repository: None,
     };
     svc.sink
         .upsert(
@@ -641,4 +642,201 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
         vec![walked(P1, "a", "read")]
     );
     assert_eq!(svc.excluded_projects(&ctx).await.unwrap(), vec![P2]);
+}
+
+// ── The organization's gear repository (ADR-0042 §2) ────────────────────────
+
+/// The organization's gear repository, read as a walk reads it: keyed by the
+/// organization, named after it.
+fn org_read(print: &str, gears: Vec<LocalGear>) -> RepoRead {
+    RepoRead {
+        project_id: ORG,
+        organization: true,
+        project_name: "Acme".into(),
+        repo: "acme/gears".into(),
+        repo_key: "korg".into(),
+        git_ref: "main".into(),
+        fingerprint: print.into(),
+        gears,
+        ..RepoRead::default()
+    }
+}
+
+#[test]
+fn the_organizations_gear_repository_is_walked_as_an_organization_occurrence() {
+    let mut store = Store::default();
+    let w = walk(
+        "t1",
+        vec![
+            read(
+                P1,
+                "k1",
+                "f1",
+                vec![gear("billing", "src/billing", "src/billing/gear.toml")],
+            ),
+            org_read(
+                "fo",
+                vec![gear("ledger", "gears/ledger", "gears/ledger/gear.toml")],
+            ),
+        ],
+        &[(P1, "k1"), (ORG, "korg")],
+    );
+    let plan = store.run(&w);
+    assert_eq!(plan.created, 2);
+    let ledger = store.entry("ledger");
+    assert_eq!(
+        ledger.state, STATE_DECLARED,
+        "found declared, like a project's"
+    );
+    let occ = store.occurrences_of("ledger");
+    assert_eq!(occ.len(), 1);
+    assert_eq!(occ[0].project_id, None, "it belongs to no project");
+    assert_eq!(occ[0].project_name.as_deref(), Some("Acme"));
+    assert_eq!(occ[0].scope.as_deref(), Some(SCOPE_ORGANIZATION));
+    assert!(occ[0].in_organization());
+    assert_eq!(occ[0].scope_name(), "organization");
+    let billing = store.occurrences_of("billing");
+    assert_eq!(
+        billing[0].scope, None,
+        "a project's occurrence names no scope"
+    );
+    assert_eq!(billing[0].scope_name(), "project");
+    // The read is kept under the organization, so an unchanged repository is
+    // skipped next time.
+    assert!(
+        store
+            .reads
+            .iter()
+            .any(|(_, r)| r.project_id == ORG && r.repo_key == "korg")
+    );
+    // A project filter does not find it; the registry still does.
+    let joined = join(
+        store.entries.clone(),
+        store.occurrences.iter().map(|(_, o)| o.clone()).collect(),
+    );
+    assert!(
+        filter_entries(joined.clone(), None, Some(P1), None)
+            .iter()
+            .all(|e| e.entry.name != "ledger")
+    );
+    assert!(
+        filter_entries(joined, None, None, None)
+            .iter()
+            .any(|e| e.entry.name == "ledger")
+    );
+}
+
+#[test]
+fn a_reread_replaces_what_the_organizations_repository_holds_and_unsetting_it_retires_it() {
+    let mut store = Store::default();
+    let both = |now: &str, gears| {
+        walk(
+            now,
+            vec![org_read(now, gears)],
+            &[(P1, "k1"), (ORG, "korg")],
+        )
+    };
+    store.run(&both(
+        "t1",
+        vec![
+            gear("ledger", "gears/ledger", "gears/ledger/gear.toml"),
+            gear("tax", "gears/tax", "gears/tax/gear.toml"),
+        ],
+    ));
+    assert_eq!(store.occurrences.len(), 2);
+    // Read again without `tax`: its occurrence goes, the entry is orphaned.
+    let plan = store.run(&both(
+        "t2",
+        vec![gear("ledger", "gears/ledger", "gears/ledger/gear.toml")],
+    ));
+    assert_eq!(plan.occurrences_removed, 1);
+    assert!(store.entry("tax").orphaned);
+    assert!(!store.entry("ledger").orphaned);
+
+    // A walk over named projects (a push) leaves it alone.
+    let push = Walk {
+        org: ORG,
+        now: "t3".into(),
+        in_scope: None,
+        resolved: [(P1, "k1".to_string())].into_iter().collect(),
+        projects_resolved: [P1].into_iter().collect(),
+        reads: Vec::new(),
+    };
+    store.run(&push);
+    assert_eq!(store.occurrences_of("ledger").len(), 1);
+
+    // A full walk without it -- the setting was removed -- retires it.
+    let plan = store.run(&walk("t4", Vec::new(), &[(P1, "k1")]));
+    assert_eq!(plan.occurrences_removed, 1);
+    assert!(store.occurrences_of("ledger").is_empty());
+    assert!(store.entry("ledger").orphaned, "kept, orphaned");
+    assert!(store.reads.iter().all(|(_, r)| r.project_id != ORG));
+}
+
+#[test]
+fn only_an_organization_scope_connection_serves_the_gear_repository() {
+    let input = GearRepositoryInput {
+        connection_id: Uuid::from_u128(0xc0),
+        repo: " https://github.com/acme/gears.git ".into(),
+        branch: Some("refs/heads/trunk".into()),
+    };
+    let ok = gear_repository_of(
+        &input,
+        Some((ORG, "organization", "Acme GitHub")),
+        Some("u7".into()),
+        "t".into(),
+    )
+    .unwrap();
+    assert_eq!(ok.repo, "acme/gears");
+    assert_eq!(ok.branch, "trunk");
+    assert_eq!(ok.tenant, ORG);
+    assert_eq!(ok.connection_label.as_deref(), Some("Acme GitHub"));
+    assert_eq!(ok.set_by.as_deref(), Some("u7"));
+
+    for scope in ["personal", "workspace", ""] {
+        let refused =
+            gear_repository_of(&input, Some((ORG, scope, "mine")), None, "t".into()).unwrap_err();
+        let GearRepositoryError::NotShared { scope: named, hint } = &refused else {
+            panic!("{scope}: {refused:?}");
+        };
+        assert!(!named.is_empty());
+        assert!(hint.contains("organization"), "{scope}: {hint}");
+    }
+    let personal = gear_repository_scope_refusal("personal").unwrap();
+    assert!(
+        personal.starts_with(PERSONAL_TOKEN_HINT),
+        "the walk's wording: {personal}"
+    );
+    assert_eq!(
+        gear_repository_of(&input, None, None, "t".into()).unwrap_err(),
+        GearRepositoryError::UnknownConnection(Uuid::from_u128(0xc0))
+    );
+    for bad in ["acme", "acme/gears/extra", "", "a b/c"] {
+        let input = GearRepositoryInput {
+            repo: bad.into(),
+            ..input.clone()
+        };
+        assert!(
+            matches!(
+                gear_repository_of(&input, Some((ORG, "organization", "x")), None, "t".into()),
+                Err(GearRepositoryError::InvalidRepo(_))
+            ),
+            "{bad}"
+        );
+    }
+    let defaulted = GearRepositoryInput {
+        branch: None,
+        ..input
+    };
+    assert_eq!(
+        gear_repository_of(
+            &defaulted,
+            Some((ORG, "organization", "")),
+            None,
+            "t".into()
+        )
+        .unwrap()
+        .branch,
+        "main"
+    );
 }

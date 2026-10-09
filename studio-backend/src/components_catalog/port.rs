@@ -349,7 +349,21 @@ pub trait Registry: Send + Sync {
         org: Uuid,
         project_ids: &[Uuid],
     ) -> anyhow::Result<Uuid>;
+
+    /// The organization `org`'s gear repository (ADR-0042 §2), when it set
+    /// one: where "Create a gear" writes for a project without a gear
+    /// repository of its own. The caller has already shown that `ctx`
+    /// reaches `org`.
+    async fn gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<GearRepository>>;
 }
+
+/// The organization's gear repository: the connection's tenant, the
+/// connection, `owner/name` and the branch new gears go back to.
+pub use super::registry::GearRepository;
 
 /// The catalogue's answer to [`Registry`].
 pub struct CatalogRegistry {
@@ -408,6 +422,19 @@ impl Registry for CatalogRegistry {
             },
         )
         .await
+    }
+
+    async fn gear_repository(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<GearRepository>> {
+        if org == ctx.subject_tenant_id() {
+            return self.service.gear_repository(ctx).await;
+        }
+        let acting = crate::org_scope::acting_in(ctx, org)
+            .map_err(|e| anyhow::anyhow!("acting in organization {org}: {e}"))?;
+        self.service.gear_repository(&acting).await
     }
 }
 

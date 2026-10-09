@@ -207,12 +207,17 @@ impl CatalogService {
                 path: occ.path.clone(),
             });
         }
-        let (Some(tenant), Some(project_id)) = (occ.tenant, occ.project_id) else {
+        let Some(tenant) = occ.tenant else {
             return Err(DeclareFailure::Refused(DeclareError::NoConnection));
         };
         // Written as the walk reads: in the project's tenant, where its
-        // connection's token is readable.
-        let pctx = registry::in_tenant(ctx, project_id)?;
+        // connection's token is readable -- or, in the organization's gear
+        // repository, in the organization's own.
+        let pctx = match occ.project_id {
+            Some(project_id) => registry::in_tenant(ctx, project_id)?,
+            None if occ.in_organization() => ctx.clone(),
+            None => return Err(DeclareFailure::Refused(DeclareError::NoConnection)),
+        };
         let target = RepositoryTarget {
             tenant,
             connection_id: occ.connection_id,

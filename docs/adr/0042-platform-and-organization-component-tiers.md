@@ -130,7 +130,8 @@ see "More Information".
   also reaches every other organization's products, through one reviewed path.
 - Bad: the catalogue's reads now join two tenants. Organizations that
   configured `gears-rust` as their own source see it twice until those
-  sources are removed. A one-off migration drops them.
+  sources are removed. They are marked shadowed by the platform, and the
+  Sources panel offers to remove them.
 - Bad: composing an organization's own gears needs the Gearbox engine to read
   more than one corpus (below). Until it can, Studio offers them in coverage
   and candidates, and says the engine cannot compose them yet.
@@ -154,7 +155,7 @@ Studio's side follows once the engine answers this.
    tier on every component, the Components page in tabs (Platform | Ours |
    All). *Built: see the catalogue design's Tiers component.*
 2. **The organization's gear repository** as the default target of "Create a
-   gear".
+   gear". *Built: see the catalogue design's Tiers component.*
 3. **Publish as contribution:** a pull request into `gears-rust` (ADR-0041's
    P4).
 4. **Several corpora and pinned versions**, once the engine supports them.

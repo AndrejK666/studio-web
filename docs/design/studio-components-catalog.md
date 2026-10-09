@@ -365,7 +365,10 @@ context's organization it:
 1. Asks organizations for the organization's projects (`ProjectsOf`).
 2. For each project not excluded (or, for a push, the project named), resolves
    its repositories exactly as `project_gears` does: its gear repository, else
-   its `project.config` `sources[]`.
+   its `project.config` `sources[]`. A full walk also reads the organization's
+   gear repository when one is set (see Tiers, phase 2), in the
+   organization's own tenant, keyed by the organization where a project's
+   read is keyed by the project.
 3. Skips a repository whose fingerprint — of the files discovery reads, stable
    across builds, with the discovery rules' version in it — matches the one
    stored on its `registry_read` node; that costs one tree listing.
@@ -550,8 +553,9 @@ The platform's components and the organization's, read together
   platform's catalogue synced in the root tenant, reads that join both tiers,
   `tier` on every component and candidate, the Components page in tabs
   (Platform | Ours | All).
-- [ ] **Phase 2**: the organization's gear repository as the default target of
-  "Create a gear".
+- [x] **Phase 2** (`registry.rs`, `registry_gear_repository_rest.rs`,
+  studio-product's scaffold): the organization's gear repository as the
+  default target of "Create a gear", and read by the registry walk.
 - [ ] **Phase 3**: publishing as a pull request into the platform's repository.
 - [ ] **Phase 4**: several corpora and pinned versions, once the engine has
   them.
@@ -609,10 +613,54 @@ platform's (root) tenant, and every organization reads it beside its own.
   organization's over those; a layout the platform authored reads
   `owner: platform`. A mark the organization never set falls back to the
   platform's, and whether a record is redundant is judged against that.
+- **The organization's gear repository (phase 2).** An organization may name
+  one repository its gears live in: a connection, `owner/name` and the branch
+  new gears go back to (default `main`). It is kept on the organization's
+  `registry_settings` node (`gear_repository`, with who set it and when),
+  read by every member (`GET /registry/gear-repository`, with `may_manage`)
+  and changed only by whoever may decide about the registry
+  (`component.registry`, 403 `REGISTRY_ADMIN_REQUIRED` otherwise): `PUT` sets
+  it, `DELETE` unsets it (the repository is not touched), and
+  `POST /registry/gear-repository/create` creates a repository through the
+  connection (`connectors::sdk::create_repository`) and sets it. The
+  connection must be one the organization sees
+  (`ConnectorService::nearest_by_id` from the organization's tenant) and
+  **organization-scoped**: the walk reads the repository as the service, on
+  a schedule nobody is signed in to, and a project's "Create a gear" writes
+  it from below the organization. A personal connection (its token is its
+  owner's) or a workspace one (readable only in that workspace) is refused
+  with a 400 (`CONNECTION_NOT_SHARED`) saying why, in the walk's own words
+  (`registry::gear_repository_scope_refusal`); a creation is refused before
+  anything is created. Setting, creating or removing it queues a walk and
+  ensures the hourly schedule.
+- **The walk reads it.** A full walk reads the organization's gear repository
+  like a project's repository (fingerprint, discovery, candidates), in the
+  organization's tenant, keyed by the organization where a project's read is
+  keyed by the project. What it finds is an `occurrence` with `project_id`
+  null, `project_name` the organization's name and `scope: organization`
+  (`GET /registry` answers every occurrence's `scope`, `project` or
+  `organization`, and the portal says "organization gear repository"); its
+  entries are the organization's tier. Its status is one more row of
+  `GET /registry/projects`, keyed by the organization. A walk over named
+  projects (a push) leaves it alone; a full walk after it was unset retires
+  its occurrences, and their entries stay, `orphaned`. Declare it on a
+  candidate found there writes in the organization's tenant.
+- **"Create a gear" writes there.** A project's scaffold
+  (`POST /studio-product/v1/projects/{id}/scaffold`) writes into the
+  project's gear repository when it has one, else the organization's (asked
+  through `port::Registry::gear_repository`, the organization found by
+  walking up from the project), else the project's `sources[]`; its answer
+  says which (`repo`, `target`). `POST /registry/scaffold` writes a new gear
+  straight into the organization's gear repository: the same skeleton,
+  through `product::port::GearScaffolds`, with a pull request by default;
+  `dry_run` answers the files. Nothing is recorded: the walk finds the gear,
+  `declared`, once it is merged.
 
 ##### Responsibility boundaries
 
-The platform's facts are never written from an organization. Publishing an
+The platform's facts are never written from an organization. The skeleton a
+new gear starts from is studio-product's; this gear keeps only where the
+organization's gears live. Publishing an
 organization's gear to the platform (ADR-0042 §4) and composing from more
 than one corpus are later phases.
 
@@ -658,7 +706,12 @@ than one corpus are later phases.
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
 | `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`, checked against the lifecycle table and recorded. Answers the entry with its decisions. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
 | `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run}`: a pull request adding `gear.toml` (and `gear.gdl`) in the module's directory on `declare/<name>`, recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate; 503 without studio-product | unstable |
-| `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do | unstable |
+| `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |
+| `GET` | `/registry/gear-repository` | The organization's gear repository (ADR-0042 §2): `{gear_repository: {tenant, connection_id, connection_label, repo, branch, set_by, set_at} \| null, may_manage}`. Every member | unstable |
+| `PUT` | `/registry/gear-repository` | Set it: `{connection_id, repo, branch?}`. The connection must be organization-scoped (400 `CONNECTION_NOT_SHARED`, saying why). Queues a walk. 403 for anyone but an organization administrator | unstable |
+| `DELETE` | `/registry/gear-repository` | Unset it; the next full walk retires what was found there. 403 for anyone but an organization administrator | unstable |
+| `POST` | `/registry/gear-repository/create` | Create a repository through an organization-scoped connection (`{connection_id, name, owner?, is_org?, private?}`) and set it; 201. 403 for anyone but an organization administrator | unstable |
+| `POST` | `/registry/scaffold` | Create a gear in the organization's gear repository: `{slug, problem?, capabilities?, gear_kind?, plugin_host?, plugin_spec?, parent_dir?, app_title?, open_pr? (default true), dry_run?}` → `{branch, commit_sha, pr_url, files, repo, dry_run}`. 403 for anyone but an organization administrator; 400 `failed_precondition` with no gear repository; 503 without studio-product | unstable |
 | `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
 | `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |
 

@@ -17,6 +17,22 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.delete_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Remove the organization's gear repository",
+      "authenticated": true,
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-connector/v1/connections/{id}",
       "operation_id": "studio_connector.delete_connection",
       "tag": "StudioConnectors",
@@ -570,6 +586,21 @@
       "authenticated": true,
       "responses": [
         "ExcludedProjectsDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.get_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's gear repository",
+      "authenticated": true,
+      "responses": [
+        "GearRepositoryStateDto"
       ],
       "errors": [
         "401",
@@ -2391,6 +2422,42 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/gear-repository/create",
+      "operation_id": "studio_components_catalog.create_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create a repository and make it the organization's gear repository",
+      "authenticated": true,
+      "request": "CreateGearRepositoryRequest",
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/scaffold",
+      "operation_id": "studio_components_catalog.scaffold_registry_gear",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Create a gear in the organization's gear repository",
+      "authenticated": true,
+      "request": "RegistryScaffoldRequest",
+      "responses": [
+        "RegistryScaffoldResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/registry/{name}/decisions",
       "operation_id": "studio_components_catalog.decide_registry_entry",
       "tag": "StudioComponentsCatalog",
@@ -3884,6 +3951,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/registry/gear-repository",
+      "operation_id": "studio_components_catalog.update_registry_gear_repository",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Set the organization's gear repository",
+      "authenticated": true,
+      "request": "SetGearRepositoryRequest",
+      "responses": [
+        "GearRepositoryStateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },

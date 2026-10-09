@@ -5,6 +5,7 @@
  * Pure rules behind `component-registry.tsx`, kept here for their tests. */
 
 import type { RegistryDecision, RegistryEntry, RegistryOwner, RegistryProjectWalk } from "./api";
+import { occurrencePlace } from "./org-gear-repository";
 
 /** The states in the order a component moves through them. */
 export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected", "merged"] as const;
@@ -130,7 +131,7 @@ export function stateCounts(entries: readonly RegistryEntry[]): Record<string, n
 export function projectsOf(e: RegistryEntry): string[] {
   const seen: string[] = [];
   for (const o of e.occurrences) {
-    const name = o.project_name || o.project_id || o.repo;
+    const name = o.scope === "organization" ? occurrencePlace(o) : o.project_name || o.project_id || o.repo;
     if (!seen.includes(name)) seen.push(name);
   }
   return seen;
@@ -194,7 +195,7 @@ export function evidenceLines(e: Pick<RegistryEntry, "evidence">): string[] {
 export function candidateWhere(e: RegistryEntry): string {
   const o = e.occurrences.find((x) => x.declared_in === "detected") ?? e.occurrences[0];
   if (!o) return "—";
-  const project = o.project_name || o.project_id || o.repo;
+  const project = o.scope === "organization" ? occurrencePlace(o) : o.project_name || o.project_id || o.repo;
   return `${project} · ${o.path}`;
 }
 
