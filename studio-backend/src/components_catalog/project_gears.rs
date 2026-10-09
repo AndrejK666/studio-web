@@ -320,6 +320,12 @@ fn parent(path: &str) -> &str {
     path.rfind('/').map_or("", |i| &path[..i])
 }
 
+/// A Rust file that holds tests rather than a gear: `tests.rs`, `*_tests.rs`,
+/// `*_test.rs`.
+fn is_test_file(name: &str) -> bool {
+    name == "tests.rs" || name.ends_with("_tests.rs") || name.ends_with("_test.rs")
+}
+
 /// The Rust files a gear is declared in by convention, shallowest first and
 /// at most [`MAX_RUST_FILES`]: a crate's `lib.rs`, a module's `mod.rs`, and
 /// any file whose name says gear, module or plugin (`gear.rs`,
@@ -330,6 +336,11 @@ pub fn rust_candidates<'a>(paths: &[&'a str]) -> Vec<&'a str> {
         .iter()
         .copied()
         .filter(|p| p.ends_with(".rs") && !skipped(p))
+        // A test module's fixtures write gear attributes into string
+        // literals, at the start of a line: read, they declare the gears
+        // under test, and the first finding wins over the real `mod.rs`
+        // (seen on studio-web's own `project_gears_tests.rs`).
+        .filter(|p| !is_test_file(file_name(p)))
         .filter(|p| {
             let name = file_name(p);
             matches!(name, "lib.rs" | "mod.rs" | "module.rs")
