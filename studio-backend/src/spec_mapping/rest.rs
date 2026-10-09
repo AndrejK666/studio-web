@@ -22,6 +22,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::local;
 use super::plan::{self, PastDecision, Vocabulary};
 use crate::artifact_ingest::port::{MappingDecision, MappingDecisionStore};
 use crate::components_catalog::port::ComponentCatalog;
@@ -168,6 +169,11 @@ pub struct CandidateDto {
     pub composable: String,
     /// The engine's reason, when `blocked`. Null otherwise.
     pub composable_why: Option<String>,
+    /// `catalogue`, or `project` for a gear the project's own repository
+    /// declares -- whether or not the catalogue lists it too.
+    pub origin: String,
+    /// For a `project` gear, where it lives in the repository. Null otherwise.
+    pub path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -588,6 +594,8 @@ fn plan_dto(
                     built: c.built.as_str().to_owned(),
                     composable: c.composable.as_str().to_owned(),
                     composable_why: c.composable_why,
+                    origin: "catalogue".to_owned(),
+                    path: None,
                 })
                 .collect(),
         })
@@ -733,12 +741,19 @@ async fn get_project_plan(
             }),
         Err(_) => Vec::new(),
     };
-    let (components, profiles) = ports.catalog()?.components(&org).await.map_err(internal)?;
+    let catalog = ports.catalog()?;
+    let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
+    let own = local::project_gears(catalog.as_ref(), &org, project_id).await;
+    let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));
     let rows = plan::plan(&keys, &components, &profiles, &rules);
     let statements: Vec<String> = requirements.into_iter().map(|r| r.text).collect();
     let mut dto = plan_dto(rows, &rules, plan::deployment_profile(&statements));
+    local::mark_in_repo(
+        dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
+        &in_repo,
+    );
     let mut sources: BTreeMap<String, Vec<CapabilitySource>> =
         needs.into_iter().map(|c| (c.key, c.sources)).collect();
     for row in &mut dto.items {

@@ -524,6 +524,11 @@ export interface Candidate {
   composable: Composability;
   /** The engine's reason, when `blocked`. */
   composable_why?: string | null;
+  /** `project` when the project's own repository declares this gear (whether
+   *  or not the catalogue lists it too); `catalogue` otherwise. */
+  origin?: "catalogue" | "project";
+  /** For a `project` gear, where it lives in the repository. */
+  path?: string | null;
 }
 
 /** Why a candidate was offered, in the words of the step that offered it. */

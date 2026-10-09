@@ -249,6 +249,9 @@ pub struct CatalogService {
     /// profile, a field schema), so a cached read built from the old state is
     /// known to be old. See [`Self::generation`].
     generation: Arc<std::sync::atomic::AtomicU64>,
+    /// The gears each project repository declares, kept while the files they
+    /// were read from are unchanged.
+    project_gears: super::project_gears::Cache,
 }
 
 /// Bumps the catalogue generation when dropped — at the end of a write, so a
@@ -281,6 +284,7 @@ impl CatalogService {
             products: std::sync::OnceLock::new(),
             account_management: std::sync::OnceLock::new(),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            project_gears: super::project_gears::Cache::default(),
         }
     }
 
@@ -1527,12 +1531,107 @@ impl CatalogService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
+        let repos = self.project_repos(ctx, project_id).await?;
+        if repos.is_empty() {
+            return Ok(None);
+        }
+        let mut read = Vec::new();
+        let mut deps = BTreeSet::new();
+        for (target, enricher) in self.enrichers(repos)? {
+            match enricher.cargo_dependencies(ctx).await {
+                Ok(found) => {
+                    deps.extend(found);
+                    read.push(target.repo);
+                }
+                Err(e) if target.owned => return Err(e),
+                Err(e) => {
+                    tracing::warn!(project_id, repo = target.repo, error = %format!("{e:#}"), "studio-components-catalog: a project source could not be read");
+                }
+            }
+        }
+        if read.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((read.join(", "), deps)))
+    }
+
+    /// The gears the project's own code declares (`project_gears`), read
+    /// from the same repositories as [`Self::project_dependencies`]. Empty
+    /// when there is no code to read. A source that cannot be read is skipped
+    /// and logged, the project's gear repository included: these gears add
+    /// to the catalogue's, and the catalogue's answer stands without them.
+    pub async fn project_gears(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Vec<super::project_gears::LocalGear>> {
+        let repos = self.project_repos(ctx, project_id).await?;
+        let mut out: Vec<super::project_gears::LocalGear> = Vec::new();
+        if repos.is_empty() {
+            return Ok(out);
+        }
+        for (target, enricher) in self.enrichers(repos)? {
+            match enricher.project_gears(ctx, &self.project_gears).await {
+                Ok(found) => {
+                    for gear in found.iter() {
+                        if !out.iter().any(|g| g.name.eq_ignore_ascii_case(&gear.name)) {
+                            out.push(gear.clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(project_id, repo = target.repo, error = %format!("{e:#}"), "studio-components-catalog: a project repository's gears could not be read");
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// A reader per repository. An invalid gear repository is an error; an
+    /// invalid source is skipped.
+    fn enrichers(
+        &self,
+        repos: Vec<ProjectRepo>,
+    ) -> anyhow::Result<Vec<(ProjectRepo, RepoEnricher)>> {
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
+        let mut out = Vec::new();
+        for target in repos {
+            match RepoEnricher::new(
+                Arc::clone(&connectors),
+                target.tenant,
+                target.connection_id,
+                target.repo.clone(),
+                target.branch.clone(),
+                RepoMode::parse("gears"),
+            ) {
+                Some(enricher) => out.push((target, enricher)),
+                None if target.owned => {
+                    return Err(anyhow!("invalid gear repository for the project"));
+                }
+                None => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// Where the project's code is: the gear repository when one is
+    /// connected -- what a `new_gears` project writes into -- and otherwise
+    /// the repositories it was seeded from, which its config records
+    /// (`project_sources`), each through the connection it names. Empty when
+    /// there is neither.
+    async fn project_repos(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Vec<ProjectRepo>> {
         let gear_repo = match self.products.get().and_then(|p| p.get()) {
             Some(products) => products.gear_repo(ctx, project_id).await?,
             None => None,
         };
         let Some(v) = gear_repo else {
-            return self.source_dependencies(ctx, project_id).await;
+            return Ok(self.source_repos(ctx, project_id).await);
         };
         let v = &v;
         let text = |k: &str| {
@@ -1543,47 +1642,32 @@ impl CatalogService {
         };
         let repo = text("repo");
         if repo.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let tenant = Uuid::parse_str(&text("tenant"))
             .map_err(|_| anyhow!("the project's gear repo names no tenant"))?;
-        let connection_id = Uuid::parse_str(&text("connection_id")).ok();
-        let connectors = self
-            .connector_service()
-            .ok_or_else(|| anyhow!("no connector service is available for repository sources"))?;
-        let enricher = RepoEnricher::new(
-            connectors,
+        Ok(vec![ProjectRepo {
             tenant,
-            connection_id,
-            repo.clone(),
-            text("branch"),
-            RepoMode::parse("gears"),
-        )
-        .ok_or_else(|| anyhow!("invalid gear repository for the project"))?;
-        Ok(Some((repo, enricher.cargo_dependencies(ctx).await?)))
+            connection_id: Uuid::parse_str(&text("connection_id")).ok(),
+            repo,
+            branch: text("branch"),
+            owned: true,
+        }])
     }
 
-    /// A gear repository is what a `new_gears` project writes into; every
-    /// other project's code is the repositories it was seeded from, which its
-    /// config records (`project_sources`). Each is read through the connection
-    /// it names. A source that cannot be read is skipped and logged, so one
-    /// private repository does not hide what the others depend on.
-    async fn source_dependencies(
-        &self,
-        ctx: &SecurityContext,
-        project_id: &str,
-    ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
+    /// The repositories a project was seeded from. One whose connection the
+    /// caller cannot see is skipped and logged, so one private repository
+    /// does not hide the others.
+    async fn source_repos(&self, ctx: &SecurityContext, project_id: &str) -> Vec<ProjectRepo> {
         let (Some(am), Some(connectors)) =
             (self.account_management.get(), self.connector_service())
         else {
-            return Ok(None);
+            return Vec::new();
         };
         let Ok(project) = Uuid::parse_str(project_id) else {
-            return Ok(None);
+            return Vec::new();
         };
-        // What to read: `(tenant of the connection, connection, repository,
-        // branch)`, from the project's record of its repositories.
-        let mut targets: Vec<(Uuid, Uuid, String, String)> = Vec::new();
+        let mut out: Vec<ProjectRepo> = Vec::new();
         for source in crate::project_sources::read(am.as_ref(), ctx, project)
             .await
             .unwrap_or_default()
@@ -1592,12 +1676,13 @@ impl CatalogService {
                 continue;
             };
             match connectors.locate(ctx, project, connection_id).await {
-                Some(tenant) => targets.push((
+                Some(tenant) => out.push(ProjectRepo {
                     tenant,
-                    connection_id,
-                    source.full_path,
-                    source.branch.unwrap_or_default(),
-                )),
+                    connection_id: Some(connection_id),
+                    repo: source.full_path,
+                    branch: source.branch.unwrap_or_default(),
+                    owned: false,
+                }),
                 None => tracing::info!(
                     project_id,
                     repo = source.full_path,
@@ -1606,38 +1691,22 @@ impl CatalogService {
             }
         }
         let mut seen = std::collections::HashSet::new();
-        targets.retain(|(_, connection_id, repo, _)| {
-            seen.insert((*connection_id, repo.to_ascii_lowercase()))
-        });
-
-        let mut read = Vec::new();
-        let mut deps = BTreeSet::new();
-        for (tenant, connection_id, repo, branch) in targets {
-            let Some(enricher) = RepoEnricher::new(
-                Arc::clone(&connectors),
-                tenant,
-                Some(connection_id),
-                repo.clone(),
-                branch,
-                RepoMode::parse("gears"),
-            ) else {
-                continue;
-            };
-            match enricher.cargo_dependencies(ctx).await {
-                Ok(found) => {
-                    deps.extend(found);
-                    read.push(repo);
-                }
-                Err(e) => {
-                    tracing::warn!(project_id, repo, error = %format!("{e:#}"), "studio-components-catalog: a project source could not be read");
-                }
-            }
-        }
-        if read.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some((read.join(", "), deps)))
+        out.retain(|r| seen.insert((r.connection_id, r.repo.to_ascii_lowercase())));
+        out
     }
+}
+
+/// One repository a project's code is in.
+struct ProjectRepo {
+    /// The tenant that owns the connection it is read through.
+    tenant: Uuid,
+    connection_id: Option<Uuid>,
+    /// `owner/name`.
+    repo: String,
+    branch: String,
+    /// The project's own gear repository: failing to read it is the answer,
+    /// where a source that cannot be read is skipped.
+    owned: bool,
 }
 
 /// One phase, with what has been counted when it starts. Free-standing because

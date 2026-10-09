@@ -18,7 +18,8 @@ This README is what you need to work in the directory.
   - `documents::port::SpecNeeds` — a project's workspace, the vocabulary, and
     what the project's documents need (the index the documents gear writes);
   - `components_catalog::port::ComponentCatalog` — the components and their
-    profiles, a project's code dependencies, the engine's completion;
+    profiles, a project's code dependencies and its own gears, the engine's
+    completion;
   - `artifact_ingest::port::MappingDecisionStore` — the decisions.
 - A missing port makes the routes that need it answer 503.
 
@@ -29,6 +30,9 @@ This README is what you need to work in the directory.
   The documents gear calls it when it indexes a document; nothing else does.
 - `plan.rs` — the rules: contract → evidence → gap, built first within a step,
   ranked by decisions; `deployment_profile`. Pure functions over JSON values.
+- `local.rs` — the project's own gears beside the catalogue's: one candidate
+  per gear (the catalogue's entry when it has one), labelled `origin: project`
+  with its `path` in the repository.
 - `rest.rs` — the routes, and the assembly of a project's plan from the ports.
 
 ## Working here

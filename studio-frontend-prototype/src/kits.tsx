@@ -846,6 +846,14 @@ function SuggestedComponents({
                               )}
                               <ComponentLink nav={nav} name={c.name} />
                               <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                              {c.origin === "project" && (
+                                <span
+                                  title={`Declared in this project's own repository${c.path ? `: ${c.path}` : ""}`}
+                                  style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}
+                                >
+                                  THIS REPO
+                                </span>
+                              )}
                               <span
                                 style={{
                                   marginLeft: 5,
