@@ -10,6 +10,7 @@ import {
   type PlanRow,
   type ProfileAdvice,
   type KitMaterialization,
+  type Conformance,
   type ProductChange,
   type ProductPreview,
   type ProjectProduct,
@@ -40,6 +41,20 @@ import {
   specReasons,
 } from "./spec-coverage";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
+import {
+  alsoCovers,
+  applyFix,
+  codeDiff,
+  codeFor,
+  codeGears,
+  fixesFrom,
+  nextStep,
+  plainText,
+  rowShortlist,
+  type Fix,
+  type NextAction,
+  type NextStep,
+} from "./components-flow";
 
 export function ProjectKits({
   token,
@@ -72,7 +87,18 @@ export function ProjectKits({
   const reconciled = useRef(new Set<string>());
   const product = useProjectProduct(token, projectId, projectName);
   /** How many capabilities the documents declare; null until they are read. */
-  const [capCount, setCapCount] = useState<number | null>(null);
+  /** What section 1 found: capabilities asked, how many the product leaves
+   *  open, and the recommended gears. */
+  const [flow, setFlow] = useState<{ capabilities: number | null; open: number; recommended: string[] }>({
+    capabilities: null,
+    open: 0,
+    recommended: [],
+  });
+  /** What the product card last heard from the engine. */
+  const [verdict, setVerdict] = useState<{ resolves: boolean | null; fixes: number }>({ resolves: null, fixes: 0 });
+  /** The next-step line asks the product card to act. */
+  const [command, setCommand] = useState<{ kind: ProductCommand; at: number } | null>(null);
+  const code = useCodeReport(token, projectId, workspaceId, section === "components");
 
   const reload = useCallback(async () => {
     setError(null);
@@ -250,7 +276,25 @@ export function ProjectKits({
           button further down, which is the answer before the question. */}
       {section === "components" && (
         <>
-      <JourneyStrip capabilities={capCount} product={product} />
+      <NextStepBar
+        step={nextStep({
+          capabilities: flow.capabilities,
+          open: flow.open,
+          picks: product.picks.length,
+          inCode: code.report ? codeGears(code.report).length : null,
+          resolves: verdict.resolves,
+          fixes: verdict.fixes,
+          written: !!product.record?.written && verdict.resolves !== null,
+          composing: product.composing,
+        })}
+        onAct={(action) => {
+          if (action === "add-recommended") {
+            product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
+          } else {
+            setCommand({ kind: action, at: Date.now() });
+          }
+        }}
+      />
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
@@ -261,12 +305,20 @@ export function ProjectKits({
         token={token}
         projectId={projectId}
         product={product}
-        onCapabilities={setCapCount}
+        code={code}
+        onFlow={setFlow}
       />
       {product.composing && (
-        <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
+        <ProductCard
+          token={token}
+          projectId={projectId}
+          projectName={projectName}
+          product={product}
+          code={code}
+          command={command}
+          onVerdict={setVerdict}
+        />
       )}
-      <SpecAgainstCode token={token} projectId={projectId} workspaceId={workspaceId} />
         </>
       )}
       {section === "kits" && (
@@ -435,12 +487,19 @@ export function ProjectKits({
  *  code depends on a component that fills it; the components the code uses
  *  that no capability accounts for; and the Gearbox engine's view of the
  *  code's own gears. */
-function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; projectId: string; workspaceId: string }) {
-  const [report, setReport] = useState<import("./api").Conformance | null>(null);
+type ProductCommand = Exclude<NextAction, "add-recommended">;
+
+/** What the code depends on, against what the specs declare: read from every
+ *  Cargo.toml in the project's repositories (`POST /conformance`). Read on
+ *  arrival, because section 1 shows it per capability and the product card
+ *  starts the product from it. */
+type CodeReport = { report: Conformance | null; busy: boolean; error: string | null; reload: () => void };
+
+function useCodeReport(token: string, projectId: string, workspaceId: string, on: boolean): CodeReport {
+  const [report, setReport] = useState<Conformance | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nav = usePortalNav();
-  const compare = async () => {
+  const load = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -454,78 +513,46 @@ function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; pro
     } finally {
       setBusy(false);
     }
+  }, [token, projectId, workspaceId]);
+  useEffect(() => {
+    if (on) void load();
+  }, [on, load]);
+  return { report, busy, error, reload: () => void load() };
+}
+
+/** The page's one sentence: where the person is, and the button for the next
+ *  step. It replaces three tiles that had to be read and combined. */
+function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextAction) => void }) {
+  const label: Record<NextAction, string> = {
+    "add-recommended": "Add the recommended gears",
+    "take-from-code": "Take the product from the code",
+    preview: "Check it",
+    fix: "Show the fixes",
+    build: "Build it in Studio-ide →",
+    open: "Open in Studio-ide",
   };
-  const missing = report?.items.filter((r) => r.status === "missing").length ?? 0;
   return (
-    <div className="card" style={{ marginTop: 12 }} data-spec-against-code>
-      <div className="card-head">
-        <div>
-          <h2>Specs ↔ code</h2>
-          <p className="subtitle">
-            What the project&apos;s documents declare, against what its code depends on — read from every
-            Cargo.toml in the gear repository.
-          </p>
-        </div>
-        <button className="ghost" disabled={busy} onClick={() => void compare()}>
-          {busy ? "Comparing…" : "Compare"}
+    <div
+      className={`next-step ${step.tone}`}
+      role="status"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "8px 12px",
+        margin: "0 0 12px",
+        background: step.tone === "done" ? "var(--success-soft)" : step.tone === "warn" ? "var(--warning-soft)" : "var(--accent)",
+      }}
+    >
+      <b style={{ fontSize: 13 }}>Next:</b>
+      <span style={{ fontSize: 13 }}>{step.text}</span>
+      {step.action && (
+        <button className="primary" style={{ marginLeft: "auto" }} onClick={() => onAct(step.action as NextAction)}>
+          {label[step.action]}
         </button>
-      </div>
-      {error && <div className="error">{error}</div>}
-      {report && (
-        <div style={{ fontSize: 12 }}>
-          <p style={{ margin: "0 0 8px", opacity: 0.8 }}>
-            <code>{report.repo}</code> uses {report.components_in_code.length} catalogue components ·{" "}
-            {report.total - missing} of {report.total} declared capabilities implemented
-            {missing > 0 ? ` · ${missing} missing` : ""}
-          </p>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {report.items.map((r) => (
-              <li key={r.capability} style={{ margin: "0 0 4px" }}>
-                <span className={`badge ${r.status === "implemented" ? "ok" : "failed"}`}>{r.capability}</span>{" "}
-                {r.status === "implemented" ? (
-                  r.implemented_by.map((i, n) => (
-                    <span key={i.name}>
-                      {n > 0 && ", "}
-                      <ComponentLink nav={nav} name={i.name} />
-                      {i.declared ? "" : <span style={{ opacity: 0.5 }} title="matched by words, not declared"> ~</span>}
-                    </span>
-                  ))
-                ) : (
-                  <span style={{ opacity: 0.8 }}>
-                    nothing in the code fills it
-                    {r.candidates.length > 0 && <> · the catalogue has {r.candidates.map(gearLabel).join(", ")}</>}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-          {report.unexplained.length > 0 && (
-            <p style={{ margin: "8px 0 0" }}>
-              <b>In the code, not in the specs:</b>{" "}
-              {report.unexplained.map((u, n) => (
-                <span key={u.name}>
-                  {n > 0 && ", "}
-                  <ComponentLink nav={nav} name={u.name} />
-                  {u.declares.length > 0 && <span style={{ opacity: 0.6 }}> ({u.declares.join(", ")})</span>}
-                </span>
-              ))}
-              <span style={{ opacity: 0.7 }}> — a capability the specs do not declare, or a dependency to drop.</span>
-            </p>
-          )}
-          {report.gearbox.length > 0 && (
-            <div style={{ margin: "8px 0 0" }}>
-              <b>Gearbox on the code&apos;s own gears:</b>
-              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                {report.gearbox.map((g) => (
-                  <li key={`${g.gear}-${g.reason}`}>
-                    {g.added ? "needs " : "cannot run: "}
-                    <ComponentLink nav={nav} name={g.gear} /> — {g.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
       )}
     </div>
   );
@@ -535,12 +562,14 @@ function SuggestedComponents({
   token,
   projectId,
   product,
-  onCapabilities,
+  code,
+  onFlow,
 }: {
   token: string;
   projectId: string;
   product: ProductState;
-  onCapabilities?: (count: number) => void;
+  code: CodeReport;
+  onFlow?: (flow: { capabilities: number | null; open: number; recommended: string[] }) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   /** Where the documents say the product runs: the profile to default to. */
@@ -555,6 +584,8 @@ function SuggestedComponents({
   const [whyOpen, setWhyOpen] = useState<Record<string, string | true>>({});
   /** The capability a new gear is being scaffolded for. */
   const [scaffoldFor, setScaffoldFor] = useState<PlanRow | null>(null);
+  /** Rows showing every candidate, not just the recommended one and the picks. */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggleWhy = (capability: string, candidate?: string) =>
     setWhyOpen((current) => {
       const next = { ...current };
@@ -574,16 +605,11 @@ function SuggestedComponents({
       const answer = await api.projectPlan(token, projectId);
       const next = answer.items;
       setSources(Object.fromEntries(next.map((r) => [r.capability, r.sources ?? []])));
-      onCapabilities?.(next.length);
       setDocCount(new Set(next.flatMap((r) => (r.sources ?? []).map((s) => s.id))).size);
       setPlan(next);
       setAdvice(answer.profile ?? null);
-      // A product nobody has picked for yet starts from the best built gear
-      // per capability. One that has picks keeps them: suggestions are a
-      // source of candidates, not the product.
-      if (product.composing && product.loaded && product.picks.length === 0) {
-        void product.seed(defaultPicks(next));
-      }
+      // An empty product is not filled in here: the next-step line offers
+      // the code's gears or the recommended ones, and the person chooses.
     } catch (cause) {
       setError(errText(cause));
     } finally {
@@ -631,6 +657,14 @@ function SuggestedComponents({
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
   const composing = product.composing;
   const coverage = plan ? coverageSummary(plan, product.picks) : null;
+  const covers = useMemo(() => (plan ? alsoCovers(plan) : {}), [plan]);
+  const recommendedKey = recommended.join(",");
+  useEffect(() => {
+    onFlow?.({ capabilities: plan ? plan.length : null, open: coverage?.open ?? 0, recommended });
+    // The arrays are fresh per render; their content is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, coverage?.open, recommendedKey]);
+  const report = code.report;
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -674,16 +708,19 @@ function SuggestedComponents({
             <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
               {plan.length} capabilit{plan.length === 1 ? "y" : "ies"} from {docCount} document
               {docCount === 1 ? "" : "s"} · {built} built candidate{built === 1 ? "" : "s"} ·{" "}
-              {unbuilt} with nothing built yet · {gaps} with nothing at all.
+              {unbuilt} with nothing built yet · {gaps} with nothing at all
+              {report && ` · the code depends on ${report.components_in_code.length} catalogue components`}
+              {code.busy && " · reading the code…"}.
             </p>
+            {code.error && <div className="hint" style={{ fontSize: 12 }}>The code could not be read: {code.error}</div>}
             {advice && (
               <p
                 style={{ fontSize: 12, margin: "0 0 12px", display: "flex", gap: 8, alignItems: "center" }}
-                title={advice.because.join("\n")}
+                title={advice.because.map(plainText).join("\n")}
               >
                 <span>
                   The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
-                  {advice.because[0]}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
+                  {plainText(advice.because[0] ?? "")}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
                 </span>
                 {composing && product.profile !== advice.profile && (
                   <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
@@ -714,6 +751,8 @@ function SuggestedComponents({
                 const needsGear =
                   !row.nonfunctional && (row.gap || row.unbuilt || (composing && cover.cover === "open" && !row.candidates.some((c) => c.built === "built")));
                 const reasons = open === true ? specReasons(row) : [];
+                const inCode = codeFor(report, row.capability);
+                const { shown: shortlist, hidden } = rowShortlist(row, product.picks, !!expanded[row.capability]);
                 return (
                   <div
                     key={row.capability}
@@ -747,6 +786,16 @@ function SuggestedComponents({
                       {composing && cover.cover === "open" && (
                         <span className="badge danger" title="No gear in the product fills it">
                           not closed
+                        </span>
+                      )}
+                      {inCode && !row.nonfunctional && (
+                        <span
+                          className={`badge ${inCode.status === "implemented" ? "ok" : ""}`}
+                          title="What the project's code depends on, read from its Cargo.toml files"
+                        >
+                          {inCode.status === "implemented"
+                            ? `in the code: ${inCode.by.map((b) => gearLabel(b.name)).join(", ")}`
+                            : "not in the code"}
                         </span>
                       )}
                       {rowSources.length > 0 && (
@@ -815,8 +864,9 @@ function SuggestedComponents({
                     )}
                     {(row.candidates.length > 0 || beyond.length > 0) && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                        {row.candidates.map((c) => {
+                        {shortlist.map((c) => {
                           const pickable = composing && isPickable(c);
+                          const others = (covers[c.name] ?? []).filter((k) => k !== row.capability);
                           const picked = pickable && product.picks.includes(c.name);
                           const strong = candidateStrength(c) === "strong";
                           return (
@@ -844,7 +894,7 @@ function SuggestedComponents({
                                   {picked ? "✓" : "+"}
                                 </button>
                               )}
-                              <ComponentLink nav={nav} name={c.name} />
+                              <ComponentLink nav={c.origin === "project" ? null : nav} name={c.name} />
                               <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
                               {c.origin === "project" && (
                                 <span
@@ -886,9 +936,27 @@ function SuggestedComponents({
                               >
                                 ?
                               </button>
+                              {others.length > 0 && (
+                                <span
+                                  style={{ marginLeft: 4, fontSize: 9, opacity: 0.6 }}
+                                  title={`The same gear is offered for ${others.join(", ")} too: one gear, several answers`}
+                                >
+                                  also {others.join(", ")}
+                                </span>
+                              )}
                             </span>
                           );
                         })}
+                        {(hidden > 0 || expanded[row.capability]) && (
+                          <button
+                            type="button"
+                            className="linklike"
+                            style={{ fontSize: 11 }}
+                            onClick={() => setExpanded((e) => ({ ...e, [row.capability]: !e[row.capability] }))}
+                          >
+                            {expanded[row.capability] ? "fewer" : `${hidden} more`}
+                          </button>
+                        )}
                         {beyond.map((p) => (
                           <span
                             key={p.name}
@@ -937,6 +1005,19 @@ function SuggestedComponents({
                 );
               })}
             </div>
+            {report && report.unexplained.length > 0 && (
+              <p style={{ fontSize: 12, margin: "10px 0 0" }}>
+                <b>In the code, not in the specs:</b>{" "}
+                {report.unexplained.map((u, n) => (
+                  <span key={u.name}>
+                    {n > 0 && ", "}
+                    <ComponentLink nav={nav} name={u.name} />
+                    {u.declares.length > 0 && <span style={{ opacity: 0.6 }}> ({u.declares.join(", ")})</span>}
+                  </span>
+                ))}
+                <span style={{ opacity: 0.7 }}> — a capability the specs do not declare, or a dependency to drop.</span>
+              </p>
+            )}
           </>
         ))}
       {scaffoldFor && (
@@ -1243,69 +1324,32 @@ function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: stri
  *  catalogue page; the engine's verdict on them; and the two ways onward — into
  *  the project's repository, and into the IDE where the language server keeps
  *  checking it. */
-/** Where the person is in the page's three steps, at a glance. */
-function JourneyStrip({ capabilities, product }: { capabilities: number | null; product: ProductState }) {
-  const last = product.record?.last_preview;
-  const steps: { n: number; label: string; state: string; done: boolean }[] = [
-    {
-      n: 1,
-      label: "Your specs ask for",
-      state: capabilities == null ? "reading…" : `${capabilities} capabilit${capabilities === 1 ? "y" : "ies"}`,
-      done: (capabilities ?? 0) > 0,
-    },
-    {
-      n: 2,
-      label: "Your product",
-      state:
-        product.picks.length === 0
-          ? "no components yet"
-          : `${product.picks.length} component${product.picks.length === 1 ? "" : "s"}` +
-            (last ? (last.ok ? " · resolves" : " · does not resolve") : ""),
-      done: !!last?.ok,
-    },
-    {
-      n: 3,
-      label: "Built in Studio-ide",
-      state: product.record?.written ? `product.gdl on ${product.record.written.branch}` : "not yet",
-      done: !!product.record?.written,
-    },
-  ];
-  return (
-    <ol className="journey-strip" style={{ display: "flex", gap: 8, listStyle: "none", padding: 0, margin: "0 0 12px", flexWrap: "wrap" }}>
-      {steps.map((st) => (
-        <li
-          key={st.n}
-          style={{
-            flex: "1 1 200px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: "6px 10px",
-            fontSize: 12,
-            background: st.done ? "var(--accent)" : "transparent",
-          }}
-        >
-          <b>
-            {st.done ? "✓" : st.n} · {st.label}
-          </b>
-          <div style={{ opacity: 0.7 }}>{st.state}</div>
-        </li>
-      ))}
-    </ol>
-  );
-}
 
 function ProductCard({
   token,
   projectId,
   projectName,
   product,
+  code,
+  command,
+  onVerdict,
 }: {
   token: string;
   projectId: string;
   projectName: string;
   product: ProductState;
+  code: CodeReport;
+  command: { kind: ProductCommand; at: number } | null;
+  onVerdict: (v: { resolves: boolean | null; fixes: number }) => void;
 }) {
   const nav = usePortalNav();
+  const cardRef = useRef<HTMLElement | null>(null);
+  /** The engine's completion of a product that does not resolve, as fixes. */
+  const [fixes, setFixes] = useState<Fix[] | null>(null);
+  /** "Take the product from the code" is open. */
+  const [fromCode, setFromCode] = useState(false);
+  /** A fix was applied: preview again once the product has changed. */
+  const recheck = useRef(false);
   const { gearbox, picks, profile, record } = product;
   const [asPr, setAsPr] = useState(false);
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
@@ -1324,7 +1368,7 @@ function ProductCard({
   // The picks and profile the shown preview answers. Anything else and the
   // preview is about a different product, which the screen has to say.
   const [asked, setAsked] = useState<string | null>(null);
-  const question = JSON.stringify([profile, [...picks].sort()]);
+  const question = JSON.stringify([profile, [...picks].sort(), product.config]);
   const stale = preview !== null && asked !== question;
   const productId = productIdFrom(projectName);
   // The crate behind an engine id, for linking a resolved gear to its page.
@@ -1381,12 +1425,76 @@ function ProductCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.completedAt]);
 
+  // Ask the engine on arrival, so the verdict and its fixes are on screen
+  // without a click; a product with nothing in it has nothing to ask.
+  const asked0 = useRef(false);
+  useEffect(() => {
+    if (!product.loaded || asked0.current || picks.length === 0) return;
+    asked0.current = true;
+    void run(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.loaded, picks.length]);
+
+  // A fix changed the product: check it again.
+  useEffect(() => {
+    if (!recheck.current || picks.length === 0) return;
+    recheck.current = false;
+    const timer = setTimeout(() => void run(false), 450);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question]);
+
+  // A product that does not resolve: ask the engine how it would, without
+  // applying it, and list each change as its own fix.
+  useEffect(() => {
+    if (!preview || preview.ok || stale) {
+      setFixes(null);
+      return;
+    }
+    let live = true;
+    api
+      .completeProduct(token, picks, product.config)
+      .then((done) => live && setFixes(fixesFrom(picks, product.config, done)))
+      .catch(() => live && setFixes([]));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, stale]);
+
+  useEffect(() => {
+    onVerdict({ resolves: preview && !stale ? preview.ok : null, fixes: fixes?.length ?? 0 });
+  }, [preview, stale, fixes, onVerdict]);
+
+  const applyOne = (fix: Fix) => {
+    recheck.current = true;
+    if (fix.kind === "config") product.setField(fix.gear, fix.field, fix.value);
+    else if (fix.kind === "remove") product.toggle(fix.gear);
+    else product.setPicks((current) => applyFix(current, product.config, fix).picks);
+  };
+
+  // The next-step line's button.
+  useEffect(() => {
+    if (!command) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (command.kind === "preview") void run(false);
+    if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "build") void buildInTheia();
+    if (command.kind === "open") openOnDesktop(record?.written?.branch);
+    if (command.kind === "take-from-code") setFromCode(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command?.at]);
+
+  const inCode = code.report ? codeGears(code.report) : [];
+  const diff = codeDiff(picks, inCode);
+  const resolvesNow = !!preview?.ok && !stale;
+
   const errors = preview?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
   const warnings = preview?.diagnostics.filter((d) => d.severity === "warning").length ?? 0;
   const last = record?.last_preview;
 
   return (
-    <section className="card" style={{ marginBottom: 16 }}>
+    <section className="card" style={{ marginBottom: 16 }} ref={cardRef}>
       <div className="card-head">
         <div>
           <h2>
@@ -1407,7 +1515,7 @@ function ProductCard({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         {picks.length === 0 ? (
           <span className="empty" style={{ fontSize: 12 }}>
-            Nothing in the product yet — add the recommended components above, or pick them with +.
+            Nothing in the product yet — take it from the code, add the recommended components above, or pick them with +.
           </span>
         ) : (
           picks.map((name) => (
@@ -1471,8 +1579,18 @@ function ProductCard({
         >
           Make it resolve
         </button>
+        {inCode.length > 0 && (
+          <button
+            className="ghost"
+            aria-expanded={fromCode}
+            title="The gears the project's code already depends on, read from its Cargo.toml files"
+            onClick={() => setFromCode((v) => !v)}
+          >
+            From the code ({inCode.length})
+          </button>
+        )}
         <button
-          className="primary"
+          className={resolvesNow ? "primary" : "ghost"}
           disabled={busy !== null || picks.length === 0}
           title="Save product.gdl to the repository and open the desktop Studio on it: it clones the project and opens the product in the Gearbox view"
           onClick={() => void buildInTheia()}
@@ -1496,6 +1614,119 @@ function ProductCard({
         )}
       </div>
       {error && <div className="error">{error}</div>}
+
+      {fromCode && code.report && (
+        <div style={{ fontSize: 12, marginTop: 10, border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            The code depends on {inCode.length} gear{inCode.length === 1 ? "" : "s"} ({code.report.repo})
+          </div>
+          {diff.add.length > 0 && (
+            <div>
+              <b>Not in the product yet:</b> {diff.add.map(gearLabel).join(", ")}
+            </div>
+          )}
+          {diff.drop.length > 0 && (
+            <div>
+              <b>In the product, not in the code:</b> {diff.drop.map(gearLabel).join(", ")}
+            </div>
+          )}
+          {diff.add.length === 0 && diff.drop.length === 0 && <div>The product is exactly what the code uses.</div>}
+          {code.report.gearbox.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <b>What the engine says about the code&apos;s gears:</b>
+              <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+                {code.report.gearbox.map((g) => (
+                  <li key={`${g.gear}-${g.reason}`}>
+                    {g.added ? "needs " : "cannot run: "}
+                    <ComponentLink nav={nav} name={g.gear} /> — {g.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button
+              className="primary"
+              disabled={busy !== null}
+              title="Replace the product with the code's gears, then let the engine complete it so it resolves"
+              onClick={() => {
+                setFromCode(false);
+                void product.seed(inCode);
+              }}
+            >
+              Make the product the code&apos;s
+            </button>
+            {diff.add.length > 0 && picks.length > 0 && (
+              <button
+                className="ghost"
+                disabled={busy !== null}
+                onClick={() => {
+                  setFromCode(false);
+                  void product.seed([...picks, ...diff.add]);
+                }}
+              >
+                Add the {diff.add.length} missing
+              </button>
+            )}
+            <button className="ghost" onClick={() => code.reload()} disabled={code.busy}>
+              {code.busy ? "Reading…" : "Read the code again"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {fixes && fixes.length > 0 && (
+        <div
+          id="product-fixes"
+          tabIndex={-1}
+          style={{ fontSize: 12, marginTop: 10, border: "1px solid var(--warning, #c90)", borderRadius: 8, padding: "8px 10px" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <b>
+              How to make it resolve — {fixes.length} fix{fixes.length === 1 ? "" : "es"} from the engine
+            </b>
+            <button className="primary" style={{ marginLeft: "auto" }} disabled={busy !== null} onClick={() => void product.complete()}>
+              Apply all
+            </button>
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {fixes.map((f) => (
+              <li
+                key={`${f.kind}-${f.gear}-${f.kind === "config" ? f.field : ""}`}
+                style={{ display: "flex", alignItems: "center", gap: 8, margin: "3px 0" }}
+              >
+                <span>
+                  {f.kind === "add" && (
+                    <>
+                      Add <ComponentLink nav={nav} name={f.gear} />
+                    </>
+                  )}
+                  {f.kind === "remove" && (
+                    <>
+                      Take out <ComponentLink nav={nav} name={f.gear} />
+                    </>
+                  )}
+                  {f.kind === "config" && (
+                    <>
+                      Set <code>{gearLabel(f.gear)}</code> · <code>{f.field}</code> ={" "}
+                      <code>{typeof f.value === "string" ? f.value : JSON.stringify(f.value)}</code>
+                    </>
+                  )}
+                  <span style={{ opacity: 0.7 }}> — {f.reason}</span>
+                </span>
+                <button className="ghost" style={{ marginLeft: "auto" }} disabled={busy !== null} onClick={() => applyOne(f)}>
+                  Apply
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
+        <p className="hint" style={{ fontSize: 12 }}>
+          The engine offers no change that makes it resolve; the errors below say what it needs.
+        </p>
+      )}
 
       {preview && (
         <div style={{ marginTop: 10, opacity: stale ? 0.55 : 1 }}>
