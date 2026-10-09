@@ -4,7 +4,7 @@
  *
  * Pure rules behind `component-registry.tsx`, kept here for their tests. */
 
-import type { RegistryEntry } from "./api";
+import type { RegistryEntry, RegistryProjectWalk } from "./api";
 
 /** The states in the order a component moves through them. */
 export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected"] as const;
@@ -76,4 +76,21 @@ export function registryProjects(entries: readonly RegistryEntry[]): { id: strin
     for (const o of e.occurrences) if (o.project_id && !out.has(o.project_id)) out.set(o.project_id, o.project_name || o.project_id);
   }
   return [...out].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** One line for what the last walk did with a project. */
+export function walkLine(w: RegistryProjectWalk | undefined): { text: string; failed: boolean; hint: string | null } {
+  if (!w) return { text: "not read yet", failed: false, hint: null };
+  if (w.error) return { text: `not read: ${w.error}`, failed: true, hint: null };
+  const failed = w.repos.filter((r) => r.status === "failed");
+  if (failed.length > 0) {
+    return {
+      text: `${failed.length} of ${w.repos.length} repositor${w.repos.length === 1 ? "y" : "ies"} not readable`,
+      failed: true,
+      hint: failed.find((r) => r.hint)?.hint ?? failed[0].error ?? null,
+    };
+  }
+  const n = w.repos.reduce((sum, r) => sum + r.components, 0);
+  const fresh = w.repos.some((r) => r.status === "read");
+  return { text: `${fresh ? "read" : "unchanged"} · ${n} component${n === 1 ? "" : "s"}`, failed: false, hint: null };
 }

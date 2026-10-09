@@ -364,6 +364,24 @@ export interface RegistryOccurrence {
   declared_in: string;
 }
 
+/** What the last registry walk saw of one project. */
+export interface RegistryProjectWalk {
+  project_id: string;
+  project_name: string;
+  at: string;
+  /** Its repositories could not be listed at all. */
+  error?: string | null;
+  repos: {
+    repo: string;
+    /** `read`, `unchanged` or `failed`. */
+    status: string;
+    components: number;
+    error?: string | null;
+    /** What to do about `error`, when the walk knows. */
+    hint?: string | null;
+  }[];
+}
+
 /** One component of the organization's registry (ADR-0041). */
 export interface RegistryEntry {
   name: string;
@@ -3812,6 +3830,10 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
     return request<{ items: RegistryEntry[]; total: number }>(`/studio-components-catalog/v1/registry?${qs}`, token);
   },
+  /** What the last registry walk saw of each project: read, unchanged, or
+   *  not readable and why. */
+  registryProjects: (token: string) =>
+    request<{ items: RegistryProjectWalk[]; total: number }>("/studio-components-catalog/v1/registry/projects", token),
   registryExcludedProjects: (token: string) =>
     request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token),
   saveRegistryExcludedProjects: (token: string, projectIds: string[]) =>

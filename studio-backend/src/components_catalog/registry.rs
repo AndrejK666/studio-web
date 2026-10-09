@@ -580,6 +580,78 @@ struct SettingsRecord {
     organization_id: Option<Uuid>,
     #[serde(default)]
     excluded_project_ids: Vec<Uuid>,
+    /// What the last walk saw of each project it read, so a person can tell
+    /// a project with no components from one the walk could not read.
+    #[serde(default)]
+    last_walk: Vec<ProjectWalk>,
+}
+
+/// What the last walk saw of one project.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProjectWalk {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// RFC 3339.
+    pub at: String,
+    /// Set when the project's repositories could not be listed at all.
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub repos: Vec<RepoWalk>,
+}
+
+/// What the last walk did with one repository of a project.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RepoWalk {
+    pub repo: String,
+    /// `read` (read anew), `unchanged` (its fingerprint matched) or `failed`.
+    pub status: String,
+    /// Components found in it: read anew, or still recorded for it.
+    #[serde(default)]
+    pub components: usize,
+    #[serde(default)]
+    pub error: Option<String>,
+    /// What a person can do about `error`, when the walk knows.
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+/// What a person can do about a repository the walk could not read.
+///
+/// The walk runs as the service, on a schedule nobody is signed in to, so a
+/// repository connected with someone's personal token is not readable to it --
+/// by design: an organization-wide job must not borrow one person's
+/// credential. The fix is to share the connection, not to impersonate.
+pub fn read_failure_hint(error: &str) -> Option<String> {
+    let e = error.to_ascii_lowercase();
+    if e.contains("not readable") || e.contains("personal") {
+        return Some(
+            "The repository is connected with a personal token, which the registry's background read cannot use. Share the connection with the workspace or the organization, or connect the repository with a shared token."
+                .to_owned(),
+        );
+    }
+    if e.contains("401") || e.contains("403") || e.contains("bad credentials") {
+        return Some("The connection's token was refused by the provider: renew it on the Connections page.".to_owned());
+    }
+    if e.contains("404") || e.contains("not found") {
+        return Some("The repository or branch was not found with this connection: check the project's Sources.".to_owned());
+    }
+    None
+}
+
+/// The last walk's statuses after `walked`: a full walk replaces them, a walk
+/// over named projects replaces only theirs.
+pub fn merge_walks(previous: Vec<ProjectWalk>, walked: Vec<ProjectWalk>, full: bool) -> Vec<ProjectWalk> {
+    if full {
+        return walked;
+    }
+    let mut out: Vec<ProjectWalk> = previous
+        .into_iter()
+        .filter(|p| !walked.iter().any(|w| w.project_id == p.project_id))
+        .collect();
+    out.extend(walked);
+    out.sort_by(|a, b| a.project_name.cmp(&b.project_name));
+    out
 }
 
 /// What a registry walk counted. The run's result.
@@ -685,10 +757,9 @@ impl CatalogService {
         Ok(sources)
     }
 
-    /// The projects the walk skips.
-    pub async fn excluded_projects(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<Uuid>> {
+    async fn settings(&self, ctx: &SecurityContext) -> anyhow::Result<SettingsRecord> {
         let id = gts::registry_settings_instance_id(&ctx.subject_tenant_id().to_string());
-        let settings = records::<SettingsRecord>(
+        Ok(records::<SettingsRecord>(
             self.sink
                 .list(ctx, Some(gts::REGISTRY_SETTINGS_TYPE))
                 .await?,
@@ -696,8 +767,17 @@ impl CatalogService {
         .into_iter()
         .find(|(i, _)| *i == id)
         .map(|(_, s)| s)
-        .unwrap_or_default();
-        Ok(settings.excluded_project_ids)
+        .unwrap_or_default())
+    }
+
+    /// The projects the walk skips.
+    pub async fn excluded_projects(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<Uuid>> {
+        Ok(self.settings(ctx).await?.excluded_project_ids)
+    }
+
+    /// What the last walk saw of each project it read.
+    pub async fn last_walk(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<ProjectWalk>> {
+        Ok(self.settings(ctx).await?.last_walk)
     }
 
     /// Replace the projects the walk skips. Deduplicated, in the order given.
@@ -713,9 +793,11 @@ impl CatalogService {
             .into_iter()
             .filter(|p| seen.insert(*p))
             .collect();
+        let last_walk = self.settings(ctx).await?.last_walk;
         let value = serde_json::to_value(SettingsRecord {
             organization_id: Some(org),
             excluded_project_ids: ids.clone(),
+            last_walk,
         })?;
         self.sink
             .upsert(
@@ -823,7 +905,22 @@ impl CatalogService {
             ..Walk::default()
         };
         let total = in_scope.len();
+        let mut statuses: Vec<ProjectWalk> = Vec::with_capacity(total);
+        // Components still recorded per (project, repository): what an
+        // unchanged repository holds.
+        let mut held: HashMap<(Uuid, String), usize> = HashMap::new();
+        for (_, o) in occurrences.iter().filter(|(_, o)| o.organization_id == org) {
+            if let Some(p) = o.project_id {
+                *held.entry((p, o.repo_key.clone())).or_default() += 1;
+            }
+        }
         for (i, project) in in_scope.iter().enumerate() {
+            let mut status = ProjectWalk {
+                project_id: project.id,
+                project_name: project.name.clone(),
+                at: walk.now.clone(),
+                ..ProjectWalk::default()
+            };
             progress.set_with(
                 format!("registry: {} ({}/{total})", project.name, i + 1),
                 serde_json::to_value(&counts).unwrap_or(Value::Null),
@@ -832,6 +929,8 @@ impl CatalogService {
                 Ok(repos) => repos,
                 Err(e) => {
                     tracing::warn!(project_id = %project.id, error = %format!("{e:#}"), "components-catalog: registry: a project's repositories could not be resolved");
+                    status.error = Some(format!("{e:#}"));
+                    statuses.push(status);
                     continue;
                 }
             };
@@ -839,6 +938,15 @@ impl CatalogService {
                 Ok(readers) => readers,
                 Err(e) => {
                     tracing::warn!(project_id = %project.id, error = %format!("{e:#}"), "components-catalog: registry: a project's repositories cannot be read");
+                    let error = format!("{e:#}");
+                    status.repos.push(RepoWalk {
+                        repo: String::new(),
+                        status: "failed".to_owned(),
+                        hint: read_failure_hint(&error),
+                        error: Some(error),
+                        ..RepoWalk::default()
+                    });
+                    statuses.push(status);
                     continue;
                 }
             };
@@ -851,9 +959,23 @@ impl CatalogService {
                     .project_gears_unless(ctx, &self.project_gears, known)
                     .await
                 {
-                    Ok(ProjectGearsRead::Unchanged) => counts.repos_unchanged += 1,
+                    Ok(ProjectGearsRead::Unchanged) => {
+                        counts.repos_unchanged += 1;
+                        status.repos.push(RepoWalk {
+                            repo: target.repo.clone(),
+                            status: "unchanged".to_owned(),
+                            components: held.get(&(project.id, key.clone())).copied().unwrap_or(0),
+                            ..RepoWalk::default()
+                        });
+                    }
                     Ok(ProjectGearsRead::Read { fingerprint, gears }) => {
                         counts.repos_read += 1;
+                        status.repos.push(RepoWalk {
+                            repo: target.repo.clone(),
+                            status: "read".to_owned(),
+                            components: gears.len(),
+                            ..RepoWalk::default()
+                        });
                         walk.reads.push(RepoRead {
                             project_id: project.id,
                             project_name: project.name.clone(),
@@ -868,9 +990,18 @@ impl CatalogService {
                     Err(e) => {
                         counts.repos_failed += 1;
                         tracing::warn!(project_id = %project.id, repo = %target.repo, error = %format!("{e:#}"), "components-catalog: registry: a repository could not be read; its occurrences are kept");
+                        let error = format!("{e:#}");
+                        status.repos.push(RepoWalk {
+                            repo: target.repo.clone(),
+                            status: "failed".to_owned(),
+                            components: held.get(&(project.id, key.clone())).copied().unwrap_or(0),
+                            hint: read_failure_hint(&error),
+                            error: Some(error),
+                        });
                     }
                 }
             }
+            statuses.push(status);
         }
 
         let entries: Vec<_> = entries
@@ -892,6 +1023,20 @@ impl CatalogService {
                 tracing::warn!(instance_id = %id, error = %format!("{e:#}"), "components-catalog: registry: a gone node could not be retired");
             }
         }
+        // What each project's read came to, for the page's project list.
+        let mut settings = self.settings(ctx).await?;
+        settings.organization_id = Some(org);
+        settings.last_walk = merge_walks(std::mem::take(&mut settings.last_walk), statuses, only.is_empty());
+        self.sink
+            .upsert(
+                ctx,
+                &[gts::registry_settings_node(
+                    &org.to_string(),
+                    serde_json::to_value(&settings)?,
+                )],
+                &[],
+            )
+            .await?;
         counts.entries_created = plan.created;
         counts.entries_updated = plan.updated;
         counts.occurrences_written = plan.occurrences_written;
