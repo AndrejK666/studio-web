@@ -83,6 +83,12 @@ describe("why a gear is offered", () => {
     expect(lines.some((l) => l.startsWith("Found by its words only"))).toBe(true);
   });
 
+  it("says when the gear is the project's own", () => {
+    expect(candidateReasons(cand("studio-documents", { origin: "project", path: "studio-backend/src/documents" }), "storage")[0]).toBe(
+      "Declared in this project's own repository, at studio-backend/src/documents: you already have it.",
+    );
+  });
+
   it("names the contract and what blocks the engine", () => {
     const lines = candidateReasons(
       cand("a", { step: "contract", contracts: ["authn/Api@v1"], composable: "blocked", composable_why: "needs a plugin" }),

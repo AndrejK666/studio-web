@@ -109,6 +109,9 @@ export function lookingFor(row: PlanRow): string {
 /** Why a candidate is offered for a capability, and what stands in its way. */
 export function candidateReasons(c: Candidate, capability: string): string[] {
   const lines: string[] = [];
+  if (c.origin === "project") {
+    lines.push(`Declared in this project's own repository${c.path ? `, at ${c.path}` : ""}: you already have it.`);
+  }
   if (c.step === "contract") {
     lines.push(`Provides ${(c.contracts ?? []).join(", ")}: a contract ${quote(capability)} is satisfied by.`);
   }
