@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ComponentRegistry } from "./component-registry";
 import { ApiError, api } from "./api";
 import type { ComponentSource, ComponentValues, CatalogNode, Connection, FieldSchema, StudioKit } from "./api";
 import { errText } from "./format";
@@ -424,9 +425,12 @@ export function ComponentsCatalog({
   tenantId,
   onCategories,
   focus = null,
+  projects = [],
 }: {
   token: string;
   tenantId?: string;
+  /** The organization's projects: which ones the registry reads. */
+  projects?: { id: string; name: string }[];
   /** The shell's filter rail. Not read: the catalogue's search, kind,
    *  category, SDK switch and sort are its own, above the list and in the
    *  address (docs/list-standard.md). */
@@ -447,6 +451,9 @@ export function ComponentsCatalog({
    *  the editor writes them — this is what the table reads. */
   const [resolved, setResolved] = useState<Record<string, ComponentValues>>({});
   const [selected, setSelected] = useSelectedComponent(focus?.name ?? null);
+  /** The catalogue (what the sources list) or the registry (what the
+   *  organization's projects declare, ADR-0041). */
+  const [pane, setPane] = useState<"catalogue" | "registry">("catalogue");
   useEffect(() => {
     if (focus) setSelected(focus.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -662,6 +669,9 @@ export function ComponentsCatalog({
     setSync("queued…");
     try {
       const { run_id } = await api.syncComponents(token, body);
+      // Kept on the server too, so the scheduled sync reads the same sources
+      // (ADR-0041); a backend without the route keeps working as before.
+      void api.saveCatalogSources(token, body.repositories).catch(() => undefined);
       const deadline = Date.now() + 10 * 60 * 1000;
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
@@ -882,6 +892,14 @@ export function ComponentsCatalog({
             <div className="crumb">
               <h1>Components</h1>
               <span className="asof">{filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}</span>
+              <span className="chips" role="tablist" style={{ margin: "0 0 0 12px" }}>
+                <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
+                  Catalogue
+                </button>
+                <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                  Registry
+                </button>
+              </span>
             </div>
             <div className="tools">
               <div className="seg" role="tablist" aria-label="View mode">
@@ -948,7 +966,9 @@ export function ComponentsCatalog({
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {viewMode === "graph" ? (
+          {pane === "registry" ? (
+            <ComponentRegistry token={token} projects={projects} onOpenComponent={(name) => { setPane("catalogue"); setSelected(name); }} />
+          ) : viewMode === "graph" ? (
             <>
               <div className="dt-toolbar">
                 <div className="dt-toolbar-left">{filterControls}</div>
